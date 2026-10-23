@@ -750,7 +750,7 @@ fn mask_password_params(s: String) -> String {
 /// never grants: only those the user may connect to are sized.
 pub const BOOTSTRAP_SQL: &str = "select datname as database, \
     case when has_database_privilege(datname, 'CONNECT') \
-         then pg_size_pretty(pg_database_size(datname)) end as size \
+         then pg_database_size(datname) end as size \
     from pg_database where not datistemplate order by datname";
 
 /// A successful connection's bootstrap result.

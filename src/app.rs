@@ -209,7 +209,7 @@ fn parse_bootstrap_databases(grid: &Grid) -> Vec<DatabaseInfo> {
         .iter()
         .filter_map(|row| {
             let name = cell_text(row.first()?).to_string();
-            let size = cell_text(row.get(1)?).to_string();
+            let size = crate::query::schema::format_size_cell(cell_text(row.get(1)?));
             // No size means no CONNECT (RDS's `rdsadmin`): not one to
             // offer on the start card.
             (!size.is_empty()).then_some(DatabaseInfo { name, size })

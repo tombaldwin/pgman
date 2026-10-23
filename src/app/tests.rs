@@ -6930,7 +6930,8 @@ fn bootstrap_grid(rows: &[(&str, &str)]) -> Grid {
 
 #[test]
 fn parse_bootstrap_databases_extracts_name_and_size_in_row_order() {
-    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    // BOOTSTRAP_SQL sends byte counts; the card shows them formatted.
+    let grid = bootstrap_grid(&[("main", "1288490189"), ("analytics", "314572800")]);
     let got = parse_bootstrap_databases(&grid);
     assert_eq!(
         got,
@@ -6986,7 +6987,8 @@ fn parse_bootstrap_databases_empty_grid_yields_empty_vec() {
 #[test]
 fn bootstrap_result_populates_databases_and_leaves_grid_empty() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    // BOOTSTRAP_SQL sends byte counts; the card shows them formatted.
+    let grid = bootstrap_grid(&[("main", "1288490189"), ("analytics", "314572800")]);
     a.apply_bootstrap_grid(grid);
     assert_eq!(
         a.databases,

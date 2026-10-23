@@ -20,6 +20,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- One size format everywhere: database sizes on the start card and in
+  the environments overview, and table sizes in the schema browser, read
+  `9.0 MB` / `212 MB` / `1.2 GB`. The start card used `pg_size_pretty`,
+  which stays in kB up to 10 MB (`10199 kB` beside `10 MB`), and the
+  schema browser used `MiB` with two decimals.
 - In the editor and the prompts the error footer points at `F2 / :error
   detail`, not F2 alone: F2 takes fn on a Mac.
 - The start card's `recent` list says how to bring an entry back: `in
