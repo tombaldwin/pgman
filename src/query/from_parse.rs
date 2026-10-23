@@ -11,7 +11,10 @@
 //! and biased unqualified completion (prefer columns of tables that
 //! appear in the current `FROM`).
 
-/// One table reference pulled from a `FROM` / `JOIN`.
+/// One table reference pulled from a `FROM` / `JOIN`. `schema`, `name`
+/// and `alias` are the names the server resolves: an unquoted
+/// identifier folded to lower case, a quoted one verbatim (see
+/// [`ident_value`]), so `FROM "Users"` and `FROM Users` differ.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRefInQuery {
     pub schema: Option<String>,
