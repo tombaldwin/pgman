@@ -8,6 +8,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- Cell editing: `u` on a cell in the grid (or a field in row detail)
+  edits it in place. Enter writes a one-row `UPDATE … WHERE <primary
+  key>` and sends it through the safety guard like any editor statement,
+  the statement shown in the confirm; `Ctrl-N` sets NULL (and NULL ↔ the
+  empty string). It works on a SELECT from one table with its primary
+  key in the result, and otherwise says why not (a join, a view, no
+  primary key, the key not selected, a computed column, read-only). The
+  UPDATE changes exactly one row or is rolled back, and the cell then
+  shows the value as the server stored it.
+
 - `sslrootcert=<file>` in a connection string pins the trusted CAs, as
   in libpq (and `require` with a CA file checks the chain). It used to
   be ignored, with the default trust store used instead. `sslcrl` and

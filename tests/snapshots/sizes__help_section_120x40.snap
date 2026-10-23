@@ -19,21 +19,21 @@ expression: dump(&buf)
 │   conn pick               │     ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)                           │
 │   row detail              │     ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)                          │
 │   cell detail             │     ctrl-/         toggle `-- ` line comment on the current line                         │
-│   schema browser          │     ( [ {  ' " autoclose / skip-over — pairs the open with its close (cursor between);   │
-│   EXPLAIN tree            │            typing the close (or matching quote) over it just steps past                  │
-│   slow queries            │     ctrl-r         reverse-incremental history search (ctrl-d in there deletes the       │
-│   environments            │                    focused entry)                                                        │
-│   active sessions         │     ctrl-w         \watch — re-run every 2 s; any key stops                              │
-│   psql backslash commands │     ctrl-x         open the buffer in $EDITOR (\e)                                       │
-│   : commands              │     ctrl-s         save the current buffer as a named saved query                        │
-│   tabs                    │     ctrl-o         open the saved-queries panel (load one in)                            │
-│   saved queries           │     ctrl-f         format the buffer (built-in; pg_format if installed)                  │
-│   notifications           │     ctrl-l / F8   parse buffer as log → pick a reconstructed query                       │
-│   jdbc tap                │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply script                 │
-│   result diff             │     tab / ctrl-spc identifier completion (cycles on repeat tab)                          │
-│   schema wizard           │     .             auto-trigger qualified completion (users.|)                            │
-│   help                    │     (in popup) type to narrow live · esc to restore typed prefix                         │
-│                           │     enter         insert newline                                                         │
+│   cell edit               │     ( [ {  ' " autoclose / skip-over — pairs the open with its close (cursor between);   │
+│   schema browser          │            typing the close (or matching quote) over it just steps past                  │
+│   EXPLAIN tree            │     ctrl-r         reverse-incremental history search (ctrl-d in there deletes the       │
+│   slow queries            │                    focused entry)                                                        │
+│   environments            │     ctrl-w         \watch — re-run every 2 s; any key stops                              │
+│   active sessions         │     ctrl-x         open the buffer in $EDITOR (\e)                                       │
+│   psql backslash commands │     ctrl-s         save the current buffer as a named saved query                        │
+│   : commands              │     ctrl-o         open the saved-queries panel (load one in)                            │
+│   tabs                    │     ctrl-f         format the buffer (built-in; pg_format if installed)                  │
+│   saved queries           │     ctrl-l / F8   parse buffer as log → pick a reconstructed query                       │
+│   notifications           │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply script                 │
+│   jdbc tap                │     tab / ctrl-spc identifier completion (cycles on repeat tab)                          │
+│   result diff             │     .             auto-trigger qualified completion (users.|)                            │
+│   schema wizard           │     (in popup) type to narrow live · esc to restore typed prefix                         │
+│   help                    │     enter         insert newline                                                         │
 │                           │     ↑ ↓ ← →       move cursor (col remembered across lines)                              │
 │                           │     home / end    start / end of current line                                            │
 │                           │     ctrl-p / -n   prev / next history entry (history persists across restarts)           │

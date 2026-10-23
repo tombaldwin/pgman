@@ -28,7 +28,7 @@ use help::draw_help;
 pub(crate) use help::help_heading_jump;
 use landing::draw_landing;
 use panels::{
-    draw_about, draw_confirm, draw_conn_pick, draw_environments, draw_error_detail,
+    draw_about, draw_cell_edit, draw_confirm, draw_conn_pick, draw_environments, draw_error_detail,
     draw_explain_tree, draw_log_pick, draw_notifications, draw_param_prompt, draw_rename_prompt,
     draw_save_query_prompt, draw_saved_queries, draw_sessions, draw_slow_queries,
 };
@@ -233,6 +233,9 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
     }
     if app.mode == Mode::ParamPrompt {
         draw_param_prompt(f, area, app);
+    }
+    if app.mode == Mode::CellEdit {
+        draw_cell_edit(f, area, app);
     }
     if app.mode == Mode::ResultDiff {
         draw_result_diff(f, area, app);
@@ -1742,7 +1745,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 }
                 Mode::LogPick => "↑↓ / j/k navigate · enter load · c toggle clusters · esc cancel",
                 Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit · E envs",
-            Mode::RowDetail => "J / K next / prev row · j / k field · y yank · esc close",
+            Mode::RowDetail => "J / K next / prev row · j / k field · y yank · u edit · esc close",
             Mode::CellDetail => {
                 if app.cell_detail.json_rows.is_empty() {
                     "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back"
@@ -1776,6 +1779,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::RenameQueryPrompt => "edit name · enter save · esc cancel",
                 Mode::SaveQueryPrompt => "type a name · enter persist · esc cancel",
                 Mode::ParamPrompt => "type value · enter next · esc cancel",
+                Mode::CellEdit => "type the value · enter save · ctrl-n NULL · esc cancel",
                 Mode::ResultDiff => "j/k navigate · r re-pin B as A · c clear pin · q / esc close",
                 // Unreachable in practice: the command-bar branch at
                 // the head of this chain owns the footer while the bar
@@ -1826,6 +1830,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 | Mode::SavedQueriesFilter
                 | Mode::RenameQueryPrompt
                 | Mode::CommandBar
+                | Mode::CellEdit
         ) || tunnel_prompt
             || failed_normal
             || connecting_normal
@@ -2229,6 +2234,7 @@ pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
     ("conn pick", "the connection picker"),
     ("row detail", "one row, field by field (enter on the grid)"),
     ("cell detail", "one value, as text or as a JSON tree"),
+    ("cell edit", "change one value of a table row (u)"),
     (
         "schema browser",
         "schemas, tables, columns, constraints (S)",
@@ -2402,6 +2408,10 @@ pub(crate) fn help_body(
     );
     push(
         row("    I             yank focused row as INSERT (single-table SELECTs)"),
+        &mut lines,
+    );
+    push(
+        row("    u             edit the focused cell → one-row UPDATE (see cell edit)"),
         &mut lines,
     );
     push(
@@ -2601,6 +2611,10 @@ pub(crate) fn help_body(
         row("    y             yank focused field value to clipboard"),
         &mut lines,
     );
+    push(
+        row("    u             edit the focused field (see cell edit)"),
+        &mut lines,
+    );
     push(row("    esc / q       close"), &mut lines);
     push(Line::from(""), &mut lines);
 
@@ -2627,6 +2641,26 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(row("    esc / q       back to row detail"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("cell edit", &mut lines, &mut anchors);
+    push(
+        row("  u on a cell of a SELECT from one table whose primary key is in the result"),
+        &mut lines,
+    );
+    push(
+        row("    enter         save: UPDATE … WHERE <primary key> through the safety guard"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-n        NULL ↔ empty string (typing ends a NULL)"),
+        &mut lines,
+    );
+    push(row("    esc           cancel"), &mut lines);
+    push(
+        row("  one row or nothing: any other count is rolled back"),
+        &mut lines,
+    );
     push(Line::from(""), &mut lines);
 
     heading("schema browser", &mut lines, &mut anchors);

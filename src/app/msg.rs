@@ -55,6 +55,14 @@ pub enum AppMsg {
         /// Stashed on App so the rich-error overlay can render it.
         detail: Option<crate::conn::QueryErrDetail>,
     },
+    /// A cell edit's UPDATE changed its one row. `value` is the column
+    /// as `RETURNING` rendered it; `tx` says whether it is committed.
+    CellUpdated {
+        generation: u64,
+        pending: crate::app::PendingCellEdit,
+        value: crate::grid::Cell,
+        tx: crate::conn::EditTx,
+    },
     /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
     TxClosed {
         generation: u64,
@@ -196,6 +204,7 @@ impl AppMsg {
             | AppMsg::QueryOk { generation, .. }
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. }
+            | AppMsg::CellUpdated { generation, .. }
             | AppMsg::Notice { generation, .. }
             | AppMsg::Notification { generation, .. }
             | AppMsg::SlowQueriesLoaded { generation, .. }

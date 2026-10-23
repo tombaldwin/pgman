@@ -33,6 +33,12 @@
   form the classifier missed reaches no transaction at all.
   `statement_timeout_ms` (default 30000) is applied the same way as the
   read-only flag.
+- **Cell edits are editor statements.** `u` writes a one-row `UPDATE …
+  WHERE <primary key>` and sends it down the same path a typed statement
+  takes — split, classified, the database's guard, `auto_tx` — with the
+  statement shown in the confirm. It is refused at `u` on a read-only
+  session, and it runs so that it changes exactly one row or is rolled
+  back ([keys](keys.md#cell-edit-u)).
 - **Every statement is classified before it runs.** Classification
   is pure and heuristic: it strips comments, looks at the leading
   keyword, and checks whether the statement carries a `WHERE`. It is

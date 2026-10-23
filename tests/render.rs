@@ -1327,6 +1327,7 @@ fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Confirm;
     let buf = render(&mut a, 80, 24);
@@ -2489,20 +2490,20 @@ fn narrow_help_lists_every_section_with_its_teaser_then_opens_one() {
     a.on_key(KeyEvent::from(KeyCode::Char('?')));
     let buf = render(&mut a, 80, 24);
     let text = dump(&buf);
-    assert!(text.contains("help · 22 sections"), "{text}");
+    assert!(text.contains("help · 23 sections"), "{text}");
     assert!(
         text.contains("▸ grid                     the results: move, sort, filter, find, yank"),
         "the selected section, marked, with its teaser:\n{text}"
     );
     assert!(
-        text.contains("↓ 9 more"),
+        text.contains("↓ 10 more"),
         "the list says there is more:\n{text}"
     );
     // Walk to the bottom: the list follows the selection.
     a.on_key(KeyEvent::from(KeyCode::Char('G')));
     let text = dump(&render(&mut a, 80, 24));
     assert!(text.contains("▸ help"), "{text}");
-    assert!(text.contains("↑ 9 more"), "{text}");
+    assert!(text.contains("↑ 10 more"), "{text}");
     // Enter opens the selected section full width, heading on row 0.
     a.on_key(KeyEvent::from(KeyCode::Char('g')));
     a.on_key(KeyEvent::from(KeyCode::Char('j')));
@@ -2679,4 +2680,108 @@ fn row_detail_more_below_counts_the_fields_out_of_sight() {
         assert!(screen.contains(&want), "{w}x{h} want {want}:\n{screen}");
         assert!(screen.contains("field 1 of 30"), "{w}x{h}:\n{screen}");
     }
+}
+
+// ---------------------------------------------------------------
+// Cell edit (docs/backlog/cell-editing.md)
+// ---------------------------------------------------------------
+
+/// `u`'s editor open on `public.users.name where id = 2`, with `value`
+/// (`None`: NULL).
+fn cell_edit_app(value: Option<&str>) -> App {
+    let mut a = settle_app();
+    a.grid = Grid {
+        columns: vec!["id".into(), "name".into()],
+        rows: vec![vec![Some("2".into()), value.map(str::to_string)]],
+        truncated: false,
+    };
+    let edit = pgman::query::cell_edit::CellEdit {
+        schema: "public".into(),
+        table: "users".into(),
+        column: "name".into(),
+        key: vec![("id".into(), "2".into())],
+        old: value.map(str::to_string),
+        row: 0,
+        col: 1,
+    };
+    a.cell_edit = Some(pgman::app::CellEditUi {
+        input: tui_common::TextInput::with_text(value.unwrap_or_default()),
+        null: value.is_none(),
+        row_cells: a.grid.rows[0].clone(),
+        edit,
+        return_to: Mode::Normal,
+    });
+    a.mode = Mode::CellEdit;
+    a
+}
+
+/// The editor names the cell and the row, shows a NULL as the grid's
+/// dimmed `NULL`, and says its keys — at 80 columns, and in the footer.
+#[test]
+fn the_cell_editor_names_the_cell_and_shows_null_as_the_grid_does() {
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut a = cell_edit_app(None);
+        let buf = render(&mut a, w, h);
+        let text = dump(&buf);
+        assert!(text.contains(" edit cell "), "{w}x{h}:\n{text}");
+        assert!(text.contains("public.users.name"), "{w}x{h}:\n{text}");
+        assert!(text.contains("where id = 2"), "{w}x{h}:\n{text}");
+        assert!(
+            text.contains("enter save · ctrl-n NULL · esc cancel"),
+            "{w}x{h}:\n{text}"
+        );
+        // The value row reads `NULL`, dimmed italic like the grid's
+        // marker — not the text "NULL".
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("│NULL "))
+            .unwrap_or_else(|| panic!("{w}x{h}: no NULL value row:\n{text}"));
+        let x: Vec<char> = line.chars().collect();
+        let col = x
+            .windows(5)
+            .position(|win| win.iter().collect::<String>() == "│NULL")
+            .expect("the marker")
+            + 1;
+        let cell = &buf[(col as u16, y as u16)];
+        assert_eq!(cell.symbol(), "N");
+        assert!(
+            cell.modifier.contains(Modifier::ITALIC),
+            "{w}x{h}: the NULL marker is italic"
+        );
+        let footer: String = (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect();
+        assert!(footer.contains("enter save"), "{w}x{h}: {footer}");
+    }
+}
+
+/// A value wider than the box scrolls to keep the cursor (at its end)
+/// in view: the tail shows, not the head.
+#[test]
+fn a_long_value_scrolls_to_the_cursor() {
+    let long = format!("{}TAIL", "x".repeat(200));
+    let mut a = cell_edit_app(Some(&long));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("xxxTAIL"), "{text}");
+}
+
+/// The confirm for an edit names the cell, says it is one row or
+/// nothing, and shows the statement it will send.
+#[test]
+fn the_confirm_for_a_cell_edit_shows_the_update_and_the_one_row_rule() {
+    let mut a = cell_edit_app(Some("bo"));
+    a.on_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Confirm);
+    let text = dump(&render(&mut a, 120, 40));
+    assert!(
+        text.contains("edit public.users.name where id = 2"),
+        "{text}"
+    );
+    assert!(text.contains("one row, or rolled back"), "{text}");
+    assert!(
+        text.contains("UPDATE public.users SET name = NULL WHERE id = '2' RETURNING name"),
+        "{text}"
+    );
 }

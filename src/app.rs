@@ -1,6 +1,7 @@
 //! Application state and the event loop.
 
 mod cmd;
+mod edit_cell;
 mod editor;
 mod handle;
 mod history;
@@ -1374,6 +1375,11 @@ pub struct App {
     pub history_pos: Option<usize>,
     /// A guarded run waiting on confirmation.
     pub pending_run: Option<PendingRun>,
+    /// `u`'s editor while it is open (`Mode::CellEdit`).
+    pub cell_edit: Option<CellEditUi>,
+    /// A cell edit inside the `auto_tx` transaction awaiting commit or
+    /// rollback: a rollback puts the old value back in the grid.
+    pub edit_awaiting_tx: Option<PendingCellEdit>,
     /// True while an explicit transaction is open (auto_tx write succeeded —
     /// waiting on the user to commit or rollback).
     pub tx_open: bool,
@@ -1802,6 +1808,8 @@ impl App {
             history_pos: None,
             history_draft: String::new(),
             pending_run: None,
+            cell_edit: None,
+            edit_awaiting_tx: None,
             tx_open: false,
             log_pick: LogPickUi::default(),
             last_log_pick: None,
@@ -2735,6 +2743,7 @@ impl App {
             Mode::ParamPrompt => self.on_param_prompt_key(key),
             Mode::ResultDiff => self.on_result_diff_key(key),
             Mode::CommandBar => self.on_command_bar_key(key),
+            Mode::CellEdit => self.on_cell_edit_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -3207,6 +3216,7 @@ impl App {
             Mode::ConnPick => Some("conn pick"),
             Mode::RowDetail => Some("row detail"),
             Mode::CellDetail => Some("cell detail"),
+            Mode::CellEdit => Some("cell edit"),
             Mode::SchemaBrowser | Mode::SchemaBrowserFilter => Some("schema browser"),
             Mode::SchemaLint => Some("schema wizard"),
             Mode::ErrorDetail => Some("editor"),
@@ -3896,6 +3906,7 @@ impl App {
                     decision,
                     is_batch: false,
                     summary: None,
+                    cell_edit: None,
                 });
                 self.mode = Mode::Confirm;
             }
@@ -3992,6 +4003,7 @@ impl App {
                     decision: synthesized,
                     is_batch: true,
                     summary: Some(summary),
+                    cell_edit: None,
                 });
                 self.mode = Mode::Confirm;
             }

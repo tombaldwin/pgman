@@ -36,6 +36,7 @@ expression: dump(&buf)
 │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value   │
 │     Y             copy the (filtered) grid to clipboard as CSV                                   │
 │     I             yank focused row as INSERT (single-table SELECTs)                              │
+│     u             edit the focused cell → one-row UPDATE (see cell edit)                         │
 │     D             pin result as A · run another query, D again to diff as B                      │
 │     m<a-z>        set bookmark at focused (row, col)                                             │
 │     '<a-z>        jump to bookmark                                                               │
@@ -106,10 +107,9 @@ expression: dump(&buf)
 │     g / G         first / last field                                                             │
 │     enter         zoom into focused field (cell detail)                                          │
 │     y             yank focused field value to clipboard                                          │
+│     u             edit the focused field (see cell edit)                                         │
 │     esc / q       close                                                                          │
-│                                                                                                  │
-│   cell detail                                                                                    │
-│ ↓ 153 more below                                                                                 │
+│ ↓ 162 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter

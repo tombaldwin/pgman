@@ -19,21 +19,21 @@ expression: dump(&buf)
 │   conn pick               │   row detail                                                                             │
 │   row detail              │     y             yank focused field value to clipboard                                  │
 │   cell detail             │                                                                                          │
-│   schema browser          │   cell detail                                                                            │
-│   EXPLAIN tree            │     y             yank value to clipboard                                                │
-│   slow queries            │     y             yank the jq-style path (.foo[0].bar)                                   │
-│   environments            │                                                                                          │
-│   active sessions         │   schema browser                                                                         │
-│   psql backslash commands │     s             yank SELECT * FROM <schema>.<table> LIMIT 100 template                 │
-│   : commands              │     i             yank INSERT INTO … (cols) VALUES (NULL, …) template                    │
-│   tabs                    │                                                                                          │
-│   saved queries           │   notifications                                                                          │
-│   notifications           │     y             yank focused payload to clipboard                                      │
-│   jdbc tap                │                                                                                          │
-│   result diff             │   schema wizard                                                                          │
-│   schema wizard           │     y             yank the focused finding's SQL suggestion (if any)                     │
+│   cell edit               │   cell detail                                                                            │
+│   schema browser          │     y             yank value to clipboard                                                │
+│   EXPLAIN tree            │     y             yank the jq-style path (.foo[0].bar)                                   │
+│   slow queries            │                                                                                          │
+│   environments            │   schema browser                                                                         │
+│   active sessions         │     s             yank SELECT * FROM <schema>.<table> LIMIT 100 template                 │
+│   psql backslash commands │     i             yank INSERT INTO … (cols) VALUES (NULL, …) template                    │
+│   : commands              │                                                                                          │
+│   tabs                    │   notifications                                                                          │
+│   saved queries           │     y             yank focused payload to clipboard                                      │
+│   notifications           │                                                                                          │
+│   jdbc tap                │   schema wizard                                                                          │
+│   result diff             │     y             yank the focused finding's SQL suggestion (if any)                     │
+│   schema wizard           │                                                                                          │
 │   help                    │                                                                                          │
-│                           │                                                                                          │
 │                           │                                                                                          │
 │                           │                                                                                          │
 │                           │                                                                                          │

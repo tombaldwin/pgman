@@ -201,6 +201,11 @@ pub enum Mode {
     /// returns to the mode the bar was opened from. State lives
     /// in `App::command_bar`.
     CommandBar,
+    /// `u`'s one-line editor for the focused cell (from the grid or row
+    /// detail). Enter saves through the safety guard as a one-row
+    /// `UPDATE`, `Ctrl-N` toggles NULL, Esc cancels. State lives in
+    /// `App::cell_edit`.
+    CellEdit,
 }
 
 impl Mode {
@@ -224,6 +229,7 @@ impl Mode {
                 | Mode::SavedQueriesFilter
                 | Mode::RenameQueryPrompt
                 | Mode::CommandBar
+                | Mode::CellEdit
         )
     }
 }
@@ -763,6 +769,45 @@ pub struct PendingRun {
     /// For multi-statement runs, a human summary shown in the confirm modal
     /// in place of the (less useful for batches) classification.
     pub summary: Option<String>,
+    /// Set when `sql` is a cell edit's UPDATE: confirming runs it under
+    /// the one-row guard (`conn::run_single_row_update`) and puts the
+    /// new value in the grid.
+    pub cell_edit: Option<PendingCellEdit>,
+}
+
+/// `u`'s inline editor (`Mode::CellEdit`): the planned edit, the value
+/// being typed, and whether it is SQL NULL.
+#[derive(Debug, Clone)]
+pub struct CellEditUi {
+    pub edit: crate::query::cell_edit::CellEdit,
+    pub input: TextInput,
+    /// The value is SQL NULL (`Ctrl-N`); `input` is empty while it is.
+    pub null: bool,
+    /// The row as the grid held it when the editor opened.
+    pub row_cells: Vec<crate::grid::Cell>,
+    /// The grid or row detail: where Esc and a save land.
+    pub return_to: Mode,
+}
+
+impl CellEditUi {
+    /// The value as it would be written: `None` for NULL.
+    pub fn value(&self) -> crate::grid::Cell {
+        (!self.null).then(|| self.input.text().to_string())
+    }
+}
+
+/// A cell edit on its way to the database — confirming, running, or
+/// (under `auto_tx`) waiting on commit or rollback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingCellEdit {
+    pub edit: crate::query::cell_edit::CellEdit,
+    /// The value being written.
+    pub new: crate::grid::Cell,
+    /// The row as the grid held it when the edit was planned: how the
+    /// result finds it again after a sort or a tab switch.
+    pub row_cells: Vec<crate::grid::Cell>,
+    /// Where the operator lands when it's done.
+    pub return_to: Mode,
 }
 
 /// Tap-monitor navigation state — the active sub-view, sort, and the

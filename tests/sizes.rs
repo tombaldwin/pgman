@@ -412,6 +412,7 @@ fn scr_confirm() -> App {
         decision,
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Confirm;
     a

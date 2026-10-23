@@ -323,6 +323,7 @@ fn confirm_modal_names_the_statement_not_the_enum_variant() {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Confirm;
     let buf = render(&mut a, 80, 24);

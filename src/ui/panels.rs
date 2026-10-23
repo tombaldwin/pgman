@@ -205,9 +205,11 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     } else {
         crate::safety::unrecognised_statement_word(&pending.sql)
     };
-    let headline = match &typo {
-        Some(word) => confirm_typo_line(word),
-        None => format!("{} ({detail}){wrap_note}", pending.kind.label()),
+    let headline = match (&typo, &pending.cell_edit) {
+        (Some(word), _) => confirm_typo_line(word),
+        // The summary names the cell; the run label adds nothing.
+        (None, Some(_)) => format!("{detail}{wrap_note} · one row, or rolled back"),
+        (None, None) => format!("{} ({detail}){wrap_note}", pending.kind.label()),
     };
     // For batch runs the SQL can be long — show the first 8 lines and an
     // ellipsis. Single statements show as-is.
@@ -2921,6 +2923,79 @@ pub(super) fn draw_param_prompt(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+/// `u`'s editor: the column and row being changed, then the value — or
+/// the grid's dimmed `NULL` marker while it is NULL. Wide values scroll
+/// so the cursor stays in the box.
+pub(super) fn draw_cell_edit(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let Some(ui) = app.cell_edit.as_ref() else {
+        return;
+    };
+    let w = 72u16.min(area.width.saturating_sub(2)).max(20);
+    let h = 6u16.min(area.height);
+    let popup = centered(area, w, h);
+    f.render_widget(Clear, popup);
+    let block = crate::ui::chrome::panel_block(theme)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(crate::ui::chrome::panel_title(theme, " edit cell "));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let edit = &ui.edit;
+    let target = format!("{}.{}.{}", edit.schema, edit.table, edit.column);
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(target, Style::default().fg(theme.accent))),
+        Line::from(Span::styled(
+            format!("where {}", crate::query::cell_edit::key_summary(edit)),
+            Style::default().fg(theme.muted),
+        )),
+    ];
+    let input_row = lines.len() as u16;
+    let width = inner.width as usize;
+    let (shown, cursor_x) = if ui.null {
+        (
+            Span::styled(
+                crate::grid::NULL_MARKER,
+                Style::default()
+                    .fg(theme.null_cell)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            0,
+        )
+    } else {
+        let (window, x) = input_window(ui.input.text(), ui.input.cursor_col(), width);
+        (
+            Span::styled(
+                window,
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+            x,
+        )
+    };
+    lines.push(Line::from(shown));
+    lines.push(Line::from(Span::styled(
+        "enter save · ctrl-n NULL · esc cancel",
+        Style::default().fg(theme.muted),
+    )));
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    let x = inner.x + cursor_x as u16;
+    let y = inner.y + input_row;
+    if x < inner.x + inner.width && y < inner.y + inner.height {
+        f.set_cursor_position((x, y));
+    }
+}
+
+/// The part of a one-line `text` that fits `width` columns with the
+/// cursor (a char index) in view, and the cursor's column within it.
+/// Whole text when it fits; otherwise scrolled just far enough. Pure.
+pub(crate) fn input_window(text: &str, cursor: usize, width: usize) -> (String, usize) {
+    let width = width.max(1);
+    let chars: Vec<char> = text.chars().collect();
+    // One column is kept for the cursor past the last character.
+    let start = (cursor + 1).saturating_sub(width);
+    let window: String = chars.iter().skip(start).take(width).collect();
+    (window, cursor - start)
+}
+
 /// LISTEN/NOTIFY arrivals panel (`N` from Normal). Lists the
 /// ring buffer of recent NOTIFY arrivals; j/k navigate, `y`
 /// yanks the focused payload, `c` clears.
@@ -3345,6 +3420,19 @@ fn push_kv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_window_keeps_the_cursor_in_view() {
+        // Fits: all of it.
+        assert_eq!(input_window("abc", 3, 10), ("abc".into(), 3));
+        // Cursor at the end of a long value: the tail, one column left
+        // for the cursor.
+        assert_eq!(input_window("abcdefgh", 8, 4), ("fgh".into(), 3));
+        // Cursor at the start: the head.
+        assert_eq!(input_window("abcdefgh", 0, 4), ("abcd".into(), 0));
+        // Cursor in the middle: scrolled just enough.
+        assert_eq!(input_window("abcdefgh", 5, 4), ("cdef".into(), 3));
+    }
 
     #[test]
     fn environment_lines_group_replicas_under_their_primary_and_align_columns() {

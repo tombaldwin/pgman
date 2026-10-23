@@ -8707,6 +8707,7 @@ fn confirm_modal_app() -> App {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.last_error = Some("relation \"orders\" does not exist".into());
     a.mode = Mode::Confirm;
@@ -8870,6 +8871,7 @@ async fn reconnect_drops_everything_a_decision_modal_was_holding() {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Editor;
     a.editor.buffer = "\\c other_db".into();
