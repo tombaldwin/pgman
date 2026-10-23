@@ -64,6 +64,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- After `SELECT … FROM ONLY t`, `I` yanked an `INSERT INTO public.only`:
+  `ONLY` was read as the table's name. It is now skipped; a quoted
+  `"only"` or a schema `only.t` is still a name.
 - Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
   comparisons in the SCRAM path's digest crates) and `clipboard-win`
   5.4.3 (5.4.1 was yanked).
