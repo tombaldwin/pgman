@@ -8,28 +8,31 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [0.2.0] — 2026-10-23
 
+### Highlights
+
+- **Edit a cell in place.** `u` on a result cell writes a one-row
+  `UPDATE` by primary key, shown in the same safety confirm as any
+  statement you run.
+- **Page past 1000 rows.** `M` fetches the next 1000 rows of a
+  `SELECT`, through a server-side cursor that pgman closes before it
+  can leave your session idle in transaction.
+- **A config advisor in the schema wizard (`W`).** Read-only findings
+  on cache hit ratio, temp-file spills, dead tuples, lock waits and
+  checkpoints, each with its evidence, a conservative setting and the
+  RDS / Aurora parameter to change.
+- **The whole JDBC tap event.** `Enter` on a tap row shows the full
+  SQL, every bound parameter, the error's cause chain and the caller
+  stack; the list shows the focused statement's parameters beneath it.
+- **Help in sections.** One section at a time instead of one long page,
+  with a summary for each and a filter across them all.
+- **More logs read.** Logs → SQL now reads Postgres's `csvlog` and
+  `jsonlog`, p6spy and datasource-proxy logs, and statements that
+  failed with an `ERROR:`.
+- **`sslrootcert`** in a connection string pins the trusted CAs, as in
+  libpq.
+
 ### Added
 
-- `docs/tap.md`: the JDBC tap for pgman users — the OpenTelemetry, TCP
-  and UDP ways in, the v1 event fields, the limits and drop counts,
-  `--tap-record` / `--tap-replay`, redaction and security.
-- Config advisor in the schema wizard (`W`): read-only findings from the
-  server's statistics — buffer cache hit ratio, temp-file spills (with the
-  spilling statements from `pg_stat_statements`), dead tuples and the
-  autovacuum setting behind them, lock-wait chains, and checkpoints forced
-  by WAL volume (`pg_stat_checkpointer` from PG17). Each shows its
-  evidence, how long the counters have accumulated, a conservative
-  setting, and its RDS / Aurora parameter-group name, static or dynamic.
-  `e` yanks a finding's evidence query.
-- `M` in the results fetches past the first 1000 rows. A plain `SELECT`
-  from the editor now reads through a server-side cursor; while it has
-  more, the title says `partial · M fetches more`, and each `M` appends
-  1000 rows (up to 100 000 held), keeping the sort and filter. pgman
-  closes the cursor — never leaving the session idle in transaction —
-  after 60 s without a fetch or 10 min open (sooner if the server's own
-  timeouts are), and before any other database work; `M` then re-runs
-  the query. `EXPLAIN`, scripts, `\watch`, locking `SELECT`s and a
-  `SELECT` inside an open transaction stay capped at 1000 as before.
 - Cell editing: `u` on a cell in the grid (or a field in row detail)
   edits it in place. Enter writes a one-row `UPDATE … WHERE <primary
   key>` and sends it through the safety guard like any editor statement,
@@ -39,13 +42,23 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   primary key, the key not selected, a computed column, read-only). The
   UPDATE changes exactly one row or is rolled back, and the cell then
   shows the value as the server stored it.
-
-- `sslrootcert=<file>` in a connection string pins the trusted CAs, as
-  in libpq (and `require` with a CA file checks the chain). It used to
-  be ignored, with the default trust store used instead. `sslcrl` and
-  `sslcrldir` are refused rather than ignored.
-- `Tab` after `:help ` completes the help section names, as it completes
-  command names.
+- `M` in the results fetches past the first 1000 rows. A plain `SELECT`
+  from the editor now reads through a server-side cursor; while it has
+  more, the title says `partial · M fetches more`, and each `M` appends
+  1000 rows (up to 100 000 held), keeping the sort and filter. pgman
+  closes the cursor — never leaving the session idle in transaction —
+  after 60 s without a fetch or 10 min open (sooner if the server's own
+  timeouts are), and before any other database work; `M` then re-runs
+  the query. `EXPLAIN`, scripts, `\watch`, locking `SELECT`s and a
+  `SELECT` inside an open transaction stay capped at 1000 as before.
+- Config advisor in the schema wizard (`W`): read-only findings from the
+  server's statistics — buffer cache hit ratio, temp-file spills (with the
+  spilling statements from `pg_stat_statements`), dead tuples and the
+  autovacuum setting behind them, lock-wait chains, and checkpoints forced
+  by WAL volume (`pg_stat_checkpointer` from PG17). Each shows its
+  evidence, how long the counters have accumulated, a conservative
+  setting, and its RDS / Aurora parameter-group name, static or dynamic.
+  `e` yanks a finding's evidence query.
 - `Enter` on a JDBC tap List row opens the whole event: the full SQL,
   `pool` / `conn` / `txn`, every bound parameter, the error's cause chain
   down to the root cause, and the caller stack. A failed row used to be
@@ -55,6 +68,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   parameters beneath the list, labelled `params (some redacted)` when
   the producer masked a value and `params (withheld by source)` for
   OpenTelemetry spans, which carry none.
+- `sslrootcert=<file>` in a connection string pins the trusted CAs, as
+  in libpq (and `require` with a CA file checks the chain). It used to
+  be ignored, with the default trust store used instead. `sslcrl` and
+  `sslcrldir` are refused rather than ignored.
 - A Postgres log's `ERROR:` + `STATEMENT:` pair is reconstructed as a
   query marked failed with the error message — what the default
   `log_min_error_statement` logs with nothing else on. A statement
@@ -65,6 +82,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Logs → SQL reads p6spy (default single-line format) and
   datasource-proxy query logs, tagged `[p6spy]` / `[ds-proxy]` in the
   picker.
+- `Tab` after `:help ` completes the help section names, as it completes
+  command names.
+- `docs/tap.md`: the JDBC tap for pgman users — the OpenTelemetry, TCP
+  and UDP ways in, the v1 event fields, the limits and drop counts,
+  `--tap-record` / `--tap-replay`, redaction and security.
 
 ### Changed
 
@@ -77,7 +99,6 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   when A and B are the same columns from one table and the key is in
   both (`key: id (primary key)` in the title), instead of the leftmost
   column that happens to be unique; otherwise it infers as before.
-
 - Help is a list of sections and one section at a time instead of one
   ~275-row page: from 110 columns the list sits beside the section, and
   on a narrower terminal the list comes first, each section with a
