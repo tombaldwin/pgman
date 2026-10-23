@@ -56,6 +56,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   it counts characters now. Every yank reports a clipboard failure the
   same way (`yank failed: …`), and the test suite no longer writes to
   the system clipboard.
+- `:fixture` with a grid filter active captures the rows the filter
+  shows, as `Y` exports them, and the status says `N of M row(s)
+  (filtered)`. It captured every row, hidden ones included.
 - Sorting a column (`s`) decides once per column whether to compare
   numbers or text: a column that is all numbers sorts by exact value
   (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in

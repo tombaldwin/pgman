@@ -2074,6 +2074,42 @@ fn dispatch_fixture_errors_without_source_table() {
         .contains("single-table"));
 }
 
+/// With a filter active `:fixture` captures what the filter shows, as
+/// `Y` exports it, and says how many of how many; it captured every
+/// row, the hidden ones too.
+#[test]
+fn dispatch_fixture_captures_only_the_filtered_rows() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(
+        &["id", "name"],
+        &[&["1", "alice"], &["2", "bob"], &["3", "bobby"]],
+    );
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    a.grid_view.filter = Some("bob".into());
+    a.rebuild_visible_rows();
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-filt-{}", std::process::id()));
+    let path = dir.join("users.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(status.contains("2 of 3 row(s) (filtered)"), "{status}");
+    let parsed = crate::dbunit::parse_flat_xml(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let ids: Vec<&str> = parsed
+        .rows
+        .iter()
+        .map(|r| r.columns[0].1.as_str())
+        .collect();
+    assert_eq!(ids, ["2", "3"]);
+    // A filter that hides everything captures nothing and says why.
+    a.grid_view.filter = Some("zzz".into());
+    a.rebuild_visible_rows();
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("no rows match the filter — nothing to capture")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `:fixture <path>` writes to the whole path, spaces included — it
 /// took the first word, so `:fixture my dir/f.xml` wrote `./my`.
 #[test]
