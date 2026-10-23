@@ -54,11 +54,13 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
     for (idx, line) in log.lines().enumerate() {
         let line_no = idx + 1;
         let Some(Record { prefix, level, msg }) = split_record(line) else {
+            // Postgres writes a tab after every newline in a message;
+            // that tab is the log's, not the statement's or the value's
+            // — inside a string literal it would change the data.
+            let line = line.strip_prefix('\t').unwrap_or(line);
             if let Some(open) = open_params.as_mut() {
-                // Postgres writes a tab after every newline in a message;
-                // that tab is the log's, not the value's.
                 open.text.push('\n');
-                open.text.push_str(line.strip_prefix('\t').unwrap_or(line));
+                open.text.push_str(line);
                 let params = parse_parameters(&open.text);
                 match &open.target {
                     ParamTarget::Current => {
@@ -778,9 +780,9 @@ mod tests {
                 sql,
                 [
                     "select id, total from invoices where status = 'open' and total > '100'",
-                    "select id\n\tfrom customer\n\twhere active",
+                    "select id\nfrom customer\nwhere active",
                     "select * from invoices where id = '48202'",
-                    "select * from invoice_lnes\n\twhere invoice_id = 1",
+                    "select * from invoice_lnes\nwhere invoice_id = 1",
                     "select 1",
                 ],
                 "log_line_prefix = '{format}'"
@@ -818,7 +820,7 @@ mod tests {
 2026-10-21 09:12:50 UTC [101] LOG:  statement: select 1";
         let q = parse(log);
         assert_eq!(q.len(), 2, "{q:?}");
-        assert_eq!(q[0].raw_sql, "select totl\n\tfrom invoices\n\twhere id = 7");
+        assert_eq!(q[0].raw_sql, "select totl\nfrom invoices\nwhere id = 7");
         assert_eq!(q[0].runnable_sql, q[0].raw_sql);
         assert_eq!(q[0].src_line, 4, "the STATEMENT line, where the SQL is");
         assert_eq!(
@@ -1038,6 +1040,21 @@ mod tests {
         assert_eq!(
             q[0].runnable_sql,
             "insert into probe_t (id, note) values ('4', 'line one\nline two\ttabbed')"
+        );
+    }
+
+    /// The tab Postgres writes after each newline of a message is the
+    /// log's: inside a string literal that spans lines, keeping it would
+    /// change the data the statement writes.
+    #[test]
+    fn a_statements_continuation_lines_lose_the_tab_postgres_added() {
+        let log = "\
+[7] LOG:  statement: insert into notes values ('line one
+\t\tindented two')";
+        let q = parse(log);
+        assert_eq!(
+            q[0].raw_sql,
+            "insert into notes values ('line one\n\tindented two')"
         );
     }
 

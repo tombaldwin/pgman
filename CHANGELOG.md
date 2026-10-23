@@ -63,6 +63,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   longer corrupts the reconstruction. The rest of the value, which
   Postgres writes on the next line, went into the statement's SQL and
   the value was cut short; it now stays in the value.
+- Logs → SQL: a multi-line statement from a Postgres log no longer
+  keeps the tab Postgres adds to each continuation line, which changed
+  a string literal that spans lines.
 
 ## [0.1.0] — 2026-10-22
 
