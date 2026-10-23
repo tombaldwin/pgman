@@ -174,6 +174,12 @@ different one-off queries never cluster; two copies of the same query with
 different literals always do — which is exactly the loop-driven-select
 signature this is built to catch.
 
+Statements that repeat by design never cluster: transaction control
+(`BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, …), session settings
+(`SET`, `RESET`, `SHOW`, `DISCARD`) and a connection pool's `select 1`
+ping. They wrap every request, so as clusters they would outrank the
+loop you are looking for. They still appear in the all-queries list.
+
 ## Implementation notes
 
 Reconstruction: `src/query/hibernate.rs`, `src/query/pglog.rs`,

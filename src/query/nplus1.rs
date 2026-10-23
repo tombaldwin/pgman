@@ -200,12 +200,45 @@ pub fn summarize(queries: &[ReconstructedQuery]) -> SessionSummary {
     }
 }
 
+/// True for a statement that repeats by design rather than because a loop
+/// issued it: transaction control (`BEGIN`, `COMMIT`, `SAVEPOINT`, …),
+/// session settings (`SET`, `RESET`, `SHOW`, `DISCARD`), and a pool's
+/// `select 1` liveness ping. Every request a log records wraps its work in
+/// some of these, so as N+1 clusters they would outrank the real one.
+/// They stay in the all-queries list; only clustering skips them.
+pub fn is_session_noise(fingerprint: &str) -> bool {
+    let fp = fingerprint.trim().trim_end_matches(';').trim_end();
+    let first = fp
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or_default();
+    matches!(
+        first,
+        "begin"
+            | "start"
+            | "commit"
+            | "end"
+            | "rollback"
+            | "abort"
+            | "savepoint"
+            | "release"
+            | "set"
+            | "reset"
+            | "show"
+            | "discard"
+    ) || fp == "select ?"
+}
+
 /// Cluster reconstructed queries by fingerprint. Only clusters seen 2+ times
 /// are returned, most-repeated first — a repeated shape is the N+1 signature.
+/// Statements that repeat by design ([`is_session_noise`]) never cluster.
 pub fn detect(queries: &[ReconstructedQuery]) -> Vec<Cluster> {
     let mut groups: HashMap<String, (String, Vec<usize>)> = HashMap::new();
     for (i, q) in queries.iter().enumerate() {
         let fp = fingerprint(&q.raw_sql);
+        if is_session_noise(&fp) {
+            continue;
+        }
         let entry = groups
             .entry(fp)
             .or_insert_with(|| (q.raw_sql.clone(), Vec::new()));
@@ -373,6 +406,65 @@ mod tests {
         assert!(runnable_member(&clusters[0], &queries).is_none());
     }
 
+    /// Transaction control, session settings and pool pings wrap every
+    /// request: they repeat by design, so they never cluster — the loop
+    /// that is really there still does — and they stay in the list.
+    #[test]
+    fn transaction_control_settings_and_pings_are_not_n_plus_1() {
+        let log = "\
+2026-10-21 09:12:48.001 UTC [31840] LOG:  statement: BEGIN
+2026-10-21 09:12:48.002 UTC [31840] LOG:  execute <unnamed>: select * from invoice_lines where invoice_id = $1
+2026-10-21 09:12:48.002 UTC [31840] DETAIL:  parameters: $1 = '1'
+2026-10-21 09:12:48.003 UTC [31840] LOG:  statement: COMMIT
+2026-10-21 09:12:48.011 UTC [31840] LOG:  statement: begin;
+2026-10-21 09:12:48.012 UTC [31840] LOG:  execute <unnamed>: select * from invoice_lines where invoice_id = $1
+2026-10-21 09:12:48.012 UTC [31840] DETAIL:  parameters: $1 = '2'
+2026-10-21 09:12:48.013 UTC [31840] LOG:  statement: commit;
+2026-10-21 09:12:48.014 UTC [31840] LOG:  statement: begin;
+2026-10-21 09:12:48.015 UTC [31840] LOG:  statement: commit;
+2026-10-21 09:12:48.021 UTC [31840] LOG:  statement: START TRANSACTION READ ONLY
+2026-10-21 09:12:48.022 UTC [31840] LOG:  statement: SAVEPOINT s1
+2026-10-21 09:12:48.023 UTC [31840] LOG:  statement: ROLLBACK TO SAVEPOINT s1
+2026-10-21 09:12:48.024 UTC [31840] LOG:  statement: RELEASE SAVEPOINT s1
+2026-10-21 09:12:48.025 UTC [31840] LOG:  statement: SAVEPOINT s1
+2026-10-21 09:12:48.026 UTC [31840] LOG:  statement: RELEASE SAVEPOINT s1
+2026-10-21 09:12:48.027 UTC [31840] LOG:  statement: ROLLBACK
+2026-10-21 09:12:48.028 UTC [31840] LOG:  statement: END
+2026-10-21 09:12:48.029 UTC [31840] LOG:  statement: ABORT
+2026-10-21 09:12:48.030 UTC [31840] LOG:  statement: START TRANSACTION
+2026-10-21 09:12:48.031 UTC [31840] LOG:  statement: END
+2026-10-21 09:12:48.032 UTC [31840] LOG:  statement: ABORT
+2026-10-21 09:12:48.041 UTC [31840] LOG:  statement: SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY
+2026-10-21 09:12:48.042 UTC [31840] LOG:  statement: SHOW TRANSACTION ISOLATION LEVEL
+2026-10-21 09:12:48.043 UTC [31840] LOG:  statement: SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY
+2026-10-21 09:12:48.044 UTC [31840] LOG:  statement: SHOW TRANSACTION ISOLATION LEVEL
+2026-10-21 09:12:48.045 UTC [31840] LOG:  statement: RESET ALL
+2026-10-21 09:12:48.046 UTC [31840] LOG:  statement: RESET ALL
+2026-10-21 09:12:48.047 UTC [31840] LOG:  statement: DISCARD ALL
+2026-10-21 09:12:48.048 UTC [31840] LOG:  statement: DISCARD ALL
+2026-10-21 09:12:48.049 UTC [31840] LOG:  statement: select 1;
+2026-10-21 09:12:48.050 UTC [31840] LOG:  statement: SELECT 1;
+2026-10-21 09:12:48.051 UTC [31840] LOG:  statement: select 1
+2026-10-21 09:12:48.052 UTC [31840] LOG:  statement: SELECT 1";
+        let queries = crate::query::pglog::parse(log);
+        assert_eq!(queries.len(), 32, "all stay in the list");
+        let clusters = detect(&queries);
+        let shapes: Vec<&str> = clusters.iter().map(|c| c.fingerprint.as_str()).collect();
+        assert_eq!(shapes, ["select * from invoice_lines where invoice_id = ?"]);
+        assert_eq!(summarize(&queries).repeated_queries, 2);
+    }
+
+    #[test]
+    fn a_select_that_only_starts_like_a_ping_still_clusters() {
+        let queries = vec![
+            rq("select 1 from invoices where id = 1"),
+            rq("select 1 from invoices where id = 2"),
+            rq("settle_invoice(1)"),
+            rq("settle_invoice(2)"),
+        ];
+        assert_eq!(detect(&queries).len(), 2);
+    }
+
     #[test]
     fn detect_ignores_one_off_queries() {
         let queries = vec![rq("select 1"), rq("select 2 from t")];
@@ -420,7 +512,7 @@ mod tests {
         let s = summarize(&queries);
         assert_eq!(s.one_line(), "2 queries");
         // Single cluster → "cluster" (singular) in the suffix.
-        let queries = vec![rq("select 1"), rq("select 1")];
+        let queries = vec![rq("select * from t"), rq("select * from t")];
         let s = summarize(&queries);
         assert!(s.one_line().contains("1 N+1 cluster ("));
     }

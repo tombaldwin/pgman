@@ -74,6 +74,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `[appName]` before the thread, a Hibernate bind paired with whichever
   thread logged a statement last. The thread is now the bracket group
   nearest the logger.
+- Logs → SQL: `BEGIN` / `COMMIT` / `ROLLBACK`, `SET` / `SHOW` / `RESET` /
+  `DISCARD` and `select 1` pool pings are no longer reported as N+1
+  clusters, where they outranked the real one. They stay in the list.
 
 ## [0.1.0] — 2026-10-22
 
