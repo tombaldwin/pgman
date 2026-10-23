@@ -434,10 +434,7 @@ async fn main() -> anyhow::Result<()> {
         !cli.no_update_check && std::env::var_os("PGMAN_NO_UPDATE_CHECK").is_none();
     // Restore the editor draft from the last session (best-effort).
     // Cursor lands at the end so the operator can keep typing.
-    if let Some(draft) = app::load_draft() {
-        application.editor.cursor = draft.len();
-        application.editor.buffer = draft;
-    }
+    application.restore_draft();
     // `--log PATH`: preload the editor with a log and run the same
     // importer F8 / ctrl-l use, so pgman opens straight into the
     // reconstructed-query picker (`Mode::LogPick`) once the splash

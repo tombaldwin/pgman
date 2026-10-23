@@ -27,6 +27,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Two pgman windows no longer lose each other's editor draft. A window
+  that never changed the draft writes nothing when it quits, so it can't
+  overwrite what another window saved meanwhile; and a window with edits
+  of its own, finding `draft.sql` changed by another window, saves to a
+  sibling `draft-YYYYMMDD-HHMMSS.sql` and says so, instead of clobbering it.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

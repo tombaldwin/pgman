@@ -1575,6 +1575,12 @@ pub struct App {
     /// Set whenever the buffer is mutated; cleared on save. Avoids
     /// `write_atomic`-ing a buffer that hasn't changed.
     pub draft_dirty: bool,
+    /// The draft text this instance last read from, or wrote to,
+    /// `draft_file`. A save only writes when the buffer differs from
+    /// it (this window changed the draft), and only to `draft_file`
+    /// when the file still holds it (no other window wrote since) —
+    /// see [`plan_draft_write`].
+    pub draft_synced: String,
     /// Grid view-metadata for the live result grid: cursor column,
     /// sort, raw rows, filter, visible-row indices, and row source.
     /// Shared shape with `TabSnapshot` (snapshotted per tab).
@@ -1820,6 +1826,7 @@ impl App {
             external_edit_pending: false,
             draft_last_save: None,
             draft_dirty: false,
+            draft_synced: String::new(),
             grid_view: GridView::default(),
             grid_find: GridFind::default(),
             explain: ExplainUi::default(),
@@ -1995,7 +2002,9 @@ impl App {
                 && self.draft_dirty
                 && draft_save_due(self.draft_last_save, Instant::now(), DRAFT_SAVE_GAP)
             {
-                let _ = persist_draft_to(&self.draft_file, &self.editor.buffer);
+                if let Err(e) = self.save_draft() {
+                    tracing::warn!("could not auto-save editor draft: {e}");
+                }
                 self.draft_last_save = Some(Instant::now());
                 self.draft_dirty = false;
             }
@@ -2007,8 +2016,10 @@ impl App {
             self.remember_env_selection();
             // Persist the editor draft so the next launch can restore
             // whatever the operator had in flight. Best-effort: failure
-            // logs and moves on — the loop is already finishing.
-            if let Err(e) = persist_draft_to(&self.draft_file, &self.editor.buffer) {
+            // logs and moves on — the loop is already finishing. A
+            // window that never changed the draft writes nothing, so
+            // it can't overwrite what another window saved meanwhile.
+            if let Err(e) = self.save_draft() {
                 tracing::warn!("could not save editor draft: {e}");
             }
             // Persist the query history ring too. Same best-effort
@@ -5811,16 +5822,10 @@ pub fn persist_history_to(path: &std::path::Path, entries: &[String]) -> std::io
     crate::util::write_private(path, &text)
 }
 
-/// Best-effort restore of the editor buffer from the last session.
-/// `None` when the file is absent or unreadable — the operator gets
-/// a fresh blank buffer in either case rather than a startup error.
-pub fn load_draft() -> Option<String> {
-    load_draft_from(&draft_path())
-}
-
-/// Path-parameterised core of [`load_draft`]. Lets tests use a
-/// unique temp file so parallel tests don't race on the shared
-/// `~/.local/share/pgman/draft.sql`.
+/// Best-effort read of a saved editor draft. `None` when the file is
+/// absent, unreadable or empty — the operator gets a fresh blank
+/// buffer in each case rather than a startup error. Path-parameterised
+/// so tests use a unique temp file, never the real `draft.sql`.
 pub fn load_draft_from(path: &std::path::Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     if text.is_empty() {
@@ -5837,6 +5842,113 @@ pub fn load_draft_from(path: &std::path::Path) -> Option<String> {
 /// or the new file complete, never a truncated half-write.
 pub fn persist_draft_to(path: &std::path::Path, buf: &str) -> std::io::Result<()> {
     crate::util::write_private(path, buf)
+}
+
+/// What a draft save should do — see [`plan_draft_write`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftWrite {
+    /// This window hasn't changed the draft: write nothing.
+    Skip,
+    /// Write the buffer to the draft file.
+    Write,
+    /// Another window wrote the draft file since this one last read
+    /// or wrote it, and this window has edits of its own: write them
+    /// to a sibling file instead of clobbering the other window's.
+    Divert,
+}
+
+/// Pure: decide a draft save. `synced` is the text this window last
+/// read from / wrote to the draft file, `on_disk` what the file holds
+/// now (`""` when it's missing).
+///
+/// ```
+/// use pgman::app::{plan_draft_write, DraftWrite};
+/// // Untouched window: never writes, even if another window did.
+/// assert_eq!(plan_draft_write("old", "old", "new"), DraftWrite::Skip);
+/// // Edited, nobody else wrote: write.
+/// assert_eq!(plan_draft_write("mine", "old", "old"), DraftWrite::Write);
+/// // Edited, and another window wrote meanwhile: don't clobber.
+/// assert_eq!(plan_draft_write("mine", "old", "theirs"), DraftWrite::Divert);
+/// ```
+pub fn plan_draft_write(buffer: &str, synced: &str, on_disk: &str) -> DraftWrite {
+    if buffer == synced {
+        DraftWrite::Skip
+    } else if on_disk == synced || on_disk == buffer {
+        DraftWrite::Write
+    } else {
+        DraftWrite::Divert
+    }
+}
+
+/// Pure: the sibling a diverted draft goes to —
+/// `draft-YYYYMMDD-HHMMSS.sql` beside `draft_file`, with `-N` appended
+/// for `n > 1` so two diverts in the same second don't collide.
+pub fn draft_sibling_path(
+    draft_file: &std::path::Path,
+    unix_secs: u64,
+    n: u32,
+) -> std::path::PathBuf {
+    let stamp: String = format_unix_secs_utc(unix_secs)
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let (date, time) = stamp.split_at(8.min(stamp.len()));
+    let suffix = if n > 1 {
+        format!("-{n}")
+    } else {
+        String::new()
+    };
+    draft_file.with_file_name(format!("draft-{date}-{time}{suffix}.sql"))
+}
+
+impl App {
+    /// Restore the editor buffer from `draft_file` (best-effort) and
+    /// remember it as the synced text, so quitting without touching
+    /// it writes nothing.
+    pub fn restore_draft(&mut self) {
+        if let Some(draft) = load_draft_from(&self.draft_file) {
+            self.editor.cursor = draft.len();
+            self.editor.buffer = draft.clone();
+            self.draft_synced = draft;
+        }
+    }
+
+    /// Save the editor buffer per [`plan_draft_write`]. On a divert
+    /// the sibling becomes this window's draft file from then on, so
+    /// later saves keep going there rather than spawning one per tick.
+    pub fn save_draft(&mut self) -> std::io::Result<()> {
+        let on_disk = std::fs::read_to_string(&self.draft_file).unwrap_or_default();
+        match plan_draft_write(&self.editor.buffer, &self.draft_synced, &on_disk) {
+            DraftWrite::Skip => return Ok(()),
+            DraftWrite::Write => persist_draft_to(&self.draft_file, &self.editor.buffer)?,
+            DraftWrite::Divert => {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let sibling = (1..)
+                    .map(|n| draft_sibling_path(&self.draft_file, secs, n))
+                    .find(|p| !p.exists())
+                    .expect("an unbounded range always finds a free name");
+                persist_draft_to(&sibling, &self.editor.buffer)?;
+                let name = sibling
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                tracing::warn!(
+                    "{} changed in another pgman window; this window's draft saved to {} instead",
+                    self.draft_file.display(),
+                    sibling.display()
+                );
+                self.last_status = Some(format!(
+                    "another pgman window saved the draft — this one's is kept in {name}"
+                ));
+                self.draft_file = sibling;
+            }
+        }
+        self.draft_synced = self.editor.buffer.clone();
+        Ok(())
+    }
 }
 
 /// Split `$EDITOR` into program + initial args by whitespace. Matches

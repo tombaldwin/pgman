@@ -12365,3 +12365,173 @@ fn enter_after_typing_a_whole_table_name_is_a_newline_not_a_no_op_accept() {
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.editor.buffer, "select * from panel_usr_items");
 }
+
+/// A fresh scratch dir for the draft tests — never the real data dir.
+fn draft_scratch(tag: &str) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "pgman-draft-{tag}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A window whose persistence all points into `dir`, with the draft
+/// restored from `dir/draft.sql` the way `main` does at startup.
+fn draft_window(dir: &std::path::Path) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.draft_file = dir.join("draft.sql");
+    a.history_file = dir.join("history.log");
+    a.saved_queries_file = dir.join("saved.toml");
+    a.restore_draft();
+    a
+}
+
+#[test]
+fn plan_draft_write_covers_each_case() {
+    // Untouched: skip, whatever the disk holds.
+    assert_eq!(plan_draft_write("a", "a", "a"), DraftWrite::Skip);
+    assert_eq!(plan_draft_write("a", "a", "other"), DraftWrite::Skip);
+    assert_eq!(plan_draft_write("", "", ""), DraftWrite::Skip);
+    // Edited, disk unchanged since we synced: write.
+    assert_eq!(plan_draft_write("ab", "a", "a"), DraftWrite::Write);
+    // A deliberate clear is an edit too, and is written.
+    assert_eq!(plan_draft_write("", "a", "a"), DraftWrite::Write);
+    // Disk already holds exactly our text: writing is harmless.
+    assert_eq!(plan_draft_write("ab", "a", "ab"), DraftWrite::Write);
+    // Edited, and the disk moved under us (or vanished): divert.
+    assert_eq!(plan_draft_write("ab", "a", "ac"), DraftWrite::Divert);
+    assert_eq!(plan_draft_write("ab", "a", ""), DraftWrite::Divert);
+}
+
+#[test]
+fn draft_sibling_path_is_a_utc_stamp_beside_the_draft() {
+    let base = std::path::Path::new("/x/pgman/draft.sql");
+    let secs = 1_792_750_507;
+    assert_eq!(format_unix_secs_utc(secs), "2026-10-23T10:15:07Z");
+    assert_eq!(
+        draft_sibling_path(base, secs, 1),
+        std::path::Path::new("/x/pgman/draft-20261023-101507.sql")
+    );
+    assert_eq!(
+        draft_sibling_path(base, secs, 2),
+        std::path::Path::new("/x/pgman/draft-20261023-101507-2.sql")
+    );
+}
+
+#[test]
+fn an_untouched_window_never_overwrites_another_windows_draft() {
+    let dir = draft_scratch("untouched");
+    std::fs::write(dir.join("draft.sql"), "select 1").unwrap();
+    let mut a = draft_window(&dir);
+    let mut b = draft_window(&dir);
+    assert_eq!(b.editor.buffer, "select 1", "B restored the old draft");
+
+    a.editor.buffer = "select 1, 2 -- A's work".into();
+    a.save_draft().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "select 1, 2 -- A's work"
+    );
+
+    // B never touched its buffer: saving (auto-save or exit) is a no-op.
+    b.save_draft().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "select 1, 2 -- A's work",
+        "B must not clobber A's draft"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_edited_window_diverts_to_a_sibling_when_another_window_saved_first() {
+    let dir = draft_scratch("divert");
+    std::fs::write(dir.join("draft.sql"), "select 1").unwrap();
+    let mut a = draft_window(&dir);
+    let mut b = draft_window(&dir);
+
+    a.editor.buffer = "A's work".into();
+    a.save_draft().unwrap();
+    b.editor.buffer = "B's work".into();
+    b.save_draft().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "A's work",
+        "A's draft survives"
+    );
+    let sibling = b.draft_file.clone();
+    assert_ne!(sibling, dir.join("draft.sql"));
+    assert_eq!(sibling.parent(), Some(dir.as_path()));
+    assert!(sibling
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("draft-"));
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "B's work");
+    assert!(b
+        .last_status
+        .as_deref()
+        .unwrap_or("")
+        .contains("another pgman window"));
+
+    // B's later saves keep going to the same sibling, not a new one each tick.
+    b.editor.buffer = "B's work, more".into();
+    b.save_draft().unwrap();
+    assert_eq!(b.draft_file, sibling);
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "B's work, more");
+    let files = std::fs::read_dir(&dir).unwrap().count();
+    assert_eq!(files, 2, "draft.sql + one sibling");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_window_saving_twice_in_a_row_keeps_writing_the_draft() {
+    // Its own previous write is not "another window's change".
+    let dir = draft_scratch("twice");
+    let mut a = draft_window(&dir);
+    a.editor.buffer = "one".into();
+    a.save_draft().unwrap();
+    a.editor.buffer = "two".into();
+    a.save_draft().unwrap();
+    assert_eq!(a.draft_file, dir.join("draft.sql"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "two"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn quitting_an_untouched_window_leaves_another_windows_draft_alone() {
+    // The reported data loss, through the real exit path.
+    let dir = draft_scratch("exit");
+    std::fs::write(dir.join("draft.sql"), "old draft").unwrap();
+    let mut b = draft_window(&dir);
+    b.mode = Mode::Normal;
+    // Window A saves its work after B opened.
+    std::fs::write(dir.join("draft.sql"), "A's newer work").unwrap();
+
+    let mut tui = crate::tui::HeadlessTui::default();
+    let (tx, rx) = mpsc::unbounded_channel::<Event>();
+    tx.send(Event::Key(KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(2), b.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate quickly")
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "A's newer work"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
