@@ -59,6 +59,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `y` on a NULL field leaves the clipboard alone.
 - The result diff counts a NULL → `''` change and shows it; `\fixture`
   leaves NULL cells out (flat XML's NULL) instead of writing `col=""`.
+- Logs → SQL: a Postgres log's bound value with a newline in it no
+  longer corrupts the reconstruction. The rest of the value, which
+  Postgres writes on the next line, went into the statement's SQL and
+  the value was cut short; it now stays in the value.
 
 ## [0.1.0] — 2026-10-22
 

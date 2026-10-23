@@ -46,10 +46,37 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
     let mut out: Vec<ReconstructedQuery> = Vec::new();
     let mut seen = Seen::default();
     let mut current: Option<Pending> = None;
+    // A `parameters:` message whose last quoted value is still open: a
+    // bound value with a newline in it runs on over continuation lines,
+    // which belong to the value, not to the statement's SQL.
+    let mut open_params: Option<OpenParams> = None;
 
     for (idx, line) in log.lines().enumerate() {
         let line_no = idx + 1;
         let Some(Record { prefix, level, msg }) = split_record(line) else {
+            if let Some(open) = open_params.as_mut() {
+                // Postgres writes a tab after every newline in a message;
+                // that tab is the log's, not the value's.
+                open.text.push('\n');
+                open.text.push_str(line.strip_prefix('\t').unwrap_or(line));
+                let params = parse_parameters(&open.text);
+                match &open.target {
+                    ParamTarget::Current => {
+                        if let Some(cur) = current.as_mut() {
+                            cur.params = params;
+                        }
+                    }
+                    ParamTarget::Error(pid) => {
+                        if let Some(err) = seen.errors.get_mut(pid) {
+                            err.params = params;
+                        }
+                    }
+                }
+                if !quote_open(&open.text) {
+                    open_params = None;
+                }
+                continue;
+            }
             // Not a record line — a continuation of a multi-line statement.
             if let Some(cur) = current.as_mut() {
                 cur.sql.push('\n');
@@ -57,6 +84,7 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
             }
             continue;
         };
+        open_params = None;
         let pid = extract_pid(prefix).unwrap_or_default();
         // An ERROR's report runs on through DETAIL / HINT / CONTEXT / …
         // to its STATEMENT; anything else from that backend means the
@@ -69,13 +97,18 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
             "DETAIL" => {
                 if msg.contains("parameters:") {
                     let params = parse_parameters(msg);
-                    if let Some(cur) = current.as_mut() {
+                    let target = if let Some(cur) = current.as_mut() {
                         if !params.is_empty() {
                             cur.params = params;
                         }
+                        Some(ParamTarget::Current)
                     } else if let Some(err) = seen.errors.get_mut(&pid) {
                         err.params = params;
-                    }
+                        Some(ParamTarget::Error(pid.clone()))
+                    } else {
+                        None
+                    };
+                    open_params = OpenParams::new(msg, target);
                 }
                 // Non-parameter DETAIL lines belong to `current` — don't finalize.
             }
@@ -112,6 +145,7 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
                 if msg.contains("parameters:") {
                     if let Some(err) = seen.errors.get_mut(&pid) {
                         err.params = parse_parameters(msg);
+                        open_params = OpenParams::new(msg, Some(ParamTarget::Error(pid.clone())));
                     }
                 }
             }
@@ -136,6 +170,38 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
     finalize(current.take(), &mut seen, &mut out);
     out.sort_by_key(|q| q.src_line);
     out
+}
+
+/// Where a `parameters:` message's values go: the statement being
+/// built, or a backend's pending `ERROR:`.
+enum ParamTarget {
+    Current,
+    Error(String),
+}
+
+/// A `parameters:` message that ended inside a quoted value — the rest
+/// of the value is on the continuation lines that follow.
+struct OpenParams {
+    text: String,
+    target: ParamTarget,
+}
+
+impl OpenParams {
+    /// `Some` only when `msg`'s last quoted value is unterminated.
+    fn new(msg: &str, target: Option<ParamTarget>) -> Option<Self> {
+        let target = target?;
+        quote_open(msg).then(|| OpenParams {
+            text: msg.to_string(),
+            target,
+        })
+    }
+}
+
+/// True if `params` (a `parameters: $1 = '…', …` message) ends inside a
+/// quoted value. Postgres doubles a quote inside a value, so an odd
+/// number of quotes means the last one opened a value that hasn't closed.
+fn quote_open(params: &str) -> bool {
+    params.bytes().filter(|&b| b == b'\'').count() % 2 == 1
 }
 
 /// The levels an `ERROR`'s report carries between it and its
@@ -929,6 +995,50 @@ mod tests {
         assert_eq!(q.len(), 2);
         assert_eq!(q[0].runnable_sql, "select * from t where id = 'one'");
         assert_eq!(q[1].runnable_sql, "select * from t where id = 'two'");
+    }
+
+    /// A bound value with a newline in it: Postgres 16 writes the rest of
+    /// the value on a tab-indented continuation line. It belongs to the
+    /// value, not to the statement.
+    #[test]
+    fn a_parameter_value_with_a_newline_continues_on_the_next_line() {
+        let log = "\
+2026-10-23 09:53:54.340 UTC [1869] LOG:  duration: 0.018 ms  parse <unnamed>: insert into probe_t (id, note) values ($1, $2)
+2026-10-23 09:53:54.341 UTC [1869] LOG:  duration: 0.048 ms  bind <unnamed>: insert into probe_t (id, note) values ($1, $2)
+2026-10-23 09:53:54.341 UTC [1869] DETAIL:  parameters: $1 = '4', $2 = 'line one
+\tline two\ttabbed'
+2026-10-23 09:53:54.341 UTC [1869] LOG:  execute <unnamed>: insert into probe_t (id, note) values ($1, $2)
+2026-10-23 09:53:54.341 UTC [1869] DETAIL:  parameters: $1 = '4', $2 = 'line one
+\tit''s
+\tthree'
+2026-10-23 09:53:54.341 UTC [1869] LOG:  duration: 0.193 ms
+2026-10-23 09:53:54.342 UTC [1869] ERROR:  value too long for type character varying(3)
+2026-10-23 09:53:54.342 UTC [1869] CONTEXT:  unnamed portal with parameters: $1 = 'a
+\tb'
+2026-10-23 09:53:54.342 UTC [1869] STATEMENT:  select $1::varchar(3)";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "{q:#?}");
+        assert_eq!(
+            q[0].raw_sql,
+            "insert into probe_t (id, note) values ($1, $2)"
+        );
+        assert_eq!(
+            q[0].params[1].value,
+            ParamValue::Literal("line one\nit's\nthree".to_string())
+        );
+        assert_eq!(
+            q[0].runnable_sql,
+            "insert into probe_t (id, note) values ('4', 'line one\nit''s\nthree')"
+        );
+        assert_eq!(q[1].runnable_sql, "select 'a\nb'::varchar(3)");
+        // The bind's own value, with the tab inside the value kept.
+        let bind_only = log.lines().take(4).collect::<Vec<_>>().join("\n")
+            + "\n2026-10-23 09:53:54.341 UTC [1869] LOG:  execute <unnamed>: insert into probe_t (id, note) values ($1, $2) ";
+        let q = parse(&bind_only);
+        assert_eq!(
+            q[0].runnable_sql,
+            "insert into probe_t (id, note) values ('4', 'line one\nline two\ttabbed')"
+        );
     }
 
     #[test]

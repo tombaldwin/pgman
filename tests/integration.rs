@@ -1393,6 +1393,43 @@ async fn panel_loads_render_every_column_type_as_the_server_prints_it() {
     assert!(!grid.truncated);
 }
 
+/// Run each reconstructed query's `runnable_sql` and return its single
+/// row's cells — the proof a reconstruction is SQL the server accepts
+/// and means the value the log bound.
+async fn run_reconstructed(
+    queries: &[pgman::query::reconstruct::ReconstructedQuery],
+) -> Vec<Vec<Option<String>>> {
+    let (client, _tunnel) = lib_client().await;
+    let mut rows = Vec::new();
+    for q in queries {
+        let grid = pgman::conn::run_query(&client, &q.runnable_sql)
+            .await
+            .unwrap_or_else(|e| panic!("{:?}: {e}", q.runnable_sql));
+        assert_eq!(grid.rows.len(), 1, "{:?}", q.runnable_sql);
+        rows.push(grid.rows[0].clone());
+    }
+    rows
+}
+
+/// A bound value with a newline in it continues on the log's next line;
+/// the reconstruction runs and yields the value the backend was given.
+#[tokio::test]
+async fn a_postgres_log_parameter_with_a_newline_reconstructs_to_the_same_value() {
+    let log = "\
+2026-10-23 09:53:54.341 UTC [1869] LOG:  execute <unnamed>: select $1::int as id, $2::text as note
+2026-10-23 09:53:54.341 UTC [1869] DETAIL:  parameters: $1 = '4', $2 = 'line one
+\tline two\ttabbed'";
+    let q = pgman::query::pglog::parse(log);
+    assert_eq!(q.len(), 1, "{q:#?}");
+    assert_eq!(
+        run_reconstructed(&q).await,
+        [vec![
+            Some("4".to_string()),
+            Some("line one\nline two\ttabbed".to_string())
+        ]]
+    );
+}
+
 /// Drive `pgman mcp serve` over stdio: send `requests` (one frame each),
 /// close stdin, and return every frame it wrote. Every stdout line must
 /// parse as JSON — stdout is protocol only.
