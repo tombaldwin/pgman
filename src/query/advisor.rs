@@ -242,7 +242,7 @@ pub const CONTEXT_SQL: &str = concat!(
      to_regproc('aurora_version') IS NOT NULL, \
      pg_is_in_recovery(), \
      pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER'), \
-     EXTRACT(EPOCH FROM now() - pg_postmaster_start_time())::float8, \
+     EXTRACT(EPOCH FROM clock_timestamp() - pg_postmaster_start_time())::float8, \
      date_trunc('second', pg_postmaster_start_time())::text, \
      current_database()::text, \
      EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')"
@@ -279,7 +279,7 @@ pub const DB_STATS_SQL: &str = concat!(
     tag!(),
     "SELECT d.blks_hit, d.blks_read, d.temp_files, d.temp_bytes, \
      date_trunc('second', d.stats_reset)::text, \
-     EXTRACT(EPOCH FROM now() - d.stats_reset)::float8 \
+     EXTRACT(EPOCH FROM clock_timestamp() - d.stats_reset)::float8 \
      FROM pg_stat_database d WHERE d.datname = current_database()"
 );
 
@@ -300,7 +300,7 @@ pub fn vacuum_sql(th: &Thresholds) -> String {
         "{}SELECT s.schemaname::text, s.relname::text, \
          quote_ident(s.schemaname) || '.' || quote_ident(s.relname), \
          s.n_live_tup, s.n_dead_tup, COALESCE(c.reloptions, '{{}}'::text[]), \
-         EXTRACT(EPOCH FROM now() - GREATEST(s.last_vacuum, s.last_autovacuum))::float8 \
+         EXTRACT(EPOCH FROM clock_timestamp() - GREATEST(s.last_vacuum, s.last_autovacuum))::float8 \
          FROM pg_stat_user_tables s JOIN pg_class c ON c.oid = s.relid \
          WHERE s.n_live_tup >= {} AND s.n_dead_tup >= {} * s.n_live_tup \
          ORDER BY s.n_dead_tup DESC LIMIT 20",
@@ -323,8 +323,8 @@ pub fn locks_sql(version_num: i32) -> String {
         "{}WITH s AS (SELECT a.pid, a.usename, a.state, a.xact_start, a.query_start, a.query, \
          pg_blocking_pids(a.pid) AS blockers FROM pg_stat_activity a WHERE a.pid <> pg_backend_pid()) \
          SELECT s.pid, COALESCE(quote_ident(s.usename::text), ''), COALESCE(s.state, ''), \
-         EXTRACT(EPOCH FROM now() - s.xact_start)::float8, \
-         CASE WHEN cardinality(s.blockers) > 0 THEN EXTRACT(EPOCH FROM now() - {wait_start})::float8 END, \
+         EXTRACT(EPOCH FROM clock_timestamp() - s.xact_start)::float8, \
+         CASE WHEN cardinality(s.blockers) > 0 THEN EXTRACT(EPOCH FROM clock_timestamp() - {wait_start})::float8 END, \
          s.blockers, COALESCE(left(regexp_replace(s.query, '\\s+', ' ', 'g'), 200), '') \
          FROM s WHERE cardinality(s.blockers) > 0 OR s.pid IN (SELECT unnest(blockers) FROM s) \
          ORDER BY s.pid",
@@ -342,7 +342,7 @@ pub fn checkpoints_sql(version_num: i32) -> String {
     };
     format!(
         "{}SELECT {timed}, {req}, date_trunc('second', stats_reset)::text, \
-         EXTRACT(EPOCH FROM now() - stats_reset)::float8 FROM {view}",
+         EXTRACT(EPOCH FROM clock_timestamp() - stats_reset)::float8 FROM {view}",
         tag!()
     )
 }

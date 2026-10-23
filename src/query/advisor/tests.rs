@@ -125,6 +125,10 @@ fn every_statement_is_tagged_and_a_select() {
         checkpoints_sql(170_000),
     ] {
         assert!(sql.starts_with("/* pgman:advisor */ "), "{sql}");
+        // The wizard runs these on the editor's session, which may be
+        // inside a transaction: now() would be its start, and every age
+        // (a lock wait, the stats window) would be short by that much.
+        assert!(!sql.contains("now()"), "use clock_timestamp(): {sql}");
         let body = sql.trim_start_matches("/* pgman:advisor */ ");
         assert!(
             body.starts_with("SELECT") || body.starts_with("WITH"),
@@ -152,7 +156,7 @@ fn checkpoints_read_pg_stat_checkpointer_from_pg17() {
 fn lock_waits_read_waitstart_from_pg14() {
     assert!(locks_sql(140_000).contains("l.waitstart"));
     assert!(!locks_sql(139_999).contains("waitstart"));
-    assert!(locks_sql(139_999).contains("now() - s.query_start"));
+    assert!(locks_sql(139_999).contains("clock_timestamp() - s.query_start"));
 }
 
 #[test]
