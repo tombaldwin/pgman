@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 244
+assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X · YYYY-MM-DD ────────────────────────────────────╮╭──────────────────────────────────╮
@@ -109,7 +109,7 @@ expression: dump(&buf)
 │     esc / q       close                                                                          │
 │                                                                                                  │
 │   cell detail                                                                                    │
-│ ↓ 149 more below                                                                                 │
+│ ↓ 153 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   esc / ?  close help
+ RO   esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter

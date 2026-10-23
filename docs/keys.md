@@ -1,6 +1,6 @@
 # Keys
 
-Press `?` (or `F1`, which also works while typing) for the in-app cheat sheet — it auto-scrolls to the section
+Press `?` (or `F1`, which also works while typing) for the in-app cheat sheet — it opens at the section
 for whatever mode you opened it from. `q` closes most panels and quits from
 the grid / connection picker; `Esc` closes overlays; in Normal mode it goes
 back to the environments overview when environments are configured, and
@@ -393,7 +393,7 @@ bar itself). See [docs/commands.md](commands.md) for what each command does.
 | Key | Action |
 |---|---|
 | `Enter` | Run the command |
-| `Tab` | Complete the command name (unique name fills in; several are listed) |
+| `Tab` | Complete the command name (unique name fills in; several are listed); after `:help `, the section name |
 | `Esc` | Cancel — returns to the mode you opened it from |
 | `←` / `→` / `Home` / `End` | Move the cursor |
 | `Backspace` / `Ctrl-W` | Delete char / word |
@@ -402,16 +402,28 @@ bar itself). See [docs/commands.md](commands.md) for what each command does.
 
 ### Help (`F1` / `?`)
 
+Help is a list of sections and one section at a time. From 110 columns
+the list sits in a left column beside the section; on a narrower
+terminal the list comes first, each section with a one-line summary,
+and `Enter` opens one full width. Opened from a mode, help shows that
+mode's section; opened from the grid, the list.
+
 | Key | Action |
 |---|---|
-| `j` / `k` / `↓` / `↑` | Scroll |
-| `g` / `G` | Top / bottom |
+| `j` / `k` / `↓` / `↑` | Scroll the section (in the narrow list: move the selection) |
+| `Tab` / `]` | Next section |
+| `Shift-Tab` / `[` | Previous section |
+| `g` / `G` | Top / bottom (in the narrow list: first / last section) |
 | `PageUp` / `PageDown` | Scroll by 10 |
-| `Esc` / `?` / `q` / `F1` | Close — returns to the mode you opened help from |
+| `Enter` | Open the selected section (narrow list) |
+| `/` | Filter every section live: matching rows under their section headings; `Enter` keeps the filter, `Esc` clears it. With a filter up, `Tab` / `]` / `[` jump from section to section |
+| `Esc` | Clear the filter; else back to the list (narrow terminals); else close |
+| `?` / `q` / `F1` | Close — returns to the mode you opened help from |
 
-Open it at a named section with `:help <topic>` — `grid`, `editor`,
-`commands`, `schema`, `saved`, `slow`, `sessions`, `environments`, `tap`,
-`explain`, `diff`, `wizard`.
+Open it at a section with `:help <topic>`: a section's name, or the start
+of one (`:help sch` is the schema browser; `Tab` completes the names) — the earlier one-word topics
+(`schema`, `saved`, `tap`, `wizard`, …) still work. `:help all` shows every
+section on one scrolling page, as help was before it had sections.
 
 ### About (`A`)
 

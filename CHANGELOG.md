@@ -12,6 +12,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   in libpq (and `require` with a CA file checks the chain). It used to
   be ignored, with the default trust store used instead. `sslcrl` and
   `sslcrldir` are refused rather than ignored.
+- `Tab` after `:help ` completes the help section names, as it completes
+  command names.
 - The JDBC tap's List view shows the focused statement's bound
   parameters beneath the list, labelled `params (some redacted)` when
   the producer masked a value and `params (withheld by source)` for
@@ -24,6 +26,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- Help is a list of sections and one section at a time instead of one
+  ~275-row page: from 110 columns the list sits beside the section, and
+  on a narrower terminal the list comes first, each section with a
+  one-line summary, and `Enter` opens one. `Tab` / `]` / `[` move between
+  sections, `/` filters every section live (matching rows under their
+  headings), and `:help all` keeps the single page. `:help <topic>`
+  takes any section name or the start of one, and an unknown topic lists
+  every section.
 - One TLS crypto provider (ring) instead of two: no cmake / C build of
   aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
   Postgres connection no longer offers the post-quantum X25519MLKEM768
@@ -36,6 +46,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   them with no confirmation. They now need one, like other writes.
 - If the TLS connector couldn't be built, a `require` / `verify-*`
   connection fell back to plaintext. It now fails instead.
+- Help opened from a mode (`F1` / `?`, or `:help editor`) now shows the
+  section's heading; it was hidden under the `↑ N more above` marker,
+  so the section opened on its first key.
+- The help overlay's footer shows its own keys; a status left from before
+  help opened used to take the footer instead.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

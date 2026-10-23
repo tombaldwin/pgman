@@ -1,0 +1,55 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: ledger-staging.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com:5432  •  Database: ledger  •  User: billing                  ││                                                    PostgreSQL   help │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo, synthetic data · environment staging ledger-staging/ledger (direct)                                             ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
+│  ORDER BY due_at;           ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                             │
+│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
+╰─────────────────────────────│   grid                    │   8 rows in 6 sections match 'yank'                                                                          │─────────────────────────────╯
+╭[ ◆ result · 5 row(s) ◆ ]────│   editor                  │                                                                                                              │─────────────────────────────╮
+│number      customer_id  stat│   confirm                 │   grid                                                                                                       │                             │
+│INV-004822  2102         open│   tx open                 │     I             yank focused row as INSERT (single-table SELECTs)                                          │                             │
+│INV-004824  2104         open│   log pick                │                                                                                                              │                             │
+│INV-004827  2107         open│   conn pick               │   row detail                                                                                                 │                             │
+│INV-004829  2109         open│   row detail              │     y             yank focused field value to clipboard                                                      │                             │
+│INV-004831  2111         open│   cell detail             │                                                                                                              │                             │
+│                             │   schema browser          │   cell detail                                                                                                │                             │
+│                             │   EXPLAIN tree            │     y             yank value to clipboard                                                                    │                             │
+│                             │   slow queries            │     y             yank the jq-style path (.foo[0].bar)                                                       │                             │
+│                             │   environments            │                                                                                                              │                             │
+│                             │   active sessions         │   schema browser                                                                                             │                             │
+│                             │   psql backslash commands │     s             yank SELECT * FROM <schema>.<table> LIMIT 100 template                                     │                             │
+│                             │   : commands              │     i             yank INSERT INTO … (cols) VALUES (NULL, …) template                                        │                             │
+│                             │   tabs                    │                                                                                                              │                             │
+│                             │   saved queries           │   notifications                                                                                              │                             │
+│                             │   notifications           │     y             yank focused payload to clipboard                                                          │                             │
+│                             │   jdbc tap                │                                                                                                              │                             │
+│                             │   result diff             │   schema wizard                                                                                              │                             │
+│                             │   schema wizard           │     y             yank the focused finding's SQL suggestion (if any)                                         │                             │
+│                             │   help                    │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             │                           │                                                                                                              │                             │
+│                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   filter: /yank  · enter keep · esc clear

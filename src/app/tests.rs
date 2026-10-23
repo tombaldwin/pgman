@@ -58,7 +58,11 @@ fn f1_from_editor_opens_help() {
     a.editor.buffer = "select 1".into();
     a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Help);
-    assert_eq!(a.help.origin, Some(Mode::Editor));
+    assert_eq!(
+        Some(a.help.section),
+        crate::ui::help_section_index("editor")
+    );
+    assert_eq!(a.help.view, HelpView::Section);
 }
 
 #[test]
@@ -70,7 +74,7 @@ fn f1_from_help_closes_back_to_origin_mode() {
     a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     // Restored to the source mode, not Normal.
     assert_eq!(a.mode, Mode::Editor);
-    assert!(a.help.origin.is_none());
+    assert!(a.help.return_to.is_none());
 }
 
 #[test]
@@ -1813,6 +1817,20 @@ fn saved(name: &str, body: &str) -> crate::saved::SavedQuery {
     crate::saved::SavedQuery {
         name: name.into(),
         body: body.into(),
+    }
+}
+
+/// Esc out of the help overlay. On a narrow terminal — and a unit test
+/// never drew one, so `help.split` is false — Esc from a section goes
+/// back to the section list first and closes from there, so it takes
+/// one press or two. Never more: a third would be a key for the mode
+/// help closed into.
+fn esc_out_of_help(a: &mut App) {
+    for _ in 0..2 {
+        if a.mode != Mode::Help {
+            return;
+        }
+        a.on_key(KeyEvent::from(KeyCode::Esc));
     }
 }
 
@@ -5679,9 +5697,12 @@ fn backslash_help_routes_to_help_overlay() {
     a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert_eq!(a.mode, Mode::Help);
-    // The Editor section is the active anchor since we came
-    // from Editor.
-    assert_eq!(a.help.origin, Some(Mode::Editor));
+    // The Editor section is the one shown since we came from
+    // Editor.
+    assert_eq!(
+        Some(a.help.section),
+        crate::ui::help_section_index("editor")
+    );
 }
 
 #[test]
@@ -7676,7 +7697,10 @@ fn command_help_opens_the_overlay_at_the_topic_and_names_the_topics_it_knows() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     run_command(&mut a, "help editor");
     assert_eq!(a.mode, Mode::Help);
-    assert_eq!(a.help.origin, Some(Mode::Editor));
+    assert_eq!(
+        Some(a.help.section),
+        crate::ui::help_section_index("editor")
+    );
     a.mode = Mode::Normal;
     run_command(&mut a, "help nonsense");
     assert_eq!(a.mode, Mode::Normal, "an unknown topic opens nothing");
@@ -7692,16 +7716,20 @@ fn every_help_topic_closes_back_to_where_the_bar_was_opened_from() {
     // into the tap monitor and `:help commands` into
     // `Mode::CommandBar` — a mode with no command bar behind it, so
     // every key went to a prompt that wasn't on screen.
-    for (topic, anchor) in crate::app::cmd::help_topics() {
+    for (i, topic) in crate::app::cmd::help_topic_names().iter().enumerate() {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         run_command(&mut a, &format!("help {topic}"));
         assert_eq!(a.mode, Mode::Help, "`:help {topic}` must open help");
-        assert_eq!(
-            a.help.origin,
-            Some(*anchor),
-            "`:help {topic}` must anchor on its own section"
-        );
-        a.on_key(KeyEvent::from(KeyCode::Esc));
+        if topic == "all" {
+            assert_eq!(a.help.view, HelpView::All);
+        } else {
+            assert_eq!(
+                (a.help.section, a.help.view),
+                (i, HelpView::Section),
+                "`:help {topic}` must open its own section"
+            );
+        }
+        esc_out_of_help(&mut a);
         assert_eq!(
             a.mode,
             Mode::Normal,
@@ -7725,7 +7753,7 @@ fn help_from_the_bar_opened_over_help_returns_to_where_help_was_opened_from() {
         type_str(&mut a, line);
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.mode, Mode::Help, "`:{line}` must open help");
-        a.on_key(KeyEvent::from(KeyCode::Esc));
+        esc_out_of_help(&mut a);
         assert_eq!(
             a.mode,
             Mode::Editor,
@@ -8038,8 +8066,8 @@ fn question_mark_opens_help_from_every_panel_mode() {
         a.on_key(KeyEvent::from(KeyCode::Char('?')));
         assert_eq!(a.mode, Mode::Help, "? must open help from {mode:?}");
         assert_eq!(
-            a.help.origin,
-            Some(mode),
+            Some(a.help.section),
+            crate::ui::help_section_index(anchor),
             "and the overlay must open at that mode's section"
         );
         assert_eq!(App::help_anchor_for(mode), Some(anchor));
@@ -8475,7 +8503,7 @@ fn f1_from_a_decision_modal_still_opens_help_and_returns_to_it() {
     let mut a = tx_decision_app();
     a.on_key(KeyEvent::from(KeyCode::F(1)));
     assert_eq!(a.mode, Mode::Help);
-    a.on_key(KeyEvent::from(KeyCode::Esc));
+    esc_out_of_help(&mut a);
     assert_eq!(a.mode, Mode::TxDecision, "help must hand the modal back");
     assert!(a.tx_open);
 }
@@ -12364,4 +12392,372 @@ fn enter_after_typing_a_whole_table_name_is_a_newline_not_a_no_op_accept() {
     draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.editor.buffer, "select * from panel_usr_items");
+}
+
+// ---------------------------------------------------------------
+// The sectioned help overlay (docs/backlog/help-overlay.md)
+// ---------------------------------------------------------------
+
+fn help_app() -> App {
+    App::new(Theme::default(), None, Vec::new(), SafetyConfig::default())
+}
+
+fn section_of(title: &str) -> usize {
+    crate::ui::help_section_index(title).expect("a help section")
+}
+
+#[test]
+fn every_mode_anchor_names_a_help_section() {
+    // A renamed heading would leave its modes opening the list.
+    for mode in [
+        Mode::Editor,
+        Mode::Confirm,
+        Mode::TxDecision,
+        Mode::LogPick,
+        Mode::ConnPick,
+        Mode::RowDetail,
+        Mode::CellDetail,
+        Mode::SchemaBrowser,
+        Mode::SchemaLint,
+        Mode::ConfirmTerminate,
+        Mode::Notifications,
+        Mode::TapMonitor,
+        Mode::SavedQueries,
+        Mode::ResultDiff,
+        Mode::ExplainTree,
+        Mode::SlowQueries,
+        Mode::Sessions,
+        Mode::Environments,
+        Mode::GridFilter,
+        Mode::About,
+        Mode::CommandBar,
+    ] {
+        let anchor = App::help_anchor_for(mode).expect("an anchor");
+        assert!(
+            crate::ui::help_section_index(anchor).is_some(),
+            "{mode:?} anchors on {anchor:?}, which is no help section"
+        );
+    }
+}
+
+#[test]
+fn help_from_the_grid_opens_the_list_and_from_a_mode_its_section() {
+    let mut a = help_app();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    assert_eq!((a.help.view, a.help.section), (HelpView::List, 0));
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal, "Esc from the list closes");
+
+    a.mode = Mode::SchemaBrowser;
+    press(&mut a, KeyCode::Char('?'));
+    assert_eq!(
+        (a.help.view, a.help.section),
+        (HelpView::Section, section_of("schema browser"))
+    );
+}
+
+#[test]
+fn narrow_help_is_two_levels_enter_in_and_esc_out() {
+    let mut a = help_app();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    // j / k move the list's selection, clamped at both ends.
+    press(&mut a, KeyCode::Char('k'));
+    assert_eq!(a.help.section, 0);
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Down);
+    assert_eq!(a.help.section, 2);
+    press(&mut a, KeyCode::Char('G'));
+    assert_eq!(a.help.section, crate::ui::HELP_SECTIONS.len() - 1);
+    press(&mut a, KeyCode::Char('g'));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.help.view, HelpView::Section);
+    assert_eq!(a.help.section, 1);
+    // In the section j scrolls it, not the selection.
+    a.help.max_scroll = 5;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!((a.help.section, a.help.scroll), (1, 1));
+    press(&mut a, KeyCode::Esc);
+    assert_eq!((a.mode, a.help.view), (Mode::Help, HelpView::List));
+    assert_eq!(a.help.section, 1, "the list keeps the section selected");
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal);
+}
+
+#[test]
+fn wide_help_esc_closes_from_the_section_and_j_scrolls_it() {
+    let mut a = help_app();
+    a.mode = Mode::Editor;
+    press(&mut a, KeyCode::F(1));
+    a.help.split = true; // what a frame at >= 110 columns writes back
+    a.help.max_scroll = 3;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!(a.help.scroll, 1);
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Editor, "no list level to go back to");
+    // From the grid (the List view) j scrolls the section beside it
+    // too — the list is not a level of its own here.
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    a.help.split = true;
+    a.help.max_scroll = 3;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!((a.help.section, a.help.scroll), (0, 1));
+}
+
+#[test]
+fn tab_and_brackets_switch_help_sections_and_wrap_not_editor_tabs() {
+    let mut a = help_app();
+    a.new_tab();
+    let tab = a.active_tab;
+    a.mode = Mode::Editor;
+    press(&mut a, KeyCode::F(1));
+    let editor = section_of("editor");
+    a.help.scroll = 2;
+    press(&mut a, KeyCode::Tab);
+    assert_eq!((a.help.section, a.help.scroll), (editor + 1, 0));
+    press(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.help.section, editor + 2);
+    press(&mut a, KeyCode::Char('['));
+    press(&mut a, KeyCode::BackTab);
+    assert_eq!(a.help.section, editor);
+    assert_eq!(
+        a.active_tab, tab,
+        "] / [ in help must not switch editor tabs"
+    );
+    assert_eq!(a.mode, Mode::Help);
+    // Wraps at both ends.
+    a.help.section = 0;
+    press(&mut a, KeyCode::Char('['));
+    assert_eq!(a.help.section, crate::ui::HELP_SECTIONS.len() - 1);
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(a.help.section, 0);
+}
+
+#[test]
+fn the_help_filter_types_every_character_and_keeps_or_clears() {
+    let mut a = help_app();
+    a.mode = Mode::Editor;
+    press(&mut a, KeyCode::F(1));
+    press(&mut a, KeyCode::Char('/'));
+    assert_eq!(a.mode, Mode::HelpFilter);
+    // `?`, `q`, `!`, `:`, `]` and digits are text here, not keys.
+    type_str(&mut a, "?q!:]1");
+    assert_eq!(a.mode, Mode::HelpFilter);
+    assert_eq!(a.help.filter.as_deref(), Some("?q!:]1"));
+    assert!(a.command_bar.is_none());
+    for _ in 0..6 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_str(&mut a, "yank");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("filter: /yank  · enter keep · esc clear")
+    );
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        (a.mode, a.help.filter.as_deref()),
+        (Mode::Help, Some("yank"))
+    );
+    // A kept filter: Esc clears it first, and only then leaves.
+    press(&mut a, KeyCode::Esc);
+    assert_eq!((a.mode, a.help.filter.as_deref()), (Mode::Help, None));
+    // An empty filter kept is no filter.
+    press(&mut a, KeyCode::Char('/'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.help.filter, None);
+    // Esc while typing clears and stays in help.
+    press(&mut a, KeyCode::Char('/'));
+    type_str(&mut a, "tab");
+    press(&mut a, KeyCode::Esc);
+    assert_eq!((a.mode, a.help.filter.as_deref()), (Mode::Help, None));
+    // F1 closes help even while typing, back where it came from.
+    press(&mut a, KeyCode::Char('/'));
+    press(&mut a, KeyCode::F(1));
+    assert_eq!((a.mode, a.help.filter.as_deref()), (Mode::Editor, None));
+}
+
+#[test]
+fn help_filter_jumps_go_heading_to_heading() {
+    let mut a = help_app();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    a.help.filter = Some("esc".into());
+    // What a frame of the filter's page writes back.
+    a.help.heading_rows = vec![2, 12, 20];
+    a.help.max_scroll = 30;
+    let section = a.help.section;
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(a.help.scroll, 1);
+    press(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.help.scroll, 11);
+    press(&mut a, KeyCode::Char('['));
+    assert_eq!(a.help.scroll, 1);
+    assert_eq!(a.help.section, section, "a jump is not a section switch");
+}
+
+#[test]
+fn help_all_is_one_page_and_closes_on_esc() {
+    let mut a = help_app();
+    run_command(&mut a, "help all"); // from Normal
+    assert_eq!((a.mode, a.help.view), (Mode::Help, HelpView::All));
+    a.help.max_scroll = 100;
+    press(&mut a, KeyCode::PageDown);
+    assert_eq!(a.help.scroll, 10);
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal, "one Esc: the page is not a level");
+}
+
+#[test]
+fn help_topics_resolve_by_name_then_prefix_then_word() {
+    use crate::app::cmd::resolve_help_topic;
+    // Exact names, any case, `: commands` without its colon.
+    assert_eq!(resolve_help_topic("editor"), Some(section_of("editor")));
+    assert_eq!(
+        resolve_help_topic("EXPLAIN tree"),
+        Some(section_of("EXPLAIN tree"))
+    );
+    assert_eq!(
+        resolve_help_topic("commands"),
+        Some(section_of(": commands"))
+    );
+    assert_eq!(
+        resolve_help_topic(": commands"),
+        Some(section_of(": commands"))
+    );
+    assert_eq!(resolve_help_topic("tx open"), Some(section_of("tx open")));
+    // A prefix: the first section, in document order, it starts.
+    assert_eq!(
+        resolve_help_topic("sch"),
+        Some(section_of("schema browser"))
+    );
+    assert_eq!(resolve_help_topic("no"), Some(section_of("notifications")));
+    assert_eq!(
+        resolve_help_topic("psql"),
+        Some(section_of("psql backslash commands"))
+    );
+    // A prefix that runs past the first word.
+    assert_eq!(
+        resolve_help_topic("schema w"),
+        Some(section_of("schema wizard"))
+    );
+    // A word of the name.
+    assert_eq!(
+        resolve_help_topic("backslash"),
+        Some(section_of("psql backslash commands"))
+    );
+    assert_eq!(
+        resolve_help_topic("locks"),
+        None,
+        "a word of the rows is not a name"
+    );
+    assert_eq!(resolve_help_topic(""), None);
+    assert_eq!(resolve_help_topic("nonsense"), None);
+    // Every one-word topic `:help` took before it had sections still
+    // opens the section it did.
+    for (topic, title) in [
+        ("grid", "grid"),
+        ("editor", "editor"),
+        ("commands", ": commands"),
+        ("schema", "schema browser"),
+        ("saved", "saved queries"),
+        ("slow", "slow queries"),
+        ("sessions", "active sessions"),
+        ("environments", "environments"),
+        ("tap", "jdbc tap"),
+        ("explain", "EXPLAIN tree"),
+        ("diff", "result diff"),
+        ("wizard", "schema wizard"),
+    ] {
+        assert_eq!(
+            resolve_help_topic(topic),
+            Some(section_of(title)),
+            "{topic}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_help_topic_lists_every_section() {
+    let mut a = help_app();
+    run_command(&mut a, "help nonsense");
+    let err = a.last_error.clone().unwrap_or_default();
+    for (title, _) in crate::ui::HELP_SECTIONS {
+        let name = title.trim_start_matches(':').trim().to_ascii_lowercase();
+        assert!(err.contains(&name), "{name:?} missing from {err:?}");
+    }
+    assert!(err.ends_with(", all"), "{err:?}");
+}
+
+#[test]
+fn help_topic_candidates_are_every_section_name_a_prefix_picks() {
+    use crate::app::cmd::help_topic_candidates;
+    assert_eq!(
+        help_topic_candidates("sch"),
+        vec!["schema browser", "schema wizard"]
+    );
+    assert_eq!(help_topic_candidates("SCHEMA W"), vec!["schema wizard"]);
+    assert_eq!(help_topic_candidates("comm"), vec!["commands"]);
+    assert_eq!(help_topic_candidates("al"), vec!["all"]);
+    assert!(help_topic_candidates("zz").is_empty());
+    assert_eq!(
+        help_topic_candidates("").len(),
+        crate::ui::HELP_SECTIONS.len() + 1,
+        "every section, and all"
+    );
+}
+
+#[test]
+fn tab_after_colon_help_completes_the_section_name() {
+    let bar_text = |a: &App| a.command_bar.as_ref().map(|b| b.input.text().to_string());
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "help sch");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(
+        bar_text(&a).as_deref(),
+        Some("help schema "),
+        "the common prefix"
+    );
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("schema browser · schema wizard")
+    );
+    type_str(&mut a, "w");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("help schema wizard"));
+    assert_eq!(a.command_bar_completions, None);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        (a.mode, a.help.section),
+        (Mode::Help, section_of("schema wizard"))
+    );
+
+    // Nothing typed yet: every topic is listed, the input left alone.
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "help ");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("help "));
+    let listed = a.command_bar_completions.clone().unwrap_or_default();
+    assert!(
+        listed.starts_with("grid · editor · confirm") && listed.ends_with("help · all"),
+        "{listed}"
+    );
+    // No match says so.
+    type_str(&mut a, "zz");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("no help section starts with zz")
+    );
+    // Another command's argument is not completed.
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "connect ed");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("connect ed"));
+    assert_eq!(a.command_bar_completions, None);
 }

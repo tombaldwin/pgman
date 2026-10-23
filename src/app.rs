@@ -2350,7 +2350,8 @@ impl App {
         // on F1 / esc / ? / q). The cheat-sheet auto-scrolls to the
         // section for the mode we came from so the operator sees the
         // relevant keys immediately.
-        if matches!(key.code, KeyCode::F(1)) && self.mode != Mode::Help {
+        if matches!(key.code, KeyCode::F(1)) && !matches!(self.mode, Mode::Help | Mode::HelpFilter)
+        {
             self.open_help_from(self.mode);
             return;
         }
@@ -2535,7 +2536,8 @@ impl App {
         let mark_pending = self.pending_mark_set || self.pending_mark_jump;
         if !ctrl && !alt && !typing_mode && !mark_pending && !self.prompt_owns_keys() {
             if let KeyCode::Char(c) = key.code {
-                let bracket_is_mine = self.mode != Mode::SchemaBrowser;
+                // Help uses them for next / previous section.
+                let bracket_is_mine = !matches!(self.mode, Mode::SchemaBrowser | Mode::Help);
                 if c == ']' && bracket_is_mine {
                     self.cycle_tab(true);
                     return;
@@ -2591,6 +2593,7 @@ impl App {
         let pre_mode = self.mode;
         match self.mode {
             Mode::Help => self.on_help_key(key),
+            Mode::HelpFilter => self.on_help_filter_key(key),
             Mode::Confirm => self.on_confirm_key(key),
             Mode::TxDecision => self.on_tx_decision_key(key),
             Mode::LogPick => self.on_log_pick_key(key),
@@ -3030,29 +3033,48 @@ impl App {
 
     /// Open the help overlay from `from`. Captures `from` so the
     /// close path restores that mode (instead of always going to
-    /// Normal), and pre-scrolls the help body to the section that
-    /// matches `from` — operators see the relevant keys without
-    /// hunting for them.
+    /// Normal), and shows the section that matches `from` — operators
+    /// see the relevant keys without hunting for them. A mode with no
+    /// section of its own (the grid's start) opens the section list.
     pub fn open_help_from(&mut self, from: Mode) {
-        self.open_help_anchored(from, from);
+        let section = Self::help_anchor_for(from).and_then(crate::ui::help_section_index);
+        self.open_help_section(section, from);
     }
 
-    /// Open help pre-scrolled to `anchor`'s section but returning to
+    /// Open help at section `section` (an index into
+    /// `ui::HELP_SECTIONS`; `None` opens the list) but return to
     /// `return_to` on close. `:help <topic>` is the reason the two
     /// can differ: the topic names the section to show, not the mode
     /// the operator was in. Collapsing them meant `:help tap` closed
     /// into the tap monitor and `:help commands` into
     /// `Mode::CommandBar` — a mode with no command bar behind it.
-    pub fn open_help_anchored(&mut self, anchor: Mode, return_to: Mode) {
-        self.help.origin = Some(anchor);
+    pub fn open_help_section(&mut self, section: Option<usize>, return_to: Mode) {
+        self.help.section = section.unwrap_or(0);
+        self.help.view = if section.is_some() {
+            HelpView::Section
+        } else {
+            HelpView::List
+        };
+        self.open_help_view(return_to);
+    }
+
+    /// `:help all` — every section on one scrolling page, as help was
+    /// before it had sections.
+    pub fn open_help_all(&mut self, return_to: Mode) {
+        self.help.section = 0;
+        self.help.view = HelpView::All;
+        self.open_help_view(return_to);
+    }
+
+    fn open_help_view(&mut self, return_to: Mode) {
         self.help.return_to = Some(return_to);
-        self.help.scroll = 0; // Renderer-side anchor pass will adjust.
+        self.help.scroll = 0;
+        self.help.filter = None;
         self.mode = Mode::Help;
     }
 
-    /// Pure: anchor heading text that `draw_help` uses to position
-    /// the initial scroll for a given source mode. `None` falls
-    /// back to top-of-document.
+    /// Pure: the heading of the help section a given source mode
+    /// opens at (`ui::HELP_SECTIONS`). `None` opens the section list.
     pub fn help_anchor_for(mode: Mode) -> Option<&'static str> {
         match mode {
             Mode::Normal => None,
@@ -3084,7 +3106,7 @@ impl App {
             Mode::GridFind => Some("grid"),
             Mode::About => Some("grid"),
             Mode::CommandBar => Some(": commands"),
-            Mode::Help => None,
+            Mode::Help | Mode::HelpFilter => None,
         }
     }
 

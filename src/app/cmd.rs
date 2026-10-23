@@ -20,35 +20,56 @@ pub(crate) const REPLICA_READONLY_REFUSAL: &str = "this is a read replica: it st
 /// 8 MB is a schema dump of a few thousand tables.
 pub(crate) const INCLUDE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Help topics `:help <topic>` accepts, paired with the mode whose
-/// help anchor they scroll to. Reuses `App::help_anchor_for` rather
-/// than naming heading strings twice — a renamed heading can't leave
-/// this table pointing at nothing.
-///
-/// The mode here is *only* an anchor. It is not where the operator
-/// was, and closing help must not send them there — `:help commands`
-/// used to land them in `Mode::CommandBar` with no command bar behind
-/// it. See `App::open_help_anchored`.
-const HELP_TOPICS: &[(&str, Mode)] = &[
-    ("grid", Mode::Normal),
-    ("editor", Mode::Editor),
-    ("commands", Mode::CommandBar),
-    ("schema", Mode::SchemaBrowser),
-    ("saved", Mode::SavedQueries),
-    ("slow", Mode::SlowQueries),
-    ("sessions", Mode::Sessions),
-    ("environments", Mode::Environments),
-    ("tap", Mode::TapMonitor),
-    ("explain", Mode::ExplainTree),
-    ("diff", Mode::ResultDiff),
-    ("wizard", Mode::SchemaLint),
-];
+/// A help section's name as `:help` spells it: lowercase, without the
+/// `:` that heads `: commands`. Pure.
+fn help_topic_name(title: &str) -> String {
+    title.trim_start_matches(':').trim().to_ascii_lowercase()
+}
 
-/// The `(topic, anchor mode)` table `:help <topic>` dispatches on.
-/// Exposed so a test can walk every topic rather than a sample.
-#[cfg(test)]
-pub(crate) fn help_topics() -> &'static [(&'static str, Mode)] {
-    HELP_TOPICS
+/// Every name `:help` takes, in section order, then `all` — what Tab
+/// completes and what an unknown topic lists. Pure.
+pub(crate) fn help_topic_names() -> Vec<String> {
+    crate::ui::HELP_SECTIONS
+        .iter()
+        .map(|(title, _)| help_topic_name(title))
+        .chain(std::iter::once("all".to_string()))
+        .collect()
+}
+
+/// The help section `:help <topic>` opens: an exact name first, then
+/// the first section (in document order) whose name starts with the
+/// topic, then the first with a word that does — so the one-word
+/// topics `:help` took before it had sections (`schema`, `tap`,
+/// `sessions`, `wizard`, …) still land where they did. Case and the
+/// `:` of `: commands` don't matter. `None` for no match. Pure.
+pub(crate) fn resolve_help_topic(topic: &str) -> Option<usize> {
+    let wanted = help_topic_name(topic);
+    if wanted.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = crate::ui::HELP_SECTIONS
+        .iter()
+        .map(|(title, _)| help_topic_name(title))
+        .collect();
+    names
+        .iter()
+        .position(|n| *n == wanted)
+        .or_else(|| names.iter().position(|n| n.starts_with(&wanted)))
+        .or_else(|| {
+            names
+                .iter()
+                .position(|n| n.split_whitespace().any(|w| w.starts_with(&wanted)))
+        })
+}
+
+/// Tab completion for `:help <typed>`: every [`help_topic_names`]
+/// entry `typed` is a prefix of (case-insensitively). Pure.
+pub(crate) fn help_topic_candidates(typed: &str) -> Vec<String> {
+    let typed = typed.to_ascii_lowercase();
+    help_topic_names()
+        .into_iter()
+        .filter(|n| n.starts_with(&typed))
+        .collect()
 }
 
 /// The status after `\\report` / `\\fixture` wrote `path`: the file's
@@ -244,8 +265,8 @@ impl App {
             // Help`, and Esc then closed help into help — no way back
             // to the editor.
             origin = self.help.return_to.take().unwrap_or(Mode::Normal);
-            self.help.origin = None;
             self.help.scroll = 0;
+            self.help.filter = None;
         }
         self.command_bar = Some(CommandBarUi {
             input: TextInput::new(),
@@ -334,30 +355,27 @@ impl App {
         });
     }
 
-    /// `:help` / `:help <topic>` — open the help overlay, scrolled to
-    /// the section for `<topic>`. Topics map onto the modes whose
-    /// anchors the overlay already knows (`App::help_anchor_for`), so
-    /// there is exactly one list of section names in the codebase.
+    /// `:help` / `:help <topic>` / `:help all` — open the help
+    /// overlay at the section `<topic>` names (`resolve_help_topic`),
+    /// or with every section on one page.
     fn dispatch_help_topic(&mut self, topic: Option<String>) {
         let Some(topic) = topic else {
             self.open_help_from(self.mode);
             return;
         };
-        let wanted = topic.to_ascii_lowercase();
-        match HELP_TOPICS
-            .iter()
-            .find(|(name, _)| *name == wanted)
-            .map(|(_, mode)| *mode)
-        {
-            // Anchor on the topic; come back to where the bar was
-            // opened from (`on_command_bar_key` has already restored
-            // `self.mode` to the bar's origin by this point).
-            Some(anchor) => self.open_help_anchored(anchor, self.mode),
+        // Come back to where the bar was opened from
+        // (`on_command_bar_key` has already restored `self.mode` to the
+        // bar's origin by this point).
+        if topic.eq_ignore_ascii_case("all") {
+            self.open_help_all(self.mode);
+            return;
+        }
+        match resolve_help_topic(&topic) {
+            Some(section) => self.open_help_section(Some(section), self.mode),
             None => {
-                let names: Vec<&str> = HELP_TOPICS.iter().map(|(n, _)| *n).collect();
                 self.last_error = Some(format!(
                     "unknown help topic '{topic}' · try: {}",
-                    names.join(", ")
+                    help_topic_names().join(", ")
                 ));
             }
         }

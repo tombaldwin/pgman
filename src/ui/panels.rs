@@ -816,120 +816,6 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
-    let theme = &app.theme;
-    // On a smaller terminal 70 % left a few lines of a several-hundred
-    // line sheet: there it takes the whole body.
-    let popup = if area.width < 120 || area.height < 30 {
-        area
-    } else {
-        centered_pct(area, 70, 70)
-    };
-    // Body content width: popup minus borders (2) and the uniform(1)
-    // padding (2) on the horizontal axis — the same budget `inner_height`
-    // below uses on the vertical axis. Long descriptions get wrapped to
-    // this width ourselves, with a hanging indent to the description
-    // column, rather than left to `Paragraph`'s `Wrap` — which has no
-    // notion of where the description starts and so wraps continuations
-    // to column 0.
-    let inner_width = popup.width.saturating_sub(4) as usize;
-    let (raw_lines, raw_anchors) = help_body(theme);
-    let (lines, anchors) = wrap_help_lines(raw_lines, raw_anchors, inner_width);
-    // Body height = popup height minus borders (top + bottom) minus padding
-    // (uniform(1) — top + bottom). That's the visible row budget for clamping
-    // the scroll offset. Computed BEFORE the anchor pass below, which
-    // has to clamp against it.
-    let total_lines = lines.len() as u16;
-    let inner_height = popup.height.saturating_sub(4);
-    let max_scroll = total_lines.saturating_sub(inner_height);
-    app.help.max_scroll = max_scroll;
-    // If we have a captured help_origin, pre-scroll to the matching
-    // section the first time draw runs (`help_scroll` is reset to 0
-    // by `open_help_from`; we detect that as "anchor not applied
-    // yet" and set it once, then clear the origin).
-    if let Some(origin) = app.help.origin {
-        if app.help.scroll == 0 {
-            if let Some(anchor) = App::help_anchor_for(origin) {
-                if let Some(&row) = anchors.get(anchor) {
-                    // Clamp on the way IN, not only on the way out:
-                    // an anchor near the end of the document stored a
-                    // scroll past `max_scroll`, the render clamped it
-                    // for display only, and the first few `k` presses
-                    // then walked the stored value back down through
-                    // the range that renders identically — the
-                    // overlay looked frozen.
-                    app.help.scroll = row.min(max_scroll);
-                }
-            }
-        }
-        // Consume the origin AFTER we've used it to position the
-        // scroll. Subsequent draws (j/k navigation) shouldn't snap
-        // back to the anchor.
-        app.help.origin = None;
-    }
-    f.render_widget(Clear, popup);
-    let effective_scroll = app.help.scroll.min(max_scroll);
-
-    // No `.wrap(…)`: `wrap_help_lines` above already re-flowed every
-    // row to exactly `inner_width`, and that is the wrap the anchor map
-    // was counted over. Letting `Paragraph` wrap a second time turned
-    // any over-budget row into two rendered rows *after* the anchors
-    // were fixed, so every anchor below such a row pointed short of its
-    // heading — 15 rows short at a 50-column terminal, and far more
-    // below that.
-    let help = Paragraph::new(lines)
-        .scroll((effective_scroll, 0))
-        .style(Style::default().fg(theme.text))
-        .block(
-            crate::ui::chrome::panel_block(theme)
-                .border_style(Style::default().fg(theme.border_active))
-                .padding(Padding::uniform(1)),
-        );
-    f.render_widget(help, popup);
-
-    // Scroll indicators: emit "↑ N more above" on the top inner row and
-    // "↓ N more below" on the bottom inner row when content extends past the
-    // viewport. Rendered AFTER the body so they overlay its first / last
-    // visible row.
-    let hint_style = Style::default()
-        .fg(theme.accent)
-        .add_modifier(Modifier::BOLD);
-    if effective_scroll > 0 {
-        // Overlay the first visible body row: skip border + top padding.
-        let row = Rect {
-            x: popup.x + 2,
-            y: popup.y + 2,
-            width: popup.width.saturating_sub(4),
-            height: 1,
-        };
-        f.render_widget(Clear, row);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                format!("↑ {} more above", effective_scroll),
-                hint_style,
-            ))),
-            row,
-        );
-    }
-    if effective_scroll < max_scroll {
-        // Overlay the last visible body row: above bottom padding + border.
-        let row = Rect {
-            x: popup.x + 2,
-            y: popup.y + popup.height.saturating_sub(3),
-            width: popup.width.saturating_sub(4),
-            height: 1,
-        };
-        f.render_widget(Clear, row);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                format!("↓ {} more below", max_scroll - effective_scroll),
-                hint_style,
-            ))),
-            row,
-        );
-    }
-}
-
 /// EXPLAIN tree modal. Flattens the plan via `App::flattened_explain_rows`,
 /// renders each node as one line: `[▶/▼] indent · node_type (relation as
 /// alias) · stats`. The hottest node (highest `actual_total_time` or,
@@ -3216,7 +3102,7 @@ fn hanging_indent_fits(text: &str, col: usize, width: usize) -> bool {
 /// two rendered rows, and the anchor map — counted here, before that
 /// second pass — pointed further and further above the heading it
 /// named the narrower the terminal got.
-fn wrap_help_lines(
+pub(super) fn wrap_help_lines(
     raw: Vec<Line<'static>>,
     anchors: std::collections::HashMap<&'static str, u16>,
     width: usize,

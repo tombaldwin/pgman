@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
  1 SELECT number, cu…               ] [ switch · ctrl-t new
-╭──────────────────────────────────────────────────────────╮
-│                                                          │
-│ pgman — keys (? / F1 help · : commands · ! / F2 error    │
-│ detail · F3 notify)                                      │
-│                                                          │
-│   grid                                                   │
-│     q             quit                                   │
-│     esc           back to the environments overview,     │
-│                   when environments are configured       │
-│     ? / F1        toggle this help (both work from every │
-│ ↓ 361 more below                                         │
-│                                                          │
+╭[ ◆ help · 22 sections ◆ ]────────────────────────────────╮
+│ pgman — keys (? / F1 help · : commands · ! / F2 error d… │
+│ ▸ grid                     the results: move, sort, fil… │
+│   editor                   write and run SQL · EXPLAIN … │
+│   confirm                  the y / n prompt before a gu… │
+│   tx open                  commit or roll back an open … │
+│   log pick                 pick a query reconstructed f… │
+│   conn pick                the connection picker         │
+│   row detail               one row, field by field (ent… │
+│   cell detail              one value, as text or as a J… │
+│   schema browser           schemas, tables, columns, co… │
+│   ↓ 13 more                                              │
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   esc / ?  close help
+ RO   TAP   N+1 ×1   esc / ? close help · +3 more

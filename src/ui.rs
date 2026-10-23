@@ -16,6 +16,7 @@ use unicode_width::UnicodeWidthChar;
 mod chrome;
 mod editor;
 mod header;
+mod help;
 mod landing;
 mod panels;
 mod results;
@@ -23,12 +24,13 @@ mod schema;
 mod tap;
 
 use editor::{draw_completion_popup, draw_editor};
+use help::draw_help;
+pub(crate) use help::help_heading_jump;
 use landing::draw_landing;
 use panels::{
     draw_about, draw_confirm, draw_conn_pick, draw_environments, draw_error_detail,
-    draw_explain_tree, draw_help, draw_log_pick, draw_notifications, draw_param_prompt,
-    draw_rename_prompt, draw_save_query_prompt, draw_saved_queries, draw_sessions,
-    draw_slow_queries,
+    draw_explain_tree, draw_log_pick, draw_notifications, draw_param_prompt, draw_rename_prompt,
+    draw_save_query_prompt, draw_saved_queries, draw_sessions, draw_slow_queries,
 };
 use results::{draw_cell_detail, draw_grid, draw_result_diff, draw_row_detail};
 use schema::{draw_schema_browser, draw_schema_lint};
@@ -163,7 +165,7 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
         };
         app.completion_popup_drawn = draw_completion_popup(f, above, below, app);
     }
-    if app.mode == Mode::Help {
+    if matches!(app.mode, Mode::Help | Mode::HelpFilter) {
         draw_help(f, area, app);
     }
     if app.mode == Mode::Confirm {
@@ -1131,7 +1133,7 @@ pub(crate) fn fit_hints(hints: &str, width: usize, help: &str) -> String {
         let remaining = items.len() - kept;
         let marker = format!("{help} +{remaining} more");
         let mut pieces: Vec<&str> = items[..kept].to_vec();
-        pieces.push(&marker);
+        pieces.push(marker.trim_start());
         let candidate = pieces.join(SEP);
         if display_width(&candidate) <= width {
             return candidate;
@@ -1552,7 +1554,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // The confirm modal says what it's asking itself; its footer is
         // the keys that answer it. A status left from the editor (a
         // completion's, the cost preview's) hid `y run · n / esc cancel`.
-        .filter(|_| app.mode != Mode::Confirm)
+        //
+        // Help is the same: its footer is the overlay's own keys. A
+        // status from before it opened (`connected to …`, a yank's
+        // `copied …`) sat there instead, and at 200 columns it read as
+        // something the overlay had said.
+        .filter(|_| !matches!(app.mode, Mode::Confirm | Mode::Help))
     {
         let sp = SPINNER[app.anim_tick % SPINNER.len()];
         let prefix = if app.query_running {
@@ -1602,7 +1609,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             "connecting… · q quit"
         } else {
             match app.mode {
-                Mode::Help => "esc / ?  close help",
+                Mode::Help => help_footer_hints(&app.help, area.width),
+                Mode::HelpFilter => "type to filter · enter keep · esc clear",
                 Mode::Editor if app.completion.is_some() => {
                     // Popup is up — surface the keys that act on it.
                     // Typing narrows live; Tab cycles; Esc restores the
@@ -1682,11 +1690,20 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         };
         // `?` opens help everywhere except where it's a character being
         // typed; there only F1 does (fn-F1 on a Mac keyboard).
-        let help_key = if app.mode.is_text_input() { "F1" } else { "?" };
+        // In help itself `?` closes it: the overflow marker names no key
+        // there, only how many hints did not fit.
+        let help_key = if app.mode == Mode::Help {
+            ""
+        } else if app.mode.is_text_input() {
+            "F1"
+        } else {
+            "?"
+        };
         let appended;
         let hints: &str = if matches!(
             app.mode,
             Mode::Help
+                | Mode::HelpFilter
                 | Mode::Confirm
                 | Mode::TxDecision
                 | Mode::GridFilter
@@ -1779,6 +1796,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         Mode::SchemaBrowserFilter => app.schema_browser.filter.as_ref().map(|f| {
             // Status reads "filter: /<pat>  · …" — same shape as
             // GridFilter.
+            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
+            PREFIX_CHARS + display_width(f) as u16
+        }),
+        Mode::HelpFilter => app.help.filter.as_ref().map(|f| {
+            // Status reads "filter: /<pat>  · …" — same shape as the
+            // schema browser's.
             const PREFIX_CHARS: u16 = "filter: /".len() as u16;
             PREFIX_CHARS + display_width(f) as u16
         }),
@@ -2039,6 +2062,83 @@ pub(crate) fn auto_scroll_to_field(
         scroll = scroll.max(needed);
     }
     scroll.min(max_scroll)
+}
+
+/// The help overlay's sections in `help_body` order: each heading and
+/// the one-line teaser the narrow section list shows beside it. The
+/// app resolves `:help <topic>` and a mode's section against this list
+/// without building the body; a test pins that `help_body`'s headings
+/// are exactly these, in this order.
+pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
+    ("grid", "the results: move, sort, filter, find, yank"),
+    (
+        "editor",
+        "write and run SQL · EXPLAIN · history · completion",
+    ),
+    ("confirm", "the y / n prompt before a guarded statement"),
+    ("tx open", "commit or roll back an open transaction"),
+    ("log pick", "pick a query reconstructed from a log"),
+    ("conn pick", "the connection picker"),
+    ("row detail", "one row, field by field (enter on the grid)"),
+    ("cell detail", "one value, as text or as a JSON tree"),
+    (
+        "schema browser",
+        "schemas, tables, columns, constraints (S)",
+    ),
+    ("EXPLAIN tree", "the plan as a tree, hottest node in red"),
+    ("slow queries", "pg_stat_statements, slowest first (T)"),
+    (
+        "environments",
+        "every database you know · discovery · patches",
+    ),
+    (
+        "active sessions",
+        "pg_stat_activity and locks · terminate (L)",
+    ),
+    (
+        "psql backslash commands",
+        "\\d \\dt \\df \\l \\x \\c \\i and friends",
+    ),
+    (
+        ": commands",
+        "the : bar: about, help, readonly, redact, connect",
+    ),
+    ("tabs", "an editor and a result per tab · ] / [ switch"),
+    ("saved queries", "named queries kept across sessions (Q)"),
+    ("notifications", "LISTEN / NOTIFY arrivals (F3)"),
+    (
+        "jdbc tap",
+        "your app's statements, live from the JDBC tap (F4)",
+    ),
+    ("result diff", "compare two results, A against B (D)"),
+    (
+        "schema wizard",
+        "schema lint: missing keys, unused indexes (W)",
+    ),
+    ("help", "this overlay's own keys"),
+];
+
+/// The help overlay's footer: its own keys, for the page it is on —
+/// `width` is the terminal's, which decides the split as it does for
+/// the overlay. Pure.
+pub(crate) fn help_footer_hints(help: &crate::app::HelpUi, width: u16) -> &'static str {
+    use crate::app::HelpView;
+    // Closing first: a narrow footer drops hints from the end, and the
+    // way out is the one that must survive.
+    if help.filter.is_some() {
+        "? close help · esc clear filter · j/k scroll · ] / [ next / prev section · / edit filter"
+    } else if help.view == HelpView::All || help::help_is_split(width) {
+        "esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter"
+    } else if help.view == HelpView::List {
+        "esc / ? close help · j/k select · enter open · / filter"
+    } else {
+        "esc list · ? close help · j/k scroll · ] / [ section · / filter"
+    }
+}
+
+/// Index of the help section headed `title` in [`HELP_SECTIONS`]. Pure.
+pub(crate) fn help_section_index(title: &str) -> Option<usize> {
+    HELP_SECTIONS.iter().position(|(t, _)| *t == title)
 }
 
 /// Build the help body: a flat `Vec<Line>` plus an anchor → row
@@ -2582,7 +2682,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                  enter runs · esc cancels · tab completes the command name"),
+        row("                  enter runs · esc cancels · tab completes the command name and :help's topic"),
         &mut lines,
     );
     push(row("    :about          the About card"), &mut lines);
@@ -2591,11 +2691,11 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    :help [topic]   this help · topics: grid, editor, commands, schema, saved,"),
+        row("    :help [topic]   this help, at a section: its name or the start of it"),
         &mut lines,
     );
     push(
-        row("                    slow, sessions, environments, tap, explain, diff, wizard"),
+        row("                    (tab completes it) · :help all  every section on one page"),
         &mut lines,
     );
     push(row("    :quit  /  :q    quit pgman"), &mut lines);
@@ -2805,11 +2905,27 @@ pub(crate) fn help_body(
 
     heading("help", &mut lines, &mut anchors);
     push(
-        row("    j / k  ↑ ↓    scroll · g / G  top / bottom · PageUp/Down  by 10"),
+        row("    j / k  ↑ ↓    scroll the section · g / G  top / bottom · PageUp/Down  by 10"),
         &mut lines,
     );
     push(
-        row("    esc / ? / q / F1   close (returns to the mode you opened help from)"),
+        row("    tab / ]       next section · shift-tab / [  previous section"),
+        &mut lines,
+    );
+    push(
+        row("    enter         open the selected section (a narrow terminal lists them first)"),
+        &mut lines,
+    );
+    push(
+        row("    /             filter every section live · enter keep · esc clear"),
+        &mut lines,
+    );
+    push(
+        row("    esc           back to the section list (narrow terminals), else close"),
+        &mut lines,
+    );
+    push(
+        row("    ? / q / F1    close (returns to the mode you opened help from)"),
         &mut lines,
     );
 

@@ -27,7 +27,7 @@ pub(crate) fn view_label(mode: Mode) -> &'static str {
     match mode {
         Mode::Normal | Mode::GridFilter | Mode::GridFind => "results",
         Mode::Editor | Mode::HistorySearch => "editor",
-        Mode::Help => "help",
+        Mode::Help | Mode::HelpFilter => "help",
         Mode::Confirm | Mode::TxDecision | Mode::ConfirmTerminate => "confirm",
         Mode::LogPick => "logs → SQL",
         Mode::ConnPick => "connections",
