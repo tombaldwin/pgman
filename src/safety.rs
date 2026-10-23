@@ -647,8 +647,18 @@ pub fn is_transaction_control(sql: &str) -> bool {
 /// `EXPLAIN` — and that takes no row locks. A locking clause (`FOR
 /// UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR KEY SHARE`)
 /// anywhere in the code, a subquery's included, would hold its locks for
-/// as long as the cursor stays open. Over-matching only costs paging.
-/// Pure.
+/// as long as the cursor stays open.
+///
+/// And it calls no function outside [`PAGEABLE_FUNCTIONS`], a short list
+/// of built-ins that read and never write. Behind a cursor a function
+/// runs only for the rows fetched, and its writes stay uncommitted while
+/// the cursor is open: `SELECT log_visit(id) FROM t` over 3000 rows would
+/// run 1001 times, not 3000, and nobody else would see even those until
+/// the cursor closed. Any other call — a user function, `nextval`, a
+/// name qualified by any schema but `pg_catalog` — runs the old way,
+/// unpaged, every row computed and committed at once. A function a
+/// *view* calls is out of sight here (docs/backlog/paging.md says so).
+/// Over-matching only costs paging. Pure.
 pub fn is_pageable_select(sql: &str) -> bool {
     if !matches!(classify(sql), StatementKind::Select) {
         return false;
@@ -663,6 +673,121 @@ pub fn is_pageable_select(sql: &str) -> bool {
     !toks
         .windows(2)
         .any(|w| w[0] == "for" && matches!(w[1].as_str(), "update" | "share" | "no" | "key"))
+        && calls_only_pageable_functions(&strip_sql_comments(sql))
+}
+
+/// The functions a statement may call and still run behind the result
+/// cursor ([`is_pageable_select`]): built-ins Postgres marks immutable or
+/// stable, which read and never write, so running them for only the
+/// fetched rows changes nothing anyone can see. Deliberately short — a
+/// function missing here only costs paging. Not `nextval`, `setval`,
+/// `random`, `clock_timestamp`, `pg_sleep`, `gen_random_uuid`,
+/// `set_config` or any `pg_*` admin call: each is volatile.
+pub const PAGEABLE_FUNCTIONS: &str = concat!(
+    // aggregates
+    "count sum avg min max array_agg string_agg bool_and bool_or every json_agg jsonb_agg ",
+    "json_object_agg jsonb_object_agg stddev stddev_pop stddev_samp variance var_pop ",
+    "var_samp percentile_cont percentile_disc mode ",
+    // window functions
+    "row_number rank dense_rank percent_rank cume_dist ntile lag lead first_value ",
+    "last_value nth_value ",
+    // conditionals
+    "coalesce nullif greatest least ",
+    // strings
+    "lower upper initcap length char_length character_length octet_length substring ",
+    "substr position strpos trim btrim ltrim rtrim lpad rpad left right repeat replace ",
+    "reverse split_part concat concat_ws format starts_with translate regexp_replace ",
+    "regexp_match regexp_matches regexp_split_to_array regexp_split_to_table ",
+    "string_to_array array_to_string md5 encode decode to_hex chr ascii quote_ident ",
+    "quote_literal quote_nullable ",
+    // numbers
+    "abs ceil ceiling floor round trunc mod div power sqrt exp ln log sign width_bucket ",
+    // dates and times
+    "now statement_timestamp transaction_timestamp age date_trunc date_part date_bin ",
+    "extract make_date make_time make_timestamp make_timestamptz make_interval to_char ",
+    "to_date to_timestamp to_number justify_days justify_hours justify_interval isfinite ",
+    // arrays and set-returning
+    "array_length array_lower array_upper array_position array_positions array_append ",
+    "array_prepend array_cat array_remove array_replace cardinality unnest ",
+    "generate_series generate_subscripts ",
+    // json
+    "to_json to_jsonb row_to_json json_build_object jsonb_build_object json_build_array ",
+    "jsonb_build_array jsonb_pretty json_typeof jsonb_typeof json_array_length ",
+    "jsonb_array_length json_extract_path jsonb_extract_path json_extract_path_text ",
+    "jsonb_extract_path_text json_each jsonb_each json_each_text jsonb_each_text ",
+    "json_object_keys jsonb_object_keys json_array_elements jsonb_array_elements ",
+    "json_array_elements_text jsonb_array_elements_text jsonb_set jsonb_strip_nulls ",
+    // types
+    "pg_typeof format_type current_setting ",
+);
+
+/// Words a `(` follows that are not function calls: keywords that take a
+/// parenthesised list or subquery (`IN (`, `EXISTS (`, `OVER (`, `AS (`),
+/// and type names that take a modifier (`::numeric(10, 2)`).
+const NOT_A_CALL_BEFORE_PAREN: &str = concat!(
+    "select from where join lateral on using in exists any all some array row values as ",
+    "materialized and or not by over filter group partition having when then else case is ",
+    "like ilike similar between union intersect except distinct limit offset first next ",
+    "cast cube rollup sets with recursive returns window numeric decimal varchar char ",
+    "character varying bit time timestamp timestamptz timetz interval float ",
+);
+
+/// `true` if every function `sql` calls is one of [`PAGEABLE_FUNCTIONS`]
+/// — unqualified or qualified by `pg_catalog`. A word before `(` is a
+/// call unless it is in [`NOT_A_CALL_BEFORE_PAREN`], follows `AS` (a
+/// column-alias list, `AS g(i)`), or names a CTE's columns (`x(a) AS (`).
+fn calls_only_pageable_functions(sql: &str) -> bool {
+    let toks = call_tokens(sql);
+    let word = |i: usize| match toks.get(i) {
+        Some(CallTok::Word(w)) => Some(w.as_str()),
+        _ => None,
+    };
+    (0..toks.len()).all(|i| {
+        let Some(w) = word(i) else {
+            return true;
+        };
+        if toks.get(i + 1) != Some(&CallTok::Punct('(')) {
+            return true;
+        }
+        if i >= 1 && toks[i - 1] == CallTok::Dot {
+            return i >= 2 && word(i - 2) == Some("pg_catalog") && listed(PAGEABLE_FUNCTIONS, w);
+        }
+        listed(NOT_A_CALL_BEFORE_PAREN, w)
+            || (i >= 1 && word(i - 1) == Some("as"))
+            || names_cte_columns(&toks, i + 1)
+            || listed(PAGEABLE_FUNCTIONS, w)
+    })
+}
+
+/// Whether `word` is one of the space-separated words of `list`.
+fn listed(list: &str, word: &str) -> bool {
+    list.split_ascii_whitespace().any(|w| w == word)
+}
+
+/// Whether the `(` at `open` starts a CTE's column list: its `)` is
+/// followed by `AS (`, `AS MATERIALIZED` or `AS NOT MATERIALIZED`. A call
+/// can be followed by `AS` (an alias) but never by `AS (`.
+fn names_cte_columns(toks: &[CallTok], open: usize) -> bool {
+    let mut depth = 0usize;
+    for (j, t) in toks.iter().enumerate().skip(open) {
+        match t {
+            CallTok::Punct('(') => depth += 1,
+            CallTok::Punct(')') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let as_follows = matches!(toks.get(j + 1), Some(CallTok::Word(w)) if w == "as");
+                    let body_follows = match toks.get(j + 2) {
+                        Some(CallTok::Punct('(')) => true,
+                        Some(CallTok::Word(w)) => w == "materialized" || w == "not",
+                        _ => false,
+                    };
+                    return as_follows && body_follows;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -680,8 +805,53 @@ mod pageable_tests {
             "-- a comment first\nSELECT 1",
             "SELECT substring(name FROM 1 FOR 3) FROM t",
             "SELECT 'for update' FROM t",
+            // Calls that only read.
+            "SELECT count(*), max(id), avg(n) FROM t",
+            "SELECT lower(name), coalesce(a, 0) FROM t WHERE upper(code) = 'A'",
+            "SELECT g FROM generate_series(1, 3000) g",
+            "SELECT x FROM generate_series(1, 3) AS g(x)",
+            "SELECT pg_catalog.lower(name) FROM t",
+            "SELECT id::numeric(10, 2), CAST(id AS varchar(10)) FROM t",
+            "SELECT * FROM t WHERE id IN (1, 2) AND EXISTS (SELECT 1) OR NOT (a)",
+            "SELECT row_number() OVER (PARTITION BY a ORDER BY b) FROM t",
+            "SELECT count(*) FILTER (WHERE a) FROM t",
+            "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY n) FROM t",
+            "WITH x(a) AS (SELECT 1) SELECT a FROM x",
+            "WITH x(a) AS MATERIALIZED (SELECT 1) SELECT a FROM x",
+            "SELECT t.id, now() FROM t",
+            "SELECT 'log_visit(1)', $$nextval('s')$$ FROM t",
+            "SELECT 1 -- log_visit(1)\nFROM t",
         ] {
             assert!(is_pageable_select(sql), "{sql}");
+        }
+    }
+
+    /// Behind a cursor a function runs only for the fetched rows and its
+    /// writes stay uncommitted while the cursor is open, so a call pgman
+    /// can't vouch for runs unpaged.
+    #[test]
+    fn a_call_that_may_write_does_not_page() {
+        for sql in [
+            "SELECT log_visit(i) FROM generate_series(1, 3000) i",
+            "SELECT id FROM t WHERE audit_row(t.id)",
+            "SELECT count(log_visit(id)) FROM t",
+            "SELECT * FROM log_rows(3)",
+            "SELECT x FROM t, LATERAL log_visit(t.id) x",
+            "SELECT \"log_visit\"(1)",
+            "SELECT log_visit(1) AS y FROM t",
+            "WITH x AS (SELECT log_visit(1)) SELECT * FROM x",
+            "SELECT * FROM t WHERE id IN (SELECT log_visit(id) FROM u)",
+            // Volatile built-ins.
+            "SELECT nextval('s') FROM t",
+            "SELECT random() FROM t",
+            "SELECT clock_timestamp() FROM t",
+            "SELECT pg_sleep(1)",
+            // A schema's own `lower` or `count` is not the built-in.
+            "SELECT public.lower(name) FROM t",
+            "SELECT app.count(*) FROM t",
+            "SELECT \"app\".\"count\"(*) FROM t",
+        ] {
+            assert!(!is_pageable_select(sql), "{sql}");
         }
     }
 
@@ -720,7 +890,10 @@ enum CallTok {
     Literal(String),
     /// `(`, `)` or `,`.
     Punct(char),
-    /// Anything else: an operator, a `.`, a `::`, an `E'…'` string with
+    /// A `.`: what qualifies a name (`pg_catalog.lower`). In an
+    /// argument it is as unreadable as [`CallTok::Opaque`].
+    Dot,
+    /// Anything else: an operator, a `::`, an `E'…'` string with
     /// backslash escapes (`E'\164ransaction_read_only'` spells a GUC in
     /// octal, and this classifier has no unescaper), an unterminated
     /// dollar-quote. Its presence in an argument marks the argument as one
@@ -751,6 +924,7 @@ fn call_tokens(sql: &str) -> Vec<CallTok> {
                     }
                     match b[i] {
                         b'(' | b')' | b',' => out.push(CallTok::Punct(b[i] as char)),
+                        b'.' => out.push(CallTok::Dot),
                         b';' => {}
                         c if c.is_ascii_whitespace() => {}
                         _ => out.push(CallTok::Opaque),

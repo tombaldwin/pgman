@@ -6430,6 +6430,7 @@ async fn paging_reads_ten_thousand_rows_in_order_without_gaps() {
     assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
     assert!(opened.grid.truncated, "more than a page exists");
     assert!(opened.cursor.is_some(), "the cursor stays open");
+    assert!(!opened.standby, "the primary is no standby");
     assert!(!opened.in_transaction);
     assert_eq!(
         session_state(&writer, pid, "idle in transaction").await,
@@ -6463,6 +6464,73 @@ async fn paging_reads_ten_thousand_rows_in_order_without_gaps() {
     assert_eq!(pages, 10, "10 000 rows are ten pages of 1000");
     assert_eq!(ids, (1..=10_000).collect::<Vec<i64>>());
     assert_eq!(session_state(&writer, pid, "idle").await, "idle");
+}
+
+/// On a standby the pager never holds a cursor: replaying the primary's
+/// DDL or VACUUM would conflict with it, and after
+/// `max_standby_streaming_delay` the server ends the whole session. The
+/// first page lands, partial, and the session is idle at once; asked
+/// again for the rows held plus a page (what `M` does there), it re-runs
+/// and is idle again.
+#[tokio::test]
+async fn on_a_standby_the_pager_commits_after_the_first_page() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let observer = probe_client(STANDBY_DSN).await;
+    let client = probe_client(STANDBY_DSN).await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let sql = "SELECT g FROM generate_series(1, 2500) g".to_string();
+    for want in [PAGE_ROWS, 2 * PAGE_ROWS] {
+        let opened = pager
+            .open(sql.clone(), want)
+            .await
+            .expect("pager alive")
+            .expect("open runs on the standby");
+        assert_eq!(opened.grid.rows.len(), want);
+        assert!(opened.grid.truncated, "{want}: more rows exist");
+        assert!(opened.standby, "{want}: the server is in recovery");
+        assert!(opened.cursor.is_none(), "{want}: no cursor held");
+        assert_eq!(
+            session_state(&observer, pid, "idle").await,
+            "idle",
+            "{want}: committed, not idle in transaction"
+        );
+    }
+}
+
+/// A session the server ends under pgman — `pg_terminate_backend` from
+/// another connection here; a recovery conflict or an idle timeout in the
+/// field — hands its parting FATAL to the notice channel, which then
+/// closes: the close is how the App learns the connection is gone, and
+/// the FATAL is the reason it shows. (Its `Display` is only "db error".)
+#[tokio::test]
+async fn a_terminated_session_hands_on_the_servers_reason_and_closes() {
+    let (notice_tx, mut notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    let (client, _t) = pgman::conn::connect_only(dsn, true, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect");
+    let pid = backend_pid(&client).await;
+    let killer = probe_client(DSN).await;
+    killer
+        .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+        .await
+        .expect("terminate the backend");
+    let fatal = tokio::time::timeout(std::time::Duration::from_secs(5), notices.recv())
+        .await
+        .expect("the driver reports before 5 s")
+        .expect("a parting message, not just the close");
+    assert!(fatal.ends_session(), "{fatal:?}");
+    assert_eq!(
+        fatal.message, "terminating connection due to administrator command",
+        "{fatal:?}"
+    );
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), notices.recv())
+        .await
+        .expect("the channel closes before 5 s");
+    assert!(closed.is_none(), "then the channel closes: {closed:?}");
+    assert!(client.is_closed());
 }
 
 /// A result that fits in a page never holds a transaction open.

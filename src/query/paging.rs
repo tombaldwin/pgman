@@ -45,12 +45,33 @@ pub const LIFETIME_CLOSE: Duration = Duration::from_secs(10 * 60);
 /// timeouts: the main loop's clock is no finer than this.
 const MIN_CLOSE: Duration = Duration::from_millis(500);
 
-/// `true` exactly when it runs as the first command of its transaction
-/// — which, sent on its own, means the session was not inside one.
-/// Postgres documents `statement_timestamp()` and
+/// Two answers in one row, read with the `prepare` the run already does.
+///
+/// The first is `true` exactly when it runs as the first command of its
+/// transaction — which, sent on its own, means the session was not
+/// inside one. Postgres documents `statement_timestamp()` and
 /// `transaction_timestamp()` as equal during the first command of a
 /// transaction.
-const IDLE_PROBE_SQL: &str = "SELECT statement_timestamp() = transaction_timestamp()";
+///
+/// The second, `pg_is_in_recovery()`, says the server is a standby,
+/// where an open cursor is not safe to hold: replaying the primary's
+/// DDL or VACUUM conflicts with it, and after
+/// `max_standby_streaming_delay` (30 s by default, less on an Aurora
+/// reader) the server terminates the whole session. There pgman fetches
+/// the page and commits, and `M` re-runs the query. Asked per run, not
+/// at connect, so a standby promoted since is a primary again.
+const PROBE_SQL: &str =
+    "SELECT statement_timestamp() = transaction_timestamp(), pg_is_in_recovery()";
+
+/// What [`PROBE_SQL`] said, from its two text columns: `(idle,
+/// standby)`. No answer (the probe failed — an aborted transaction) is
+/// "not idle", which runs the statement unpaged. Pure.
+pub fn read_probe(row: Option<(Option<&str>, Option<&str>)>) -> (bool, bool) {
+    match row {
+        Some((idle, standby)) => (idle == Some("t"), standby == Some("t")),
+        None => (false, false),
+    }
+}
 
 /// The two server settings that would end the session under an open
 /// cursor, in milliseconds (`pg_settings.setting` is in the GUC's base
@@ -154,8 +175,11 @@ pub struct Opened {
     /// The first page. `truncated` iff more rows exist.
     pub grid: Grid,
     /// `Some` while the cursor stays open for `M`; `None` when the
-    /// result was complete (or ran unpaged).
+    /// result was complete, ran unpaged, or ran on a standby.
     pub cursor: Option<Limits>,
+    /// The server is a standby, so no cursor was held past the first
+    /// page (see [`PROBE_SQL`]): `M` re-runs the query.
+    pub standby: bool,
     /// The session was already inside a transaction (pgman's auto-tx,
     /// or a `BEGIN` the operator typed), so the statement ran the old
     /// way, unpaged: closing a cursor there would end *their*
@@ -333,7 +357,7 @@ async fn open(
     // Pipelined: tokio-postgres sends both before awaiting either, so
     // the probe costs no round trip of its own.
     let (stmt, probe) =
-        futures::future::join(client.prepare(sql), client.simple_query(IDLE_PROBE_SQL)).await;
+        futures::future::join(client.prepare(sql), client.simple_query(PROBE_SQL)).await;
     let stmt = stmt.map_err(QueryErr::from)?;
     let columns: Vec<String> = stmt
         .columns()
@@ -341,11 +365,15 @@ async fn open(
         .map(|c| c.name().to_string())
         .collect();
     let origins = crate::conn::column_origins(stmt.columns());
-    let idle = probe.ok().is_some_and(|msgs| {
-        msgs.iter().any(
-            |m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(r) if r.get(0) == Some("t")),
-        )
-    });
+    let probe = probe.ok();
+    let (idle, standby) = read_probe(probe.as_deref().and_then(|msgs| {
+        msgs.iter().find_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => {
+                Some((r.try_get(0).ok().flatten(), r.try_get(1).ok().flatten()))
+            }
+            _ => None,
+        })
+    }));
     if !idle || columns.is_empty() {
         // Today's path. A zero-column `SELECT FROM t` reports its row
         // count, which a cursor would not.
@@ -354,6 +382,7 @@ async fn open(
             Opened {
                 grid,
                 cursor: None,
+                standby,
                 in_transaction: !idle,
                 origins,
             },
@@ -371,7 +400,9 @@ async fn open(
     };
     let (rows, lookahead) = split_page(None, rows, want);
     let more = lookahead.is_some();
-    if !more {
+    // On a standby the cursor is never held: the page is all there is.
+    let hold = more && !standby;
+    if !hold {
         end(client, "COMMIT").await;
     }
     let grid = Grid {
@@ -379,13 +410,14 @@ async fn open(
         rows,
         truncated: more,
     };
-    let open = more.then_some(OpenCursor {
+    let open = hold.then_some(OpenCursor {
         lookahead,
         n_columns: grid.columns.len(),
     });
     let opened = Opened {
         grid,
-        cursor: more.then(|| close_limits(settings.0, settings.1)),
+        cursor: hold.then(|| close_limits(settings.0, settings.1)),
+        standby,
         in_transaction: false,
         origins,
     };
@@ -499,6 +531,15 @@ mod tests {
         assert_eq!(statement_position(Some(10), 10, 8), None, "in the wrapping");
         assert_eq!(statement_position(Some(3), 10, 8), None);
         assert_eq!(statement_position(None, 10, 8), None);
+    }
+
+    #[test]
+    fn the_probe_reads_idle_and_standby_and_no_answer_is_neither() {
+        assert_eq!(read_probe(Some((Some("t"), Some("f")))), (true, false));
+        assert_eq!(read_probe(Some((Some("t"), Some("t")))), (true, true));
+        assert_eq!(read_probe(Some((Some("f"), Some("t")))), (false, true));
+        assert_eq!(read_probe(Some((None, None))), (false, false));
+        assert_eq!(read_probe(None), (false, false));
     }
 
     #[test]

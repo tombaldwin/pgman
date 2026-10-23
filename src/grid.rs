@@ -31,6 +31,9 @@ pub enum More {
     CursorOpen,
     /// The cursor has closed; `M` re-runs the statement.
     CursorClosed,
+    /// It ran on a standby, where pgman never holds a cursor (a
+    /// recovery conflict would end the session); `M` re-runs it.
+    Standby,
     /// pgman holds no more than `paging::MAX_HELD_ROWS`.
     Ceiling,
 }
@@ -44,6 +47,7 @@ pub fn partial_title_note(more: More) -> String {
         More::InTransaction => format!("{} · in a transaction, so no paging", cap_title_note()),
         More::CursorOpen => "partial · M fetches more".to_string(),
         More::CursorClosed => "partial · cursor closed · M re-runs".to_string(),
+        More::Standby => "partial · on a standby · M re-runs for more".to_string(),
         More::Ceiling => format!(
             "partial · stopped at pgman's {}-row limit",
             crate::query::paging::MAX_HELD_ROWS
@@ -56,7 +60,7 @@ pub fn partial_title_note(more: More) -> String {
 pub fn partial_status_note(more: More) -> String {
     let note = partial_title_note(more);
     match more {
-        More::CursorOpen | More::CursorClosed => note,
+        More::CursorOpen | More::CursorClosed | More::Standby => note,
         More::Unpaged | More::InTransaction | More::Ceiling => {
             format!("{note} · {EVERY_ROW_HINT}")
         }
@@ -572,7 +576,11 @@ mod tests {
         );
         // Where `M` can go on, the status says so and no more; where it
         // can't, it names the way to every row.
-        for more in [More::CursorOpen, More::CursorClosed] {
+        assert_eq!(
+            partial_title_note(More::Standby),
+            "partial · on a standby · M re-runs for more"
+        );
+        for more in [More::CursorOpen, More::CursorClosed, More::Standby] {
             assert_eq!(partial_status_note(more), partial_title_note(more));
         }
         for more in [More::Unpaged, More::InTransaction, More::Ceiling] {

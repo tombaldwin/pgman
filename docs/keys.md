@@ -40,6 +40,11 @@ Shown at startup when more than one data source was discovered, and via `c`
 
 On a failed connection (Normal mode, "connection failed" screen): `r` retries
 the same DSN; `p` re-opens the picker (shown when there are candidates to pick).
+A connection that drops while pgman is running — the server ended the
+session (`pg_terminate_backend`, a restart, a standby's recovery conflict,
+an idle timeout) or the network went — lands on the same screen, its error
+`connection lost · ` and the server's own message, and the same `r`
+reconnects.
 
 ## Start card / grid (Normal mode)
 
@@ -157,20 +162,43 @@ rows only` when there are more. A fetched page keeps the active sort
 and filter. `Ctrl-C` cancels a fetch that is taking too long, keeping
 the rows already there.
 
-The cursor holds a read transaction open on the server, so pgman closes
-it after 60 s without a fetch, or 10 min after the query ran (sooner
-when the server's `idle_in_transaction_session_timeout` or
-`transaction_timeout` is shorter), and as soon as anything else talks
-to the database: the next query, a panel such as `L` or `T`, a
-reconnect, closing the tab. The title then says `cursor closed · M
+While a partial result's cursor is open, the session is **idle in
+transaction**, holding an `ACCESS SHARE` lock on every table the query
+reads. Reads and writes go on around it, but DDL on those tables — a
+migration, `ALTER TABLE`, `TRUNCATE`, `VACUUM FULL`, `REINDEX` — waits
+for the lock, and every later statement on those tables queues behind
+that waiting DDL. The open transaction also holds back vacuum. So pgman
+closes the cursor after 60 s without a fetch, or 10 min after the query
+ran (sooner when the server's `idle_in_transaction_session_timeout` or
+`transaction_timeout` is shorter), when the last row is fetched, and as
+soon as anything else talks to the database: the next query, a panel
+such as `L` or `T`, a reconnect, closing the tab. On a standby no cursor
+is held at all (below). The title then says `cursor closed · M
 re-runs`, and `M` runs the query again for the rows already held plus
 1000 more, as a fresh snapshot.
+
+On a standby (the header's `replica` badge) pgman never holds the cursor
+open: a standby replaying the primary's DDL or `VACUUM` cancels a
+session that is in its way, and after `max_standby_streaming_delay` (30 s
+by default, less on an Aurora reader) it ends the whole connection. So
+there the first 1000 rows arrive and the transaction commits at once;
+the title says `partial · on a standby · M re-runs for more`, and each
+`M` runs the query again for the rows held plus 1000.
 
 Everything else stops at 1000 rows with `capped at 1000 · more rows not
 fetched` in the title: `EXPLAIN`, scripts of several statements,
 `\watch`, `SELECT … FOR UPDATE` / `FOR SHARE` (a cursor would hold the
-locks), and a `SELECT` run while a transaction is open (`in a
-transaction, so no paging`). For every row, run it outside the TUI with
+locks), a `SELECT` that calls a function pgman does not know to be
+read-only, and a `SELECT` run while a transaction is open (`in a
+transaction, so no paging`). The functions a paged `SELECT` may call are
+a short list of built-ins that never write — `count`, `sum`, `min`,
+`max`, `avg`, `coalesce`, `lower`, `upper`, `length`, `now`,
+`date_trunc`, `generate_series` and the like; anything else (your own
+function, `nextval`, `random`, a name in any schema but `pg_catalog`)
+runs the old way, every row computed and committed at once, because
+behind a cursor a function runs only for the rows fetched and its writes
+stay uncommitted until the cursor closes. pgman cannot see a function a
+view calls: a `SELECT` from a view whose definition writes still pages. For every row, run it outside the TUI with
 `pgman query 'SQL' --json` (or `--batch --format json`), which isn't
 capped; see [commands](commands.md). How the cursor works is in
 [docs/backlog/paging.md](backlog/paging.md).

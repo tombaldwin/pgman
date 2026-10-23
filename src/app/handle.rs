@@ -40,6 +40,17 @@ impl App {
                 tunnel,
                 ..
             } => {
+                if client.is_closed() {
+                    // Closed between the bootstrap and now: its
+                    // `ConnectionLost` landed while this was still
+                    // connecting, and went unheeded. Its tunnel goes
+                    // off-thread, like the one a Booted replaces below.
+                    if let Some(dead) = tunnel {
+                        tokio::task::spawn_blocking(move || drop(dead));
+                    }
+                    self.conn_state = ConnState::Failed(super::msg::connection_lost_reason(None));
+                    return;
+                }
                 self.conn_state = ConnState::Connected { server_version };
                 self.in_recovery = in_recovery;
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
@@ -74,6 +85,7 @@ impl App {
             AppMsg::BootFailed { error, .. } => {
                 self.conn_state = ConnState::Failed(error);
             }
+            AppMsg::ConnectionLost { reason, .. } => self.on_connection_lost(reason),
             AppMsg::QueryOk {
                 grid,
                 origins,
@@ -115,6 +127,7 @@ impl App {
                     sql: p.sql,
                     ceiling: false,
                     in_transaction: p.in_transaction,
+                    standby: p.standby,
                 });
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-

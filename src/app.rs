@@ -2079,7 +2079,7 @@ impl App {
                 .then(|| draft_save_at(self.draft_last_save, DRAFT_SAVE_GAP));
             // An open result cursor closes on its deadline even when
             // nothing else wakes the loop: an idle pgman must not leave
-            // the session idle in transaction.
+            // the session idle in transaction past it.
             let cursor_close_at = self.cursor_deadline();
             tokio::select! {
                 ev = events.recv() => {
@@ -3909,6 +3909,13 @@ impl App {
         // The barrier closes the cursor (and with no client there is
         // none); the title follows.
         self.cursor = None;
+        if matches!(self.conn_state, ConnState::Failed(_)) {
+            // The connection-failed card is up: the session was lost
+            // (`App::on_connection_lost`), or a reconnect failed and the
+            // client still held is the session that was left. Neither is
+            // one to send work to; `r` reconnects.
+            return None;
+        }
         let client = self.client.clone()?;
         Some(crate::query::paging::Db::new(client, self.pager.as_ref()))
     }
@@ -3952,8 +3959,9 @@ impl App {
             .map(|c| c.deadline())
     }
 
-    /// Close a cursor that has outlived its limits — never leave a
-    /// production session idle in transaction — and say so.
+    /// Close a cursor that has outlived its limits — the session is idle
+    /// in transaction while it is open, holding its tables' locks — and
+    /// say so.
     pub(crate) fn tick_cursor_timeout(&mut self, now: Instant) {
         if self.query_running {
             return;
@@ -3997,7 +4005,7 @@ impl App {
         match self.result_more() {
             More::Unpaged => {
                 self.last_status = Some(
-                    "only a plain SELECT run from the editor pages · pgman query '…' --json returns every row"
+                    "only a plain SELECT from the editor, calling no function but read-only built-ins, pages · pgman query '…' --json returns every row"
                         .into(),
                 );
             }
@@ -4017,7 +4025,7 @@ impl App {
                 self.spawn_page_request(PageRequest::Fetch(want));
                 self.last_status = Some(format!("fetching rows {}–{}…", held + 1, held + want));
             }
-            More::CursorClosed => {
+            More::CursorClosed | More::Standby => {
                 // The statement passed `is_pageable_select` when it first
                 // ran — a plain SELECT, which every guard allows — and that
                 // classification is a pure function of the text.
@@ -4026,9 +4034,11 @@ impl App {
                 };
                 let want = (held + PAGE_ROWS).min(MAX_HELD_ROWS);
                 self.spawn_page_request(PageRequest::Rerun(sql, want));
-                self.last_status = Some(format!(
-                    "the cursor had closed · re-running for {want} rows…"
-                ));
+                self.last_status = Some(if self.result_more() == More::Standby {
+                    format!("on a standby · re-running for {want} rows…")
+                } else {
+                    format!("the cursor had closed · re-running for {want} rows…")
+                });
             }
         }
     }
@@ -4036,9 +4046,13 @@ impl App {
     /// Send a `M` request to the pager; the answer lands as
     /// `AppMsg::PageLoaded` for the active result.
     fn spawn_page_request(&mut self, req: PageRequest) {
-        let (Some(pager), Some(result_id)) = (
+        // Behind the connection-failed card the pager, if any, is the
+        // session a failed reconnect left: nothing to page on (as `db`).
+        let failed = matches!(self.conn_state, ConnState::Failed(_));
+        let (Some(pager), Some(result_id), false) = (
             self.pager.clone(),
             self.result_paging.as_ref().map(|p| p.id),
+            failed,
         ) else {
             self.last_error = Some(self.not_connected_message());
             return;
@@ -4129,9 +4143,11 @@ impl App {
             }
             Ok(PageOutcome::Rerun(opened)) => {
                 let in_transaction = opened.in_transaction;
+                let standby = opened.standby;
                 self.replace_rows(opened.grid);
                 if let Some(p) = self.result_paging.as_mut() {
                     p.in_transaction = in_transaction;
+                    p.standby = standby;
                 }
                 let now = Instant::now();
                 self.cursor = opened.cursor.map(|limits| CursorMirror {
@@ -6574,6 +6590,7 @@ pub(crate) fn result_more(
         None => More::Unpaged,
         Some(p) if p.in_transaction => More::InTransaction,
         Some(p) if p.ceiling => More::Ceiling,
+        Some(p) if p.standby => More::Standby,
         Some(p) if cursor_result == Some(p.id) => More::CursorOpen,
         Some(_) => More::CursorClosed,
     }

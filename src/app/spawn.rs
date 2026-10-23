@@ -28,6 +28,61 @@ enum RunRoute {
 }
 
 impl App {
+    /// Clear the state that belongs to the session being left: for a
+    /// reconnect ([`App::start_connect`]) and a lost connection
+    /// ([`App::on_connection_lost`]) alike.
+    fn abandon_session_state(&mut self) {
+        // Abandon any in-flight query state from the prior session. On a
+        // reconnect the query's QueryOk/QueryFailed (which would normally
+        // clear these) is tagged with the OLD generation and will be
+        // dropped by the on_msg stale-generation filter, so without this
+        // the flag would stay stuck true — a permanent spinner that blocks
+        // every new run on the new connection.
+        self.query_running = false;
+        self.query_started = None;
+        // Anything a decision modal was holding: an open transaction
+        // belongs to the connection being dropped (the server rolls it
+        // back), a guarded run was classified against the old database,
+        // and a pid is meaningless on the new one. Left set, `tx_open`
+        // refused `\watch` for the rest of the session and `pending_run`
+        // could fire against the wrong DB.
+        self.tx_open = false;
+        if let Some(edit) = self.edit_awaiting_tx.take() {
+            self.revert_cell_edit(&edit);
+        }
+        self.pending_run = None;
+        self.cell_edit = None;
+        self.pending_terminate = None;
+    }
+
+    /// The live connection closed under the App
+    /// (`AppMsg::ConnectionLost`): drop its pager and cancel dispatcher,
+    /// clear what belonged to the session as a reconnect does, and show
+    /// the connection-failed card with the reason — whose `r` reconnects
+    /// and `p` picks another connection, as after a failed connect. The
+    /// dead client itself stays until a reconnect replaces it; `App::db`
+    /// and `spawn_run` send nothing to it while the card is up.
+    pub(super) fn on_connection_lost(&mut self, reason: String) {
+        if !matches!(self.conn_state, ConnState::Connected { .. }) {
+            // A connect that failed says so itself (`BootFailed`); one
+            // still in flight checks its client when it lands.
+            return;
+        }
+        tracing::warn!("{reason}");
+        // The server ended the transaction with the session; there is no
+        // cursor left to close.
+        self.cursor = None;
+        self.abandon_session_state();
+        self.watch = None;
+        self.pager = None;
+        self.cancel_dispatcher = None;
+        self.mode = Mode::Normal;
+        // The last run's status ("… · M fetches more") speaks of a session
+        // that is gone; the card says what happened.
+        self.last_status = None;
+        self.conn_state = ConnState::Failed(reason);
+    }
+
     /// Spawn the connect + bootstrap-query task. The result returns as an
     /// `AppMsg` tagged with the current generation.
     pub(super) fn start_connect(&mut self) {
@@ -54,31 +109,11 @@ impl App {
         // already drops messages whose generation doesn't match; we just
         // need to make the field actually move.
         self.generation = self.generation.wrapping_add(1);
-        // Abandon any in-flight query state from the prior generation. The
-        // query's QueryOk/QueryFailed (which would normally clear these) is
-        // tagged with the OLD generation and will be dropped by the on_msg
-        // stale-generation filter, so without this the flag would stay stuck
-        // true — a permanent spinner that blocks every new run on the new
-        // connection. This is the single choke point for all reconnects.
-        self.query_running = false;
-        self.query_started = None;
         // The cursor lives on the session being left: close it there
         // (the old pager queues the COMMIT) rather than leave it idle in
         // transaction until the old connection drops.
         self.close_cursor();
-        // Same for anything a decision modal was holding: an open
-        // transaction belongs to the connection being dropped (the
-        // server rolls it back), a guarded run was classified against
-        // the old database, and a pid is meaningless on the new one.
-        // Left set, `tx_open` refused `\watch` for the rest of the
-        // session and `pending_run` could fire against the wrong DB.
-        self.tx_open = false;
-        if let Some(edit) = self.edit_awaiting_tx.take() {
-            self.revert_cell_edit(&edit);
-        }
-        self.pending_run = None;
-        self.cell_edit = None;
-        self.pending_terminate = None;
+        self.abandon_session_state();
         self.conn_state = ConnState::Connecting;
         self.in_recovery = None;
         let tx = self.msg_tx.clone();
@@ -95,16 +130,28 @@ impl App {
             tokio::sync::mpsc::unbounded_channel::<conn::NotificationMsg>();
         let forward_tx = tx.clone();
         let notice_generation = generation;
+        // The channel closes when the connection driver ends — the
+        // session is over — so its end is the App's "connection lost",
+        // with the server's parting FATAL (sent on it) as the reason.
         tokio::spawn(async move {
+            let mut fatal = None;
             while let Some(notice) = notice_rx.recv().await {
+                if notice.ends_session() {
+                    fatal = Some(notice);
+                    continue;
+                }
                 let msg = AppMsg::Notice {
                     generation: notice_generation,
                     notice,
                 };
                 if forward_tx.send(msg).is_err() {
-                    break;
+                    return;
                 }
             }
+            let _ = forward_tx.send(AppMsg::ConnectionLost {
+                generation: notice_generation,
+                reason: super::msg::connection_lost_reason(fatal.as_ref()),
+            });
         });
         // Same forwarding shape for LISTEN/NOTIFY arrivals. Each
         // connect gets its own channel pair so stale notifications
@@ -425,7 +472,7 @@ impl App {
         decision: Decision,
         is_batch: bool,
     ) {
-        if self.client.is_none() {
+        if self.client.is_none() || matches!(self.conn_state, ConnState::Failed(_)) {
             self.last_error = Some(self.not_connected_message());
             return;
         }
@@ -488,6 +535,7 @@ impl App {
                             sql,
                             cursor: opened.cursor,
                             in_transaction: opened.in_transaction,
+                            standby: opened.standby,
                         }),
                     ),
                     Ok(Err(e)) => (Err(e), None),
