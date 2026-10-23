@@ -34,9 +34,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A burst of tap events no longer piles up in memory behind the
   screen. pgman redrew once per event, so 4 000 large events took over
   30 s to land and held more than 800 MiB on the way; they now land in
-  a few frames (under a second, about 100 MiB). The hop into the app is
-  bounded, so events pgman cannot keep up with are dropped and counted
-  on the `DROP` badge instead of queueing without limit.
+  a few frames (under a second, 100–200 MiB at peak). The hop into the
+  app is bounded, so events pgman cannot keep up with are dropped and
+  counted on the `DROP` badge instead of queueing without limit.
 - A tap listener that cannot bind (port in use) is now reported on the
   status line and on stderr — `--tap-listen`, `--tap-udp`, `--tap-otlp`
   and the listener a Java project turns on by itself. The status line

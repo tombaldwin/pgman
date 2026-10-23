@@ -2194,7 +2194,7 @@ impl App {
 
     /// Fold a batch of tap events — what the run loop hands over when
     /// it drains everything queued behind one frame
-    /// ([`Self::drain_pending_msgs`]). The ring generation is bumped
+    /// ([`drain_tap_batch`]). The ring generation is bumped
     /// once for the whole batch, not per event, so the memoised
     /// aggregates (Hotspots, Callers, N+1) are recomputed at most once
     /// per drawn frame however many events the batch carried.
