@@ -6,7 +6,7 @@ expression: dump(&buf)
  pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  ╭[ ◆ data · row 1 of 1 · field 1/1 · JSON ◆ ]────────╮  │
+│  ╭[ ◆ data · row 1 of 1 · field 1 of 1 · JSON ◆ ]─────╮  │
 │  │                                                    │  │
 │  │ ▼ { 3 }                                            │  │
 ╰──│   "id": 1                                          │──╯

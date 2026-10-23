@@ -152,7 +152,11 @@ pub fn environments_status(envs: usize, dbs: usize, failed: usize) -> String {
     if envs == 0 {
         return "environments · none configured".to_string();
     }
-    let mut s = format!("environments · {envs} · {dbs} databases");
+    let mut s = format!(
+        "{} · {}",
+        crate::ui::count_label(envs as u64, "environment", "environments"),
+        crate::ui::count_label(dbs as u64, "database", "databases")
+    );
     if failed > 0 {
         s.push_str(&format!(" · {failed} failed"));
     }
@@ -2847,9 +2851,10 @@ impl App {
             .saved_ui
             .cursor
             .min(self.saved_queries.entries.len() - 1);
-        self.last_status = Some(format!(
-            "saved queries · {} entries",
-            self.saved_queries.entries.len()
+        self.last_status = Some(crate::ui::count_label(
+            self.saved_queries.entries.len() as u64,
+            "saved query",
+            "saved queries",
         ));
         self.mode = Mode::SavedQueries;
     }

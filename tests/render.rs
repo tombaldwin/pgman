@@ -2398,3 +2398,57 @@ fn row_detail_and_cell_detail_say_null_and_empty_string_apart() {
         assert_eq!(buf[at[0]].fg, colour, "field {field}:\n{rendered}");
     }
 }
+
+/// One completion candidate is `1 match`, not `1 matches`.
+#[test]
+fn completion_popup_with_one_candidate_says_one_match() {
+    use pgman::query::complete::{Candidate, CandidateKind};
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT * FROM us".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.completion = Some(pgman::app::CompletionCycle {
+        start: a.editor.cursor - 2,
+        end: a.editor.cursor,
+        origin: "us".into(),
+        origin_prefix: "us".into(),
+        origin_cursor: a.editor.cursor,
+        candidates: vec![Candidate {
+            display: "users".into(),
+            insert: "users".into(),
+            kind: CandidateKind::Table,
+            context: None,
+        }],
+        selected: None,
+        auto: false,
+    });
+    let screen = dump(&render(&mut a, 80, 18));
+    assert!(screen.contains(" 1 match · Tab"), "{screen}");
+}
+
+/// Row detail's `↓ N more fields below` counts the fields the operator
+/// can't see — including the one under the indicator itself — and says
+/// fields, as the title does, not wrapped lines.
+#[test]
+fn row_detail_more_below_counts_the_fields_out_of_sight() {
+    let mut a = settle_app();
+    let columns: Vec<String> = (1..=30).map(|i| format!("col{i:02}")).collect();
+    let row: Vec<Option<String>> = (1..=30).map(|i| Some(format!("value{i:02}"))).collect();
+    a.grid = Grid {
+        columns,
+        rows: vec![row],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.mode = Mode::RowDetail;
+    for (w, h) in [(80, 24), (120, 40)] {
+        let screen = dump(&render(&mut a, w, h));
+        let seen = (1..=30)
+            .filter(|i| screen.contains(&format!("col{i:02} ")))
+            .count();
+        let want = format!("↓ {} more fields below", 30 - seen);
+        assert!(screen.contains(&want), "{w}x{h} want {want}:\n{screen}");
+        assert!(screen.contains("field 1 of 30"), "{w}x{h}:\n{screen}");
+    }
+}

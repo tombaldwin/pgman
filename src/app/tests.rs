@@ -10083,7 +10083,7 @@ fn environments_open_without_a_connection_and_load_the_installed_rows() {
     assert!(!a.environments.loading);
     assert_eq!(
         a.last_status.as_deref(),
-        Some("environments · 4 · 8 databases")
+        Some("4 environments · 8 databases")
     );
     // The cursor walks databases, not headings, and stops at the ends.
     for _ in 0..8 {
@@ -10139,14 +10139,12 @@ fn environments_status_counts_failures() {
         environments_status(0, 0, 0),
         "environments · none configured"
     );
-    assert_eq!(
-        environments_status(2, 6, 0),
-        "environments · 2 · 6 databases"
-    );
+    assert_eq!(environments_status(2, 6, 0), "2 environments · 6 databases");
     assert_eq!(
         environments_status(2, 4, 1),
-        "environments · 2 · 4 databases · 1 failed"
+        "2 environments · 4 databases · 1 failed"
     );
+    assert_eq!(environments_status(1, 1, 0), "1 environment · 1 database");
 }
 
 #[test]

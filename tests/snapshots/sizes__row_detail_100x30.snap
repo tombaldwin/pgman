@@ -11,7 +11,7 @@ expression: dump(&buf)
  1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                     │
-│  FROM in╭[ ◆ row 1 / 5 · field 1/6 ◆ ]─────────────────────────────────────────────────╮         │
+│  FROM in╭[ ◆ row 1 of 5 · field 1 of 6 ◆ ]─────────────────────────────────────────────╮         │
 │  WHERE s│                                                                              │         │
 │  ORDER B│ number      │ INV-004822                                                     │         │
 │         │ customer_id │ 2102                                                           │         │

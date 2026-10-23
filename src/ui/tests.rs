@@ -1082,6 +1082,28 @@ fn middle_ellipsis_keeps_the_character_cut_for_a_statement() {
 }
 
 #[test]
+fn fields_out_of_view_counts_fields_not_wrapped_lines() {
+    // Five fields; the third wraps over 10 lines.
+    let counts = [1, 1, 10, 1, 1];
+    // Lines 0..4 seen: fields 0..=2 start in view, two below.
+    assert_eq!(fields_out_of_view(&counts, 0..4), (0, 2));
+    // Scrolled into the long field: 0, 1 and 2 start above, 3 and 4 below.
+    assert_eq!(fields_out_of_view(&counts, 4..8), (3, 2));
+    // At the bottom: everything but the last two started above.
+    assert_eq!(fields_out_of_view(&counts, 10..14), (3, 0));
+    assert_eq!(fields_out_of_view(&[], 0..4), (0, 0));
+    // A field starting on the first line past what is seen is out of view.
+    assert_eq!(fields_out_of_view(&[2, 2, 2], 0..2), (0, 2));
+}
+
+#[test]
+fn more_fields_label_pluralises_and_handles_a_continuing_field() {
+    assert_eq!(more_fields_label("↓", 1, "below"), "↓ 1 more field below");
+    assert_eq!(more_fields_label("↑", 3, "above"), "↑ 3 more fields above");
+    assert_eq!(more_fields_label("↓", 0, "below"), "↓ more below");
+}
+
+#[test]
 fn is_key_hint_tells_keys_from_prose() {
     for hint in [
         "y run",

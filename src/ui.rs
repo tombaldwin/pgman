@@ -2073,6 +2073,43 @@ pub(crate) fn diff_cell(cell: &grid::Cell) -> &str {
 /// Given the per-field line counts, where each field starts in the line
 /// stream and the desired scroll offset that keeps `focus_field` fully in
 /// view inside a `body_height`-row viewport. Pure / testable.
+/// How many fields of a row-detail body start out of view: before the
+/// first line the operator can see, and at or after the end of what
+/// they can see — `visible`, which leaves out a line the `↑` / `↓`
+/// indicator is drawn over. Fields, not lines — the title counts fields
+/// (`field 3 of 24`), and a long wrapped value is one field however many
+/// lines it takes. Pure.
+pub(crate) fn fields_out_of_view(
+    field_line_counts: &[u16],
+    visible: std::ops::Range<u16>,
+) -> (usize, usize) {
+    let (scroll, end) = (visible.start, visible.end);
+    let mut top: u16 = 0;
+    let (mut above, mut below) = (0, 0);
+    for &n in field_line_counts {
+        if top < scroll {
+            above += 1;
+        } else if top >= end {
+            below += 1;
+        }
+        top = top.saturating_add(n);
+    }
+    (above, below)
+}
+
+/// The `↑ N more fields above` / `↓ N more fields below` indicator. With
+/// none wholly out of view (a long value continues), just `↓ more below`.
+/// Pure.
+pub(crate) fn more_fields_label(arrow: &str, n: usize, side: &str) -> String {
+    match n {
+        0 => format!("{arrow} more {side}"),
+        n => format!(
+            "{arrow} {} {side}",
+            count_label(n as u64, "more field", "more fields")
+        ),
+    }
+}
+
 pub(crate) fn auto_scroll_to_field(
     field_line_counts: &[u16],
     focus_field: usize,

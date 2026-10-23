@@ -29,6 +29,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Counts read as English: `1 match · Tab to cycle`, `4 saved queries`,
+  `2 environments · 6 databases` (the bare first number now says what it
+  counts), and the row-detail title `row 1 of 50 · field 1 of 24` like
+  the cell detail's. Row detail's `↓ N more below` counts fields, as the
+  title does, rather than wrapped lines of text (`↓ 3 more fields
+  below`); the cell detail says `more lines`.
 - A footer tip too wide for the terminal cut a key hint down to its
   label (`… expand-all/collapse-all`, `y… suggestion`). Key hints are now
   dropped whole, from the end; prose goes before them.

@@ -531,7 +531,10 @@ pub(super) fn draw_completion_popup(
     // "Tab to┐" instead of the full "Tab to cycle ┐").
     let title = match cycle.selected {
         Some(i) => format!(" {}/{} ", i + 1, total),
-        None => format!(" {total} matches · Tab to cycle "),
+        None => format!(
+            " {} · Tab to cycle ",
+            crate::ui::count_label(total as u64, "match", "matches")
+        ),
     };
     let title_width = title.chars().count() as u16;
     // +2 so the title text fits between the block's corner glyphs
