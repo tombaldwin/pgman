@@ -66,6 +66,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Logs → SQL: a multi-line statement from a Postgres log no longer
   keeps the tab Postgres adds to each continuation line, which changed
   a string literal that spans lines.
+- Logs → SQL: Hibernate logs in logback's default pattern
+  (`%logger{36} - %msg`) are read whole. pgman cut the statement at
+  its first `:` (`like 'ref:%'`, a `10:00:00` timestamp), or dropped a
+  statement with no `:` in it.
 
 ## [0.1.0] — 2026-10-22
 

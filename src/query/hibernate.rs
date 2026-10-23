@@ -183,9 +183,23 @@ fn sql_message(line: &str) -> Option<(usize, &str)> {
             _ => Some((i, m.len())),
         }
     })?;
-    let after = &line[marker_pos + marker_len..];
-    let colon = after.find(':')?;
-    Some((marker_pos, after[colon + 1..].trim()))
+    let msg = message_after_logger(&line[marker_pos + marker_len..])?;
+    Some((marker_pos, msg))
+}
+
+/// The message after a logger name: one `:` (Spring Boot's
+/// `%logger : %msg`) or `-` (logback's default `%logger{36} - %msg`)
+/// separator, with the whitespace around it, is the pattern's; with
+/// neither (`%logger %msg`), the message starts at the first non-space
+/// character. Any later `:` or `-` is the SQL's (`like 'ref:%'`,
+/// `'10:00:00'`). `None` when the logger name runs straight into other
+/// text (`org.hibernate.SQL=DEBUG` in a config dump) — not a message.
+fn message_after_logger(after: &str) -> Option<&str> {
+    let trimmed = after.trim_start();
+    if let Some(msg) = trimmed.strip_prefix([':', '-']) {
+        return Some(msg.trim());
+    }
+    (after.is_empty() || after.starts_with(char::is_whitespace)).then(|| trimmed.trim_end())
 }
 
 /// Parse a `binding parameter …` message (Hibernate 5 or 6 form).
@@ -432,6 +446,38 @@ binding parameter [1] as [BIGINT] - [7]
         // emit a `ReconstructedQuery` with empty `raw_sql`.
         let log = "[main] org.hibernate.SQL : ";
         assert!(parse(log).is_empty());
+    }
+
+    /// Logback's default pattern, `%d{HH:mm:ss.SSS} [%thread] %-5level
+    /// %logger{36} - %msg%n`: the separator is ` - `, and a `:` in the
+    /// SQL is the SQL's.
+    #[test]
+    fn logback_default_pattern_keeps_the_whole_statement() {
+        let log = "\
+10:00:00.123 [http-nio-8080-exec-3] DEBUG org.hibernate.SQL - select c.id, c.name from customer c where c.status=? and c.region=?
+10:00:00.124 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [VARCHAR] - [active]
+10:00:00.124 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [2] as [VARCHAR] - [eu-west]
+10:00:00.130 [http-nio-8080-exec-3] DEBUG org.hibernate.SQL - select o.id from orders o where o.customer_id=? and o.note like 'ref:%'
+10:00:00.131 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [BIGINT] - [42]
+10:00:00.140 [http-nio-8080-exec-3] DEBUG org.hibernate.SQL - select o.id from orders o where o.created_at > '2026-01-01 10:00:00'::timestamptz and o.customer_id=?
+10:00:00.141 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [BIGINT] - [43]
+10:00:00.150 [main] DEBUG org.hibernate.SQL   select 1 from dual where 1=?
+10:00:00.151 [main] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [INTEGER] - [1]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                "select c.id, c.name from customer c where c.status='active' and c.region='eu-west'",
+                "select o.id from orders o where o.customer_id=42 and o.note like 'ref:%'",
+                "select o.id from orders o where o.created_at > '2026-01-01 10:00:00'::timestamptz and o.customer_id=43",
+                "select 1 from dual where 1=1",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_logger_name_running_into_other_text_is_not_a_statement() {
+        assert!(parse("logging.level.org.hibernate.SQL=DEBUG").is_empty());
     }
 
     #[test]

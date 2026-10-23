@@ -12,7 +12,8 @@ Three input shapes are recognised:
   statement, followed by the separately-logged bind parameters (`binding
   parameter [1] as [INTEGER] - [42]` on Hibernate 5, `binding parameter
   (1:INTEGER) <- [42]` on Hibernate 6). Multi-line `hibernate.format_sql=true`
-  output is reassembled. `hibernate.show_sql=true`'s console form —
+  output is reassembled. Spring Boot's default pattern (`logger : message`)
+  and logback's (`logger - message`) both work. `hibernate.show_sql=true`'s console form —
   `Hibernate: select …`, what Spring Boot prints by default — works too,
   with its binds attached.
 
