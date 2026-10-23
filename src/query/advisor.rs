@@ -138,11 +138,30 @@ impl Setting {
         self.context == "postmaster"
     }
 
-    /// As Postgres would show it: sizes in their largest exact unit,
-    /// anything else as `setting` plus its unit.
+    /// The value in milliseconds, for the time settings.
+    pub fn millis(&self) -> Option<i64> {
+        let n: i64 = self.setting.parse().ok()?;
+        let mult = match self.unit.as_deref()? {
+            "ms" => 1,
+            "s" => 1000,
+            "min" => 60_000,
+            _ => return None,
+        };
+        n.checked_mul(mult)
+    }
+
+    /// As `SHOW` would show it: sizes and times in their largest exact
+    /// unit (`128MB`, `1d`, `5s`), zero and the negative "off" values
+    /// bare (`0`, `-1`), anything else as `setting` plus its unit.
     pub fn display(&self) -> String {
+        if self.setting.parse::<i64>().is_ok_and(|n| n <= 0) {
+            return self.setting.clone();
+        }
         if let Some(b) = self.bytes() {
             return pg_size(b);
+        }
+        if let Some(ms) = self.millis() {
+            return pg_time(ms);
         }
         match &self.unit {
             Some(u) => format!("{}{u}", self.setting),
@@ -165,20 +184,41 @@ pub fn pg_size(bytes: i64) -> String {
     }
 }
 
+/// A positive millisecond count in Postgres's time syntax, in the
+/// largest unit that divides it exactly (`1d`, `5min`, `1500ms`), as
+/// `SHOW` spells it.
+pub fn pg_time(ms: i64) -> String {
+    for (unit, size) in [
+        ("d", 86_400_000),
+        ("h", 3_600_000),
+        ("min", 60_000),
+        ("s", 1000),
+    ] {
+        if ms != 0 && ms % size == 0 {
+            return format!("{}{unit}", ms / size);
+        }
+    }
+    format!("{ms}ms")
+}
+
 /// A byte count for a person: one decimal, binary units.
 pub fn human_size(bytes: i64) -> String {
     crate::query::schema::format_bytes(bytes.max(0) as u64)
 }
 
 /// A span of seconds as the two largest units: `3d 4h`, `2h 10m`,
-/// `12m`, `40s`.
+/// `12m`, `40s`; a zero second unit is left off (`1h`, not `1h 0m`).
 pub fn format_span(secs: f64) -> String {
     let s = secs.max(0.0) as u64;
     let (d, h, m) = (s / 86_400, (s % 86_400) / 3600, (s % 3600) / 60);
-    if d > 0 {
+    if d > 0 && h > 0 {
         format!("{d}d {h}h")
-    } else if h > 0 {
+    } else if d > 0 {
+        format!("{d}d")
+    } else if h > 0 && m > 0 {
         format!("{h}h {m}m")
+    } else if h > 0 {
+        format!("{h}h")
     } else if m > 0 {
         format!("{m}m")
     } else {

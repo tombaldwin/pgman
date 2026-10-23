@@ -63,7 +63,26 @@ fn setting_bytes_reads_each_unit_pg_settings_uses() {
     };
     assert_eq!(plain.bytes(), None);
     assert_eq!(plain.display(), "0.2");
-    assert_eq!(mem("5000", "ms", "user").display(), "5000ms");
+    assert_eq!(mem("5000", "ms", "user").display(), "5s");
+}
+
+/// `SHOW`'s spelling: a time in its largest exact unit, zero and -1
+/// bare (Postgres prints `0`, not `0ms`, and `-1` for "off").
+#[test]
+fn setting_display_spells_times_and_zero_as_show_does() {
+    assert_eq!(mem("0", "ms", "user").display(), "0");
+    assert_eq!(mem("-1", "kB", "superuser").display(), "-1");
+    assert_eq!(mem("0", "kB", "superuser").display(), "0");
+    assert_eq!(mem("86400000", "ms", "user").display(), "1d");
+    assert_eq!(mem("3600000", "ms", "user").display(), "1h");
+    assert_eq!(mem("300000", "ms", "user").display(), "5min");
+    assert_eq!(mem("1500", "ms", "user").display(), "1500ms");
+    assert_eq!(mem("300", "s", "sighup").display(), "5min");
+    assert_eq!(mem("90", "s", "sighup").display(), "90s");
+    assert_eq!(mem("2", "min", "sighup").display(), "2min");
+    assert_eq!(mem("86400000", "ms", "user").millis(), Some(86_400_000));
+    assert_eq!(mem("300", "s", "sighup").millis(), Some(300_000));
+    assert_eq!(mem("4096", "kB", "user").millis(), None);
 }
 
 #[test]
@@ -81,6 +100,11 @@ fn format_span_keeps_the_two_largest_units() {
     assert_eq!(format_span(2.0 * 3600.0 + 600.0), "2h 10m");
     assert_eq!(format_span(3.0 * DAY + 4.0 * 3600.0 + 59.0), "3d 4h");
     assert_eq!(format_span(-5.0), "0s");
+    // A zero second unit is left off.
+    assert_eq!(format_span(3600.0), "1h");
+    assert_eq!(format_span(3600.0 + 59.0), "1h");
+    assert_eq!(format_span(2.0 * DAY + 59.0), "2d");
+    assert_eq!(format_span(DAY + 3600.0), "1d 1h");
 }
 
 #[test]
@@ -98,7 +122,7 @@ fn window_names_the_reset_or_the_server_start() {
     assert_eq!(never.secs(), 7200.0);
     assert_eq!(
         never.describe(),
-        "counters never reset: at least 2h 0m (server started 2026-10-23 06:00:00+00)"
+        "counters never reset: at least 2h (server started 2026-10-23 06:00:00+00)"
     );
 }
 
@@ -185,7 +209,11 @@ fn a_young_window_gets_a_note_and_quiets_the_ratio_checks() {
     let young = db(1_000, 1_000_000, GIB, 3599.0);
     let note = young_window_note(&c, &young.window, &th).expect("note");
     assert_eq!(note.code, "ADV000");
-    assert!(note.detail.contains("wait until 1h 0m"), "{}", note.detail);
+    assert!(
+        note.detail.contains("wait until 1h have"),
+        "{}",
+        note.detail
+    );
     assert!(cache_hit_finding(&c, &young, None, &th).is_none());
     assert!(temp_spill_finding(&c, &young, None, &Spillers::Known(vec![]), &th).is_none());
     let cp = Checkpoints {
@@ -487,7 +515,7 @@ fn dead_tuples_under_the_trigger_blame_the_scale_factor() {
         "{:?}",
         a.evidence
     );
-    assert!(a.window.contains("last vacuumed 2h 0m ago"), "{}", a.window);
+    assert!(a.window.contains("last vacuumed 2h ago"), "{}", a.window);
     let ch = a.change.as_ref().unwrap();
     assert_eq!(
         (ch.current.as_str(), ch.suggested.as_str()),
@@ -737,7 +765,7 @@ fn session_level_values_say_they_are_this_session_s() {
     let f = lock_finding(&c, &s, &idle_timeout(&off), &th).unwrap();
     assert_eq!(
         advice(&f).change.as_ref().unwrap().current,
-        "0ms (this session)"
+        "0 (this session)"
     );
     let wm = mem("4096", "kB", "user");
     let none = Spillers::Known(vec![]);
