@@ -280,7 +280,10 @@ impl App {
         sql: String,
         decision: Decision,
     ) {
-        let Some(client) = self.client.clone() else {
+        // Through `db()`, which closes an open result cursor first: an
+        // UPDATE sent inside the cursor's transaction would be undone
+        // when the pager ends it.
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -293,6 +296,7 @@ impl App {
         self.last_error = None;
         self.last_status = Some("saving the edit…".into());
         tokio::spawn(async move {
+            let client = db.ready().await;
             let msg = match conn::run_single_row_update(&client, &sql, keep_open).await {
                 Ok(done) => AppMsg::CellUpdated {
                     generation,
