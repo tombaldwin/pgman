@@ -8,9 +8,13 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
+    // Compact, and last: the producer's own drop counter can be any
+    // u64, and a panel too narrow for the whole title loses trailing
+    // segments first — so the drop count goes before the key hints do.
+    // The monitor's status line carries it too.
     let dropped = app.tap_health.dropped_events_total;
     let dropped_suffix = if dropped > 0 {
-        format!(" · {dropped} dropped")
+        format!(" · {} dropped", compact_count(dropped))
     } else {
         String::new()
     };
@@ -32,7 +36,7 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
         String::new()
     };
     let title = format!(
-        "JDBC tap — {} · {}{dropped_suffix} · view: {view_label}{sort_suffix} · v cycle · Shift-B baseline · s sort · c clear · q close",
+        "JDBC tap — {} · {} · view: {view_label}{sort_suffix} · v cycle · Shift-B baseline · s sort · c clear · q close{dropped_suffix}",
         count_label(app.tap_health.query_count, "query", "queries"),
         count_label(app.tap_health.heartbeat_count, "heartbeat", "heartbeats"),
     );

@@ -466,6 +466,48 @@ fn fit_status_never_exceeds_width_or_ends_in_a_partial_word() {
     }
 }
 
+#[test]
+fn compact_count_shortens_large_counts_without_overstating_them() {
+    let cases: [(u64, &str); 10] = [
+        (0, "0"),
+        (9_999, "9999"),
+        (10_000, "10.0k"),
+        (12_345, "12.3k"),
+        (999_999, "999.9k"),
+        (1_000_000, "1.0M"),
+        (4_567_890_123, "4.5G"),
+        (999_999_999_999_999, "999.9T"),
+        (1_000_000_000_000_000_000, "1.0e18"),
+        (u64::MAX, "1.8e19"),
+    ];
+    for (n, want) in cases {
+        assert_eq!(compact_count(n), want, "{n}");
+    }
+}
+
+/// A producer's drop counter of 10¹⁸, shown raw, took nineteen columns
+/// of the tap monitor's title and pushed its key hints off.
+#[test]
+fn a_huge_drop_count_leaves_the_tap_monitor_key_hints_visible() {
+    let mut a = settled_app(false, false);
+    a.tap_health.dropped_events_total = 1_000_000_000_000_000_000;
+    let title = |a: &mut App, w: u16| {
+        tap_monitor_rows(a, w, 30)
+            .into_iter()
+            .find(|r| r.contains("heartbeat"))
+            .expect("title row")
+    };
+    let wide = title(&mut a, 150);
+    assert!(wide.contains("q close"), "{wide}");
+    assert!(wide.contains("1.0e18 dropped"), "{wide}");
+    // Narrower, the drop count is what gives way — not the hints.
+    let narrow = title(&mut a, 135);
+    assert!(
+        narrow.contains("q close") && !narrow.contains("dropped"),
+        "{narrow}"
+    );
+}
+
 fn hint_dump(listeners: &[crate::tap::TapListener]) -> String {
     tap_setup_hint_lines(&crate::theme::Theme::default(), listeners)
         .iter()

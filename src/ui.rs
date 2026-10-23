@@ -1150,6 +1150,28 @@ pub(crate) fn count_label(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// A count short enough for a title: exact below 10 000, then `12.3k`,
+/// `4.5M`, `1.2G`, `3.4T` (cut down, never rounded up, so they never
+/// claim more than there is), and `1.0e18` past that. A producer's
+/// raw `dropped_events_total` of 10¹⁸ took nineteen columns and pushed
+/// the key hints off the tap monitor's title. Pure / testable.
+pub(crate) fn compact_count(n: u64) -> String {
+    if n < 10_000 {
+        return n.to_string();
+    }
+    for (unit, suffix) in [
+        (1_000u64, "k"),
+        (1_000_000, "M"),
+        (1_000_000_000, "G"),
+        (1_000_000_000_000, "T"),
+    ] {
+        if n < unit * 1_000 {
+            return format!("{}.{}{suffix}", n / unit, n % unit / (unit / 10));
+        }
+    }
+    format!("{:.1e}", n as f64)
+}
+
 /// Fit a ` · `-joined panel title into `width` columns by dropping
 /// whole trailing segments, marking the cut with a trailing `…`
 /// segment. A title left to the border gets cut mid-word instead

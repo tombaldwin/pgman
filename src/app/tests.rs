@@ -4808,6 +4808,16 @@ fn tap_events_do_not_overwrite_another_status() {
 }
 
 #[test]
+fn tap_monitor_status_shortens_a_huge_drop_count() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_heartbeat(1_000_000_000_000_000_000, 1));
+    assert_eq!(
+        a.tap_health.monitor_status(&[]),
+        "JDBC tap · 0 queries · 1 heartbeat · 1.0e18 dropped (JAR backpressure)"
+    );
+}
+
+#[test]
 fn tap_monitor_status_names_the_bound_listeners_before_any_event() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.tap_listeners.push(crate::tap::TapListener {

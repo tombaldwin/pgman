@@ -1725,7 +1725,7 @@ impl TapHealth {
         let dropped_suffix = if self.dropped_events_total > 0 {
             format!(
                 " · {} dropped (JAR backpressure)",
-                self.dropped_events_total
+                crate::ui::compact_count(self.dropped_events_total)
             )
         } else {
             String::new()

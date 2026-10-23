@@ -66,6 +66,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   the JVM at the bound OTLP port.
 - The tap monitor's title is no longer cut mid-word by its border: the
   room it was fitted to left out the decoration round the panel name.
+- A producer's huge drop counter no longer pushes the tap monitor's key
+  hints off its title: counts from 10 000 up read `12.3k`, `4.5M`, …,
+  `1.0e18`, and the drop count now comes after the hints, so a narrow
+  panel gives it up first (the status line still shows it).
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2
