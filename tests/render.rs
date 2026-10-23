@@ -1980,6 +1980,25 @@ fn redaction_never_blocks_out_the_product_name_in_the_chrome() {
     }
 }
 
+/// Connected to a standby, the header wears a `replica` badge — tall
+/// and one-row headers alike — and not on a primary or before it's known.
+#[test]
+fn the_header_marks_a_standby_as_a_replica() {
+    for (w, h) in [(80, 24), (120, 40), (80, 16)] {
+        let mut a = settle_app();
+        a.in_recovery = Some(true);
+        let screen = dump(&render(&mut a, w, h));
+        let header: String = screen.lines().take(5).collect::<Vec<_>>().join("\n");
+        assert!(header.contains("replica"), "{w}x{h}:\n{header}");
+        for not in [Some(false), None] {
+            a.in_recovery = not;
+            let screen = dump(&render(&mut a, w, h));
+            let header: String = screen.lines().take(5).collect::<Vec<_>>().join("\n");
+            assert!(!header.contains("replica"), "{w}x{h} {not:?}:\n{header}");
+        }
+    }
+}
+
 /// A long RDS endpoint is cut in the header so the fields after it keep
 /// their place: Database at 80 columns (User drops first, as before),
 /// and both at 120, where the old line dropped User.

@@ -33,6 +33,7 @@ impl App {
             }
             AppMsg::Booted {
                 server_version,
+                in_recovery,
                 grid,
                 client,
                 schema_cache,
@@ -40,6 +41,7 @@ impl App {
                 ..
             } => {
                 self.conn_state = ConnState::Connected { server_version };
+                self.in_recovery = in_recovery;
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
                 // without touching the Client. Replaced on every new
                 // Booted so the dispatcher always matches the live

@@ -1653,6 +1653,10 @@ pub struct App {
     /// the ssh subprocess) only fires when the App loses the client.
     tunnel: Option<crate::tunnel::SshTunnel>,
     safety_config: SafetyConfig,
+    /// The connected server is a standby (`pg_is_in_recovery()`, asked
+    /// at every connect). `None` until known. The header wears a
+    /// `replica` badge for it, as the environments overview names one.
+    pub in_recovery: Option<bool>,
     pub read_only: bool,
     /// What `:readonly on|off` last said, or `None` if the operator
     /// never said anything. Sticky across reconnects: `read_only`
@@ -1864,6 +1868,7 @@ impl App {
             cancel_dispatcher: None,
             tunnel: None,
             safety_config,
+            in_recovery: None,
             read_only,
             read_only_override: None,
             statement_timeout_ms,

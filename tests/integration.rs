@@ -2757,6 +2757,31 @@ fn connecting_works_when_a_database_on_the_server_refuses_connect() {
     assert!(booted.grid.rows.is_empty());
 }
 
+/// Every connect asks the server whether it is a standby: the compose
+/// file's streaming standby says yes, the primary no.
+#[test]
+fn connect_and_bootstrap_reports_whether_the_server_is_a_standby() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for (dsn, want) in [(DSN, Some(false)), (STANDBY_DSN, Some(true))] {
+        let booted = rt.block_on(async {
+            let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+            let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+            pgman::conn::connect_and_bootstrap(
+                pgman::conn::Dsn::parse(dsn).unwrap(),
+                true,
+                5_000,
+                pgman::conn::BOOTSTRAP_SQL.to_string(),
+                notice_tx,
+                notification_tx,
+            )
+            .await
+        });
+        let booted = booted.unwrap_or_else(|e| panic!("{dsn}: {e}"));
+        assert_eq!(booted.in_recovery, want, "{dsn}");
+        assert_ne!(booted.server_version, "unknown", "{dsn}");
+    }
+}
+
 /// The schema fetch learns each partition's parent from a real server,
 /// sub-partitions included.
 #[test]

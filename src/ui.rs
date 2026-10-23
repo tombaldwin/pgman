@@ -354,6 +354,16 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
         Span::styled(state, state_style),
     ];
+    if shows_replica_badge(app) {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            " replica ",
+            Style::default()
+                .bg(theme.health_yellow)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if let Some(update) = &app.update_available {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
@@ -385,6 +395,13 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     ];
     head.append(&mut spans);
     f.render_widget(Paragraph::new(Line::from(head)), area);
+}
+
+/// Connected to a standby: the header says `replica`, whichever way the
+/// connection was made — `:connect` and `--dsn` too, not only an
+/// environment whose inventory names one. Pure.
+pub(crate) fn shows_replica_badge(app: &App) -> bool {
+    matches!(app.conn_state, ConnState::Connected { .. }) && app.in_recovery == Some(true)
 }
 
 /// What follows "pgman" in the header: ` 0.1.0 · 2026-10-19`, or without

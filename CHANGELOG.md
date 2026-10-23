@@ -41,6 +41,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Connected to a standby by `:connect` or `--dsn`, nothing said it was
+  one; only an environment naming a replica did. Every connect now asks
+  `pg_is_in_recovery()`, and the header wears a `replica` badge on a
+  standby whichever way it was reached.
 - A result stopped at 1000 rows said only `capped at 1000`, which read as
   though that was the whole table. It now says `more rows not fetched`,
   and the status line adds that `pgman query '…' --json` returns every
