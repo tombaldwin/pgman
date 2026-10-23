@@ -105,10 +105,16 @@ neither depends on the window, and they say "now" instead.
   MiB in total. ≥ 256 MiB per hour of the window → MED, else LOW.
   Suggested `work_mem`: twice the current; when `pg_stat_statements`
   names a top spiller whose per-call spill is under 4× the current
-  value, the next power of two above that spill (clamped to 2×–4×).
-  The suggestion is per role (`ALTER ROLE … SET work_mem`), not
-  global: `work_mem` is per sort node per connection. Up to three
-  spilling statements are listed (`temp_blks_written`, per call).
+  value, the next power of two above that spill (clamped to 2×–4×) —
+  a first step, not a fit: sorting in memory takes more than the bytes
+  spilled, and `temp_blks_written` per call sums every sort / hash node
+  and parallel worker. The suggestion is per role (`ALTER ROLE … SET
+  work_mem`), not global: `work_mem` is per sort node per connection;
+  the detail says it reaches new sessions only (a pool such as
+  HikariCP keeps its connections until `maxLifetime`, 30 min by
+  default). Up to three spilling statements are listed
+  (`temp_blks_written`, per call); one that reads `<insufficient
+  privilege>` gets the `pg_read_all_stats` / `GRANT pg_monitor` line.
 - **ADV003** — tables with ≥ 10 000 live rows whose dead tuples are ≥
   10 % of live. Cause, in order: autovacuum disabled (table reloption
   or global) → re-enable; dead past the table's own trigger

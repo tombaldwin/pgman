@@ -369,6 +369,12 @@ fn suggest_work_mem_covers_a_spill_within_two_to_four_times() {
     assert_eq!(suggest_work_mem(4 * MIB, Some(10 * MIB)).0, 16 * MIB);
     // Just under 4×: the power of two is 4× exactly.
     assert_eq!(suggest_work_mem(4 * MIB, Some(16 * MIB - 1)).0, 16 * MIB);
+    // Within reach: a first step, not a claim that it fits.
+    let (_, why) = suggest_work_mem(4 * MIB, Some(10 * MIB));
+    assert!(why.contains("a first step, not a fit"), "{why}");
+    assert!(why.contains("more than the bytes it spilled"), "{why}");
+    assert!(why.contains("parallel worker"), "{why}");
+    assert!(!why.contains("covers it"), "{why}");
     // 4× or more: twice, and the reasoning says look at the statement.
     let (v, why) = suggest_work_mem(4 * MIB, Some(16 * MIB));
     assert_eq!(v, 8 * MIB);
@@ -408,6 +414,48 @@ fn temp_spill_names_the_statements_and_their_role() {
     );
     assert!(a.evidence_sql.contains("pg_stat_statements"));
     assert!(a.change.as_ref().unwrap().rds.starts_with("per role:"));
+    // ALTER ROLE reaches new sessions only: a pool keeps its own.
+    assert!(
+        f.detail.contains("reaches new sessions only")
+            && f.detail
+                .contains("HikariCP's maxLifetime, 30 min by default"),
+        "{}",
+        f.detail
+    );
+    assert!(
+        !a.evidence.iter().any(|e| e.contains("pg_read_all_stats")),
+        "{:?}",
+        a.evidence
+    );
+}
+
+/// Without pg_read_all_stats, pg_stat_statements shows another role's
+/// statement as `<insufficient privilege>`: the evidence says why and
+/// how to see it, as ADV004 does.
+#[test]
+fn temp_spill_explains_insufficient_privilege() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let spillers = Spillers::Known(vec![Spiller {
+        query: "<insufficient privilege>".into(),
+        calls: 4,
+        temp_bytes: 40 * MIB,
+        role: "shop_app".into(),
+    }]);
+    let f = temp_spill_finding(&c, &db(1, 0, GIB, DAY), None, &spillers, &th).unwrap();
+    let a = advice(&f);
+    assert!(
+        a.evidence
+            .iter()
+            .any(|e| e.starts_with("<insufficient privilege>: pg_stat_statements shows other roles' statements only to pg_read_all_stats: GRANT pg_monitor TO")),
+        "{:?}",
+        a.evidence
+    );
+    // The role is still known: the suggestion names it.
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER ROLE shop_app SET work_mem = '16MB';")
+    );
 }
 
 #[test]

@@ -564,6 +564,10 @@ pub fn cache_hit_finding(
     })
 }
 
+/// The query text `pg_stat_statements` and `pg_stat_activity` show for
+/// another role's statement without `pg_read_all_stats`.
+pub const INSUFFICIENT_PRIVILEGE: &str = "<insufficient privilege>";
+
 /// A statement `pg_stat_statements` says spilled to temp files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spiller {
@@ -599,7 +603,7 @@ pub fn suggest_work_mem(current: i64, worst_per_call: Option<i64>) -> (i64, Stri
             (
                 fit.clamp(lo, hi),
                 format!(
-                    "the worst statement spills {} a call; this covers it",
+                    "the worst statement spills {} a call; this is a first step, not a fit — sorting it in memory takes more than the bytes it spilled, and temp_blks_written per call sums every sort and hash node and parallel worker; watch the spills after",
                     human_size(p)
                 ),
             )
@@ -655,6 +659,11 @@ pub fn temp_spill_finding(
                     crate::grid::truncate_cell(&sp.query, 120)
                 ));
             }
+            if list.iter().any(|sp| sp.query == INSUFFICIENT_PRIVILEGE) {
+                evidence.push(format!(
+                    "{INSUFFICIENT_PRIVILEGE}: pg_stat_statements shows other roles' statements only to pg_read_all_stats: GRANT pg_monitor TO <your role>"
+                ));
+            }
             let worst = list.iter().max_by_key(|sp| sp.per_call());
             (
                 worst.map(Spiller::per_call),
@@ -675,7 +684,7 @@ pub fn temp_spill_finding(
         title: format!("queries spill to temp files ({} so far)", human_size(s.temp_bytes)),
         object: ctx.database.clone(),
         detail: format!(
-            "sorts and hashes bigger than work_mem ({}) write temp files. work_mem is per sort node per connection, so raise it for the role that spills rather than server-wide{}",
+            "sorts and hashes bigger than work_mem ({}) write temp files. work_mem is per sort node per connection, so raise it for the role that spills rather than server-wide. ALTER ROLE … SET reaches new sessions only: a connection pool keeps its connections until they are recycled (HikariCP's maxLifetime, 30 min by default) or the application restarts{}",
             pg_size(current),
             if matches!(spillers, Spillers::Unavailable(_)) {
                 "; log_temp_files = 0 logs each spilling statement"
