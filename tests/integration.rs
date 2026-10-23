@@ -6661,6 +6661,63 @@ async fn a_session_already_in_a_transaction_runs_unpaged_and_untouched() {
     client.batch_execute("ROLLBACK").await.unwrap();
 }
 
+/// A paged result keeps where each column came from, so `u` can edit
+/// a cell of it: behind the cursor, and on the unpaged path a session
+/// already in a transaction takes. A computed column has no origin.
+#[tokio::test]
+async fn a_paged_result_keeps_its_column_origins() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (writer, _w) = writable_client().await;
+    let table = it_name("paging_origins");
+    writer
+        .batch_execute(&format!(
+            "DROP TABLE IF EXISTS {table}; CREATE TABLE {table} (id int PRIMARY KEY, v text); \
+             INSERT INTO {table} SELECT g, 'v' || g FROM generate_series(1, 1500) g"
+        ))
+        .await
+        .expect("create the table");
+    let oid: u32 = writer
+        .query_one(&format!("SELECT '{table}'::regclass::oid"), &[])
+        .await
+        .unwrap()
+        .get(0);
+    let want = vec![
+        Some(pgman::grid::ColumnOrigin {
+            table_oid: oid,
+            attnum: 2,
+        }),
+        Some(pgman::grid::ColumnOrigin {
+            table_oid: oid,
+            attnum: 1,
+        }),
+        None,
+    ];
+    let sql = format!("SELECT v, id, id + 1 AS next FROM {table} ORDER BY id");
+    let (client, _t) = lib_client().await;
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(sql.clone(), PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    assert!(opened.cursor.is_some(), "behind the cursor");
+    assert_eq!(opened.origins, want, "behind the cursor");
+    // Close the cursor's transaction, or the DROP below waits on it.
+    pager.barrier().await.unwrap();
+
+    let (client, _t2) = lib_client().await;
+    client.batch_execute("BEGIN").await.unwrap();
+    let opened = Pager::spawn(client.clone())
+        .open(sql, PAGE_ROWS)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.in_transaction, "the unpaged path");
+    assert_eq!(opened.origins, want, "the unpaged path");
+    client.batch_execute("ROLLBACK").await.unwrap();
+    let _ = writer.batch_execute(&format!("DROP TABLE {table}")).await;
+}
+
 /// A statement that fails while the cursor opens leaves no transaction
 /// behind, and the error is the server's.
 #[tokio::test]

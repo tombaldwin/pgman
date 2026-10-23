@@ -777,6 +777,9 @@ mod live {
         a.splash_visible = false;
         a.splash_until = None;
         a.client = Some(client.clone());
+        // As a connect does (`handle.rs`): a plain SELECT runs behind
+        // the pager, so its origins must come through that route too.
+        a.pager = Some(crate::query::paging::Pager::spawn(client.clone()));
         a.read_only = false;
         a.conn_state = ConnState::Connected {
             server_version: "16".into(),
