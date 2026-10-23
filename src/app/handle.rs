@@ -1,15 +1,15 @@
 use super::*;
 
 impl App {
-    /// Apply a finished message from a spawned task. Tap events
-    /// bypass the generation filter — the tap listener is bound
-    /// at startup and lives independently of the DB connection,
-    /// so events arriving across a reconnect are still meaningful.
+    /// Apply a finished message from a spawned task. Messages from a
+    /// superseded connection generation are dropped, except the kinds
+    /// that don't belong to a connection (update check, environments,
+    /// terminate). Tap events don't come through here at all: they
+    /// have their own bounded channel (`App::tap_tx_clone`).
     pub(super) fn on_msg(&mut self, msg: AppMsg) {
         if !matches!(
             msg,
-            AppMsg::TapEvent { .. }
-                | AppMsg::UpdateCheck(_)
+            AppMsg::UpdateCheck(_)
                 | AppMsg::Terminate
                 | AppMsg::EnvironmentsLoaded(_)
                 | AppMsg::EnvSecretResolved { .. }
@@ -444,7 +444,6 @@ impl App {
                     self.notifications.items.drain(..drop);
                 }
             }
-            AppMsg::TapEvent { event } => self.on_tap_event(event),
             AppMsg::UpdateCheck(latest) => {
                 self.update_check_done = true;
                 self.update_available = latest;

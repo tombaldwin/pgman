@@ -31,6 +31,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than
   their start, which inflated the Pools view's peak concurrency.
+- A burst of tap events no longer piles up in memory behind the
+  screen. pgman redrew once per event, so 4 000 large events took over
+  30 s to land and held more than 800 MiB on the way; they now land in
+  a few frames (under a second, about 100 MiB). The hop into the app is
+  bounded, so events pgman cannot keep up with are dropped and counted
+  on the `DROP` badge instead of queueing without limit.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

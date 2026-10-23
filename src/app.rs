@@ -1661,6 +1661,9 @@ pub struct App {
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
     msg_rx: Option<UnboundedReceiver<AppMsg>>,
+    /// The tap's own channel into the run loop ([`App::tap_tx_clone`]).
+    tap_tx: mpsc::Sender<crate::tap::TapEvent>,
+    tap_rx: Option<mpsc::Receiver<crate::tap::TapEvent>>,
 
     /// Whether an update check may run this session at all.
     /// Defaults to `false` — `App::new` alone (as every test harness
@@ -1690,11 +1693,20 @@ pub struct App {
 }
 
 impl App {
-    /// Clone of the message sender, for spawning listeners
-    /// that need to push events back into the run loop from
-    /// outside the App (the JDBC-tap listener, primarily).
+    /// Clone of the message sender, for pushing messages into the run
+    /// loop from outside the App.
     pub fn msg_tx_clone(&self) -> UnboundedSender<AppMsg> {
         self.msg_tx.clone()
+    }
+
+    /// Sender for the run loop's tap channel — bounded at
+    /// [`TAP_APP_CHANNEL_CAPACITY`], unlike the message channel. The
+    /// tap adapter in `main.rs` awaits on it, so an App that falls
+    /// behind backs the events up into the listeners' own bounded
+    /// channel, where an overflow is dropped and counted
+    /// (`tap::dropped_at_listener`) instead of queueing without limit.
+    pub fn tap_tx_clone(&self) -> mpsc::Sender<crate::tap::TapEvent> {
+        self.tap_tx.clone()
     }
 
     pub fn new(
@@ -1708,6 +1720,7 @@ impl App {
         let read_only = profile.read_only;
         let statement_timeout_ms = profile.statement_timeout_ms;
         let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+        let (tap_tx, tap_rx) = mpsc::channel(TAP_APP_CHANNEL_CAPACITY);
         // When the operator hasn't pre-selected a DSN and we discovered
         // *any* candidates, the post-splash mode is the picker — that's
         // the "lovely discovery" surface. Splash shows first, but never
@@ -1853,6 +1866,8 @@ impl App {
             statement_timeout_ms,
             msg_tx,
             msg_rx: Some(msg_rx),
+            tap_tx,
+            tap_rx: Some(tap_rx),
             update_check_enabled: false,
             update_available: None,
             update_check_done: false,
@@ -1921,6 +1936,10 @@ impl App {
             .msg_rx
             .take()
             .expect("App::run must be called exactly once");
+        let mut tap_rx = self
+            .tap_rx
+            .take()
+            .expect("App::run must be called exactly once");
 
         // Demo mode renders a synthetic, pre-populated app — never
         // open a real connection.
@@ -1974,10 +1993,15 @@ impl App {
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
                     // Everything else already queued lands before the
-                    // next draw: one frame per message held a tap burst
-                    // in the channel, redrawing — and re-aggregating —
-                    // for every event.
+                    // next draw, rather than one draw per message.
                     self.drain_pending_msgs(&mut msg_rx);
+                }
+                Some(event) = tap_rx.recv() => {
+                    // Likewise every tap event already queued, as one
+                    // batch: a frame per event held a burst in the
+                    // channel, redrawing — and re-aggregating — for
+                    // each.
+                    self.on_tap_events(drain_tap_batch(event, &mut tap_rx));
                 }
                 _ = tokio::time::sleep_until(
                     tokio::time::Instant::from_std(draft_save_at.unwrap_or_else(Instant::now)),
@@ -2116,30 +2140,18 @@ impl App {
 
     /// Apply up to [`MSG_DRAIN_PER_FRAME`] − 1 messages already waiting
     /// on `rx`, without blocking, so a backlog costs one draw rather
-    /// than one per message. Consecutive tap events fold as one batch
-    /// ([`Self::on_tap_events`]); any other message is applied in its
-    /// place in the stream, after the tap events queued ahead of it.
-    /// The cap keeps a firehose from starving key input: the loop goes
-    /// back to `select!` — and the key channel — after each batch.
+    /// than one per message. The cap keeps a flood from starving key
+    /// input: the loop goes back to `select!` — and the key channel —
+    /// after each batch.
     fn drain_pending_msgs(&mut self, rx: &mut UnboundedReceiver<AppMsg>) {
-        let mut taps: Vec<crate::tap::TapEvent> = Vec::new();
         for _ in 1..MSG_DRAIN_PER_FRAME {
             if self.should_quit {
                 break;
             }
             match rx.try_recv() {
-                Ok(AppMsg::TapEvent { event }) => taps.push(event),
-                Ok(msg) => {
-                    if !taps.is_empty() {
-                        self.on_tap_events(std::mem::take(&mut taps));
-                    }
-                    self.on_msg(msg);
-                }
+                Ok(msg) => self.on_msg(msg),
                 Err(_) => break,
             }
-        }
-        if !taps.is_empty() {
-            self.on_tap_events(taps);
         }
     }
 
@@ -5787,8 +5799,34 @@ pub const TAP_CAP: usize = 2000;
 /// waited for, plus up to this many − 1 already queued behind it
 /// ([`App::drain_pending_msgs`]). Large enough that a tap burst lands
 /// in a handful of frames, small enough that a key press waits at most
-/// one batch.
+/// one batch. Tap events are batched to the same cap
+/// ([`drain_tap_batch`]).
 pub const MSG_DRAIN_PER_FRAME: usize = 1024;
+
+/// Capacity of the tap adapter → run loop channel
+/// ([`App::tap_tx_clone`]). Bounded so an App that falls behind holds
+/// at most this many events here; the backlog past it waits in the
+/// listeners' own channel (`tap::TAP_CHANNEL_CAPACITY`), whose
+/// overflow is dropped and counted. A quarter of a frame's batch, so a
+/// full channel is emptied in one wake.
+pub const TAP_APP_CHANNEL_CAPACITY: usize = 256;
+
+/// `first`, plus the tap events already queued behind it, up to
+/// [`MSG_DRAIN_PER_FRAME`] in all — one frame's worth for
+/// [`App::on_tap_events`]. Never waits.
+fn drain_tap_batch(
+    first: crate::tap::TapEvent,
+    rx: &mut mpsc::Receiver<crate::tap::TapEvent>,
+) -> Vec<crate::tap::TapEvent> {
+    let mut batch = vec![first];
+    while batch.len() < MSG_DRAIN_PER_FRAME {
+        match rx.try_recv() {
+            Ok(event) => batch.push(event),
+            Err(_) => break,
+        }
+    }
+    batch
+}
 
 /// Encode a multi-line SQL entry to a single line: `\\` → `\\\\`,
 /// `\n` → `\\n`. Operation is reversible via [`decode_history_line`].

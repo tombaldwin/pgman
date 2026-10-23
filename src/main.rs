@@ -1,7 +1,7 @@
 //! pgman binary entry point — argument parsing, logging, then the TUI.
 
 use clap::Parser;
-use pgman::app::{AppMsg, DataSourcePick};
+use pgman::app::DataSourcePick;
 use pgman::discover::{
     discover_intellij_datasources, discover_spring_datasources, project_connection_pick,
 };
@@ -486,7 +486,7 @@ async fn main() -> anyhow::Result<()> {
     let tap_auto_enabled = cli.tap_listen.is_none() && tap_listen_effective.is_some();
     //
     // Both --tap-listen and --tap-otlp share one adapter task
-    // that translates `tap::TapEvent` → `AppMsg::TapEvent`
+    // that hands `tap::TapEvent`s to the App on its bounded tap channel
     // so the tap module stays App-agnostic.
     // --tap-record alone wouldn't see any events (it sits on
     // the adapter, which only gets fed from a transport).
@@ -509,7 +509,7 @@ async fn main() -> anyhow::Result<()> {
         || cli.tap_replay.is_some()
         || cli.tap_udp.is_some();
     let tap_channels = if needs_tap_adapter {
-        let app_tx = application.msg_tx_clone();
+        let app_tx = application.tap_tx_clone();
         // Two bounded channels so replay can't starve the live
         // transports. Live (TCP / UDP / OTLP) listeners share
         // `live_tap_tx` and try_send through forward_or_drop —
@@ -612,9 +612,15 @@ async fn main() -> anyhow::Result<()> {
                 // failure disables the recorder for this
                 // session (rather than spamming the log for
                 // every subsequent event).
-                let app_send = app_tx.send(AppMsg::TapEvent {
-                    event: event.clone(),
-                });
+                //
+                // Awaited: the App's tap channel is bounded, so an
+                // App that falls behind stalls this task, the
+                // listeners' channel fills, and the listeners drop
+                // and count the overflow (`tap::dropped_at_listener`)
+                // — the hop that used to be unbounded queued a burst
+                // here without limit and without counting it. Replay
+                // waits too, keeping its delivery guarantee.
+                let app_send = app_tx.send(event.clone()).await;
                 if let Some(f) = record_file.as_mut() {
                     // Drop-marker: when the listener has
                     // dropped events since the last write, write
