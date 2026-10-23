@@ -847,12 +847,13 @@ const ERROR_ICON: &str = " ⚠ ";
 pub(crate) const ERROR_FOOTER_MAX_ROWS: u16 = 3;
 
 /// The pointer to the error overlay that ends the footer's error: `!`
-/// where no character is being typed; F2 (fn-F2 on a Mac) in the
-/// editor and the prompts, where `!` is a character. Empty when there
-/// is no detail to open.
+/// where no character is being typed; in the editor and the prompts,
+/// where `!` is a character, F2 — and `:error`, since F2 takes fn on a
+/// Mac and an F-key must never be the only way. Empty when there is no
+/// detail to open.
 fn error_pointer(app: &App) -> &'static str {
     match app.last_error_detail {
-        Some(_) if app.mode.is_text_input() => " · F2 detail",
+        Some(_) if app.mode.is_text_input() => " · F2 / :error detail",
         Some(_) => " · ! detail",
         None => "",
     }

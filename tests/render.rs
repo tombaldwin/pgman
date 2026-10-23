@@ -2271,14 +2271,14 @@ fn a_long_error_footer_keeps_badges_start_and_pointer_at_60_80_120() {
             dump(&buf)
         );
         assert!(
-            last.ends_with("· F2 detail"),
+            last.trim_end().ends_with("F2 / :error detail"),
             "{w}x{h}: the pointer ends the footer:\n{}",
             dump(&buf)
         );
         let shown: String = footer.concat();
         if !shown.contains("does not exist") {
             assert!(
-                shown.contains("… · F2 detail"),
+                shown.contains("… · F2 / :error detail"),
                 "{w}x{h}: a cut message says so:\n{}",
                 dump(&buf)
             );

@@ -20,6 +20,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- In the editor and the prompts the error footer points at `F2 / :error
+  detail`, not F2 alone: F2 takes fn on a Mac.
 - The start card's `recent` list says how to bring an entry back: `in
   the editor, ctrl-p recalls · ctrl-r searches`.
 - Loading a saved query (after its `:param` values, if any) ends the

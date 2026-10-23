@@ -1700,7 +1700,10 @@ fn the_error_pointer_names_the_key_that_works_here() {
     assert!(f.contains("· ! detail"), "{f}");
     app.mode = crate::app::Mode::Editor;
     let f = footer(&mut app);
-    assert!(f.contains("· F2 detail") && !f.contains("! detail"), "{f}");
+    assert!(
+        f.contains("· F2 / :error detail") && !f.contains("· ! detail"),
+        "{f}"
+    );
 }
 
 #[test]
@@ -1879,7 +1882,7 @@ fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
         .sum();
     let budgeted = error_footer_rows(
         &footer_text(app.last_error.as_deref().unwrap()),
-        " · F2 detail",
+        " · F2 / :error detail",
         80 - badges - display_width(ERROR_ICON),
         ERROR_FOOTER_MAX_ROWS as usize,
     );
@@ -1895,7 +1898,7 @@ fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(footer.contains("safety.toml"), "{footer}");
-    assert!(footer.contains("F2 detail"), "{footer}");
+    assert!(footer.contains("F2 / :error detail"), "{footer}");
     assert!(!footer.contains("/home/op"), "path in the footer: {footer}");
     assert!(!footer.contains('…'), "the footer was cut: {footer}");
 
