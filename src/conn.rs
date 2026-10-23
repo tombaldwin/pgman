@@ -255,6 +255,15 @@ pub enum ReadOnlyCause {
     Profile {
         safety_toml: Option<std::path::PathBuf>,
     },
+    /// [`Self::Profile`], where this project's `.pgman/pgman.toml`
+    /// turned `read_only` on in `block` (`[safety.databases.<db>]` or
+    /// `[safety.default]`) — and `personal` when the personal side has
+    /// it on as well.
+    Project {
+        safety_toml: Option<std::path::PathBuf>,
+        personal: bool,
+        block: String,
+    },
     /// `:readonly on` in this session.
     Toggle,
     /// None of pgman's settings: a `SET`, `BEGIN READ ONLY`, or the
@@ -282,7 +291,15 @@ impl ReadOnlyCause {
         } else if replica_pin {
             Self::ReplicaPin
         } else if cfg.profile_for(db).read_only {
-            Self::Profile { safety_toml }
+            let origin = cfg.read_only_origin(db);
+            match origin.project {
+                Some(block) => Self::Project {
+                    safety_toml,
+                    personal: origin.personal,
+                    block,
+                },
+                None => Self::Profile { safety_toml },
+            }
         } else if toggle_on {
             Self::Toggle
         } else {
@@ -337,6 +354,30 @@ fn read_only_refusal_hint(
                 path.display()
             )),
         ),
+        ReadOnlyCause::Project {
+            safety_toml,
+            personal,
+            block,
+        } => {
+            let project = format!(
+                "read_only = true in this project's .pgman/pgman.toml {block} · set read_only = false there and restart pgman to write (safety.toml can't loosen it)"
+            );
+            let (footer, detail) = match (personal, safety_toml) {
+                (false, _) => (format!("read-only by .pgman/pgman.toml ({block}) — see docs/configuration.md"), project),
+                (true, Some(path)) => (
+                    format!("read-only by safety.toml and .pgman/pgman.toml ({block}) — see docs/configuration.md"),
+                    format!("{project}\nread_only = true in {} too", path.display()),
+                ),
+                (true, None) => (
+                    format!("read-only by default and by .pgman/pgman.toml ({block}) — see docs/configuration.md"),
+                    format!("{project}\npgman --init-config writes safety.toml, where read_only = false is needed too"),
+                ),
+            };
+            ReadOnlyHint {
+                footer,
+                detail: Some(detail),
+            }
+        }
         ReadOnlyCause::Toggle => hint("read-only by :readonly on · :readonly off to write", None),
         ReadOnlyCause::Elsewhere { standby_unknown } => hint(
             if *standby_unknown {
@@ -3535,6 +3576,79 @@ mod tests {
         .and_then(|h| h.detail)
         .expect("says where to look");
         assert!(detail_hint.contains("SHOW default_transaction_read_only"));
+    }
+
+    /// A profile the project's `.pgman/pgman.toml` made read-only: the
+    /// footer names that file and block, the detail says safety.toml
+    /// can't loosen it — and, when the personal side is read-only too,
+    /// that it needs changing as well.
+    #[test]
+    fn a_project_made_read_only_refusal_names_the_project_file() {
+        let detail = QueryErrDetail {
+            code: Some("25006".to_string()),
+            ..Default::default()
+        };
+        let msg = "cannot execute UPDATE in a read-only transaction";
+        let hint = |personal, safety_toml: Option<&str>| {
+            read_only_refusal_hint(
+                Some(&detail),
+                msg,
+                &ReadOnlyCause::Project {
+                    safety_toml: safety_toml.map(std::path::PathBuf::from),
+                    personal,
+                    block: "[safety.databases.ledger]".into(),
+                },
+            )
+            .expect("25006 maps to a hint")
+        };
+        let only = hint(false, Some("/x/safety.toml"));
+        assert_eq!(
+            only.footer,
+            "read-only by .pgman/pgman.toml ([safety.databases.ledger]) — see docs/configuration.md"
+        );
+        let d = only.detail.unwrap();
+        assert!(d.contains("safety.toml can't loosen it"), "{d}");
+        assert!(!d.contains("/x/safety.toml"), "{d}");
+        let both = hint(true, Some("/x/safety.toml"));
+        assert!(both
+            .footer
+            .starts_with("read-only by safety.toml and .pgman/pgman.toml"));
+        assert!(both
+            .detail
+            .unwrap()
+            .contains("read_only = true in /x/safety.toml too"));
+        let default_too = hint(true, None);
+        assert!(default_too
+            .footer
+            .starts_with("read-only by default and by .pgman/pgman.toml"));
+
+        // `for_session` picks it from the merge's record.
+        let mut writable = crate::safety::SafetyConfig::default();
+        writable.default.read_only = false;
+        let project = crate::project::ProjectSafety {
+            default: None,
+            databases: [(
+                "ledger".to_string(),
+                crate::safety::SafetyProfile::default(),
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let cfg = crate::project::merge_safety(writable, Some(&project));
+        assert_eq!(
+            ReadOnlyCause::for_session(&cfg, "ledger", None, Some(false), false, false),
+            ReadOnlyCause::Project {
+                safety_toml: None,
+                personal: false,
+                block: "[safety.databases.ledger]".into(),
+            }
+        );
+        assert_eq!(
+            ReadOnlyCause::for_session(&cfg, "other", None, Some(false), false, false),
+            ReadOnlyCause::Elsewhere {
+                standby_unknown: false
+            }
+        );
     }
 
     /// The order a session's cause is decided in: a standby whatever

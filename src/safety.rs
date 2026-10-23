@@ -155,6 +155,29 @@ impl Default for SafetyProfile {
 pub struct SafetyConfig {
     pub default: SafetyProfile,
     pub databases: HashMap<String, SafetyProfile>,
+    /// Where `read_only` came from once a project's `[safety]` block
+    /// was merged in (`project::merge_safety`): per database the merge
+    /// touched, and for `[default]` when the project set one. Empty
+    /// without a project. Never read from or written to a file.
+    #[serde(skip)]
+    pub read_only_origins: HashMap<String, ReadOnlyOrigin>,
+    #[serde(skip)]
+    pub default_read_only_origin: Option<ReadOnlyOrigin>,
+}
+
+/// Which file made a database read-only, so a refusal names the file
+/// and section to change: the personal `safety.toml` (or the built-in
+/// default without one), the project's `.pgman/pgman.toml`, or both.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadOnlyOrigin {
+    /// The personal side has `read_only` on for the database.
+    pub personal: bool,
+    /// ... from the database's own `[databases.<db>]` entry, not
+    /// `[default]`.
+    pub personal_own_entry: bool,
+    /// The project block that has `read_only` on — `[safety.default]`
+    /// or `[safety.databases.<db>]` — when one does.
+    pub project: Option<String>,
 }
 
 impl SafetyConfig {
@@ -162,6 +185,34 @@ impl SafetyConfig {
     /// explicit entry.
     pub fn profile_for(&self, db: &str) -> &SafetyProfile {
         self.databases.get(db).unwrap_or(&self.default)
+    }
+
+    /// Where `db`'s `read_only` came from. Without a project merge
+    /// everything is the personal side's: its own entry when it has
+    /// one, else `[default]`. Pure.
+    pub fn read_only_origin(&self, db: &str) -> ReadOnlyOrigin {
+        if let Some(origin) = self.read_only_origins.get(db) {
+            return origin.clone();
+        }
+        if let Some(own) = self.databases.get(db) {
+            return ReadOnlyOrigin {
+                personal: own.read_only,
+                personal_own_entry: true,
+                project: None,
+            };
+        }
+        self.read_only_origin_of_default()
+    }
+
+    /// Where `[default]`'s `read_only` came from. Pure.
+    pub fn read_only_origin_of_default(&self) -> ReadOnlyOrigin {
+        self.default_read_only_origin
+            .clone()
+            .unwrap_or(ReadOnlyOrigin {
+                personal: self.default.read_only,
+                personal_own_entry: false,
+                project: None,
+            })
     }
 
     /// The operator's personal `safety.toml` under `util::config_dir()`.

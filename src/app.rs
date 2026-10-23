@@ -75,15 +75,18 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
 }
 
 /// `:readonly off` refused by the profile: where the setting lives and
-/// what to change. `safety.toml` is read at start, so the next step
-/// ends in a restart. Pure.
+/// what to change — the personal `safety.toml` (or the built-in default
+/// without one), this project's `.pgman/pgman.toml`, or both, as the
+/// merge recorded (`SafetyConfig::read_only_origin`). Both files are
+/// read at start, so the next step ends in a restart. Pure.
 pub fn readonly_off_refusal(
     cfg: &safety::SafetyConfig,
     db: &str,
     safety_toml_exists: bool,
 ) -> String {
-    let own_entry = cfg.databases.contains_key(db);
-    match (safety_toml_exists, own_entry) {
+    let origin = cfg.read_only_origin(db);
+    let personal = || {
+        match (safety_toml_exists, origin.personal_own_entry) {
         (false, _) => crate::conn::READ_ONLY_DEFAULT_HINT.to_string(),
         (true, true) => format!(
             "{db} is read-only in safety.toml ([databases.{db}]) · set read_only = false there and restart pgman to write"
@@ -92,6 +95,23 @@ pub fn readonly_off_refusal(
             "read-only is safety.toml's [default] · add [databases.{db}] with read_only = false and restart pgman to write"
         ),
     }
+    };
+    let Some(block) = origin.project.as_deref() else {
+        return personal();
+    };
+    if !origin.personal {
+        return format!(
+            "{db} is read-only in this project's .pgman/pgman.toml ({block}) · set read_only = false there and restart pgman to write"
+        );
+    }
+    let mine = match (safety_toml_exists, origin.personal_own_entry) {
+        (false, _) => "by default (no safety.toml)".to_string(),
+        (true, true) => format!("in safety.toml ([databases.{db}])"),
+        (true, false) => "in safety.toml's [default]".to_string(),
+    };
+    format!(
+        "{db} is read-only {mine} and in this project's .pgman/pgman.toml ({block}) · both need read_only = false, then restart pgman"
+    )
 }
 
 /// The status line when the query Enter loaded from the log picker

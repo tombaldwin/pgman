@@ -155,7 +155,10 @@ Each field takes the stricter of the personal and project value:
 smaller non-zero value, guards take the stricter of allow < confirm <
 block. A `[safety]` block is a *complete* profile — any field it omits
 reverts to pgman's own strict default, not your personal one. `--batch`
-applies the same merge.
+applies the same merge. When this file is what keeps a database
+read-only, `:readonly off`, `u` and a refused write name it and its
+block (`.pgman/pgman.toml ([safety.databases.ledger])`), not a
+`safety.toml` section — and both files when both say so.
 
 `[patches]` is read only by the MCP server's `pending_patches` tool
 ([MCP server](mcp.md)). A patch's id is the value its own version-row

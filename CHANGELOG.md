@@ -288,7 +288,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `safety.toml` only when the profile made the session read-only: a
   standby, `:readonly on`, or a `SET` / `BEGIN READ ONLY` / role default
   under a writable profile each says so instead of sending the operator
-  to a file that already says `read_only = false`.
+  to a file that already says `read_only = false`. A database the
+  project's `.pgman/pgman.toml` keeps read-only is described as that
+  file's block, by the refusal and by `:readonly off`, instead of as a
+  `[databases.<db>]` section of `safety.toml` that the operator's file
+  doesn't have.
 - A completion popup the editor opened on its own (after `.` or `FROM `)
   that narrows to nothing as you type on now closes without leaving
   `completion: no matches for …` in the footer. A popup Tab opened still

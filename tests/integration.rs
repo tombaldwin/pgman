@@ -1102,6 +1102,40 @@ fn batch_read_only_refusal_under_a_writable_profile_does_not_blame_safety_toml()
     }
 }
 
+/// A database the project's `.pgman/pgman.toml` keeps read-only, under a
+/// writable personal profile: the refusal names the project's file and
+/// block, not a `safety.toml` section the operator's file doesn't have.
+#[test]
+fn batch_read_only_refusal_from_the_project_file_names_it() {
+    let home = scratch_home("readonly-project", WRITABLE_PROFILE);
+    std::fs::create_dir_all(home.join(".pgman")).unwrap();
+    std::fs::write(
+        home.join(".pgman/pgman.toml"),
+        "[safety.databases.pgman_test]\nread_only = true\n",
+    )
+    .unwrap();
+    let out = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["--batch", "--dsn", DSN, "--yes", "--sql"])
+        .arg("CREATE TABLE pgman_it_ro_project (id int)")
+        .output()
+        .expect("spawn pgman");
+    let _ = std::fs::remove_dir_all(home.join(".pgman"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the write must be refused: {stderr}");
+    assert!(
+        stderr.contains(
+            "hint: read-only by .pgman/pgman.toml ([safety.databases.pgman_test]) — see docs/configuration.md"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("safety.toml can't loosen it"), "{stderr}");
+}
+
 #[test]
 fn batch_read_only_transaction_refusal_without_a_profile_says_how_to_get_one() {
     // Same server-side 25006 refusal, but under the built-in default

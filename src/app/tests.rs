@@ -9570,6 +9570,43 @@ fn readonly_off_refusal_names_the_entry_to_change() {
     );
 }
 
+/// A database read-only by the project's `.pgman/pgman.toml` is
+/// described as that file's block — not a `[databases.<db>]` the
+/// personal `safety.toml` doesn't have — and one read-only in both says
+/// both need changing.
+#[test]
+fn readonly_off_refusal_names_the_project_file_when_it_set_read_only() {
+    let ro = |read_only| crate::safety::SafetyProfile {
+        read_only,
+        ..Default::default()
+    };
+    let project = |db: &str| crate::project::ProjectSafety {
+        default: None,
+        databases: [(db.to_string(), ro(true))].into_iter().collect(),
+    };
+    let mut writable = SafetyConfig::default();
+    writable.default.read_only = false;
+    let cfg = crate::project::merge_safety(writable, Some(&project("ledger")));
+    for file in [true, false] {
+        assert_eq!(
+            readonly_off_refusal(&cfg, "ledger", file),
+            "ledger is read-only in this project's .pgman/pgman.toml ([safety.databases.ledger]) · set read_only = false there and restart pgman to write"
+        );
+    }
+    let mut personal = SafetyConfig::default();
+    personal.databases.insert("ledger".into(), ro(true));
+    let cfg = crate::project::merge_safety(personal, Some(&project("ledger")));
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", true),
+        "ledger is read-only in safety.toml ([databases.ledger]) and in this project's .pgman/pgman.toml ([safety.databases.ledger]) · both need read_only = false, then restart pgman"
+    );
+    let cfg = crate::project::merge_safety(SafetyConfig::default(), Some(&project("ledger")));
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", false),
+        "ledger is read-only by default (no safety.toml) and in this project's .pgman/pgman.toml ([safety.databases.ledger]) · both need read_only = false, then restart pgman"
+    );
+}
+
 #[test]
 fn readonly_off_on_a_pinned_database_names_its_entry() {
     let mut cfg = SafetyConfig::default();
