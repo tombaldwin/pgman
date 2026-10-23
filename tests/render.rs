@@ -1944,6 +1944,37 @@ fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
     }
 }
 
+/// A database named after the product: redaction blocks out its own
+/// part (`acme`) but never pgman's chrome — the title kept reading
+/// `▓▓▓▓▓ 0.1.0` because `pgman_test`'s `pgman` matched it.
+#[test]
+fn redaction_never_blocks_out_the_product_name_in_the_chrome() {
+    let title = format!("pgman {}", env!("CARGO_PKG_VERSION"));
+    for connected in [true, false] {
+        let mut a = settle_app();
+        a.dsn = Some(Dsn::parse("postgres://app@db.example.internal:5432/pgman_acme").unwrap());
+        if !connected {
+            a.conn_state = ConnState::Disconnected;
+        }
+        a.redact = true;
+        for (w, h) in [(80, 24), (120, 40)] {
+            let screen = dump(&render(&mut a, w, h));
+            let at = format!("{w}x{h} connected={connected}");
+            assert!(screen.contains(&title), "{at} title redacted:\n{screen}");
+            assert!(!screen.contains("acme"), "{at} acme leaked:\n{screen}");
+            if connected {
+                // The name is on screen, its own part blocked out.
+                assert!(screen.contains("pgman_▓▓▓▓"), "{at}:\n{screen}");
+            } else {
+                assert!(
+                    screen.contains("start pgman with --dsn"),
+                    "{at} hint redacted:\n{screen}"
+                );
+            }
+        }
+    }
+}
+
 /// A long RDS endpoint is cut in the header so the fields after it keep
 /// their place: Database at 80 columns (User drops first, as before),
 /// and both at 120, where the old line dropped User.

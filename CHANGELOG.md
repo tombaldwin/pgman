@@ -27,6 +27,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `--redact` blocked out pgman's own name — the title read `▓▓▓▓▓ 0.1.0`
+  — when a database name had `pgman` in it (`pgman_test`). The product
+  name is now never redacted; the rest of such a name still is.
 - A typo like `selec 1;` no longer reads as a guarded write. It is still
   guarded (pgman never assumes an unrecognised statement is safe), but the
   confirm card now says "`selec` isn't an SQL statement pgman recognises —
