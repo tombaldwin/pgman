@@ -121,7 +121,7 @@ impl App {
             .tap_nav
             .events_cursor
             .min(self.tap_events.len().saturating_sub(1));
-        self.last_status = Some(self.tap_health.monitor_status());
+        self.last_status = Some(self.tap_health.monitor_status(&self.tap_listeners));
         self.mode = Mode::TapMonitor;
     }
 

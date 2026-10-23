@@ -1470,6 +1470,10 @@ pub struct App {
     /// heartbeats. Lets the chrome badge distinguish "JAR
     /// connected, no traffic" from "JAR gone."
     pub tap_health: TapHealth,
+    /// The tap listeners that bound at startup (set by `main.rs`), so
+    /// the monitor's setup hint and status say where pgman is really
+    /// listening. Empty when no listener bound.
+    pub tap_listeners: Vec<crate::tap::TapListener>,
     /// Captured hotspots snapshot for the baseline-diff view.
     /// `None` until the operator presses `B`.
     pub tap_baseline: Option<TapBaseline>,
@@ -1801,6 +1805,7 @@ impl App {
             tap_cache: crate::tap::TapInsightsCache::default(),
             tap_nav: TapNavUi::default(),
             tap_health: TapHealth::default(),
+            tap_listeners: Vec::new(),
             tap_baseline: None,
             saved_queries: crate::saved::SavedQueries::default(),
             saved_queries_file: saved_queries_path(),
@@ -2200,7 +2205,7 @@ impl App {
         // summary is replaced — any other status (a sort flash, an
         // error) is the operator's and stays.
         let shown_summary = (self.mode == Mode::TapMonitor)
-            .then(|| self.tap_health.monitor_status())
+            .then(|| self.tap_health.monitor_status(&self.tap_listeners))
             .filter(|s| self.last_status.as_deref() == Some(s.as_str()));
         let mut ring_changed = false;
         for event in events {
@@ -2210,7 +2215,7 @@ impl App {
             self.bump_tap_generation();
         }
         if shown_summary.is_some() {
-            self.last_status = Some(self.tap_health.monitor_status());
+            self.last_status = Some(self.tap_health.monitor_status(&self.tap_listeners));
         }
     }
 

@@ -59,6 +59,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - `--tap-listen`, `--tap-udp` and `--tap-otlp` take a host name
   (`localhost:7432`), which failed as `invalid socket address syntax`.
   A name that does not resolve says to use an IP address instead.
+- The tap monitor's empty state and status line say where pgman is
+  listening (`listening on TCP 127.0.0.1:7432 · OTLP/HTTP …`). They
+  told the operator to start pgman with `--tap-otlp :4318` even with a
+  listener — that one included — already bound; the hint now points
+  the JVM at the bound OTLP port.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

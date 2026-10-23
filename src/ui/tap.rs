@@ -83,7 +83,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             // panel up?" The OTel path works today; the
             // pgman-tap JAR path is the higher-context option
             // once that JAR ships.
-            tap_setup_hint_lines(theme)
+            tap_setup_hint_lines(theme, &app.tap_listeners)
         };
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
         return;

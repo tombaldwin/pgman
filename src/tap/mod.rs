@@ -180,6 +180,47 @@ pub const TAP_TRUNCATION_MARKER: char = '…';
 /// scale this up.
 pub const TAP_CHANNEL_CAPACITY: usize = 4_096;
 
+/// Which transport a bound tap listener speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TapTransport {
+    /// `--tap-listen`: length-prefixed pgman-tap frames.
+    Tcp,
+    /// `--tap-udp`: one pgman-tap event per datagram.
+    Udp,
+    /// `--tap-otlp`: OTLP/HTTP JSON from an OpenTelemetry agent.
+    Otlp,
+}
+
+/// A tap listener that bound at startup, so the monitor can say where
+/// pgman is actually listening rather than name one flag regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TapListener {
+    pub transport: TapTransport,
+    pub addr: std::net::SocketAddr,
+}
+
+impl std::fmt::Display for TapListener {
+    /// `TCP 127.0.0.1:7432`, `UDP …`, `OTLP/HTTP …`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match self.transport {
+            TapTransport::Tcp => "TCP",
+            TapTransport::Udp => "UDP",
+            TapTransport::Otlp => "OTLP/HTTP",
+        };
+        write!(f, "{kind} {}", self.addr)
+    }
+}
+
+/// `listening on TCP 127.0.0.1:7432 · OTLP/HTTP 127.0.0.1:4318`, or
+/// `None` when nothing is bound. Pure.
+#[must_use]
+pub fn listening_summary(listeners: &[TapListener]) -> Option<String> {
+    (!listeners.is_empty()).then(|| {
+        let each: Vec<String> = listeners.iter().map(ToString::to_string).collect();
+        format!("listening on {}", each.join(" · "))
+    })
+}
+
 /// Process-global counter of events the listener side dropped
 /// because the downstream channel was full. Cumulative for
 /// the lifetime of the pgman process. Surfaced in the chrome
@@ -1243,6 +1284,24 @@ mod tests {
         assert_eq!(params[1], "short");
         assert!(e.caller.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
         assert!(e.error.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn listening_summary_names_each_bound_listener() {
+        assert_eq!(listening_summary(&[]), None);
+        let at = |transport, addr: &str| TapListener {
+            transport,
+            addr: addr.parse().unwrap(),
+        };
+        assert_eq!(
+            listening_summary(&[
+                at(TapTransport::Tcp, "127.0.0.1:7432"),
+                at(TapTransport::Udp, "127.0.0.1:7433"),
+                at(TapTransport::Otlp, "[::1]:4318"),
+            ])
+            .as_deref(),
+            Some("listening on TCP 127.0.0.1:7432 · UDP 127.0.0.1:7433 · OTLP/HTTP [::1]:4318")
+        );
     }
 
     #[test]

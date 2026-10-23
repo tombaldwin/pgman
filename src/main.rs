@@ -746,6 +746,10 @@ async fn main() -> anyhow::Result<()> {
                     .expect("adapter spawned above")
                     .0
                     .clone();
+                application.tap_listeners.push(tap::TapListener {
+                    transport: tap::TapTransport::Tcp,
+                    addr: listener.local_addr().unwrap_or(addr),
+                });
                 tokio::spawn(tap::serve_tcp_listener(listener, tap_tx));
                 tracing::info!("tap: listening on {addr} (tcp)");
                 if tap_auto_enabled {
@@ -769,6 +773,10 @@ async fn main() -> anyhow::Result<()> {
                     .expect("adapter spawned above")
                     .0
                     .clone();
+                application.tap_listeners.push(tap::TapListener {
+                    transport: tap::TapTransport::Udp,
+                    addr: socket.local_addr().unwrap_or(addr),
+                });
                 tokio::spawn(tap::serve_udp_listener(socket, tap_tx));
                 tracing::info!("tap: listening on {addr} (udp)");
             }
@@ -784,6 +792,10 @@ async fn main() -> anyhow::Result<()> {
                     .expect("adapter spawned above")
                     .0
                     .clone();
+                application.tap_listeners.push(tap::TapListener {
+                    transport: tap::TapTransport::Otlp,
+                    addr: listener.local_addr().unwrap_or(addr),
+                });
                 tokio::spawn(tap::serve_otlp_listener(listener, tap_tx));
                 tracing::info!("tap: OTLP/HTTP listening on {addr}");
             }

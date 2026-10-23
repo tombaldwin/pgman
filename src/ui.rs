@@ -2932,31 +2932,57 @@ pub(crate) fn tab_label_text(buffer: &str) -> String {
 ///   the bespoke Spring Boot starter with caller / pool /
 ///   txn data.
 ///
+/// `listeners` are the ones that bound at startup: the hint says where
+/// pgman is listening, and only tells the operator to restart with
+/// `--tap-otlp` when no OTLP listener is up — it used to say so with
+/// one already bound, or with the TCP listener waiting.
+///
 /// Pure (returns `Vec<Line>`) so the empty-state layout is
 /// renderer-agnostic and snapshot-testable.
-fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
+fn tap_setup_hint_lines(
+    theme: &crate::theme::Theme,
+    listeners: &[crate::tap::TapListener],
+) -> Vec<Line<'static>> {
     let muted = Style::default().fg(theme.muted);
     let title = Style::default()
         .fg(theme.title)
         .add_modifier(Modifier::BOLD);
     let code = Style::default().fg(theme.text);
-    vec![
-        Line::from(Span::styled("no tap events yet", muted)),
-        Line::from(""),
-        // Route 1 — OTLP (works today)
-        Line::from(Span::styled(
-            "Route 1: OpenTelemetry (works today, any JVM)",
-            title,
-        )),
-        Line::from(Span::styled("  start pgman with:", muted)),
-        Line::from(Span::styled("    pgman --tap-otlp :4318", code)),
+    let otlp = listeners
+        .iter()
+        .find(|l| l.transport == crate::tap::TapTransport::Otlp);
+    // Where the JVM should send spans: the bound OTLP listener (a
+    // wildcard bind is reached as localhost), else the default port.
+    let otlp_endpoint = match otlp {
+        Some(l) if l.addr.ip().is_unspecified() => format!("localhost:{}", l.addr.port()),
+        Some(l) => l.addr.to_string(),
+        None => "localhost:4318".to_string(),
+    };
+    let mut lines = vec![Line::from(Span::styled("no tap events yet", muted))];
+    if let Some(listening) = crate::tap::listening_summary(listeners) {
+        lines.push(Line::from(Span::styled(
+            format!("pgman is {listening}"),
+            code,
+        )));
+    }
+    lines.push(Line::from(""));
+    // Route 1 — OTLP (works today)
+    lines.push(Line::from(Span::styled(
+        "Route 1: OpenTelemetry (works today, any JVM)",
+        title,
+    )));
+    if otlp.is_none() {
+        lines.push(Line::from(Span::styled("  start pgman with:", muted)));
+        lines.push(Line::from(Span::styled("    pgman --tap-otlp :4318", code)));
+    }
+    lines.extend([
         Line::from(Span::styled("  on the JVM side:", muted)),
         Line::from(Span::styled(
             "    -javaagent:opentelemetry-javaagent.jar",
             code,
         )),
         Line::from(Span::styled(
-            "    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318",
+            format!("    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://{otlp_endpoint}"),
             code,
         )),
         Line::from(Span::styled(
@@ -2983,7 +3009,8 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
             "Once events arrive: j/k navigate · v cycle views · s sort · ? help",
             muted,
         )),
-    ]
+    ]);
+    lines
 }
 
 /// Render a duration in microseconds as a compact

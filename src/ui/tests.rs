@@ -466,10 +466,61 @@ fn fit_status_never_exceeds_width_or_ends_in_a_partial_word() {
     }
 }
 
+fn hint_dump(listeners: &[crate::tap::TapListener]) -> String {
+    tap_setup_hint_lines(&crate::theme::Theme::default(), listeners)
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn listener(transport: crate::tap::TapTransport, addr: &str) -> crate::tap::TapListener {
+    crate::tap::TapListener {
+        transport,
+        addr: addr.parse().unwrap(),
+    }
+}
+
+/// With the TCP listener bound, the hint said only "start pgman with
+/// --tap-otlp", as if nothing were listening.
+#[test]
+fn tap_setup_hint_says_which_listeners_are_bound() {
+    use crate::tap::TapTransport;
+    let dump = hint_dump(&[listener(TapTransport::Tcp, "127.0.0.1:7432")]);
+    assert!(
+        dump.contains("pgman is listening on TCP 127.0.0.1:7432"),
+        "got:\n{dump}"
+    );
+    // No OTLP listener yet, so restarting with one is still the advice.
+    assert!(dump.contains("--tap-otlp :4318"), "got:\n{dump}");
+    assert!(dump.contains("http://localhost:4318"), "got:\n{dump}");
+}
+
+#[test]
+fn tap_setup_hint_points_the_jvm_at_the_bound_otlp_listener() {
+    use crate::tap::TapTransport;
+    let dump = hint_dump(&[
+        listener(TapTransport::Tcp, "127.0.0.1:7432"),
+        listener(TapTransport::Otlp, "0.0.0.0:4319"),
+    ]);
+    assert!(
+        dump.contains("listening on TCP 127.0.0.1:7432 · OTLP/HTTP 0.0.0.0:4319"),
+        "got:\n{dump}"
+    );
+    assert!(
+        !dump.contains("--tap-otlp"),
+        "already listening; got:\n{dump}"
+    );
+    // A wildcard bind is reached as localhost, on the port it bound.
+    assert!(dump.contains("http://localhost:4319"), "got:\n{dump}");
+    let dump = hint_dump(&[listener(TapTransport::Otlp, "127.0.0.1:4320")]);
+    assert!(dump.contains("http://127.0.0.1:4320"), "got:\n{dump}");
+}
+
 #[test]
 fn tap_setup_hint_includes_otel_and_pgman_tap_routes() {
     let theme = crate::theme::Theme::default();
-    let lines = tap_setup_hint_lines(&theme);
+    let lines = tap_setup_hint_lines(&theme, &[]);
     let dump: String = lines
         .iter()
         .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))

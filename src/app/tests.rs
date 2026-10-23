@@ -4808,6 +4808,20 @@ fn tap_events_do_not_overwrite_another_status() {
 }
 
 #[test]
+fn tap_monitor_status_names_the_bound_listeners_before_any_event() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.tap_listeners.push(crate::tap::TapListener {
+        transport: crate::tap::TapTransport::Tcp,
+        addr: "127.0.0.1:7432".parse().unwrap(),
+    });
+    a.start_tap_monitor();
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("JDBC tap · no events yet · listening on TCP 127.0.0.1:7432")
+    );
+}
+
+#[test]
 fn tap_monitor_status_distinguishes_no_traffic_from_no_jar() {
     // Empty case.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
