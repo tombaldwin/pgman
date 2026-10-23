@@ -13852,7 +13852,7 @@ fn m_explains_itself_where_it_cannot_fetch() {
         a.last_status
             .as_deref()
             .unwrap_or("")
-            .starts_with("only a plain SELECT run from the editor pages"),
+            .starts_with("only a plain SELECT from the editor, calling no function but read-only built-ins, pages"),
         "{:?}",
         a.last_status
     );

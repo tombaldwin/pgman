@@ -169,8 +169,17 @@ re-runs`, and `M` runs the query again for the rows already held plus
 Everything else stops at 1000 rows with `capped at 1000 · more rows not
 fetched` in the title: `EXPLAIN`, scripts of several statements,
 `\watch`, `SELECT … FOR UPDATE` / `FOR SHARE` (a cursor would hold the
-locks), and a `SELECT` run while a transaction is open (`in a
-transaction, so no paging`). For every row, run it outside the TUI with
+locks), a `SELECT` that calls a function pgman does not know to be
+read-only, and a `SELECT` run while a transaction is open (`in a
+transaction, so no paging`). The functions a paged `SELECT` may call are
+a short list of built-ins that never write — `count`, `sum`, `min`,
+`max`, `avg`, `coalesce`, `lower`, `upper`, `length`, `now`,
+`date_trunc`, `generate_series` and the like; anything else (your own
+function, `nextval`, `random`, a name in any schema but `pg_catalog`)
+runs the old way, every row computed and committed at once, because
+behind a cursor a function runs only for the rows fetched and its writes
+stay uncommitted until the cursor closes. pgman cannot see a function a
+view calls: a `SELECT` from a view whose definition writes still pages. For every row, run it outside the TUI with
 `pgman query 'SQL' --json` (or `--batch --format json`), which isn't
 capped; see [commands](commands.md). How the cursor works is in
 [docs/backlog/paging.md](backlog/paging.md).

@@ -47,7 +47,19 @@ a read-only `WITH`, and no to `SHOW` (not a query), to anything with a
 locking clause (`FOR UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR
 KEY SHARE`, anywhere in the code — a lock held for as long as the cursor
 is open is exactly what must not happen on a production database) and to
-a statement `classify` would not call `Select`. And only for a plain
+a statement `classify` would not call `Select` — and to any statement
+that calls a function outside `safety::PAGEABLE_FUNCTIONS`, a short list
+of built-ins that read and never write (aggregates, window functions,
+`coalesce`, string, number, date, array and JSON functions). Behind a
+cursor a function runs only for the rows fetched, and its writes stay
+uncommitted while the cursor is open: `SELECT log_visit(i) FROM
+generate_series(1, 3000) i` would make 1001 calls, invisible to every
+other session until the close, where 0.1.0 made all 3000 and committed
+them at once. So a user function, `nextval`, `random`, or a name
+qualified by any schema but `pg_catalog` runs today's way, unpaged. The
+check reads the statement's text, so a function a *view* calls is out
+of its sight; `pg_proc.provolatile` would see only the functions named
+in the statement too, and a lexical list needs no round trip. And only for a plain
 `Run` from the editor: `EXPLAIN`, multi-statement scripts, a write's
 auto-tx, `\watch` re-runs and every other path keep today's behaviour.
 
@@ -73,10 +85,10 @@ one round trip.
   `COMMIT`s straight away; the extra row is how it knows. Past that, the
   extra row is kept back as a look-ahead and shown at the head of the
   next page, so "more rows exist" is always exact.
-- **Closed with `COMMIT`, not `ROLLBACK`**, so a `SELECT` that calls a
-  function with side effects behaves as it did in autocommit. (Rows never
-  fetched never ran their functions; that is the one semantic difference
-  and only matters for a side-effecting `SELECT` over more than 1000 rows.)
+- **Closed with `COMMIT`, not `ROLLBACK`**, so whatever a paged
+  `SELECT` did is kept as it would be in autocommit. A `SELECT` that
+  calls a function that could write never gets here (Choice 2): rows
+  never fetched would never run it.
   An error or a cancel aborts the transaction and pgman sends `ROLLBACK`.
 - **Read-only sessions**: `BEGIN` inherits
   `default_transaction_read_only`, so the cursor's transaction is

@@ -3997,7 +3997,7 @@ impl App {
         match self.result_more() {
             More::Unpaged => {
                 self.last_status = Some(
-                    "only a plain SELECT run from the editor pages · pgman query '…' --json returns every row"
+                    "only a plain SELECT from the editor, calling no function but read-only built-ins, pages · pgman query '…' --json returns every row"
                         .into(),
                 );
             }
