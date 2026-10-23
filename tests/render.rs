@@ -991,6 +991,32 @@ fn help_anchor_is_clamped_when_stored_not_only_when_rendered() {
     );
 }
 
+/// Opening help from a mode scrolls to that mode's section — and the
+/// section's HEADING must be on screen. The `↑ N more above` indicator
+/// overlays the first visible row once the overlay is scrolled, and the
+/// anchor pass used to scroll the heading itself onto that row: the
+/// section opened with its body first and its name hidden.
+#[test]
+fn help_opened_from_a_mode_shows_that_sections_heading() {
+    for (mode, heading) in [
+        (Mode::Editor, "editor"),
+        (Mode::SchemaBrowser, "schema browser"),
+        (Mode::SavedQueries, "saved queries"),
+        (Mode::TapMonitor, "jdbc tap"),
+    ] {
+        let mut a = settle_app();
+        a.open_help_from(mode);
+        let buf = render(&mut a, 80, 24);
+        let rendered = dump(&buf);
+        assert!(
+            rendered
+                .lines()
+                .any(|l| l.trim_matches(|c: char| c == '│' || c.is_whitespace()) == heading),
+            "{mode:?}: the {heading:?} heading must be visible:\n{rendered}"
+        );
+    }
+}
+
 /// The log picker scrolls its rows to follow the cursor. Without an
 /// offset only the first screenful of picks was ever drawn, so `j` /
 /// `G` walked the index — and the title's `n/total` — off the bottom

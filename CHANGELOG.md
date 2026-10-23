@@ -27,6 +27,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Help opened from a mode (`F1` / `?`, or `:help editor`) now shows the
+  section's heading; it was hidden under the `↑ N more above` marker,
+  so the section opened on its first key.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

@@ -858,7 +858,13 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
                     // then walked the stored value back down through
                     // the range that renders identically — the
                     // overlay looked frozen.
-                    app.help.scroll = row.min(max_scroll);
+                    //
+                    // And land one row ABOVE the heading: the
+                    // `↑ N more above` indicator overlays the first
+                    // visible row whenever the scroll is past 0, so
+                    // scrolling straight to the heading hid it under
+                    // the indicator and the section opened headless.
+                    app.help.scroll = help_anchor_scroll(row, max_scroll);
                 }
             }
         }
@@ -928,6 +934,16 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
             row,
         );
     }
+}
+
+/// The scroll that shows the heading at `anchor_row` as the first row
+/// *not* covered by the `↑ N more above` indicator. That indicator is
+/// drawn over the first visible row whenever the scroll is past 0, so
+/// the scroll stops one row short of the heading (the blank row
+/// between sections goes under the indicator). Clamped to
+/// `max_scroll`. Pure.
+pub(super) fn help_anchor_scroll(anchor_row: u16, max_scroll: u16) -> u16 {
+    anchor_row.saturating_sub(1).min(max_scroll)
 }
 
 /// EXPLAIN tree modal. Flattens the plan via `App::flattened_explain_rows`,
