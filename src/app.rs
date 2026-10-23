@@ -1662,7 +1662,14 @@ pub struct App {
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
     history_draft: String,
+    /// The live connection. Database work reaches it only through
+    /// [`App::db`], which queues the work behind `pager` — see
+    /// `the_client_is_reached_only_through_db` in the tests.
     client: Option<Arc<tokio_postgres::Client>>,
+    /// The live connection's pager (`query::paging`): owns the result
+    /// cursor and orders every piece of database work behind it. Set
+    /// with `client` on every `Booted`; dropping it ends the task.
+    pager: Option<crate::query::paging::Pager>,
     /// Cancel-side of the live connection. Set on every `Booted`
     /// alongside `client`. Cleared on disconnect. Trait-abstracted so
     /// tests can inject a recording fake to verify Ctrl-C routes
@@ -1899,6 +1906,7 @@ impl App {
             },
             pending_tunnel: None,
             client: None,
+            pager: None,
             cancel_dispatcher: None,
             tunnel: None,
             safety_config,
@@ -3352,7 +3360,7 @@ impl App {
 
     /// Spawn a `COMMIT` or `ROLLBACK` of the open transaction.
     fn close_tx(&mut self, commit: bool) {
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.tx_open = false;
             self.mode = Mode::Editor;
             return;
@@ -3366,6 +3374,7 @@ impl App {
             "rolling back…".to_string()
         });
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = if commit {
                 conn::tx_commit(&client).await
             } else {
@@ -3801,6 +3810,21 @@ impl App {
             "not connected · start pgman with --dsn postgres://… or inside a Spring project"
                 .to_string()
         }
+    }
+
+    /// The client for one piece of database work, queued behind the
+    /// pager so that it never runs inside the result cursor's
+    /// transaction: the pager closes the cursor first
+    /// (docs/backlog/paging.md, "one session, many tasks"). The place in
+    /// the queue is taken here, on the UI thread, so the order of calls
+    /// is the order on the wire. The spawned task awaits
+    /// [`crate::query::paging::Db::ready`] before its first statement.
+    ///
+    /// The only reader of `self.client` for database work; the cursor's
+    /// own requests go to the pager directly.
+    pub(crate) fn db(&mut self) -> Option<crate::query::paging::Db> {
+        let client = self.client.clone()?;
+        Some(crate::query::paging::Db::new(client, self.pager.as_ref()))
     }
 
     fn request_run(&mut self, kind: RunKind) {
@@ -4528,10 +4552,11 @@ impl App {
         // server to ask: its fixture answers for one.
         if self.demo {
             self.on_live_lint_loaded(Ok(crate::demo::live_lint()));
-        } else if let Some(client) = self.client.clone() {
+        } else if let Some(db) = self.db() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;
             tokio::spawn(async move {
+                let client = db.ready().await;
                 let result = crate::query::lint::fetch_live(&client).await;
                 let _ = tx.send(AppMsg::LiveLintLoaded { generation, result });
             });
@@ -4561,7 +4586,7 @@ impl App {
             self.mode = Mode::SlowQueries;
             return self.on_slow_queries_loaded(Ok(crate::demo::slow_queries()));
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -4569,7 +4594,7 @@ impl App {
         self.slow_queries.error = None;
         self.mode = Mode::SlowQueries;
         self.last_status = Some("loading pg_stat_statements…".into());
-        self.spawn_slow_queries_load(client);
+        self.spawn_slow_queries_load(db);
     }
 
     /// `r` inside the slow-queries panel — refresh in place.
@@ -4577,11 +4602,11 @@ impl App {
         if self.demo {
             return self.start_slow_queries();
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             return;
         };
         self.last_status = Some("refreshing pg_stat_statements…".into());
-        self.spawn_slow_queries_load(client);
+        self.spawn_slow_queries_load(db);
     }
 
     /// `E` from Normal: open the environments overview and gather. Needs
@@ -5292,25 +5317,25 @@ impl App {
             self.mode = Mode::Sessions;
             return self.on_sessions_loaded(Ok(crate::demo::sessions()));
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
         self.sessions.cursor = 0;
         self.mode = Mode::Sessions;
         self.last_status = Some("loading pg_stat_activity…".into());
-        self.spawn_sessions_load(client);
+        self.spawn_sessions_load(db);
     }
 
     fn refresh_sessions(&mut self) {
         if self.demo {
             return self.start_sessions();
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             return;
         };
         self.last_status = Some("refreshing pg_stat_activity…".into());
-        self.spawn_sessions_load(client);
+        self.spawn_sessions_load(db);
     }
 
     /// Capital-K in the Sessions panel — open a confirmation

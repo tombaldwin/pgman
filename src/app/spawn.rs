@@ -133,7 +133,7 @@ impl App {
     /// error pipeline. Routes around the safety guard because
     /// the operator just confirmed in the modal.
     pub(super) fn spawn_terminate_session(&mut self, pid: i32) {
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -141,6 +141,7 @@ impl App {
         let generation = self.generation;
         self.last_status = Some(format!("terminating pid {pid}…"));
         tokio::spawn(async move {
+            let client = db.ready().await;
             match conn::terminate_backend(&client, pid).await {
                 Ok(()) => {
                     // Re-fetch sessions so the panel reflects the
@@ -336,7 +337,7 @@ impl App {
     /// `AppMsg::CostPreviewLoaded`. The handler decides whether to
     /// confirm or proceed based on the row estimate vs threshold.
     pub(super) fn spawn_cost_preview(&mut self, sql: String, decision: Decision, threshold: u64) {
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -353,6 +354,7 @@ impl App {
         // or opening the Confirm modal.
         self.query_running = true;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let estimated = crate::query::explain::run_cost_explain(&client, &explain_sql).await;
             let _ = tx.send(AppMsg::CostPreviewLoaded {
                 sql,
@@ -371,7 +373,7 @@ impl App {
         decision: Decision,
         is_batch: bool,
     ) {
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -410,6 +412,7 @@ impl App {
         self.last_error = None;
         self.last_status = Some(running_status(kind));
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = execute(&client, &sql, kind, &decision, is_batch).await;
             // Run + wrap_in_tx leaves the transaction open on success — the
             // caller will need to commit or rollback.
@@ -522,13 +525,14 @@ impl App {
     /// Re-fetch the schema cache in the background after a DDL run and
     /// deliver it as `AppMsg::SchemaRefreshed`. Keeps completion, the schema
     /// browser, lint, and FK-nav current without forcing a full reconnect.
-    pub(super) fn spawn_schema_refresh(&self) {
-        let Some(client) = self.client.clone() else {
+    pub(super) fn spawn_schema_refresh(&mut self) {
+        let Some(db) = self.db() else {
             return;
         };
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let schema_cache = crate::query::schema::fetch(&client).await;
             let _ = tx.send(AppMsg::SchemaRefreshed {
                 generation,
@@ -537,10 +541,11 @@ impl App {
         });
     }
 
-    pub(super) fn spawn_slow_queries_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {
+    pub(super) fn spawn_slow_queries_load(&self, db: crate::query::paging::Db) {
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = match conn::run_query(&client, crate::query::slow_queries::PANEL_SQL).await
             {
                 Ok(grid) => Ok(crate::query::slow_queries::parse(&grid)),
@@ -590,10 +595,11 @@ impl App {
         true
     }
 
-    pub(super) fn spawn_sessions_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {
+    pub(super) fn spawn_sessions_load(&self, db: crate::query::paging::Db) {
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = match conn::run_query(&client, crate::query::sessions::PANEL_SQL).await {
                 Ok(grid) => Ok(crate::query::sessions::parse(&grid)),
                 Err(e) => Err(e),

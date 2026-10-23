@@ -48,6 +48,9 @@ impl App {
                 // backend PID.
                 self.cancel_dispatcher =
                     Some(Box::new(PgCancelDispatcher::new(client.cancel_token())));
+                // A new pager for the new session; the old one (and any
+                // cursor it held on the old session) ends as it drops.
+                self.pager = Some(crate::query::paging::Pager::spawn(client.clone()));
                 self.client = Some(client);
                 // Hold the new tunnel (if any) so its Drop fires when
                 // the App loses the client at quit / next reconnect.

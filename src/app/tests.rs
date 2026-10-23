@@ -13372,6 +13372,49 @@ fn a_log_preloaded_at_startup_reopens_with_the_reopened_status() {
     );
 }
 
+/// Every piece of database work reaches the client through `App::db`,
+/// which queues it behind the pager so that it never runs inside the
+/// result cursor's transaction (docs/backlog/paging.md). A new
+/// `self.client.clone()` elsewhere would skip the queue: its statement
+/// could land inside the cursor's transaction, or race the `COMMIT`
+/// that closes it. Asking whether there *is* a client is fine.
+#[test]
+fn the_client_is_reached_only_through_db() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![dir.join("app.rs")];
+    for entry in std::fs::read_dir(dir.join("app")).expect("src/app") {
+        let path = entry.expect("dir entry").path();
+        if path.file_name().is_some_and(|n| n != "tests.rs") {
+            files.push(path);
+        }
+    }
+    let mut readers = Vec::new();
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("read source");
+        for (n, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let mut rest = line;
+            while let Some(at) = rest.find("self.client") {
+                let after = &rest[at + "self.client".len()..];
+                let is_field = !after.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+                let harmless = [".is_none()", ".is_some()", " = Some("]
+                    .iter()
+                    .any(|ok| after.starts_with(ok));
+                if is_field && !harmless {
+                    readers.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                }
+                rest = after;
+            }
+        }
+    }
+    assert!(
+        readers.len() == 1 && readers[0].ends_with(": let client = self.client.clone()?;"),
+        "only App::db may read the client: {readers:#?}"
+    );
+}
+
 #[test]
 fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());

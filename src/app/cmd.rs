@@ -445,11 +445,8 @@ impl App {
             return;
         }
         let state = if want { "on" } else { "off" };
-        let live = match (&self.conn_state, self.client.clone()) {
-            (ConnState::Connected { .. }, Some(client)) => Some(client),
-            _ => None,
-        };
-        if live.is_some() && self.tx_open {
+        let live = matches!(self.conn_state, ConnState::Connected { .. }) && self.client.is_some();
+        if live && self.tx_open {
             // The open transaction would keep what it began with, so the
             // header would say one thing and the server do another.
             self.last_error = Some(format!(
@@ -461,7 +458,7 @@ impl App {
         // picked database's profile, which used to discard this the
         // moment the operator reconnected.
         self.read_only_override = Some(want);
-        let Some(client) = live else {
+        let Some(db) = live.then(|| self.db()).flatten() else {
             self.read_only = want;
             self.last_status = Some(format!(
                 "read-only {state} · the next connection opens with it {state}"
@@ -477,6 +474,7 @@ impl App {
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = crate::conn::set_session_read_only(&client, want).await;
             let _ = tx.send(AppMsg::ReadOnlyApplied {
                 generation,
