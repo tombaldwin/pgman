@@ -5737,3 +5737,91 @@ async fn the_insert_yank_puts_back_the_row_it_copied() {
     assert_eq!(after.rows[0][2], None);
     assert_eq!(after.rows[0][4].as_deref(), Some("007"));
 }
+
+/// A writable library connection to the compose database.
+async fn writable_client() -> (
+    std::sync::Arc<tokio_postgres::Client>,
+    Option<pgman::tunnel::SshTunnel>,
+) {
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect writable")
+}
+
+/// A mixed-case table and its lowercase twin. `SELECT * FROM "Mixed"`,
+/// then `I` and `:fixture`: the yanked INSERT and the fixture's apply
+/// script each put the row back in the quoted table, never the twin.
+/// Bare, `INSERT INTO public.Mixed` folded to the twin.
+#[tokio::test]
+async fn the_insert_yank_and_fixture_land_in_the_quoted_table_not_its_twin() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let mixed = format!("pgman_it_RevMixed_{pid}");
+    let twin = mixed.to_ascii_lowercase();
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE \"{mixed}\" (id int PRIMARY KEY, v text); \
+             CREATE TABLE {twin} (id int PRIMARY KEY, v text); \
+             INSERT INTO \"{mixed}\" VALUES (1, 'mixed')"
+        ))
+        .await
+        .expect("create the tables");
+    let select = format!("SELECT * FROM \"{mixed}\"");
+    let grid = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let (schema, table) =
+        pgman::app::infer_single_source_table(&select).expect("a single source table");
+    assert_eq!(table, mixed);
+    let count = |t: String| {
+        let client = client.clone();
+        async move {
+            pgman::conn::run_statement(&client, &format!("SELECT count(*) FROM {t}"))
+                .await
+                .expect("count")
+                .rows[0][0]
+                .clone()
+                .unwrap()
+        }
+    };
+
+    let insert = pgman::app::row_insert_sql(&schema, &table, &grid.columns, &grid.rows[0]);
+    let yank = client
+        .batch_execute(&format!("DELETE FROM \"{mixed}\"; {insert}"))
+        .await;
+    let (yank_mixed, yank_twin) = (
+        count(format!("\"{mixed}\"")).await,
+        count(twin.clone()).await,
+    );
+
+    let fixture = pgman::dbunit::fixture_from_rows(&table, &grid.columns, &grid.rows)
+        .expect("the table name round-trips");
+    let reparsed =
+        pgman::dbunit::parse_flat_xml(&pgman::dbunit::generate_flat_xml(&fixture)).unwrap();
+    let script =
+        pgman::dbunit::generate_apply_script(&reparsed, pgman::dbunit::CleanMode::DeleteFrom);
+    let apply = client.batch_execute(&script).await;
+    let (fx_mixed, fx_twin) = (
+        count(format!("\"{mixed}\"")).await,
+        count(twin.clone()).await,
+    );
+
+    let _ = client
+        .batch_execute(&format!("DROP TABLE \"{mixed}\"; DROP TABLE {twin}"))
+        .await;
+    yank.unwrap_or_else(|e| panic!("{insert}: {e}"));
+    assert_eq!(
+        (yank_mixed.as_str(), yank_twin.as_str()),
+        ("1", "0"),
+        "{insert}"
+    );
+    apply.unwrap_or_else(|e| panic!("{script}: {e}"));
+    assert_eq!(
+        (fx_mixed.as_str(), fx_twin.as_str()),
+        ("1", "0"),
+        "{script}"
+    );
+}

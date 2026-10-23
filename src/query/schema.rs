@@ -200,6 +200,14 @@ impl SchemaCache {
     /// isn't an FK. Case-insensitive (matches how the rest of
     /// the cache resolves identifiers).
     pub fn fk_edge_for_child(&self, schema: &str, table: &str, column: &str) -> Option<&FkEdge> {
+        // An exact match first: the grid's source is the server's own
+        // name (`"PgRevMixed"` stays mixed-case), and a lowercase twin
+        // `pgrevmixed` must not win just by sorting first.
+        if let Some(e) = self.fk_edges.iter().find(|e| {
+            e.child_schema == schema && e.child_table == table && e.child_column == column
+        }) {
+            return Some(e);
+        }
         self.fk_edges.iter().find(|e| {
             e.child_schema.eq_ignore_ascii_case(schema)
                 && e.child_table.eq_ignore_ascii_case(table)
@@ -603,6 +611,31 @@ mod tests {
             .expect("found");
         assert_eq!(hit.parent_table, "users");
         assert!(c.fk_edge_for_child("public", "orders", "other").is_none());
+    }
+
+    /// A mixed-case table and its lowercase twin each have their own FK;
+    /// following from `"PgRevMixed"` must take its edge, not the twin's
+    /// that happens to come first.
+    #[test]
+    fn fk_edge_for_child_prefers_the_exact_name() {
+        let mut c = SchemaCache::default();
+        for (child, parent) in [
+            ("pgrevmixed", "lower_parent"),
+            ("PgRevMixed", "mixed_parent"),
+        ] {
+            c.fk_edges.push(FkEdge {
+                child_schema: "public".into(),
+                child_table: child.into(),
+                child_column: "pid".into(),
+                parent_schema: "public".into(),
+                parent_table: parent.into(),
+                parent_column: "id".into(),
+            });
+        }
+        let hit = c.fk_edge_for_child("public", "PgRevMixed", "pid").unwrap();
+        assert_eq!(hit.parent_table, "mixed_parent");
+        let hit = c.fk_edge_for_child("public", "pgrevmixed", "pid").unwrap();
+        assert_eq!(hit.parent_table, "lower_parent");
     }
 
     #[test]

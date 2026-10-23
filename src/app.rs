@@ -1133,8 +1133,11 @@ pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
 /// grid row, each cell through [`format_sql_literal`]. Column names are
 /// the server's own, case and all, so they go through [`quote_ident`]
 /// (`createdAt` bare is `createdat`, a column the table lacks). The
-/// schema and table stay as the query spelled them — `FROM Users`
-/// infers `Users`, which only works bare. Pure / testable.
+/// schema and table are the server's names too: the FROM parse folds
+/// `FROM Users` to `users` and keeps `FROM "Users"` as `Users`, so
+/// quoting them names exactly the relation the query read. Bare, a
+/// mixed-case `"PgRevMixed"` landed in a lowercase twin `pgrevmixed`.
+/// Pure / testable.
 pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell]) -> String {
     let cols = columns
         .iter()
@@ -1146,7 +1149,11 @@ pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell
         .map(|c| format_sql_literal(c.as_deref()))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});")
+    format!(
+        "INSERT INTO {}.{} ({cols}) VALUES ({vals});",
+        quote_ident(schema),
+        quote_ident(table),
+    )
 }
 
 /// Build an `INSERT INTO <schema>.<table> (cols…) VALUES (NULL,

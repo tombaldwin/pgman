@@ -20,6 +20,11 @@
 //! Each non-root element is one row in the table named by the element;
 //! attributes are columns. A missing attribute is treated as a missing column
 //! (the INSERT just doesn't mention it, so the DB default applies).
+//!
+//! Names in the XML are read the way DBUnit reads them — case-insensitively
+//! when they are written in one case (`users`, `USERS` both mean `users`),
+//! exactly otherwise (`PgRevMixed` means the quoted `"PgRevMixed"`, not its
+//! lowercase twin). See [`sql_ident_name`].
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -118,9 +123,12 @@ pub fn generate_clean(fixture: &Fixture, mode: CleanMode) -> Vec<String> {
     tables.reverse();
     tables
         .iter()
-        .map(|t| match mode {
-            CleanMode::Truncate => format!("TRUNCATE TABLE {t} RESTART IDENTITY CASCADE"),
-            CleanMode::DeleteFrom => format!("DELETE FROM {t}"),
+        .map(|t| {
+            let t = sql_table_name(t);
+            match mode {
+                CleanMode::Truncate => format!("TRUNCATE TABLE {t} RESTART IDENTITY CASCADE"),
+                CleanMode::DeleteFrom => format!("DELETE FROM {t}"),
+            }
         })
         .collect()
 }
@@ -179,14 +187,22 @@ pub fn generate_flat_xml(fixture: &Fixture) -> String {
 /// NULL cell — and a short row's missing one — is left out of the
 /// row, flat XML's NULL; an empty string stays, as `""`. Applying the
 /// fixture with pgman then leaves an omitted column to its default:
-/// NULL, unless the table gives it a `DEFAULT`. `table` is used
-/// verbatim as the element name (DBUnit flat-XML convention —
-/// schema-qualify by hand if your setup needs it).
+/// NULL, unless the table gives it a `DEFAULT`. `table` is the
+/// server's own name and is used verbatim as the element name (DBUnit
+/// flat-XML convention — schema-qualify by hand if your setup needs
+/// it).
+///
+/// Refused, rather than renamed, when the table name would not read
+/// back as the same table on apply — see [`fixture_name_problem`]. A
+/// renamed element applies to some other table, or none.
 pub fn fixture_from_rows(
     table: &str,
     columns: &[String],
     rows: &[Vec<crate::grid::Cell>],
-) -> Fixture {
+) -> Result<Fixture, String> {
+    if let Some(why) = fixture_name_problem(table) {
+        return Err(format!("table {table:?} can't be a fixture element: {why}"));
+    }
     let rows = rows
         .iter()
         .map(|cells| Row {
@@ -201,7 +217,72 @@ pub fn fixture_from_rows(
                 .collect(),
         })
         .collect();
-    Fixture { rows }
+    Ok(Fixture { rows })
+}
+
+/// How a fixture name (an element or attribute name) reads as a SQL
+/// identifier on apply. A name in a single case is DBUnit's
+/// case-insensitive spelling and folds the way the server folds an
+/// unquoted name — `USERS` and `users` both mean `users`, which keeps
+/// hand-written uppercase fixtures from Java projects working. Any
+/// other name is the exact catalog name: `PgRevMixed` is
+/// `"PgRevMixed"`, not its lowercase twin `pgrevmixed`. Reserved words
+/// and names that need it are quoted (`user` → `"user"`).
+pub fn sql_ident_name(name: &str) -> String {
+    let single_upper = name.chars().any(|c| c.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    if single_upper {
+        crate::app::quote_ident(&name.to_ascii_lowercase())
+    } else {
+        crate::app::quote_ident(name)
+    }
+}
+
+/// [`sql_ident_name`] for an element name, which may be
+/// schema-qualified (`audit.events`, DBUnit's qualified-table-names
+/// spelling): each side is read on its own.
+pub fn sql_table_name(name: &str) -> String {
+    match name.split_once('.') {
+        Some((schema, table)) if !schema.is_empty() && !table.is_empty() => {
+            format!("{}.{}", sql_ident_name(schema), sql_ident_name(table))
+        }
+        _ => sql_ident_name(name),
+    }
+}
+
+/// Why `name` — a catalog name captured from a result — can't be
+/// written as a fixture name and read back as itself, or `None` when
+/// it can. XML can't carry every identifier (`?column?`, `a b`, `a"b`),
+/// and an all-uppercase name (`"USERS"`) or one with a dot would read
+/// back as a different table.
+pub fn fixture_name_problem(name: &str) -> Option<&'static str> {
+    if !is_xml_name(name) {
+        return Some("not a valid XML name");
+    }
+    if name.contains('.') {
+        return Some("a dot reads back as schema.table");
+    }
+    if sql_ident_name(name) != crate::app::quote_ident(name) {
+        return Some("an all-uppercase name reads back folded to lowercase");
+    }
+    None
+}
+
+/// Is `s` an XML `Name` as `quick_xml` will parse it back? Letters
+/// (any script), `_` and `:` may start it; digits, `-` and `.` may
+/// follow. Approximates the XML 1.0 production with Rust's Unicode
+/// classes — enough to keep every ordinary SQL identifier and refuse
+/// the punctuation that breaks the markup.
+fn is_xml_name(s: &str) -> bool {
+    let is_start = |c: char| c.is_alphabetic() || c == '_' || c == ':';
+    let is_part = |c: char| is_start(c) || c.is_numeric() || c == '-' || c == '.';
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if is_start(c) => chars.all(is_part),
+        _ => false,
+    }
 }
 
 // -- helpers --
@@ -253,7 +334,7 @@ fn insert_sql(row: &Row) -> String {
     // Every attribute omitted (`<t/>`, or a captured row of NULLs):
     // `INSERT INTO t () VALUES ()` is not SQL.
     if row.columns.is_empty() {
-        return format!("INSERT INTO {} DEFAULT VALUES", row.table);
+        return format!("INSERT INTO {} DEFAULT VALUES", sql_table_name(&row.table));
     }
     let cols: Vec<&str> = row.columns.iter().map(|(k, _)| k.as_str()).collect();
     let vals: Vec<String> = row
@@ -263,7 +344,7 @@ fn insert_sql(row: &Row) -> String {
         .collect();
     format!(
         "INSERT INTO {} ({}) VALUES ({})",
-        row.table,
+        sql_table_name(&row.table),
         cols.join(", "),
         vals.join(", ")
     )
@@ -339,7 +420,7 @@ mod tests {
             vec![Some("3".to_string()), None],
             vec![Some("4".to_string()), Some(String::new())],
         ];
-        let f = fixture_from_rows("users", &cols, &rows);
+        let f = fixture_from_rows("users", &cols, &rows).unwrap();
         assert_eq!(f.rows.len(), 4);
         assert_eq!(f.rows[0].table, "users");
         assert_eq!(
@@ -363,7 +444,7 @@ mod tests {
     /// still be SQL.
     #[test]
     fn a_row_with_no_attributes_inserts_default_values() {
-        let f = fixture_from_rows("t", &["a".to_string()], &[vec![None]]);
+        let f = fixture_from_rows("t", &["a".to_string()], &[vec![None]]).unwrap();
         assert_eq!(
             generate_flat_xml(&f),
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<dataset>\n  <t/>\n</dataset>\n"
@@ -371,11 +452,55 @@ mod tests {
         assert_eq!(generate_inserts(&f), vec!["INSERT INTO t DEFAULT VALUES"]);
     }
 
+    /// A captured mixed-case table applies to itself, not its lowercase
+    /// twin; a single-case name stays DBUnit's case-insensitive one;
+    /// a reserved word and a schema-qualified element both work.
+    #[test]
+    fn apply_names_the_table_the_fixture_was_captured_from() {
+        let f = fixture_from_rows("PgRevMixed", &["id".to_string()], &[vec![Some("1".into())]])
+            .unwrap();
+        assert_eq!(
+            generate_inserts(&f),
+            vec!["INSERT INTO \"PgRevMixed\" (id) VALUES ('1')"]
+        );
+        assert_eq!(
+            generate_clean(&f, CleanMode::DeleteFrom),
+            vec!["DELETE FROM \"PgRevMixed\""]
+        );
+        assert_eq!(
+            generate_clean(&f, CleanMode::Truncate),
+            vec!["TRUNCATE TABLE \"PgRevMixed\" RESTART IDENTITY CASCADE"]
+        );
+        assert_eq!(sql_table_name("USERS"), "users");
+        assert_eq!(sql_table_name("users"), "users");
+        assert_eq!(sql_table_name("user"), "\"user\"");
+        assert_eq!(sql_table_name("audit.events"), "audit.events");
+        assert_eq!(sql_table_name("AUDIT.PgEvents"), "audit.\"PgEvents\"");
+        let f = parse_flat_xml("<dataset><USER ID=\"1\"/></dataset>").unwrap();
+        assert_eq!(
+            generate_inserts(&f)[0],
+            "INSERT INTO \"user\" (ID) VALUES ('1')"
+        );
+    }
+
+    /// A table name that would not read back as itself is refused, not
+    /// renamed into some other table.
+    #[test]
+    fn capture_refuses_a_table_name_that_does_not_round_trip() {
+        for bad in ["weird table", "USERS", "a.b", "?column?", ""] {
+            assert!(
+                fixture_from_rows(bad, &["id".to_string()], &[]).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+        assert!(fixture_from_rows("Café_1", &["id".to_string()], &[]).is_ok());
+    }
+
     #[test]
     fn fixture_from_rows_then_generate_is_parseable() {
         let cols = vec!["id".to_string(), "name".to_string()];
         let rows = vec![vec![Some("1".to_string()), Some("O'Brien".to_string())]];
-        let f = fixture_from_rows("users", &cols, &rows);
+        let f = fixture_from_rows("users", &cols, &rows).unwrap();
         let xml = generate_flat_xml(&f);
         let parsed = parse_flat_xml(&xml).unwrap();
         assert_eq!(parsed, f);

@@ -27,6 +27,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `I` (row as INSERT) and `:fixture` named a quoted mixed-case table
+  bare: a row yanked from `"OrderLine"` was inserted into a lowercase
+  twin `orderline` if there was one, and failed otherwise. The FROM
+  parse now folds unquoted names to lower case and keeps quoted ones
+  (spaces and `""` included), and the INSERT and the fixture's apply
+  script quote the table. A fixture element in one case (`USERS`,
+  `users`) still means `users`, as DBUnit reads it; a mixed-case one
+  now means exactly that table. A table whose name a fixture can't
+  carry is refused rather than captured under another name. `F` (FK
+  follow) prefers the exact table over a case-insensitive match.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

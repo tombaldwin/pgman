@@ -737,7 +737,14 @@ impl App {
             );
             return;
         };
-        let fixture = crate::dbunit::fixture_from_rows(&table, &self.grid.columns, &self.grid.rows);
+        let fixture =
+            match crate::dbunit::fixture_from_rows(&table, &self.grid.columns, &self.grid.rows) {
+                Ok(f) => f,
+                Err(e) => {
+                    self.last_error = Some(format!("fixture capture refused — {e}"));
+                    return;
+                }
+            };
         let xml = crate::dbunit::generate_flat_xml(&fixture);
         let path = match target {
             Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),

@@ -2074,6 +2074,22 @@ fn dispatch_fixture_errors_without_source_table() {
         .contains("single-table"));
 }
 
+/// A table whose name would not read back as itself is refused with a
+/// reason, and nothing is written — not renamed into another table.
+#[test]
+fn dispatch_fixture_refuses_a_table_name_that_does_not_round_trip() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "order items".into()));
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-refuse-{}", std::process::id()));
+    let path = dir.join("f.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("fixture capture refused"), "{err}");
+    assert!(err.contains("not a valid XML name"), "{err}");
+    assert!(!path.exists(), "nothing written");
+}
+
 #[test]
 fn dispatch_fixture_errors_on_empty_grid() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -2258,6 +2274,40 @@ fn infer_single_source_table_keeps_explicit_schema() {
     assert_eq!(
         infer_single_source_table("SELECT * FROM audit.events"),
         Some(("audit".into(), "events".into()))
+    );
+}
+
+/// `FROM "PgRevMixed"` and `FROM PgRevMixed` name two different tables;
+/// the inferred source is the server's name for whichever the query read.
+#[test]
+fn infer_single_source_table_folds_bare_names_and_keeps_quoted_ones() {
+    assert_eq!(
+        infer_single_source_table(r#"SELECT * FROM "PgRevMixed""#),
+        Some(("public".into(), "PgRevMixed".into()))
+    );
+    assert_eq!(
+        infer_single_source_table("SELECT * FROM PgRevMixed"),
+        Some(("public".into(), "pgrevmixed".into()))
+    );
+    assert_eq!(
+        infer_single_source_table(r#"SELECT * FROM "Audit Log"."Big ""Q"" Table""#),
+        Some(("Audit Log".into(), "Big \"Q\" Table".into()))
+    );
+}
+
+/// The yanked INSERT names the table the row came from: a mixed-case
+/// table is quoted, or it lands in its lowercase twin.
+#[test]
+fn row_insert_sql_quotes_schema_and_table() {
+    let cols = ["id".to_string()];
+    let row = [Some("1".into())];
+    assert_eq!(
+        row_insert_sql("Audit Log", "PgRevMixed", &cols, &row),
+        "INSERT INTO \"Audit Log\".\"PgRevMixed\" (id) VALUES ('1');"
+    );
+    assert_eq!(
+        row_insert_sql("public", "user", &cols, &row),
+        "INSERT INTO public.\"user\" (id) VALUES ('1');"
     );
 }
 
