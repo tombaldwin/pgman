@@ -1048,11 +1048,12 @@ async fn connect_inner(
     cfg.connect_timeout(CONNECT_TIMEOUT);
     let verify = apply_ssl_mode(&mut cfg, &dsn);
 
-    // Connect with TLS when we can build a connector; fall back to
-    // NoTls only when connector init itself fails (e.g. crypto provider
-    // panic) — that's expected to be rare. The connection driver is
-    // spawned inside each branch because its stream type depends on
-    // which connector ran the handshake.
+    // Connect with TLS when we can build a connector. Falling back to
+    // NoTls when connector init itself fails (rare: a crypto-provider
+    // or verifier build error) is allowed only where plaintext was
+    // acceptable anyway — never for `require` or `verify-*`. The
+    // connection driver is spawned inside each branch because its
+    // stream type depends on which connector ran the handshake.
     let client = match build_tls_connector(verify) {
         Ok(connector) => {
             let (client, connection) = cfg
@@ -1061,6 +1062,9 @@ async fn connect_inner(
                 .map_err(|e| chain_message(&e))?;
             spawn_connection_driver(connection, notice_tx.clone(), notification_tx.clone());
             client
+        }
+        Err(tls_err) if !plaintext_fallback_allowed(verify, cfg.get_ssl_mode()) => {
+            return Err(format!("TLS setup failed: {tls_err}"));
         }
         Err(tls_err) => {
             // TLS connector setup failed. Fall back to NoTls so localhost
@@ -1540,6 +1544,15 @@ fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> TlsVerify {
             unreachable!("Dsn::parse should have rejected sslmode={other:?}")
         }
     }
+}
+
+/// Whether a connection whose TLS connector couldn't be built may go
+/// ahead in plaintext: only when the operator's `sslmode` already
+/// accepted plaintext (`disable`, `allow`, `prefer`) and nothing was to
+/// be verified. `require` and `verify-*` fail closed.
+fn plaintext_fallback_allowed(verify: TlsVerify, mode: tokio_postgres::config::SslMode) -> bool {
+    use tokio_postgres::config::SslMode;
+    verify == TlsVerify::Nothing && matches!(mode, SslMode::Disable | SslMode::Prefer)
 }
 
 /// How much of the server's certificate the TLS handshake checks —
@@ -2405,6 +2418,34 @@ mod tests {
         let (cfg, v) = parsed("postgres://h/d?sslmode=allow");
         assert_eq!(cfg.get_ssl_mode(), SslMode::Prefer);
         assert_eq!(v, TlsVerify::Nothing);
+    }
+
+    #[test]
+    fn only_a_plaintext_tolerant_sslmode_falls_back_to_plaintext() {
+        use super::{plaintext_fallback_allowed, TlsVerify};
+        for (url, allowed) in [
+            ("postgres://h/d", true),
+            ("postgres://h/d?sslmode=disable", true),
+            ("postgres://h/d?sslmode=allow", true),
+            ("postgres://h/d?sslmode=prefer", true),
+            ("postgres://h/d?sslmode=require", false),
+            ("postgres://h/d?sslmode=verify-ca", false),
+            ("postgres://h/d?sslmode=verify-full", false),
+        ] {
+            let dsn = Dsn::parse(url).unwrap();
+            let mut cfg = tokio_postgres::Config::new();
+            let verify = super::apply_ssl_mode(&mut cfg, &dsn);
+            assert_eq!(
+                plaintext_fallback_allowed(verify, cfg.get_ssl_mode()),
+                allowed,
+                "{url}"
+            );
+        }
+        // A verifying mode never falls back, whatever the wire mode says.
+        assert!(!plaintext_fallback_allowed(
+            TlsVerify::Chain,
+            tokio_postgres::config::SslMode::Prefer
+        ));
     }
 
     /// The verify-ca verifier against real certificates
