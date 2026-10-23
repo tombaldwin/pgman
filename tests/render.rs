@@ -2680,3 +2680,83 @@ fn row_detail_more_below_counts_the_fields_out_of_sight() {
         assert!(screen.contains("field 1 of 30"), "{w}x{h}:\n{screen}");
     }
 }
+
+/// Render and return the buffer with where the terminal cursor was put.
+fn render_with_cursor(app: &mut App, w: u16, h: u16) -> (Buffer, (u16, u16)) {
+    let backend = TestBackend::new(w, h);
+    let mut term = Terminal::new(backend).expect("terminal");
+    term.draw(|f| pgman::ui::draw(f, app)).expect("draw");
+    let pos = term.get_cursor_position().expect("cursor position");
+    (term.backend().buffer().clone(), (pos.x, pos.y))
+}
+
+/// The demo app, settled, with `keys` pressed from Normal mode.
+fn demo_after(keys: &[KeyCode]) -> App {
+    let mut a = pgman::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::Normal;
+    for k in keys {
+        a.on_key(KeyEvent::from(*k));
+    }
+    a
+}
+
+/// A long pattern typed into a footer filter lost its `filter: /`
+/// prompt: `fit_status` shrank the leading segment and then dropped
+/// it, and the cursor — placed by counting from the prompt — landed
+/// past the end of the line. The prompt keeps its head, the pattern
+/// shows its tail, and the cursor sits just after it, at 60 and 80
+/// columns, in each mode that types into the footer.
+#[test]
+fn a_long_footer_filter_keeps_its_prompt_and_cursor() {
+    const PATTERN: &str = "customer_invoice_line_items_archive";
+    let screens: [(&str, &[KeyCode], Mode, &str); 4] = [
+        (
+            "schema browser",
+            &[KeyCode::Char('S'), KeyCode::Char('/')],
+            Mode::SchemaBrowserFilter,
+            "filter: /",
+        ),
+        (
+            "help",
+            &[KeyCode::F(1), KeyCode::Char('/')],
+            Mode::HelpFilter,
+            "filter: /",
+        ),
+        (
+            "grid filter",
+            &[KeyCode::Char('/')],
+            Mode::GridFilter,
+            "filter: /",
+        ),
+        ("grid find", &[KeyCode::Char('f')], Mode::GridFind, "find: "),
+    ];
+    for (name, keys, mode, head) in screens {
+        for (w, h) in [(60u16, 16u16), (80, 24)] {
+            let mut a = demo_after(keys);
+            assert_eq!(a.mode, mode, "{name}");
+            for c in PATTERN.chars() {
+                a.on_key(KeyEvent::from(KeyCode::Char(c)));
+            }
+            let (buf, (cx, cy)) = render_with_cursor(&mut a, w, h);
+            let footer = row_text(&buf, h - 1);
+            assert_eq!(cy, h - 1, "{name} {w}x{h}: cursor off the footer");
+            assert!(
+                footer.contains(head),
+                "{name} {w}x{h}: prompt lost: {footer:?}"
+            );
+            assert!(
+                footer.contains("_archive"),
+                "{name} {w}x{h}: the pattern's tail is missing: {footer:?}"
+            );
+            // The cell left of the cursor is the pattern's last char.
+            assert!(cx > 0 && cx < w, "{name} {w}x{h}: cursor x={cx}");
+            assert_eq!(
+                buf[(cx - 1, cy)].symbol(),
+                "e",
+                "{name} {w}x{h}: cursor not after the pattern: {footer:?} cursor x={cx}"
+            );
+        }
+    }
+}

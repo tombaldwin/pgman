@@ -64,6 +64,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A long pattern typed into a footer prompt (the schema browser's and
+  help's `/` filter, the grid's `/` filter and `f` find, `ctrl-r`
+  history search) no longer loses its `filter: /` / `find:` head or the
+  cursor: the head stays, the pattern shows its end after a `…`, and
+  the cursor sits after it. The key hints go first.
 - The JDBC tap monitor read "no events yet", and the footer showed no
   `TAP` badge, while only commits / rollbacks had arrived; the status
   now counts them (`2 commits/rollbacks`).

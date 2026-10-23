@@ -1548,6 +1548,109 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     end_ellipsis(&segments[0], width)
 }
 
+/// The typing prompt the footer's status carries in a mode whose input
+/// is typed there: the fixed head (`filter: /`) and the pattern typed
+/// so far. `None` in every other mode. What [`fit_prompt`] fits and the
+/// terminal cursor follows.
+fn footer_prompt(app: &App) -> Option<(&'static str, &str)> {
+    match app.mode {
+        Mode::GridFilter => app.grid_view.filter.as_deref().map(|p| ("filter: /", p)),
+        Mode::SchemaBrowserFilter => app
+            .schema_browser
+            .filter
+            .as_deref()
+            .map(|p| ("filter: /", p)),
+        Mode::HelpFilter => app.help.filter.as_deref().map(|p| ("filter: /", p)),
+        Mode::GridFind => app.grid_find.needle.as_deref().map(|p| ("find: ", p)),
+        Mode::HistorySearch => app.history_search.as_ref().map(|s| {
+            let head = if s.matched.is_some() {
+                "(reverse-i-search) '"
+            } else {
+                "(failed reverse-i-search) '"
+            };
+            (head, s.query.as_str())
+        }),
+        _ => None,
+    }
+}
+
+/// Fit a footer typing prompt — `head`, then the `pattern` typed so far,
+/// then `rest` (`  · 3 row(s) · enter accept · esc clear`) — into
+/// `width` columns, and say at which column the cursor goes (just after
+/// the pattern). [`fit_status`] treats the head as one more segment to
+/// shrink and then drop, so a long pattern lost `filter: /` and the
+/// cursor fell off the end of the line.
+///
+/// While [`fit_status`] of the whole line keeps the head and the pattern
+/// intact, that is the answer. Otherwise the head is kept whole, and the
+/// pattern too while it and a cell for the cursor fit, with `rest` given
+/// what the pattern leaves (fitted by [`fit_status`], and dropped rather
+/// than shown as a cut last hint); past that the pattern's *tail* is
+/// shown after a `…` — the end is where the typing is — and `rest`
+/// goes. On a footer too narrow for the head and two cells, the whole
+/// line is fitted by [`fit_status`] and there is no cursor. The text is
+/// never wider than `width`. Pure.
+pub(crate) fn fit_prompt(
+    head: &str,
+    pattern: &str,
+    rest: &str,
+    width: usize,
+) -> (String, Option<usize>) {
+    let head_w = display_width(head);
+    let pat_w = display_width(pattern);
+    if head_w + 2 > width {
+        return (fit_status(&format!("{head}{pattern}{rest}"), width), None);
+    }
+    if head_w + pat_w < width {
+        // What every other status gets, while it keeps the prompt and
+        // the cursor's cell: it drops a count before a key hint.
+        let whole = fit_status(&format!("{head}{pattern}{rest}"), width);
+        if whole
+            .strip_prefix(head)
+            .is_some_and(|r| r.starts_with(pattern))
+        {
+            return (whole, Some(head_w + pat_w));
+        }
+        let room = width - head_w - pat_w;
+        let tail = fit_prompt_rest(rest, room);
+        return (format!("{head}{pattern}{tail}"), Some(head_w + pat_w));
+    }
+    // `…` and the cursor's cell come out of what the pattern gets.
+    let budget = width - head_w - 2;
+    let mut kept: Vec<char> = Vec::new();
+    let mut kept_w = 0;
+    for c in pattern.chars().rev() {
+        let cw = char_width(c);
+        if kept_w + cw > budget {
+            break;
+        }
+        kept_w += cw;
+        kept.push(c);
+    }
+    let tail: String = kept.into_iter().rev().collect();
+    (format!("{head}…{tail}"), Some(head_w + 1 + kept_w))
+}
+
+/// What of a prompt's `rest` fits in `room` columns: all of it, or its
+/// leading separator and [`fit_status`] of the segments after it — or
+/// nothing when not even its last segment (the keys that leave the
+/// prompt) fits whole. Pure.
+fn fit_prompt_rest(rest: &str, room: usize) -> String {
+    if display_width(rest) <= room {
+        return rest.to_string();
+    }
+    let body = rest.trim_start_matches([' ', '·']);
+    let lead = &rest[..rest.len() - body.len()];
+    let Some(budget) = room.checked_sub(display_width(lead)) else {
+        return String::new();
+    };
+    let last = body.rsplit(" · ").next().unwrap_or(body);
+    if body.is_empty() || display_width(last) > budget {
+        return String::new();
+    }
+    format!("{lead}{}", fit_status(body, budget))
+}
+
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     // TxDecision is its own prominent prompt — it pre-empts the normal
@@ -1595,6 +1698,11 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .filter(|_| app.mode == Mode::CommandBar);
     // Rows under the first, for an error wrapped over a taller footer.
     let mut extra_rows: Vec<Line<'static>> = Vec::new();
+    // Where the terminal cursor goes in a typing prompt the status
+    // carries, as a column from the footer's left edge: set only when
+    // the status branch drew the prompt, so an error in its place gets
+    // no cursor parked somewhere in its text.
+    let mut prompt_cursor: Option<u16> = None;
     let line = if let Some(bar) = bar {
         let mut spans = vec![
             Span::styled(" :", Style::default().fg(theme.accent)),
@@ -1682,7 +1790,23 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .width
             .saturating_sub(badge_width)
             .saturating_sub(display_width(&prefix) as u16) as usize;
-        let fitted = fit_status(&footer_text(status), available);
+        let text = footer_text(status);
+        let prompt = footer_prompt(app).and_then(|(head, pattern)| {
+            let pattern = footer_text(pattern);
+            let rest = text.strip_prefix(head)?.strip_prefix(pattern.as_str())?;
+            Some(fit_prompt(head, &pattern, rest, available))
+        });
+        let fitted = match prompt {
+            Some((fitted, cursor)) => {
+                prompt_cursor = cursor.map(|c| {
+                    (badge_width as usize + display_width(&prefix) + c)
+                        .try_into()
+                        .unwrap_or(u16::MAX)
+                });
+                fitted
+            }
+            None => fit_status(&text, available),
+        };
         Line::from(Span::styled(
             format!("{prefix}{fitted}"),
             Style::default().fg(theme.health_green),
@@ -1874,61 +1998,24 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     }
 
     // Real terminal cursor for the typing modes whose input is
-    // surfaced through the footer (GridFilter, HistorySearch,
-    // SchemaBrowserFilter). The status text always renders into a
-    // single line at `area`; the leading " " prefix from the
-    // status branch above is accounted for via `LEADING_SPACE`,
-    // and any active `[RO]` / `[TX]` badges add their own width on
-    // top.
-    let cursor_offset: Option<u16> = match app.mode {
+    // surfaced through the footer: the `:` bar, and the prompts the
+    // status carries (GridFilter, HistorySearch, SchemaBrowserFilter,
+    // HelpFilter, GridFind) — placed where `fit_prompt` put the end of
+    // the pattern. `line`'s leading " " is `LEADING_SPACE`, and any
+    // `[RO]` / `[TX]` badges add their own width on top.
+    let cursor_col: Option<u16> = match app.mode {
         // The bar renders as ":<typed>"; the cursor sits inside the
         // typed text at the widget's own column.
         Mode::CommandBar => app.command_bar.as_ref().map(|bar| {
             const PREFIX_CHARS: u16 = 1; // the ':'
-            PREFIX_CHARS + bar.input.cursor_col() as u16
+            LEADING_SPACE
+                .saturating_add(badge_width)
+                .saturating_add(PREFIX_CHARS + bar.input.cursor_col() as u16)
         }),
-        Mode::GridFilter => app.grid_view.filter.as_ref().map(|f| {
-            // Status reads "filter: /<pat>  · …"; cursor sits just
-            // after the typed pattern.
-            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        Mode::HistorySearch => app.history_search.as_ref().map(|s| {
-            // Two flavours, picked by `matched`:
-            //   "(reverse-i-search) '<q>'"
-            //   "(failed reverse-i-search) '<q>'"
-            let prefix: u16 = if s.matched.is_some() {
-                "(reverse-i-search) '".chars().count() as u16
-            } else {
-                "(failed reverse-i-search) '".chars().count() as u16
-            };
-            prefix + display_width(&s.query) as u16
-        }),
-        Mode::SchemaBrowserFilter => app.schema_browser.filter.as_ref().map(|f| {
-            // Status reads "filter: /<pat>  · …" — same shape as
-            // GridFilter.
-            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        Mode::HelpFilter => app.help.filter.as_ref().map(|f| {
-            // Status reads "filter: /<pat>  · …" — same shape as the
-            // schema browser's.
-            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        Mode::GridFind => app.grid_find.needle.as_ref().map(|f| {
-            // Status reads "find: <pat>  · …".
-            const PREFIX_CHARS: u16 = "find: ".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        _ => None,
+        _ => prompt_cursor,
     };
-    if let Some(offset) = cursor_offset {
-        let x = area
-            .x
-            .saturating_add(LEADING_SPACE)
-            .saturating_add(badge_width)
-            .saturating_add(offset);
+    if let Some(col) = cursor_col {
+        let x = area.x.saturating_add(col);
         if x < area.x.saturating_add(area.width) {
             f.set_cursor_position((x, area.y));
         }

@@ -429,6 +429,89 @@ fn fit_status_drops_short_middle_segments_whole_instead_of_mangling_a_key_hint()
     );
 }
 
+const PROMPT_REST: &str = "  · 63 row(s) · enter accept · esc clear";
+
+/// A pattern that fits leaves the line to `fit_status`, which already
+/// keeps the prompt: the same text, and the cursor just after it.
+#[test]
+fn fit_prompt_matches_fit_status_while_that_keeps_the_prompt() {
+    for width in [30, 40, 60, 80] {
+        let (text, cursor) = fit_prompt("filter: /", "us", PROMPT_REST, width);
+        assert_eq!(
+            text,
+            fit_status(&format!("filter: /us{PROMPT_REST}"), width),
+            "{width}"
+        );
+        assert_eq!(cursor, Some(11), "{width}");
+    }
+}
+
+/// The bug: `fit_status` shrank and then dropped the `filter: /`
+/// segment, so a long pattern showed as `…` and key hints, with the
+/// cursor past the end of the line.
+#[test]
+fn fit_prompt_keeps_the_head_and_the_patterns_tail() {
+    let pattern = "customer_invoice_line_items_archive_2026";
+    let (text, cursor) = fit_prompt("filter: /", pattern, PROMPT_REST, 30);
+    assert_eq!(text, "filter: /…_items_archive_2026");
+    assert_eq!(display_width(&text), 29, "one cell left for the cursor");
+    assert_eq!(cursor, Some(29));
+    // Wide enough for the pattern, not for the hints: the keys that
+    // leave the prompt stay while they fit whole, and go otherwise.
+    let (text, cursor) = fit_prompt("filter: /", pattern, PROMPT_REST, 64);
+    assert_eq!(
+        text,
+        "filter: /customer_invoice_line_items_archive_2026  · esc clear"
+    );
+    assert_eq!(cursor, Some(49));
+    let (text, _) = fit_prompt("filter: /", pattern, PROMPT_REST, 55);
+    assert_eq!(text, "filter: /customer_invoice_line_items_archive_2026");
+}
+
+#[test]
+fn fit_prompt_measures_a_wide_tail_by_display_width() {
+    let (text, cursor) = fit_prompt("find: ", "東京都の顧客一覧", "  · esc cancel", 14);
+    // 14 − head 6 − `…` − the cursor's cell = 6 columns: three glyphs.
+    assert_eq!(text, "find: …客一覧");
+    assert_eq!(cursor, Some(13));
+    assert!(display_width(&text) < 14);
+}
+
+/// Too narrow for the head and two cells: the whole line is fitted
+/// as any status is, and no cursor is placed in it.
+#[test]
+fn fit_prompt_falls_back_to_fit_status_when_the_head_cannot_fit() {
+    let (text, cursor) = fit_prompt("filter: /", "users", PROMPT_REST, 10);
+    assert_eq!(
+        text,
+        fit_status(&format!("filter: /users{PROMPT_REST}"), 10)
+    );
+    assert_eq!(cursor, None);
+}
+
+#[test]
+fn fit_prompt_never_exceeds_width_and_its_cursor_stays_on_the_line() {
+    let heads = ["filter: /", "find: ", "(failed reverse-i-search) '"];
+    let patterns = ["", "a", "customer_invoice_line_items", "東京都の顧客一覧"];
+    for head in heads {
+        for pattern in patterns {
+            for width in 0..90 {
+                let (text, cursor) = fit_prompt(head, pattern, PROMPT_REST, width);
+                assert!(
+                    display_width(&text) <= width,
+                    "{head}{pattern} @{width}: {text}"
+                );
+                if let Some(c) = cursor {
+                    assert!(c < width, "{head}{pattern} @{width}: cursor {c}");
+                    assert!(text.starts_with(head), "{head}{pattern} @{width}: {text}");
+                } else {
+                    assert!(display_width(head) + 2 > width, "{head}{pattern} @{width}");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn fit_status_never_exceeds_width_or_ends_in_a_partial_word() {
     // Real footer status strings (confirm prompt, tip) plus a couple of
