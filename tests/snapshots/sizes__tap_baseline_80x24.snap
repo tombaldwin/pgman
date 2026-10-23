@@ -8,7 +8,7 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: baseline · v cycle ·╮   │

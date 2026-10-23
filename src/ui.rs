@@ -2855,8 +2855,10 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
 
 /// Right-aligned on the tab bar, most important first: how to switch,
 /// open and close tabs. Whole pieces drop from the right when the tabs
-/// need the room, so a crowded bar still says `] [ switch`.
-const TAB_BAR_HINT_PIECES: &[&str] = &["] [ switch", "ctrl-t new", "ctrl-w close"];
+/// need the room, so a crowded bar still says `[ ] prev/next tab`. The
+/// keys go in their own order, prev before next: `] [ switch` read as
+/// a stray pair of brackets.
+const TAB_BAR_HINT_PIECES: &[&str] = &["[ ] prev/next tab", "ctrl-t new", "ctrl-w close"];
 
 /// The tab-bar hint that fits in `free` columns, one of which is the
 /// gap before it: the longest prefix of `TAB_BAR_HINT_PIECES` joined

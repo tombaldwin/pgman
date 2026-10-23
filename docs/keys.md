@@ -339,7 +339,7 @@ Entered via `Ctrl-R` from the editor. Reverse-incremental, like readline/psql.
 
 The tab bar sits under the header once connected — one row naming each
 tab by the first line of its buffer (`empty` until something is typed),
-the active tab highlighted, `] [ switch · ctrl-t new · ctrl-w close` on
+the active tab highlighted, `[ ] prev/next tab · ctrl-t new · ctrl-w close` on
 the right (whole pieces drop from the right when the tabs need the room).
 It hides on a very short terminal (fewer than 12 body rows) while there is
 only one tab.

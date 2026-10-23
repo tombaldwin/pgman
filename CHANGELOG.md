@@ -20,6 +20,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- The tab bar's hint reads `[ ] prev/next tab` instead of `] [ switch`,
+  which looked like a stray pair of brackets.
 - One TLS crypto provider (ring) instead of two: no cmake / C build of
   aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
   Postgres connection no longer offers the post-quantum X25519MLKEM768

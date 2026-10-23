@@ -4,7 +4,7 @@ assertion_line: 250
 expression: dump(&buf)
 ---
  pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
- 1 SELECT number, cu…               ] [ switch · ctrl-t new
+ 1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ discover ◆ ] space choose · s save · p scope · q back ╮
 │  AWS account 210987654321, eu-west-2 · ambient profile ·…│
 │                                                          │

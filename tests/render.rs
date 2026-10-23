@@ -1655,7 +1655,7 @@ fn tab_bar_is_visible_with_a_single_tab_once_connected() {
         "row 1 is the tab bar: {bar:?}"
     );
     assert!(
-        bar.ends_with("] [ switch · ctrl-t new · ctrl-w close"),
+        bar.ends_with("[ ] prev/next tab · ctrl-t new · ctrl-w close"),
         "the tab keys are right-aligned: {bar:?}"
     );
     // Columns, not bytes: the hint's `·` separators are multi-byte.

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn tab_bar_hint_drops_whole_pieces_from_the_right_to_fit() {
-    let full = "] [ switch · ctrl-t new · ctrl-w close";
+    let full = "[ ] prev/next tab · ctrl-t new · ctrl-w close";
     assert_eq!(tab_bar_hint(80).as_deref(), Some(full));
     assert_eq!(
         tab_bar_hint(display_width(full) + 1).as_deref(),
@@ -11,11 +11,11 @@ fn tab_bar_hint_drops_whole_pieces_from_the_right_to_fit() {
     );
     assert_eq!(
         tab_bar_hint(display_width(full)).as_deref(),
-        Some("] [ switch · ctrl-t new"),
+        Some("[ ] prev/next tab · ctrl-t new"),
         "one column short: the close key goes, whole"
     );
-    assert_eq!(tab_bar_hint(11).as_deref(), Some("] [ switch"));
-    assert_eq!(tab_bar_hint(10), None, "not even the switch key fits");
+    assert_eq!(tab_bar_hint(18).as_deref(), Some("[ ] prev/next tab"));
+    assert_eq!(tab_bar_hint(17), None, "not even the switch keys fit");
 }
 
 #[test]
