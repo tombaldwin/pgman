@@ -147,6 +147,7 @@ fn every_statement_is_tagged_and_a_select() {
         locks_sql(160_000),
         checkpoints_sql(160_000),
         checkpoints_sql(170_000),
+        WAL_SQL.to_string(),
     ] {
         assert!(sql.starts_with("/* pgman:advisor */ "), "{sql}");
         // The wizard runs these on the editor's session, which may be
@@ -190,6 +191,7 @@ fn settings_sql_names_every_mapped_setting() {
         assert!(sql.contains(&format!("'{}'", p.name)), "{}", p.name);
     }
     assert!(sql.contains("'autovacuum_vacuum_threshold'"));
+    assert!(sql.contains("'checkpoint_completion_target'"));
 }
 
 #[test]
@@ -220,8 +222,9 @@ fn a_young_window_gets_a_note_and_quiets_the_ratio_checks() {
         timed: 1,
         requested: 100,
         window: win(3599.0),
+        wal: Err("not read".into()),
     };
-    assert!(checkpoint_finding(&c, &cp, None, &th).is_none());
+    assert!(checkpoint_finding(&c, &cp, None, None, &th).is_none());
 
     let grown = db(1_000, 1_000_000, GIB, 3600.0);
     assert!(young_window_note(&c, &grown.window, &th).is_none());
@@ -807,12 +810,26 @@ fn without_pg_read_all_stats_the_lock_finding_says_what_is_hidden() {
 
 // --- ADV005 -------------------------------------------------------------
 
+/// Checkpoint counters over a day, with a GiB of WAL per requested
+/// checkpoint over the same window: plenty to have forced them all.
 fn cps(timed: i64, requested: i64) -> Checkpoints {
     Checkpoints {
         timed,
         requested,
         window: win(DAY),
+        wal: Ok(WalVolume {
+            bytes: requested * GIB,
+            window: win(DAY),
+        }),
     }
+}
+
+fn with_wal(mut c: Checkpoints, bytes: i64, age: f64) -> Checkpoints {
+    c.wal = Ok(WalVolume {
+        bytes,
+        window: win(age),
+    });
+    c
 }
 
 #[test]
@@ -820,16 +837,24 @@ fn checkpoints_fire_over_a_fifth_requested_with_ten_of_them() {
     let th = Thresholds::default();
     let c = ctx(ServerKind::SelfHosted);
     let mw = mem("1024", "MB", "sighup");
-    assert!(checkpoint_finding(&c, &cps(8, 2), Some(&mw), &th).is_none());
-    let f = checkpoint_finding(&c, &cps(79, 21), Some(&mw), &th).unwrap();
+    assert!(checkpoint_finding(&c, &cps(8, 2), Some(&mw), None, &th).is_none());
+    let f = checkpoint_finding(&c, &cps(79, 21), Some(&mw), None, &th).unwrap();
     assert_eq!(f.code, "ADV005");
+    assert_eq!(f.severity, Severity::Medium);
+    assert!(f.title.contains("forced by WAL volume"), "{}", f.title);
     assert_eq!(
         f.suggestion.as_deref(),
         Some("ALTER SYSTEM SET max_wal_size = '2GB'; SELECT pg_reload_conf();")
     );
-    assert!(checkpoint_finding(&c, &cps(80, 20), Some(&mw), &th).is_none());
-    assert!(checkpoint_finding(&c, &cps(3, 6), Some(&mw), &th).is_none());
-    assert!(advice(&f).evidence[0].starts_with("pg_stat_bgwriter: 21 requested · 79 timed"));
+    assert!(checkpoint_finding(&c, &cps(80, 20), Some(&mw), None, &th).is_none());
+    assert!(checkpoint_finding(&c, &cps(3, 6), Some(&mw), None, &th).is_none());
+    let a = advice(&f);
+    assert!(a.evidence[0].starts_with("pg_stat_bgwriter: 21 requested · 79 timed"));
+    assert_eq!(
+        a.evidence[1],
+        "pg_stat_wal: 21 GB written over the same window"
+    );
+    assert!(a.evidence_sql.ends_with(WAL_SQL), "{}", a.evidence_sql);
 }
 
 #[test]
@@ -838,7 +863,7 @@ fn checkpoints_name_pg_stat_checkpointer_on_pg17_and_skip_aurora() {
     let mut c = ctx(ServerKind::Rds);
     c.version_num = 170_002;
     let mw = mem("2048", "MB", "sighup");
-    let f = checkpoint_finding(&c, &cps(10, 90), Some(&mw), &th).unwrap();
+    let f = checkpoint_finding(&c, &cps(10, 90), Some(&mw), None, &th).unwrap();
     let a = advice(&f);
     assert!(a.evidence[0].starts_with("pg_stat_checkpointer:"));
     assert!(a.evidence_sql.contains("pg_stat_checkpointer"));
@@ -847,7 +872,155 @@ fn checkpoints_name_pg_stat_checkpointer_on_pg17_and_skip_aurora() {
         s.contains("ParameterName=max_wal_size,ParameterValue=4096,ApplyMethod=immediate"),
         "{s}"
     );
-    assert!(checkpoint_finding(&ctx(ServerKind::Aurora), &cps(10, 90), Some(&mw), &th).is_none());
+    assert!(
+        checkpoint_finding(&ctx(ServerKind::Aurora), &cps(10, 90), Some(&mw), None, &th).is_none()
+    );
+}
+
+/// The compose primary as the release panel found it: 587 requested
+/// against 794 timed, but only 2.8 GB of WAL at max_wal_size 1GB —
+/// room for about five WAL-triggered checkpoints. The rest came from
+/// CREATE / DROP DATABASE and the like, which max_wal_size doesn't
+/// touch, so the finding must not suggest it.
+#[test]
+fn requested_checkpoints_without_the_wal_for_them_dont_blame_max_wal_size() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let mw = mem("1024", "MB", "sighup");
+    let cct = Setting {
+        setting: "0.9".into(),
+        unit: None,
+        context: "sighup".into(),
+    };
+    let cp = with_wal(cps(794, 587), 2_944_454_948, DAY);
+    let f = checkpoint_finding(&c, &cp, Some(&mw), Some(&cct), &th).unwrap();
+    assert_eq!(f.severity, Severity::Low);
+    assert_eq!(
+        f.title,
+        "43% of checkpoints requested, but not by WAL volume"
+    );
+    assert!(f.suggestion.is_none(), "{:?}", f.suggestion);
+    let a = advice(&f);
+    assert!(a.change.is_none());
+    assert!(
+        f.detail.contains("at most about 5 of the 587"),
+        "{}",
+        f.detail
+    );
+    assert!(f.detail.contains("CREATE DATABASE"), "{}", f.detail);
+    assert!(f.detail.contains("base backup"), "{}", f.detail);
+    assert!(f.detail.contains("manual CHECKPOINT"), "{}", f.detail);
+    assert!(
+        f.detail.contains("Raising max_wal_size won't change those"),
+        "{}",
+        f.detail
+    );
+    assert!(
+        a.evidence[2].contains("room for at most about 5 of the 587 requested"),
+        "{:?}",
+        a.evidence
+    );
+}
+
+/// WAL for at least half the requested checkpoints blames max_wal_size;
+/// a byte less, not. With a completion target of 1 a WAL-triggered
+/// checkpoint starts every max_wal_size / 2.
+#[test]
+fn checkpoints_blame_wal_from_half_of_them() {
+    let th = Thresholds::default();
+    let mw = 1024 * MIB;
+    assert_eq!(wal_trigger_bytes(mw, 1.0), 512.0 * MIB as f64);
+    assert_eq!(wal_trigger_bytes(mw, 0.0), mw as f64);
+    let half = with_wal(cps(80, 20), 5 * GIB, DAY);
+    assert!(matches!(
+        checkpoint_cause(&half, Some(mw), 1.0, &th),
+        CheckpointCause::WalVolume { wal_forced } if wal_forced == 10.0
+    ));
+    let short = with_wal(cps(80, 20), 5 * GIB - 1, DAY);
+    assert!(matches!(
+        checkpoint_cause(&short, Some(mw), 1.0, &th),
+        CheckpointCause::Other { .. }
+    ));
+}
+
+/// pg_stat_wal reset apart from the checkpoint counters: the WAL rate
+/// is carried over to their window, and the evidence says so.
+#[test]
+fn checkpoints_compare_wal_reset_apart_as_a_rate() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let mw = mem("1024", "MB", "sighup");
+    // 2.5 GiB in half a day is 5 GiB over the counters' day: room for 10
+    // at a completion target of 1, against 20 requested.
+    let cp = with_wal(cps(70, 20), 5 * GIB / 2, DAY / 2.0);
+    let one = Setting {
+        setting: "1".into(),
+        unit: None,
+        context: "sighup".into(),
+    };
+    assert!(matches!(
+        checkpoint_cause(&cp, Some(GIB), 1.0, &th),
+        CheckpointCause::WalVolume { wal_forced } if wal_forced == 10.0
+    ));
+    let f = checkpoint_finding(&c, &cp, Some(&mw), Some(&one), &th).unwrap();
+    let a = advice(&f);
+    assert!(
+        a.evidence[1].contains("compared as rates, an estimate"),
+        "{:?}",
+        a.evidence
+    );
+    // Within a minute is the same window.
+    let near = with_wal(cps(70, 20), 5 * GIB, DAY - 59.0);
+    assert!(
+        advice(&checkpoint_finding(&c, &near, Some(&mw), Some(&one), &th).unwrap()).evidence[1]
+            .ends_with("over the same window")
+    );
+    // Reset too recently to say anything.
+    let young = with_wal(cps(80, 20), 5 * GIB, 600.0);
+    assert!(matches!(
+        checkpoint_cause(&young, Some(GIB), 1.0, &th),
+        CheckpointCause::Unknown(why) if why.contains("reset too recently")
+    ));
+}
+
+/// Before PG14 there is no pg_stat_wal: pgman can't tell, so the finding
+/// hedges — LOW, the causes listed, max_wal_size only if the log agrees.
+#[test]
+fn checkpoints_before_pg14_hedge() {
+    let th = Thresholds::default();
+    let mut c = ctx(ServerKind::SelfHosted);
+    c.version_num = 130_011;
+    let mw = mem("1024", "MB", "sighup");
+    let mut cp = cps(79, 21);
+    cp.wal = Err("pg_stat_wal, which counts the WAL written, is PG14+".into());
+    let f = checkpoint_finding(&c, &cp, Some(&mw), None, &th).unwrap();
+    assert_eq!(f.severity, Severity::Low);
+    assert_eq!(f.title, "21% of checkpoints requested rather than timed");
+    assert!(f.detail.contains("can't tell how many came from WAL volume (pg_stat_wal, which counts the WAL written, is PG14+)"), "{}", f.detail);
+    assert!(
+        f.detail.contains("checkpoint starting: wal"),
+        "{}",
+        f.detail
+    );
+    assert!(f.detail.contains("CREATE DATABASE"), "{}", f.detail);
+    let a = advice(&f);
+    assert!(
+        !a.evidence_sql.contains("pg_stat_wal"),
+        "{}",
+        a.evidence_sql
+    );
+    assert_eq!(a.evidence.len(), 1, "{:?}", a.evidence);
+    let ch = a.change.as_ref().unwrap();
+    assert!(
+        ch.reasoning.starts_with("double it only if the server log"),
+        "{}",
+        ch.reasoning
+    );
+    // max_wal_size unread: also can't tell.
+    assert!(matches!(
+        checkpoint_cause(&cps(79, 21), None, 0.9, &th),
+        CheckpointCause::Unknown(_)
+    ));
 }
 
 // --- the mapping -------------------------------------------------------

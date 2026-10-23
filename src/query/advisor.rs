@@ -300,10 +300,12 @@ pub fn server_kind(has_rds_extensions: bool, has_aurora_version: bool) -> Server
 }
 
 /// The settings the findings read: every row of the RDS table plus the
-/// autovacuum threshold the dead-tuple check needs.
+/// autovacuum threshold the dead-tuple check needs and the completion
+/// target the checkpoint check does.
 pub fn settings_sql() -> String {
     let mut names: Vec<&str> = rds::PARAMS.iter().map(|p| p.name).collect();
     names.push("autovacuum_vacuum_threshold");
+    names.push("checkpoint_completion_target");
     let list = names
         .iter()
         .map(|n| format!("'{n}'"))
@@ -1161,19 +1163,112 @@ pub fn lock_finding(
     })
 }
 
-/// The checkpoint counters.
+/// The checkpoint counters, and the WAL written over (about) the same
+/// window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Checkpoints {
     pub timed: i64,
     pub requested: i64,
     pub window: Window,
+    /// `pg_stat_wal` (PG14+); `Err` says why there is none.
+    pub wal: Result<WalVolume, String>,
 }
 
-/// ADV005: checkpoints forced by WAL volume rather than the timer.
+/// `pg_stat_wal.wal_bytes` and its own reset, which
+/// `pg_stat_reset_shared('wal')` moves apart from the checkpoint
+/// counters'.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WalVolume {
+    pub bytes: i64,
+    pub window: Window,
+}
+
+pub const WAL_SQL: &str = concat!(
+    tag!(),
+    "SELECT wal_bytes::bigint, date_trunc('second', stats_reset)::text, \
+     EXTRACT(EPOCH FROM clock_timestamp() - stats_reset)::float8 FROM pg_stat_wal"
+);
+
+/// Why ADV005's checkpoints were requested, as far as the WAL tells.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckpointCause {
+    /// The WAL written could have forced at least half of them:
+    /// `max_wal_size` is what spaces them out.
+    WalVolume { wal_forced: f64 },
+    /// Far too little WAL for them: something else asked.
+    Other { wal_forced: f64 },
+    /// pgman can't tell (before PG14, `pg_stat_wal` unreadable or too
+    /// newly reset, `max_wal_size` unknown).
+    Unknown(String),
+}
+
+/// Two counter windows that start within this many seconds of each
+/// other are the same window.
+const SAME_WINDOW_SECS: f64 = 60.0;
+
+/// The WAL a WAL-triggered checkpoint starts after: Postgres starts one
+/// when the WAL since the last reaches
+/// `max_wal_size / (1 + checkpoint_completion_target)`.
+pub fn wal_trigger_bytes(max_wal_size: i64, completion_target: f64) -> f64 {
+    max_wal_size as f64 / (1.0 + completion_target.clamp(0.0, 1.0))
+}
+
+/// How many of the requested checkpoints the WAL could have forced,
+/// and so whether `max_wal_size` is the setting to blame. An upper
+/// bound: it counts every byte as if no timed checkpoint used any.
+/// When `pg_stat_wal` was reset apart from the checkpoint counters,
+/// the WAL rate is carried over to the checkpoints' window.
+pub fn checkpoint_cause(
+    c: &Checkpoints,
+    max_wal_size: Option<i64>,
+    completion_target: f64,
+    th: &Thresholds,
+) -> CheckpointCause {
+    let wal = match &c.wal {
+        Ok(w) => w,
+        Err(why) => return CheckpointCause::Unknown(why.clone()),
+    };
+    let Some(mws) = max_wal_size.filter(|b| *b > 0) else {
+        return CheckpointCause::Unknown("max_wal_size couldn't be read".into());
+    };
+    if wal.window.young(th) {
+        return CheckpointCause::Unknown(format!(
+            "pg_stat_wal was reset too recently to compare ({})",
+            wal.window.describe()
+        ));
+    }
+    let scale = if same_window(&wal.window, &c.window) {
+        1.0
+    } else {
+        c.window.secs() / wal.window.secs().max(1.0)
+    };
+    let wal_forced = wal.bytes as f64 * scale / wal_trigger_bytes(mws, completion_target);
+    if wal_forced * 2.0 >= c.requested as f64 {
+        CheckpointCause::WalVolume { wal_forced }
+    } else {
+        CheckpointCause::Other { wal_forced }
+    }
+}
+
+fn same_window(a: &Window, b: &Window) -> bool {
+    match (a.reset_age_secs, b.reset_age_secs) {
+        (Some(x), Some(y)) => (x - y).abs() <= SAME_WINDOW_SECS,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// What asks for a checkpoint besides WAL volume.
+const OTHER_CHECKPOINT_CAUSES: &str = "CREATE DATABASE and DROP DATABASE (and ALTER DATABASE … SET TABLESPACE), a base backup (pg_basebackup, pg_backup_start), a manual CHECKPOINT, a shutdown or restart";
+
+/// ADV005: a large share of checkpoints requested rather than timed,
+/// blamed on `max_wal_size` only when the WAL written could have forced
+/// them.
 pub fn checkpoint_finding(
     ctx: &Context,
     c: &Checkpoints,
     max_wal_size: Option<&Setting>,
+    completion_target: Option<&Setting>,
     th: &Thresholds,
 ) -> Option<Finding> {
     if ctx.kind == ServerKind::Aurora || c.window.young(th) {
@@ -1189,60 +1284,129 @@ pub fn checkpoint_finding(
     }
     let p = mapping("max_wal_size");
     let current = max_wal_size.and_then(Setting::bytes);
+    let cct = completion_target
+        .and_then(|s| s.setting.parse::<f64>().ok())
+        .unwrap_or(0.9);
+    let cause = checkpoint_cause(c, current, cct, th);
     let restart = restart_of(max_wal_size, p);
-    let (suggested, suggestion) = match current {
-        Some(cur) => {
-            let next = cur.saturating_mul(2);
-            let group = p
-                .unit
-                .from_bytes(next)
-                .map(|v| v.to_string())
-                .unwrap_or_default();
-            (
-                pg_size(next),
-                Some(server_suggestion(
-                    ctx.kind,
-                    p,
-                    &pg_size(next),
-                    &group,
-                    restart,
-                )),
-            )
-        }
-        None => ("unknown".into(), None),
-    };
     let view = if ctx.version_num >= 170_000 {
         "pg_stat_checkpointer"
     } else {
         "pg_stat_bgwriter"
     };
-    Some(Finding {
-        severity: Severity::Medium,
-        code: "ADV005",
-        title: format!(
-            "{:.0}% of checkpoints forced by WAL volume",
-            share * 100.0
-        ),
-        object: "server".to_string(),
-        detail: "a checkpoint is requested when the WAL since the last one reaches max_wal_size; frequent ones write more (full-page images after each) and make I/O spiky. More room spaces them out to checkpoint_timeout; recovery after a crash takes longer in proportion".to_string(),
-        suggestion,
-        advice: Some(Box::new(Advice {
-            window: c.window.describe(),
-            evidence: vec![format!(
-                "{view}: {} requested · {} timed",
-                c.requested, c.timed
-            )],
-            evidence_sql: checkpoints_sql(ctx.version_num),
-            change: Some(SettingChange {
+    let mut evidence = vec![format!(
+        "{view}: {} requested · {} timed",
+        c.requested, c.timed
+    )];
+    if let Ok(w) = &c.wal {
+        evidence.push(format!(
+            "pg_stat_wal: {} written{}",
+            human_size(w.bytes),
+            if same_window(&w.window, &c.window) {
+                " over the same window".to_string()
+            } else {
+                format!(
+                    " — {}, not the checkpoint counters' window: compared as rates, an estimate",
+                    w.window.describe()
+                )
+            }
+        ));
+    }
+    if let (
+        Some(mws),
+        CheckpointCause::WalVolume { wal_forced } | CheckpointCause::Other { wal_forced },
+    ) = (current, &cause)
+    {
+        evidence.push(format!(
+            "a WAL-triggered checkpoint starts every {} (max_wal_size {} / (1 + checkpoint_completion_target {cct})): room for at most about {:.0} of the {} requested",
+            human_size(wal_trigger_bytes(mws, cct) as i64),
+            pg_size(mws),
+            wal_forced.floor(),
+            c.requested
+        ));
+    }
+    let evidence_sql = if ctx.version_num >= 140_000 {
+        format!("{};\n{WAL_SQL}", checkpoints_sql(ctx.version_num))
+    } else {
+        checkpoints_sql(ctx.version_num)
+    };
+    let doubled = current.map(|cur| {
+        let next = cur.saturating_mul(2);
+        let group = p
+            .unit
+            .from_bytes(next)
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        (
+            pg_size(next),
+            server_suggestion(ctx.kind, p, &pg_size(next), &group, restart),
+        )
+    });
+    let current_shown = max_wal_size
+        .map(Setting::display)
+        .unwrap_or_else(|| "unknown".into());
+    let pct = share * 100.0;
+    let (severity, title, detail, suggestion, change) = match &cause {
+        CheckpointCause::WalVolume { .. } => (
+            Severity::Medium,
+            format!("{pct:.0}% of checkpoints forced by WAL volume"),
+            "a checkpoint is requested when the WAL since the last one nears max_wal_size; frequent ones write more (full-page images after each) and make I/O spiky. More room spaces them out to checkpoint_timeout; recovery after a crash takes longer in proportion".to_string(),
+            doubled.as_ref().map(|(_, s)| s.clone()),
+            Some(SettingChange {
                 name: p.name,
-                current: max_wal_size
-                    .map(Setting::display)
+                current: current_shown,
+                suggested: doubled
+                    .as_ref()
+                    .map(|(v, _)| v.clone())
                     .unwrap_or_else(|| "unknown".into()),
-                suggested,
                 reasoning: "double it, then watch the requested share fall; it needs that much more disk for WAL at peak".into(),
                 restart,
                 rds: rds::describe(p, false),
             }),
+        ),
+        CheckpointCause::Other { wal_forced } => (
+            Severity::Low,
+            format!("{pct:.0}% of checkpoints requested, but not by WAL volume"),
+            format!(
+                "the WAL written could have forced at most about {:.0} of the {} requested checkpoints, so the rest were asked for: {OTHER_CHECKPOINT_CAUSES}. Raising max_wal_size won't change those; with log_checkpoints = on the server log names each checkpoint's reason",
+                wal_forced.floor(),
+                c.requested
+            ),
+            None,
+            None,
+        ),
+        CheckpointCause::Unknown(why) => (
+            Severity::Low,
+            format!("{pct:.0}% of checkpoints requested rather than timed"),
+            format!(
+                "pgman can't tell how many came from WAL volume ({why}). Only those does max_wal_size space out; the rest come from {OTHER_CHECKPOINT_CAUSES}. With log_checkpoints = on the server log says which: \"checkpoint starting: wal\" is WAL volume"
+            ),
+            doubled.as_ref().map(|(_, s)| s.clone()),
+            Some(SettingChange {
+                name: p.name,
+                current: current_shown,
+                suggested: doubled
+                    .as_ref()
+                    .map(|(v, _)| v.clone())
+                    .unwrap_or_else(|| "unknown".into()),
+                reasoning: "double it only if the server log shows most checkpoints starting for \"wal\"; it needs that much more disk for WAL at peak".into(),
+                restart,
+                rds: rds::describe(p, false),
+            }),
+        ),
+    };
+    Some(Finding {
+        severity,
+        code: "ADV005",
+        title,
+        object: "server".to_string(),
+        detail,
+        suggestion,
+        advice: Some(Box::new(Advice {
+            window: c.window.describe(),
+            evidence,
+            evidence_sql,
+            change,
         })),
     })
 }
@@ -1398,6 +1562,24 @@ async fn read_checkpoints(
             r.try_get(2).map_err(db_err)?,
             r.try_get(3).map_err(db_err)?,
         ),
+        wal: read_wal(client, ctx).await,
+    })
+}
+
+/// `pg_stat_wal`, which ADV005 needs to tell WAL-forced checkpoints
+/// from the rest. Its absence only hedges the finding.
+async fn read_wal(client: &tokio_postgres::Client, ctx: &Context) -> Result<WalVolume, String> {
+    if ctx.version_num < 140_000 {
+        return Err("pg_stat_wal, which counts the WAL written, is PG14+".into());
+    }
+    let r = client
+        .query_one(WAL_SQL, &[])
+        .await
+        .map_err(|e| format!("pg_stat_wal couldn't be read: {}", db_err(e)))?;
+    let g = |e: tokio_postgres::Error| format!("pg_stat_wal couldn't be read: {}", db_err(e));
+    Ok(WalVolume {
+        bytes: r.try_get(0).map_err(g)?,
+        window: window(ctx, r.try_get(1).map_err(g)?, r.try_get(2).map_err(g)?),
     })
 }
 
@@ -1475,6 +1657,7 @@ pub async fn fetch(client: &tokio_postgres::Client, th: &Thresholds) -> Result<R
                 &ctx,
                 &c,
                 settings.get("max_wal_size"),
+                settings.get("checkpoint_completion_target"),
                 th,
             )),
             Err(e) => report.errors.push(format!("ADV005: {e}")),

@@ -15,7 +15,7 @@ suggested setting, and the RDS / Aurora parameter-group mapping:
 | ADV002 | temp spills → `work_mem` (with the spilling statements when `pg_stat_statements` is there) | `pg_stat_database`, `pg_stat_statements` |
 | ADV003 | dead tuples past a table's autovacuum point → per-table `autovacuum_vacuum_scale_factor` | `pg_stat_user_tables`, `pg_class.reloptions` |
 | ADV004 | lock waits piling up → the blocking chain, `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
-| ADV005 | checkpoints forced by WAL volume → `max_wal_size` | `pg_stat_bgwriter` (≤ PG16) / `pg_stat_checkpointer` (PG17+) |
+| ADV005 | checkpoints requested rather than timed → `max_wal_size` only when the WAL written could have forced them | `pg_stat_bgwriter` (≤ PG16) / `pg_stat_checkpointer` (PG17+), `pg_stat_wal` (PG14+) |
 
 Out of this round (stay in BACKLOG): fsync / `synchronous_commit`
 (needs `pg_stat_wal` timing, which is off by default), connection thrash
@@ -125,9 +125,26 @@ neither depends on the window, and they say "now" instead.
   deadlock check runs.) Without `pg_read_all_stats` the other sessions'
   queries read `<insufficient privilege>`; the finding says so.
 - **ADV005** — requested checkpoints / all checkpoints > 20 % with ≥
-  10 checkpoints in the window → MED. Suggested `max_wal_size`: twice
-  the current. Not on Aurora: it has no checkpoints of its own (the
-  storage layer applies WAL), so the check is skipped there.
+  10 checkpoints in the window. A requested checkpoint is not always a
+  WAL-volume one: CREATE / DROP DATABASE, a base backup
+  (`pg_backup_start`), a manual `CHECKPOINT` and a shutdown all request
+  one, and `max_wal_size` changes none of them. So on PG14+ the check
+  reads `pg_stat_wal.wal_bytes` and bounds how many the WAL could have
+  forced: Postgres starts one each `max_wal_size / (1 +
+  checkpoint_completion_target)` of WAL, so at most `wal_bytes` / that
+  (an upper bound — timed checkpoints used some of the WAL too). At
+  least half the requested → MED, "forced by WAL volume", suggested
+  `max_wal_size` twice the current. Fewer → LOW, "not by WAL volume",
+  the other causes listed and no setting (on the compose primary: 587
+  requested, 2.8 GB of WAL at 1GB — room for about five).
+  `pg_stat_wal` has its own `stats_reset`: when it is more than a
+  minute from the checkpoint counters', the WAL rate is carried over to
+  their window and the evidence says it is an estimate; under an hour
+  old, or before PG14, or unreadable, the finding hedges (LOW, the
+  causes listed, double `max_wal_size` only if the server log's
+  `log_checkpoints` lines say `checkpoint starting: wal`). Not on
+  Aurora: it has no checkpoints of its own (the storage layer applies
+  WAL), so the check is skipped there.
 
 ## Privileges and missing pieces
 

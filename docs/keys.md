@@ -328,7 +328,7 @@ self-hosted, `ALTER SYSTEM`. pgman never runs it.
 | ADV002 | ≥ 64 MiB spilled to temp files (MED from 256 MiB an hour) → `work_mem` for the spilling role, with the statements when `pg_stat_statements` is installed | `pg_stat_database`, `pg_stat_statements` |
 | ADV003 | Dead tuples ≥ 10 % of live on a table of ≥ 10 000 rows, blamed on autovacuum being off, behind, or its scale factor → `autovacuum_vacuum_scale_factor` on the table | `pg_stat_user_tables` |
 | ADV004 | Sessions waiting ≥ 5 s on a lock (HIGH from 60 s or 5 waiters), with the blocking chain → `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
-| ADV005 | Over 20 % of checkpoints requested rather than timed (not on Aurora) → `max_wal_size` | `pg_stat_bgwriter`, `pg_stat_checkpointer` from PG17 |
+| ADV005 | Over 20 % of checkpoints requested rather than timed (not on Aurora). From PG14 the WAL written says whether they were forced by WAL volume (MED → `max_wal_size`) or asked for by something else — CREATE / DROP DATABASE, a base backup, a manual `CHECKPOINT`, a shutdown (LOW, no setting); before PG14 it hedges | `pg_stat_bgwriter`, `pg_stat_checkpointer` from PG17, `pg_stat_wal` |
 
 Thresholds and their reasoning: `docs/backlog/config-advisor.md`. Without
 `pg_read_all_stats` (in `pg_monitor`) other sessions' state and queries are
