@@ -70,6 +70,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   hints off its title: counts from 10 000 up read `12.3k`, `4.5M`, …,
   `1.0e18`, and the drop count now comes after the hints, so a narrow
   panel gives it up first (the status line still shows it).
+- The tap monitor's OpenTelemetry hint gives
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces`.
+  Without the path, which the exporter does not add to that variable,
+  the agent's exports got a 404.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

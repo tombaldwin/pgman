@@ -3004,7 +3004,11 @@ fn tap_setup_hint_lines(
             code,
         )),
         Line::from(Span::styled(
-            format!("    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://{otlp_endpoint}"),
+            // The per-signal variable is used as-is — the exporter does
+            // not append `/v1/traces` the way it does to
+            // OTEL_EXPORTER_OTLP_ENDPOINT — and pgman answers only that
+            // path, so a bare host:port here got the JVM a 404.
+            format!("    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://{otlp_endpoint}/v1/traces"),
             code,
         )),
         Line::from(Span::styled(

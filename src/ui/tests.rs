@@ -535,7 +535,39 @@ fn tap_setup_hint_says_which_listeners_are_bound() {
     );
     // No OTLP listener yet, so restarting with one is still the advice.
     assert!(dump.contains("--tap-otlp :4318"), "got:\n{dump}");
-    assert!(dump.contains("http://localhost:4318"), "got:\n{dump}");
+    assert!(
+        dump.contains("http://localhost:4318/v1/traces"),
+        "got:\n{dump}"
+    );
+}
+
+/// The endpoint the hint gives the JVM is one the OTLP listener
+/// answers: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is used as-is, and a
+/// bare `http://localhost:4318` got the agent's every export a 404.
+#[test]
+fn tap_setup_hint_endpoint_is_a_path_the_otlp_listener_serves() {
+    let dump = hint_dump(&[]);
+    let url = dump
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="))
+        .unwrap_or_else(|| panic!("no endpoint in:\n{dump}"));
+    let path = url
+        .strip_prefix("http://")
+        .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
+        .unwrap_or("/");
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let resp = crate::tap::process_otlp_request(
+        crate::tap::HttpRequest {
+            method: "POST".into(),
+            path: path.into(),
+            headers: [("content-type".into(), "application/json".into())]
+                .into_iter()
+                .collect(),
+            body: br#"{"resourceSpans":[]}"#.to_vec(),
+        },
+        &tx,
+    );
+    assert_eq!(resp.status, 200, "{url} → {} {}", resp.status, resp.body);
 }
 
 #[test]
@@ -554,9 +586,15 @@ fn tap_setup_hint_points_the_jvm_at_the_bound_otlp_listener() {
         "already listening; got:\n{dump}"
     );
     // A wildcard bind is reached as localhost, on the port it bound.
-    assert!(dump.contains("http://localhost:4319"), "got:\n{dump}");
+    assert!(
+        dump.contains("http://localhost:4319/v1/traces"),
+        "got:\n{dump}"
+    );
     let dump = hint_dump(&[listener(TapTransport::Otlp, "127.0.0.1:4320")]);
-    assert!(dump.contains("http://127.0.0.1:4320"), "got:\n{dump}");
+    assert!(
+        dump.contains("http://127.0.0.1:4320/v1/traces"),
+        "got:\n{dump}"
+    );
 }
 
 #[test]
