@@ -196,11 +196,16 @@ impl App {
 
     /// A bracketed paste while editing a cell: inserted at the cursor,
     /// unless it holds a newline or another control character, which a
-    /// one-line value can't show faithfully.
+    /// one-line value can't show faithfully. The one line break a copied
+    /// line ends with is dropped, not counted.
     pub(super) fn paste_into_cell_edit(&mut self, text: &str) {
         let Some(ui) = self.cell_edit.as_mut() else {
             return;
         };
+        let text = text
+            .strip_suffix("\r\n")
+            .or_else(|| text.strip_suffix('\n'))
+            .unwrap_or(text);
         if text.chars().any(char::is_control) {
             self.last_status = Some(
                 "can't paste a newline or control character into a cell · write the UPDATE in the editor"
@@ -686,6 +691,10 @@ mod tests {
         assert_eq!(value(&a), Some("a'b\\c".into()));
         a.on_paste("two\nlines".into());
         assert_eq!(value(&a), Some("a'b\\c".into()));
+        // A copied line's own line break is not part of the value.
+        a.on_paste("!\r\n".into());
+        a.on_paste("?\n".into());
+        assert_eq!(value(&a), Some("a'b\\c!?".into()));
         assert!(a
             .last_status
             .as_deref()
