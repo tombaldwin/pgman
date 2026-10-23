@@ -6135,6 +6135,24 @@ pub(crate) fn split_editor_command(s: &str) -> (String, Vec<String>) {
     (prog, args)
 }
 
+/// [`execute`], keeping the column origins of the one kind of result a
+/// cell can be edited in: a plain single-statement run outside a
+/// transaction. Every other run's are empty.
+async fn execute_with_origins(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    kind: RunKind,
+    decision: &Decision,
+    is_batch: bool,
+) -> Result<(Grid, Vec<Option<crate::grid::ColumnOrigin>>), conn::QueryErr> {
+    if kind == RunKind::Run && !is_batch && !decision.wrap_in_tx {
+        return conn::run_statement_with_origins(client, sql).await;
+    }
+    execute(client, sql, kind, decision, is_batch)
+        .await
+        .map(|grid| (grid, Vec::new()))
+}
+
 /// Build and run the effective SQL for `kind`, honouring the safety decision.
 /// `is_batch` routes through `client.batch_execute` for multi-statement runs.
 async fn execute(

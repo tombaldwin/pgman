@@ -382,6 +382,10 @@ pub struct GridView {
     /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
     /// FK navigation.
     pub source: Option<(String, String)>,
+    /// Where each column of the grid was read from — see
+    /// `grid::ColumnOrigin`. Empty unless the grid is a plain editor
+    /// run's result; a column no table backs is `None`.
+    pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
 }
 
 /// Grid find ("/" search) state. Lives on `App` only — find is a

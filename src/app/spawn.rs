@@ -410,14 +410,15 @@ impl App {
         self.last_error = None;
         self.last_status = Some(running_status(kind));
         tokio::spawn(async move {
-            let result = execute(&client, &sql, kind, &decision, is_batch).await;
+            let result = execute_with_origins(&client, &sql, kind, &decision, is_batch).await;
             // Run + wrap_in_tx leaves the transaction open on success — the
             // caller will need to commit or rollback.
             let tx_open_after = is_run && wrap_in_tx && result.is_ok();
             let msg = match result {
-                Ok(grid) => AppMsg::QueryOk {
+                Ok((grid, origins)) => AppMsg::QueryOk {
                     generation,
                     grid,
+                    origins,
                     kind_label: kind.label().to_string(),
                     tx_open_after,
                 },
@@ -487,6 +488,8 @@ impl App {
         let msg = AppMsg::QueryOk {
             generation: self.generation,
             grid,
+            // A canned answer was read from no table.
+            origins: Vec::new(),
             kind_label: kind.label().to_string(),
             // Demo never actually opens a transaction — there's no
             // connection for a COMMIT/ROLLBACK to run against.
@@ -512,6 +515,7 @@ impl App {
         // the old database. QueryOk re-infers source immediately after this on
         // the query path, so behaviour there is unchanged.
         self.grid_view.source = None;
+        self.grid_view.origins.clear();
         // A new grid landed — bookmarks keyed by the old grid's row indices
         // would resolve against unrelated rows, so drop them. (Per-tab
         // bookmarks are snapshotted/restored separately on tab switch.)

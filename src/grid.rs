@@ -42,6 +42,18 @@ pub fn cell_text(cell: &Cell) -> &str {
     cell.as_deref().unwrap_or("")
 }
 
+/// Where a result column was read from, as the server's RowDescription
+/// says: the table's `pg_class.oid` and the column's `attnum`. `None`
+/// in its place means an expression (`id + 1`, `count(*)`, a literal),
+/// which no table column backs. Cell editing and the PK-keyed result
+/// diff trust this, never the column's name: `SELECT id + 1 AS id`
+/// has an `id` column that is not the key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColumnOrigin {
+    pub table_oid: u32,
+    pub attnum: i16,
+}
+
 /// A result set: column headers plus text-rendered rows.
 ///
 /// `truncated` is set when the underlying source had more rows than

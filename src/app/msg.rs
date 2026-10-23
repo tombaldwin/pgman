@@ -32,6 +32,9 @@ pub enum AppMsg {
     QueryOk {
         generation: u64,
         grid: Grid,
+        /// Where each column came from (`conn::run_statement_with_origins`);
+        /// empty for any result but a plain editor run's.
+        origins: Vec<Option<crate::grid::ColumnOrigin>>,
         kind_label: String,
         /// True if the run wrapped the statement in a transaction that's still
         /// open — the app should prompt for commit/rollback.

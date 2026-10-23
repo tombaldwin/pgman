@@ -5777,6 +5777,7 @@ fn query_ok_clears_last_error_detail() {
             rows: vec![],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
     });
@@ -5796,6 +5797,7 @@ fn query_ok_status_flags_truncated_grids() {
             rows,
             truncated: true,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
     });
@@ -5822,6 +5824,7 @@ fn query_ok_status_omits_cap_when_not_truncated() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
     });
@@ -6016,6 +6019,7 @@ fn expanded_on_lands_new_query_result_in_row_detail() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
     });
@@ -6034,6 +6038,7 @@ fn expanded_off_leaves_new_query_result_in_grid_mode() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
     });
@@ -8929,6 +8934,7 @@ fn a_query_ok_landing_mid_command_bar_leaves_no_stale_bar_behind() {
     a.on_msg(AppMsg::QueryOk {
         generation: a.generation,
         grid: Grid::default(),
+        origins: Vec::new(),
         kind_label: "run".into(),
         tx_open_after: true,
     });
@@ -13384,4 +13390,39 @@ fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
         .as_deref()
         .unwrap_or("")
         .starts_with("no queries found"));
+}
+
+/// A plain run's column origins land on the grid view, and the next grid
+/// — one without them — clears them rather than inheriting the old ones.
+#[test]
+fn query_ok_keeps_the_column_origins_and_the_next_grid_replaces_them() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let origin = crate::grid::ColumnOrigin {
+        table_oid: 42,
+        attnum: 1,
+    };
+    let grid = crate::grid::Grid {
+        columns: vec!["id".into(), "n".into()],
+        rows: vec![vec![Some("1".into()), Some("2".into())]],
+        truncated: false,
+    };
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: grid.clone(),
+        origins: vec![Some(origin), None],
+        kind_label: "run".into(),
+        tx_open_after: false,
+    });
+    assert_eq!(a.grid_view.origins, vec![Some(origin), None]);
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid,
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+    });
+    assert!(a.grid_view.origins.is_empty());
+    a.grid_view.origins = vec![Some(origin)];
+    a.reset_grid_view();
+    assert!(a.grid_view.origins.is_empty());
 }

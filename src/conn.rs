@@ -1127,24 +1127,55 @@ async fn connect_inner(
 /// the returned `Grid` carries `truncated: true` so the renderer can
 /// surface that.
 pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
+    run_statement_with_origins(client, sql)
+        .await
+        .map(|(grid, _)| grid)
+}
+
+/// [`run_statement`], plus where each result column came from
+/// ([`column_origins`]) — the editor's plain run keeps them so a cell
+/// can be edited. Empty for a statement that returns no rows.
+pub async fn run_statement_with_origins(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<(Grid, Vec<Option<crate::grid::ColumnOrigin>>), QueryErr> {
     let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
     let columns = stmt.columns();
+    let origins = column_origins(columns);
     if columns.is_empty() {
         let affected = client.execute(&stmt, &[]).await.map_err(QueryErr::from)?;
-        Ok(Grid {
+        let grid = Grid {
             columns: vec!["status".to_string()],
             rows: vec![vec![Some(format!("{affected} row(s) affected"))]],
             truncated: false,
-        })
+        };
+        Ok((grid, origins))
     } else {
         let column_names: Vec<String> = columns.iter().map(|c| c.name().to_string()).collect();
         let (rows, truncated) = stream_text_rows(client, sql, column_names.len()).await?;
-        Ok(Grid {
+        let grid = Grid {
             columns: column_names,
             rows,
             truncated,
-        })
+        };
+        Ok((grid, origins))
     }
+}
+
+/// Each column's table OID and attnum from the RowDescription, `None`
+/// for one no table column backs. `tokio_postgres` already turns the
+/// wire's zero OID into `None`; a non-positive attnum (a system column
+/// such as `ctid`) is no column an UPDATE can set either.
+fn column_origins(columns: &[tokio_postgres::Column]) -> Vec<Option<crate::grid::ColumnOrigin>> {
+    columns
+        .iter()
+        .map(|c| match (c.table_oid(), c.column_id()) {
+            (Some(table_oid), Some(attnum)) if attnum > 0 => {
+                Some(crate::grid::ColumnOrigin { table_oid, attnum })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Stream a row-returning statement over the simple-query (text)

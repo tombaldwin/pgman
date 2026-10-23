@@ -6112,3 +6112,60 @@ async fn the_schema_cache_knows_each_tables_primary_key_in_key_order() {
     );
     assert!(cache.column_by_attnum("public", &composite, 3).is_none());
 }
+
+/// Each result column carries the table OID and attnum it was read from,
+/// and nothing for an expression or a system column — whatever the
+/// column is called. A view's columns name the view, not the table
+/// under it, and a join's name each side's own table.
+#[tokio::test]
+async fn result_columns_carry_the_table_and_attnum_they_were_read_from() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("origins");
+    let v = it_name("origins_v");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, gone int, name text); \
+             ALTER TABLE {t} DROP COLUMN gone; \
+             INSERT INTO {t} VALUES (1, 'a'); \
+             CREATE VIEW {v} AS SELECT id, name FROM {t}"
+        ))
+        .await
+        .expect("create");
+    let oid = |rel: String| {
+        let client = client.clone();
+        async move {
+            client
+                .query_one(&format!("SELECT '{rel}'::regclass::oid"), &[])
+                .await
+                .expect("oid")
+                .get::<_, u32>(0)
+        }
+    };
+    let (t_oid, v_oid) = (oid(t.clone()).await, oid(v.clone()).await);
+    let origins = |sql: String| {
+        let client = client.clone();
+        async move {
+            pgman::conn::run_statement_with_origins(&client, &sql)
+                .await
+                .expect("run")
+                .1
+        }
+    };
+    let plain = origins(format!(
+        "SELECT name AS id, id + 1 AS id2, id, ctid, 'x' AS lit FROM {t}"
+    ))
+    .await;
+    let view = origins(format!("SELECT * FROM {v}")).await;
+    let join = origins(format!(
+        "SELECT a.id, b.id FROM {t} a JOIN {v} b USING (id)"
+    ))
+    .await;
+    let _ = client
+        .batch_execute(&format!("DROP VIEW {v}; DROP TABLE {t}"))
+        .await;
+    let at = |table_oid, attnum| Some(pgman::grid::ColumnOrigin { table_oid, attnum });
+    // `name` is attnum 3: the dropped column kept its number.
+    assert_eq!(plain, vec![at(t_oid, 3), None, at(t_oid, 1), None, None]);
+    assert_eq!(view, vec![at(v_oid, 1), at(v_oid, 2)]);
+    assert_eq!(join, vec![at(t_oid, 1), at(v_oid, 1)]);
+}

@@ -73,6 +73,7 @@ impl App {
             }
             AppMsg::QueryOk {
                 grid,
+                origins,
                 kind_label,
                 tx_open_after,
                 ..
@@ -99,6 +100,7 @@ impl App {
                     .last_run_sql
                     .as_deref()
                     .and_then(infer_single_source_table);
+                self.grid_view.origins = origins;
                 // psql `\x` — expanded output. Land the new result in
                 // the row-detail view for its first row instead of
                 // the grid. No-op when the result is empty (nothing
