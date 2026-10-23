@@ -6528,6 +6528,7 @@ fn live_lint_loaded_merges_into_findings_and_resorts() {
         object: "public.Foo".into(),
         detail: "…".into(),
         suggestion: None,
+        advice: None,
     }];
     a.on_msg(AppMsg::LiveLintLoaded {
         generation: a.generation,
@@ -6578,6 +6579,7 @@ fn live_lint_failure_surfaces_status_keeps_pure_findings() {
         object: "public.events".into(),
         detail: "…".into(),
         suggestion: None,
+        advice: None,
     };
     a.schema_lint.findings = vec![pure.clone()];
     a.on_msg(AppMsg::LiveLintLoaded {

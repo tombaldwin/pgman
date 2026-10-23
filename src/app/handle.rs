@@ -479,14 +479,11 @@ impl App {
 }
 
 /// What to do about a slow-queries failure, when pgman knows. Pure.
-pub(crate) fn slow_queries_hint(msg: &str) -> &'static str {
+pub(crate) fn slow_queries_hint(msg: &str) -> String {
     if msg.contains("pg_stat_statements") {
-        "\n\npg_stat_statements isn't installed in this database. Install it once, \
-         on the primary: CREATE EXTENSION pg_stat_statements; (the module must be in \
-         shared_preload_libraries — the default on RDS). A replica gets it through \
-         replication."
+        format!("\n\n{}", crate::query::slow_queries::PGSS_MISSING)
     } else {
-        ""
+        String::new()
     }
 }
 

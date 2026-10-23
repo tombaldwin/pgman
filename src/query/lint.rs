@@ -45,6 +45,9 @@ pub struct Finding {
     pub object: String,
     pub detail: String,
     pub suggestion: Option<String>,
+    /// The config advisor's evidence and setting (`ADV…` findings);
+    /// `None` for a lint finding. See `query::advisor`.
+    pub advice: Option<Box<crate::query::advisor::Advice>>,
 }
 
 /// Run every check against `cache` and return findings, sorted
@@ -93,6 +96,7 @@ pub fn tables_without_pk_or_unique(cache: &SchemaCache) -> Vec<Finding> {
                     "ALTER TABLE {}.{} ADD PRIMARY KEY (...);",
                     t.schema, t.name
                 )),
+                advice: None,
             });
         }
     }
@@ -138,6 +142,7 @@ fn quote_finding(kind: &'static str, object: &str, name: &str) -> Finding {
             "`{name}` contains an uppercase letter — Postgres folds unquoted identifiers to lowercase, so every reference must use `\"{name}\"`",
         ),
         suggestion: None,
+        advice: None,
     }
 }
 
@@ -179,6 +184,7 @@ fn reserved_finding(kind: &'static str, object: &str, name: &str) -> Finding {
             "`{name}` is a Postgres reserved keyword — references must be quoted (`\"{name}\"`) or aliased"
         ),
         suggestion: None,
+        advice: None,
     }
 }
 
@@ -215,6 +221,7 @@ pub fn mixed_naming_within_schema(cache: &SchemaCache) -> Vec<Finding> {
                     "schema `{schema}` mixes snake_case (e.g. `{snake_one}`) and mixed-case (e.g. `{mixed_one}`) table names"
                 ),
                 suggestion: None,
+                advice: None,
             });
         }
     }
@@ -600,6 +607,7 @@ pub fn sequence_column_not_unique_finding(
             "`{column}` on `{schema}.{table}` takes its values from a sequence it owns (serial / identity) but no primary key or unique index covers it, and {why} — an explicit insert, a data load or a setval back gives two rows the same id and nothing refuses it"
         ),
         suggestion: Some(fix),
+        advice: None,
     }
 }
 
@@ -616,6 +624,7 @@ pub fn unused_index_finding(schema: &str, table: &str, index: &str) -> Finding {
             "index `{index}` on `{schema}.{table}` has idx_scan = 0 in pg_stat_user_indexes — confirm the stats are warm (post-restart counters are zero too) before dropping"
         ),
         suggestion: Some(format!("DROP INDEX {schema}.{index};")),
+        advice: None,
     }
 }
 
@@ -633,6 +642,7 @@ pub fn duplicate_index_finding(schema: &str, table: &str, names: &str) -> Findin
             "indexes [{pretty}] on `{schema}.{table}` share the same column tuple — only one is doing work; drop the rest to reclaim write throughput"
         ),
         suggestion: None,
+        advice: None,
     }
 }
 
@@ -650,6 +660,7 @@ pub fn bloated_table_finding(schema: &str, table: &str, live: i64, dead: i64) ->
             "`{schema}.{table}` has {dead} dead tuples vs {live} live ({ratio:.2}× live) — autovacuum hasn't caught up; a manual VACUUM reclaims the space"
         ),
         suggestion: Some(format!("VACUUM (VERBOSE, ANALYZE) {schema}.{table};")),
+        advice: None,
     }
 }
 
@@ -668,6 +679,7 @@ pub fn missing_comment_finding(schema: &str, table: &str) -> Finding {
         suggestion: Some(format!(
             "COMMENT ON TABLE {schema}.{table} IS '…';"
         )),
+        advice: None,
     }
 }
 
@@ -688,6 +700,7 @@ pub fn mixed_timestamp_finding(
             "schema `{schema}` has {timestamp_cols} `timestamp` (no tz) and {timestamptz_cols} `timestamptz` column(s) — almost always a forgotten `WITH TIME ZONE` in a migration that silently corrupts stored values across sessions in different timezones"
         ),
         suggestion: None,
+        advice: None,
     }
 }
 
@@ -711,6 +724,7 @@ pub fn fk_without_index_finding(
         suggestion: Some(format!(
             "CREATE INDEX ON {schema}.{table} ({columns});"
         )),
+        advice: None,
     }
 }
 
