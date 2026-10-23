@@ -4017,7 +4017,7 @@ impl App {
                 self.spawn_page_request(PageRequest::Fetch(want));
                 self.last_status = Some(format!("fetching rows {}–{}…", held + 1, held + want));
             }
-            More::CursorClosed => {
+            More::CursorClosed | More::Standby => {
                 // The statement passed `is_pageable_select` when it first
                 // ran — a plain SELECT, which every guard allows — and that
                 // classification is a pure function of the text.
@@ -4026,9 +4026,11 @@ impl App {
                 };
                 let want = (held + PAGE_ROWS).min(MAX_HELD_ROWS);
                 self.spawn_page_request(PageRequest::Rerun(sql, want));
-                self.last_status = Some(format!(
-                    "the cursor had closed · re-running for {want} rows…"
-                ));
+                self.last_status = Some(if self.result_more() == More::Standby {
+                    format!("on a standby · re-running for {want} rows…")
+                } else {
+                    format!("the cursor had closed · re-running for {want} rows…")
+                });
             }
         }
     }
@@ -4129,9 +4131,11 @@ impl App {
             }
             Ok(PageOutcome::Rerun(opened)) => {
                 let in_transaction = opened.in_transaction;
+                let standby = opened.standby;
                 self.replace_rows(opened.grid);
                 if let Some(p) = self.result_paging.as_mut() {
                     p.in_transaction = in_transaction;
+                    p.standby = standby;
                 }
                 let now = Instant::now();
                 self.cursor = opened.cursor.map(|limits| CursorMirror {
@@ -6574,6 +6578,7 @@ pub(crate) fn result_more(
         None => More::Unpaged,
         Some(p) if p.in_transaction => More::InTransaction,
         Some(p) if p.ceiling => More::Ceiling,
+        Some(p) if p.standby => More::Standby,
         Some(p) if cursor_result == Some(p.id) => More::CursorOpen,
         Some(_) => More::CursorClosed,
     }

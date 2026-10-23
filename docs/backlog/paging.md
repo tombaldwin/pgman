@@ -90,6 +90,15 @@ one round trip.
   calls a function that could write never gets here (Choice 2): rows
   never fetched would never run it.
   An error or a cancel aborts the transaction and pgman sends `ROLLBACK`.
+- **A standby holds no cursor.** Replaying the primary's DDL or
+  `VACUUM` conflicts with an open transaction on a standby, and after
+  `max_standby_streaming_delay` (30 s by default; less on an Aurora
+  reader) the server terminates the session — pgman's whole connection.
+  The probe asks `pg_is_in_recovery()` in the same row, per run (a
+  standby promoted since is a primary again), and on a standby the
+  pager fetches the first page and `COMMIT`s whatever it found. The
+  title says `partial · on a standby · M re-runs for more`; `M` takes
+  the re-run path of Choice 6, the rows held plus a page in one piece.
 - **Read-only sessions**: `BEGIN` inherits
   `default_transaction_read_only`, so the cursor's transaction is
   read-only too. Nothing changes.

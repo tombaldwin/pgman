@@ -861,6 +861,7 @@ fn a_paged_result_title_names_m() {
         sql: "SELECT id FROM t".into(),
         ceiling: false,
         in_transaction: false,
+        standby: false,
     });
     let now = std::time::Instant::now();
     a.cursor = Some(crate::app::CursorMirror {

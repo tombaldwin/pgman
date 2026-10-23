@@ -488,6 +488,7 @@ impl App {
                             sql,
                             cursor: opened.cursor,
                             in_transaction: opened.in_transaction,
+                            standby: opened.standby,
                         }),
                     ),
                     Ok(Err(e)) => (Err(e), None),

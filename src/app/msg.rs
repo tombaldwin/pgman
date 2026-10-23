@@ -17,6 +17,8 @@ pub struct RunPaging {
     pub cursor: Option<crate::query::paging::Limits>,
     /// The session was inside a transaction, so it ran unpaged.
     pub in_transaction: bool,
+    /// On a standby: no cursor held past the first page.
+    pub standby: bool,
 }
 
 /// `M`'s answer (`AppMsg::PageLoaded`).

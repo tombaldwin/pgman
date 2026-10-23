@@ -28,7 +28,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   closes the cursor — never leaving the session idle in transaction —
   after 60 s without a fetch or 10 min open (sooner if the server's own
   timeouts are), and before any other database work; `M` then re-runs
-  the query. `EXPLAIN`, scripts, `\watch`, locking `SELECT`s, a
+  the query. On a standby no cursor is held at all (a recovery conflict
+  would end the session): the first page commits at once and `M`
+  re-runs the query for more. `EXPLAIN`, scripts, `\watch`, locking `SELECT`s, a
   `SELECT` that calls a function other than a short list of read-only
   built-ins (`count`, `coalesce`, `lower`, `now`, …), and a `SELECT`
   inside an open transaction stay capped at 1000 as before.

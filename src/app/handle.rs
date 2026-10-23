@@ -115,6 +115,7 @@ impl App {
                     sql: p.sql,
                     ceiling: false,
                     in_transaction: p.in_transaction,
+                    standby: p.standby,
                 });
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-

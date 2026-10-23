@@ -166,6 +166,14 @@ reconnect, closing the tab. The title then says `cursor closed · M
 re-runs`, and `M` runs the query again for the rows already held plus
 1000 more, as a fresh snapshot.
 
+On a standby (the header's `replica` badge) pgman never holds the cursor
+open: a standby replaying the primary's DDL or `VACUUM` cancels a
+session that is in its way, and after `max_standby_streaming_delay` (30 s
+by default, less on an Aurora reader) it ends the whole connection. So
+there the first 1000 rows arrive and the transaction commits at once;
+the title says `partial · on a standby · M re-runs for more`, and each
+`M` runs the query again for the rows held plus 1000.
+
 Everything else stops at 1000 rows with `capped at 1000 · more rows not
 fetched` in the title: `EXPLAIN`, scripts of several statements,
 `\watch`, `SELECT … FOR UPDATE` / `FOR SHARE` (a cursor would hold the

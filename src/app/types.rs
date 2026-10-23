@@ -429,6 +429,8 @@ pub struct ResultPaging {
     /// The session was inside a transaction when it ran, so it ran
     /// unpaged.
     pub in_transaction: bool,
+    /// It ran on a standby, where pgman holds no cursor: `M` re-runs.
+    pub standby: bool,
 }
 
 /// The open result cursor, as the UI sees it — at most one per

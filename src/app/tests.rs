@@ -13698,6 +13698,7 @@ fn app_with_open_cursor() -> App {
             sql: "SELECT id FROM t ORDER BY id".into(),
             cursor: Some(cursor_limits()),
             in_transaction: false,
+            standby: false,
         }),
     });
     a.mode = Mode::Normal;
@@ -13756,6 +13757,7 @@ fn a_paged_result_names_m_and_how_it_continues() {
         sql: "SELECT 1".into(),
         ceiling: false,
         in_transaction: false,
+        standby: false,
     };
     assert_eq!(super::result_more(None, Some(7)), More::Unpaged);
     assert_eq!(super::result_more(Some(&p), Some(7)), More::CursorOpen);
@@ -13768,14 +13770,72 @@ fn a_paged_result_names_m_and_how_it_continues() {
     assert_eq!(super::result_more(Some(&ceiling), Some(7)), More::Ceiling);
     let in_tx = ResultPaging {
         in_transaction: true,
-        ..p
+        ..p.clone()
     };
     assert_eq!(super::result_more(Some(&in_tx), None), More::InTransaction);
+    let standby = ResultPaging { standby: true, ..p };
+    assert_eq!(super::result_more(Some(&standby), None), More::Standby);
 
     let a = app_with_open_cursor();
     assert_eq!(a.result_more(), More::CursorOpen);
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(status.ends_with("partial · M fetches more"), "{status}");
+}
+
+/// On a standby the pager holds no cursor (a recovery conflict would end
+/// the session): the first page lands with nothing open, the title says
+/// `M` re-runs, no close deadline is set, and a re-run there stays that way.
+#[test]
+fn a_standby_result_holds_no_cursor_and_m_re_runs() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: Some(RunPaging {
+            sql: "SELECT id FROM t".into(),
+            cursor: None,
+            in_transaction: false,
+            standby: true,
+        }),
+    });
+    assert_eq!(a.result_more(), crate::grid::More::Standby);
+    assert!(a.cursor.is_none());
+    assert_eq!(a.cursor_deadline(), None);
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.ends_with("partial · on a standby · M re-runs for more"),
+        "{status}"
+    );
+    let id = a.result_paging.as_ref().unwrap().id;
+    let opened = crate::query::paging::Opened {
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..2000),
+            truncated: true,
+        },
+        cursor: None,
+        standby: true,
+        in_transaction: false,
+        origins: Vec::new(),
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(opened)),
+    });
+    assert_eq!(a.grid.row_count(), 2000);
+    assert_eq!(a.result_more(), crate::grid::More::Standby);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("re-ran the query · 2000 row(s) · partial · on a standby · M re-runs for more")
+    );
 }
 
 #[test]
@@ -13861,6 +13921,7 @@ fn m_explains_itself_where_it_cannot_fetch() {
         sql: "SELECT 1".into(),
         ceiling: false,
         in_transaction: true,
+        standby: false,
     });
     a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
     assert!(
@@ -14053,6 +14114,7 @@ fn a_re_run_replaces_the_rows_and_keeps_the_sort() {
         },
         cursor: Some(cursor_limits()),
         in_transaction: false,
+        standby: false,
         origins: Vec::new(),
     };
     a.on_msg(AppMsg::PageLoaded {
