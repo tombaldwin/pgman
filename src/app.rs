@@ -2275,6 +2275,9 @@ impl App {
             crate::tap::TapKind::Query | crate::tap::TapKind::TxnBoundary => {
                 if matches!(event.kind, crate::tap::TapKind::Query) {
                     self.tap_health.query_count = self.tap_health.query_count.saturating_add(1);
+                } else {
+                    self.tap_health.boundary_count =
+                        self.tap_health.boundary_count.saturating_add(1);
                 }
                 // Two caps, oldest out first: `TAP_CAP` events and
                 // `TAP_RING_MAX_BYTES` of text — the count alone let

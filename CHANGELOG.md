@@ -64,6 +64,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The JDBC tap monitor read "no events yet", and the footer showed no
+  `TAP` badge, while only commits / rollbacks had arrived; the status
+  now counts them (`2 commits/rollbacks`).
 - Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
   comparisons in the SCRAM path's digest crates) and `clipboard-win`
   5.4.3 (5.4.1 was yanked).

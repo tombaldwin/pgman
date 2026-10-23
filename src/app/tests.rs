@@ -5039,6 +5039,44 @@ fn tap_events_do_not_overwrite_another_status() {
     assert_eq!(a.last_status, None);
 }
 
+fn tap_boundary(outcome: crate::tap::TxnOutcome, received_at: u64) -> crate::tap::TapEvent {
+    crate::tap::TapEvent {
+        kind: crate::tap::TapKind::TxnBoundary,
+        sql: None,
+        duration_micros: None,
+        rows: None,
+        txn: Some("primary-7#1".into()),
+        txn_outcome: Some(outcome),
+        ..tap_query("", received_at)
+    }
+}
+
+/// A stream of only commits / rollbacks — no query, no heartbeat — is
+/// a stream: the List view shows its `[COMMIT]` rows, so the status
+/// (and the footer's TAP badge) must not still say "no events yet".
+#[test]
+fn tap_monitor_status_counts_a_stream_of_only_txn_boundaries() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.tap_listeners.push(crate::tap::TapListener {
+        transport: crate::tap::TapTransport::Tcp,
+        addr: "127.0.0.1:7432".parse().unwrap(),
+    });
+    a.start_tap_monitor();
+    a.on_tap_event(tap_boundary(crate::tap::TxnOutcome::Commit, 1));
+    a.on_tap_event(tap_boundary(crate::tap::TxnOutcome::Rollback, 2));
+    assert_eq!(a.tap_events.len(), 2);
+    assert!(a.tap_health.any_event_seen());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("JDBC tap · 0 queries · 0 heartbeats · 2 commits/rollbacks")
+    );
+    a.on_tap_event(tap_query("SELECT 1", 3));
+    assert_eq!(
+        a.tap_health.monitor_status(&[]),
+        "JDBC tap · 1 query · 0 heartbeats · 2 commits/rollbacks"
+    );
+}
+
 #[test]
 fn tap_monitor_status_shortens_a_huge_drop_count() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());

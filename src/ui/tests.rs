@@ -684,6 +684,37 @@ fn footer_badges_surface_tap_and_nplus1_when_findings_exist() {
     );
 }
 
+/// The TAP badge means "the tap has heard from the app": a commit or
+/// rollback is hearing from it, even with no query or heartbeat yet.
+#[test]
+fn footer_badges_show_tap_for_a_stream_of_only_txn_boundaries() {
+    let mut a = settled_app(false, false);
+    a.on_tap_event(crate::tap::TapEvent {
+        v: 1,
+        kind: crate::tap::TapKind::TxnBoundary,
+        ts_unix_micros: 1,
+        received_at_unix_micros: 1,
+        app: None,
+        pool: None,
+        conn: Some("c-1".into()),
+        txn: Some("c-1#1".into()),
+        sql: None,
+        params: None,
+        params_redacted: false,
+        duration_micros: None,
+        rows: None,
+        error: None,
+        caller: None,
+        dropped_events_total: None,
+        txn_outcome: Some(crate::tap::TxnOutcome::Commit),
+    });
+    let spans = footer_badges_with(&a, &a.theme, 0);
+    assert!(
+        spans.iter().any(|s| s.content.trim() == "TAP"),
+        "expected TAP badge: {spans:?}"
+    );
+}
+
 /// A query event bound to `params`, for the tap List view's detail.
 fn tap_query_with_params(sql: &str, params: &[&str], redacted: bool) -> crate::tap::TapEvent {
     crate::tap::TapEvent {

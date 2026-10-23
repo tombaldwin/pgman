@@ -1735,6 +1735,10 @@ pub struct TapHealth {
     pub query_count: u64,
     /// Count of heartbeat events seen — for diagnostics.
     pub heartbeat_count: u64,
+    /// Count of `txn_boundary` events (commit / rollback) seen. A
+    /// stream of only these is still a stream: without the count the
+    /// monitor read "no events yet" over a ring of `[COMMIT]` rows.
+    pub boundary_count: u64,
 }
 
 impl TapHealth {
@@ -1748,7 +1752,7 @@ impl TapHealth {
     pub fn monitor_status(&self, listeners: &[crate::tap::TapListener]) -> String {
         let queries = self.query_count;
         let beats = self.heartbeat_count;
-        if queries == 0 && beats == 0 {
+        if !self.any_event_seen() {
             return match crate::tap::listening_summary(listeners) {
                 Some(listening) => format!("JDBC tap · no events yet · {listening}"),
                 None => "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into(),
@@ -1762,10 +1766,28 @@ impl TapHealth {
         } else {
             String::new()
         };
+        // Only when there are any: the line is narrow, and a stream of
+        // queries without boundaries (autocommit) is the common case.
+        let boundary_suffix = if self.boundary_count > 0 {
+            format!(
+                " · {}",
+                crate::ui::count_label(self.boundary_count, "commit/rollback", "commits/rollbacks")
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "JDBC tap · {} · {}{dropped_suffix}",
+            "JDBC tap · {} · {}{boundary_suffix}{dropped_suffix}",
             crate::ui::count_label(queries, "query", "queries"),
             crate::ui::count_label(beats, "heartbeat", "heartbeats"),
         )
+    }
+
+    /// Has the tap heard anything this session — a query, a heartbeat
+    /// or a commit / rollback? What the monitor's "no events yet" and
+    /// the footer's `TAP` badge both turn on.
+    #[must_use]
+    pub fn any_event_seen(&self) -> bool {
+        self.query_count > 0 || self.heartbeat_count > 0 || self.boundary_count > 0
     }
 }

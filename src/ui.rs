@@ -760,7 +760,7 @@ pub(crate) fn footer_badges_with(
     // listener has seen at least one event this session. F4
     // hint piggybacks on the badge so the operator knows where
     // to look.
-    if app.tap_health.query_count > 0 || app.tap_health.heartbeat_count > 0 {
+    if app.tap_health.any_event_seen() {
         out.push(Span::styled(
             " TAP ",
             Style::default()
