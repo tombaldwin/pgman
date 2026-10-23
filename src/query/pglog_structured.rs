@@ -59,7 +59,11 @@ pub fn sniff(log: &str) -> Option<Format> {
         let has = |k: &str| v.get(k).is_some_and(serde_json::Value::is_string);
         return (has("error_severity") && has("message")).then_some(Format::Json);
     }
-    let (fields, _) = csv_record(first.as_bytes(), 0)?;
+    // The whole first record, not its first line: a quoted field (a
+    // multi-line statement) can run on over several.
+    // Only blank lines come before `first`, so its first match is it.
+    let start = log.find(first)?;
+    let (fields, _) = csv_record(log.as_bytes(), start)?;
     let is_csv = fields.len() >= col::MIN
         && is_pid(&fields[col::PID])
         && super::pglog::is_severity(&fields[col::SEVERITY]);
@@ -343,6 +347,9 @@ line \"\"two\"\"'\",,,,,,,,\"PostgreSQL JDBC Driver\",\"client backend\"
     fn sniff_tells_the_formats_apart() {
         let csv = "2026-10-21 09:12:48.001 UTC,\"billing\",\"ledger\",31840,\"10.0.1.23:51234\",6530a1b2.7c60,3,\"SELECT\",2026-10-21 09:12:47 UTC,5/12,0,LOG,00000,\"statement: select 1\",,,,,,,,,\"psql\",\"client backend\",,0";
         assert_eq!(sniff(csv), Some(Format::Csv));
+        // A first record whose statement spans lines.
+        let multi = "\n2026-10-21 09:12:48.001 UTC,\"billing\",\"ledger\",31840,\"10.0.1.23:51234\",6530a1b2.7c60,3,\"SELECT\",2026-10-21 09:12:47 UTC,5/12,0,LOG,00000,\"statement: select 1\n\tfrom t\",,,,,,,,,\"psql\",\"client backend\",,0";
+        assert_eq!(sniff(multi), Some(Format::Csv));
         assert_eq!(
             sniff("\n{\"pid\":1,\"error_severity\":\"LOG\",\"message\":\"statement: select 1\"}"),
             Some(Format::Json)
