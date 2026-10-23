@@ -879,7 +879,24 @@ fn tap_addr_or_exit_cli(flag: &str, raw: &str) -> std::net::SocketAddr {
 /// shape doesn't yet authenticate), or bare `port`. Returns a
 /// useful error message on parse failure so the operator sees
 /// what went wrong without grepping logs.
+///
+/// `host` may be a name (`localhost:7432`), resolved by the system
+/// resolver — it used to fail as `invalid socket address syntax`.
 fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
+    parse_tap_addr_with(raw, |host, port| {
+        use std::net::ToSocketAddrs;
+        (host, port).to_socket_addrs().map(Iterator::collect)
+    })
+}
+
+/// [`parse_tap_addr`] with the name lookup injected, so the tests
+/// don't depend on a resolver. Of several addresses a name resolves
+/// to, the first IPv4 one wins: `localhost` resolving to `::1` first
+/// would otherwise bind a listener a JVM dialling 127.0.0.1 misses.
+fn parse_tap_addr_with(
+    raw: &str,
+    resolve: impl FnOnce(&str, u16) -> std::io::Result<Vec<std::net::SocketAddr>>,
+) -> Result<std::net::SocketAddr, String> {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix(':') {
@@ -891,8 +908,21 @@ fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
         let port: u16 = raw.parse().map_err(|e| format!("port {raw:?}: {e}"))?;
         return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     }
-    raw.parse::<SocketAddr>()
-        .map_err(|e| format!("expected host:port or :port, got {raw:?}: {e}"))
+    if let Ok(addr) = raw.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    let (host, port) = raw.rsplit_once(':').expect("checked above: raw has a ':'");
+    let port: u16 = port.parse().map_err(|e| format!("port {port:?}: {e}"))?;
+    let unresolved = |why: String| {
+        format!("cannot resolve {host:?} ({why}); use an IP address such as 127.0.0.1:{port}")
+    };
+    let addrs = resolve(host, port).map_err(|e| unresolved(e.to_string()))?;
+    addrs
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or_else(|| addrs.first())
+        .copied()
+        .ok_or_else(|| unresolved("no addresses".into()))
 }
 
 /// The log `--log` names: what was already read from stdin for
@@ -1543,6 +1573,47 @@ mod main_tests {
     fn parse_tap_addr_rejects_oversize_port() {
         let err = parse_tap_addr(":99999").unwrap_err();
         assert!(err.contains("port"), "expected port-range error: {err}");
+    }
+
+    #[test]
+    fn parse_tap_addr_resolves_localhost() {
+        // From the hosts file — no network.
+        let got = parse_tap_addr("localhost:7432").unwrap();
+        assert!(got.ip().is_loopback(), "{got}");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_prefers_an_ipv4_address_of_a_name() {
+        let v6: std::net::SocketAddr = "[::1]:7432".parse().unwrap();
+        let v4: std::net::SocketAddr = "127.0.0.1:7432".parse().unwrap();
+        let got = parse_tap_addr_with("tap-host:7432", |host, port| {
+            assert_eq!((host, port), ("tap-host", 7432));
+            Ok(vec![v6, v4])
+        });
+        assert_eq!(got, Ok(v4));
+        // Only IPv6: that, rather than nothing.
+        let got = parse_tap_addr_with("tap-host:7432", |_, _| Ok(vec![v6]));
+        assert_eq!(got, Ok(v6));
+        // Literals never reach the resolver.
+        let got = parse_tap_addr_with("[::1]:7432", |_, _| panic!("resolved a literal"));
+        assert_eq!(got, Ok(v6));
+    }
+
+    #[test]
+    fn parse_tap_addr_says_to_use_an_ip_when_a_name_does_not_resolve() {
+        let err = parse_tap_addr_with("no-such-host:7432", |_, _| {
+            Err(std::io::Error::other("nodename nor servname provided"))
+        })
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "cannot resolve \"no-such-host\" (nodename nor servname provided); use an IP address such as 127.0.0.1:7432"
+        );
+        let err = parse_tap_addr_with("empty-host:7432", |_, _| Ok(vec![])).unwrap_err();
+        assert!(err.contains("no addresses"), "{err}");
+        let err = parse_tap_addr_with("tap-host:http", |_, _| Ok(vec![])).unwrap_err();
+        assert!(err.starts_with("port \"http\""), "{err}");
     }
 
     /// Unique-per-test scratch project dir under the OS temp dir with a

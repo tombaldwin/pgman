@@ -56,6 +56,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   the column ends in `…`.
 - The tap monitor's status line says `1 query · 1 heartbeat`, not
   `1 queries · 1 heartbeats`, as its title already did.
+- `--tap-listen`, `--tap-udp` and `--tap-otlp` take a host name
+  (`localhost:7432`), which failed as `invalid socket address syntax`.
+  A name that does not resolve says to use an IP address instead.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2
