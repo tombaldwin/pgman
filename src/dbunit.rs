@@ -192,16 +192,24 @@ pub fn generate_flat_xml(fixture: &Fixture) -> String {
 /// flat-XML convention — schema-qualify by hand if your setup needs
 /// it).
 ///
-/// Refused, rather than renamed, when the table name would not read
-/// back as the same table on apply — see [`fixture_name_problem`]. A
-/// renamed element applies to some other table, or none.
+/// Refused, rather than renamed, when the table name or a column
+/// name would not read back as itself on apply — see
+/// [`fixture_name_problem`]. A renamed element applies to some other
+/// table, or none; a renamed attribute to a column the table lacks.
 pub fn fixture_from_rows(
     table: &str,
     columns: &[String],
     rows: &[Vec<crate::grid::Cell>],
 ) -> Result<Fixture, String> {
-    if let Some(why) = fixture_name_problem(table) {
+    if let Some(why) = fixture_name_problem(table, true) {
         return Err(format!("table {table:?} can't be a fixture element: {why}"));
+    }
+    for column in columns {
+        if let Some(why) = fixture_name_problem(column, false) {
+            return Err(format!(
+                "column {column:?} can't be a fixture attribute: {why}"
+            ));
+        }
     }
     let rows = rows
         .iter()
@@ -252,16 +260,17 @@ pub fn sql_table_name(name: &str) -> String {
     }
 }
 
-/// Why `name` — a catalog name captured from a result — can't be
-/// written as a fixture name and read back as itself, or `None` when
-/// it can. XML can't carry every identifier (`?column?`, `a b`, `a"b`),
-/// and an all-uppercase name (`"USERS"`) or one with a dot would read
-/// back as a different table.
-pub fn fixture_name_problem(name: &str) -> Option<&'static str> {
+/// Why `name` — a catalog name captured from a result, a table's
+/// (`table`) or a column's — can't be written as a fixture name and
+/// read back as itself, or `None` when it can. XML can't carry every
+/// identifier (`?column?`, `a b`, `a"b`), an all-uppercase name
+/// (`"USERS"`) reads back folded, and a table name with a dot reads
+/// back as schema.table.
+pub fn fixture_name_problem(name: &str, table: bool) -> Option<&'static str> {
     if !is_xml_name(name) {
         return Some("not a valid XML name");
     }
-    if name.contains('.') {
+    if table && name.contains('.') {
         return Some("a dot reads back as schema.table");
     }
     if sql_ident_name(name) != crate::app::quote_ident(name) {
@@ -336,7 +345,7 @@ fn insert_sql(row: &Row) -> String {
     if row.columns.is_empty() {
         return format!("INSERT INTO {} DEFAULT VALUES", sql_table_name(&row.table));
     }
-    let cols: Vec<&str> = row.columns.iter().map(|(k, _)| k.as_str()).collect();
+    let cols: Vec<String> = row.columns.iter().map(|(k, _)| sql_ident_name(k)).collect();
     let vals: Vec<String> = row
         .columns
         .iter()
@@ -479,7 +488,7 @@ mod tests {
         let f = parse_flat_xml("<dataset><USER ID=\"1\"/></dataset>").unwrap();
         assert_eq!(
             generate_inserts(&f)[0],
-            "INSERT INTO \"user\" (ID) VALUES ('1')"
+            "INSERT INTO \"user\" (id) VALUES ('1')"
         );
     }
 
@@ -494,6 +503,46 @@ mod tests {
             );
         }
         assert!(fixture_from_rows("Café_1", &["id".to_string()], &[]).is_ok());
+    }
+
+    /// Mixed-case, reserved and dotted column names round-trip: capture,
+    /// XML, parse, apply names the same columns, quoted where they must
+    /// be. Bare, `createdAt` was `createdat` and `user` a syntax error.
+    #[test]
+    fn column_names_round_trip_through_capture_and_apply() {
+        let cols = ["id", "createdAt", "user", "a.b"].map(String::from);
+        let row = vec![
+            Some("1".to_string()),
+            Some("t".to_string()),
+            Some("u".to_string()),
+            Some("d".to_string()),
+        ];
+        let f = fixture_from_rows("t", &cols, &[row]).unwrap();
+        let reparsed = parse_flat_xml(&generate_flat_xml(&f)).unwrap();
+        assert_eq!(reparsed, f);
+        assert_eq!(
+            generate_inserts(&reparsed),
+            vec![
+                "INSERT INTO t (id, \"createdAt\", \"user\", \"a.b\") VALUES ('1', 't', 'u', 'd')"
+            ]
+        );
+        // A hand-written uppercase fixture still means the lowercase columns.
+        let f = parse_flat_xml("<dataset><USERS ID=\"1\" FULL_NAME=\"x\"/></dataset>").unwrap();
+        assert_eq!(
+            generate_inserts(&f),
+            vec!["INSERT INTO users (id, full_name) VALUES ('1', 'x')"]
+        );
+    }
+
+    /// A column XML can't carry, or one that would read back as another
+    /// column, refuses the capture and names the column — no `_` rename.
+    #[test]
+    fn capture_refuses_a_column_name_that_does_not_round_trip() {
+        for bad in ["a\"b", "with space", "?column?", "ID", "1st"] {
+            let err =
+                fixture_from_rows("t", &["id".to_string(), bad.to_string()], &[]).expect_err(bad);
+            assert!(err.contains(&format!("column {bad:?}")), "{err}");
+        }
     }
 
     #[test]

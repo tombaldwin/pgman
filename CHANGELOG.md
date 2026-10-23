@@ -37,6 +37,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   now means exactly that table. A table whose name a fixture can't
   carry is refused rather than captured under another name. `F` (FK
   follow) prefers the exact table over a case-insensitive match.
+- A fixture's column names are quoted on apply, so a mixed-case
+  (`createdAt`) or reserved (`user`) column round-trips; an
+  all-uppercase attribute (`FULL_NAME`) still means `full_name`. A
+  column XML can't carry (`a"b`, `with space`, `?column?`) refuses
+  the `:fixture` capture and names the column, instead of being
+  renamed with `_` into a column the table doesn't have.
 - Sorting a column (`s`) decides once per column whether to compare
   numbers or text: a column that is all numbers sorts by exact value
   (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in

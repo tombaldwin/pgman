@@ -5825,3 +5825,34 @@ async fn the_insert_yank_and_fixture_land_in_the_quoted_table_not_its_twin() {
         "{script}"
     );
 }
+
+/// A fixture captured from a table with a mixed-case and a reserved
+/// column name applies back to it: the apply script quotes them. Bare,
+/// `createdAt` was `createdat` and `user` a syntax error.
+#[tokio::test]
+async fn a_fixture_of_mixed_case_and_reserved_columns_applies_back() {
+    let (client, _tunnel) = writable_client().await;
+    let table = it_name("fxcols");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int PRIMARY KEY, \"createdAt\" text, \"user\" text); \
+             INSERT INTO {table} VALUES (1, 'then', 'someone')"
+        ))
+        .await
+        .expect("create the table");
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let fixture = pgman::dbunit::fixture_from_rows(&table, &before.columns, &before.rows)
+        .expect("every name round-trips");
+    let reparsed =
+        pgman::dbunit::parse_flat_xml(&pgman::dbunit::generate_flat_xml(&fixture)).unwrap();
+    let script =
+        pgman::dbunit::generate_apply_script(&reparsed, pgman::dbunit::CleanMode::DeleteFrom);
+    let applied = client.batch_execute(&script).await;
+    let after = pgman::conn::run_statement(&client, &select).await;
+    let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
+    applied.unwrap_or_else(|e| panic!("{script}: {e}"));
+    assert_eq!(after.expect("select again").rows, before.rows, "{script}");
+}
