@@ -1859,6 +1859,27 @@ fn param_prompt_collects_values_and_substitutes() {
     assert_eq!(a.mode, Mode::Editor);
     assert_eq!(a.editor.buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
     assert!(a.saved_ui.param_prompt.is_none());
+    // No `;`, so a plain Enter would be a newline: name the key that runs.
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("loaded 'two' with 2 param(s) · alt-⏎ runs it")
+    );
+}
+
+#[test]
+fn a_loaded_saved_query_names_the_key_that_runs_it() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.load_saved_query(saved("byid", "SELECT * FROM t WHERE id = :id;"));
+    type_str(&mut a, "42");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Editor);
+    // Terminated: a plain Enter runs it.
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("loaded 'byid' with 1 param(s) · ⏎ runs it")
+    );
+    // And it does.
+    assert!(crate::app::editor::enter_runs(&a.editor.buffer));
 }
 
 #[test]

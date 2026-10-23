@@ -2885,13 +2885,20 @@ impl App {
     }
 
     /// Drop `sql` into the editor buffer and switch to the editor.
-    /// Shared by the direct and post-`:param`-prompt load paths.
+    /// Shared by the direct and post-`:param`-prompt load paths. The
+    /// status ends with the key that runs it now — after a prompt for
+    /// values the next question is how to send it.
     fn load_sql_into_editor(&mut self, sql: String, status: String) {
+        let run_key = if editor::enter_runs(&sql) {
+            "⏎ runs it"
+        } else {
+            "alt-⏎ runs it"
+        };
         self.editor.buffer = sql;
         self.editor.cursor = self.editor.buffer.len();
         self.editor.preferred_col = None;
         self.history_pos = None;
-        self.last_status = Some(status);
+        self.last_status = Some(format!("{status} · {run_key}"));
         self.mode = Mode::Editor;
     }
 
