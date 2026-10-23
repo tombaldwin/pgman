@@ -798,7 +798,14 @@ pub fn dead_tuple_finding(
         VacuumCause::TableDisabled => (
             "autovacuum is switched off for this table (autovacuum_enabled = false), so nothing reclaims them".to_string(),
             Some(format!("ALTER TABLE {} RESET (autovacuum_enabled);", t.quoted)),
-            None,
+            Some(SettingChange {
+                name: "autovacuum_enabled",
+                current: "false".into(),
+                suggested: "the default (true)".into(),
+                reasoning: "nothing vacuums this table while it is off; a bulk load that turned it off for speed should turn it back on".into(),
+                restart: false,
+                rds: "a table storage parameter: no parameter group, applies at once, the same on RDS and Aurora".into(),
+            }),
         ),
         VacuumCause::ServerDisabled => (
             "autovacuum is off server-wide, so nothing reclaims them (and nothing protects against transaction-id wraparound short of the emergency vacuum)".to_string(),

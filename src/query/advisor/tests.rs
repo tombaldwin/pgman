@@ -527,6 +527,11 @@ fn dead_tuples_with_autovacuum_off_say_turn_it_back_on() {
         f.suggestion.as_deref(),
         Some("ALTER TABLE public.orders RESET (autovacuum_enabled);")
     );
+    // The setting shown is the one the suggestion changes, not the
+    // scale factor (found driving the wizard by hand).
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(ch.name, "autovacuum_enabled");
+    assert_eq!(ch.current, "false");
     let off = VacuumDefaults {
         enabled: false,
         ..DEFAULTS
