@@ -1284,6 +1284,8 @@ impl App {
                         columns: d.b_columns.clone(),
                         rows: d.b_rows.clone(),
                         label: d.b_label.clone(),
+                        source: d.b_source.clone(),
+                        origins: d.b_origins.clone(),
                     });
                     self.mode = Mode::Normal;
                     self.result_diff.active = None;

@@ -811,6 +811,45 @@ mod live {
         assert_eq!(a.history.last(), Some(&sql));
     }
 
+    /// `D`, a change, the same query, `D`: keyed on the table's primary
+    /// key (not the unique `name` to its left), a renamed row is one
+    /// change.
+    #[tokio::test]
+    async fn the_result_diff_keys_on_the_catalogs_primary_key() {
+        let client = client().await;
+        let t = name("live_diff");
+        client
+            .batch_execute(&format!(
+                "CREATE TABLE {t} (name text UNIQUE, id int PRIMARY KEY); \
+                 INSERT INTO {t} VALUES ('ann', 1), ('bo', 2)"
+            ))
+            .await
+            .expect("create");
+        let mut a = app(&client).await;
+        let select = format!("SELECT name, id FROM {t} ORDER BY id");
+        run(&mut a, &select).await;
+        a.on_key(key(KeyCode::Char('D')));
+        client
+            .batch_execute(&format!("UPDATE {t} SET name = 'anna' WHERE id = 1"))
+            .await
+            .expect("rename");
+        run(&mut a, &select).await;
+        a.on_key(key(KeyCode::Char('D')));
+        let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+        assert_eq!(a.mode, Mode::ResultDiff);
+        let d = a.result_diff.active.as_ref().expect("a diff");
+        assert_eq!(d.key, crate::query::row_diff::RowKey::Columns(vec![1]));
+        assert!(d.key_is_pk);
+        assert_eq!(
+            (
+                d.diff.changed.len(),
+                d.diff.added.len(),
+                d.diff.removed.len()
+            ),
+            (1, 0, 0)
+        );
+    }
+
     /// A database whose guard allows an UPDATE runs the edit at Enter,
     /// with no confirm.
     #[tokio::test]

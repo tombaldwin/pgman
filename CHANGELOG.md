@@ -41,6 +41,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- The result diff (`D`) matches rows on the table's real primary key
+  when A and B are the same columns from one table and the key is in
+  both (`key: id (primary key)` in the title), instead of the leftmost
+  column that happens to be unique; otherwise it infers as before.
+
 - Help is a list of sections and one section at a time instead of one
   ~275-row page: from 110 columns the list sits beside the section, and
   on a narrower terminal the list comes first, each section with a

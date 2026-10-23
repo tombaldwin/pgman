@@ -356,13 +356,18 @@ fn result_diff_view_renders_added_removed_changed() {
         columns: cols.clone(),
         rows: a_rows,
         label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
         b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
         key,
+        key_is_pk: false,
         diff,
     });
     a.result_diff.pinned = Some(pinned);
@@ -401,19 +406,55 @@ fn result_diff_shows_a_null_to_empty_string_change() {
         columns: cols.clone(),
         rows: a_rows,
         label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
         b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
         key,
+        key_is_pk: false,
         diff,
     });
     a.result_diff.pinned = Some(pinned);
     a.mode = Mode::ResultDiff;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(rendered.contains("note: NULL → ''"), "\n{rendered}");
+}
+
+/// A diff keyed on the source table's primary key says so in its title.
+#[test]
+fn result_diff_title_names_a_primary_key() {
+    let mut a = settle_app();
+    let cols = vec!["name".to_string(), "id".to_string()];
+    let rows = vec![vec![Some("ann".to_string()), Some("1".to_string())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![1]);
+    let diff = pgman::query::row_diff::diff_rows(&rows, &rows, &key);
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: rows.clone(),
+        label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned.clone(),
+        b_columns: cols,
+        b_rows: rows,
+        b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
+        key,
+        key_is_pk: true,
+        diff,
+    });
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 160, 30));
+    assert!(rendered.contains("key: id (primary key)"), "\n{rendered}");
 }
 
 #[test]

@@ -13428,3 +13428,113 @@ fn query_ok_keeps_the_column_origins_and_the_next_grid_replaces_them() {
     a.reset_grid_view();
     assert!(a.grid_view.origins.is_empty());
 }
+
+/// A cache knowing `public.users (name, id)` keyed on `id` (OID 100) and
+/// `public.lines (order_id, line_no, sku)` keyed on both (OID 200).
+fn diff_key_cache() -> SchemaCache {
+    use crate::query::schema::ColumnMeta;
+    let mut c = SchemaCache::default();
+    let meta = |cols: &[(&str, i16)]| -> Vec<ColumnMeta> {
+        cols.iter()
+            .map(|(name, attnum)| ColumnMeta {
+                name: name.to_string(),
+                type_name: "text".into(),
+                not_null: false,
+                attnum: *attnum,
+            })
+            .collect()
+    };
+    let users = ("public".to_string(), "users".to_string());
+    let lines = ("public".to_string(), "lines".to_string());
+    c.relations_by_oid.insert(100, users.clone());
+    c.relations_by_oid.insert(200, lines.clone());
+    c.columns_meta_by_table
+        .insert(users.clone(), meta(&[("name", 1), ("id", 2)]));
+    c.columns_meta_by_table.insert(
+        lines.clone(),
+        meta(&[("order_id", 1), ("line_no", 2), ("sku", 3)]),
+    );
+    c.primary_keys.insert(users, vec!["id".into()]);
+    c.primary_keys
+        .insert(lines, vec!["order_id".into(), "line_no".into()]);
+    c
+}
+
+fn pin(
+    table: &str,
+    columns: &[&str],
+    origins: &[Option<(u32, i16)>],
+    rows: &[&[&str]],
+) -> PinnedResult {
+    PinnedResult {
+        columns: columns.iter().map(|s| s.to_string()).collect(),
+        rows: rows
+            .iter()
+            .map(|r| r.iter().map(|c| Some(c.to_string())).collect())
+            .collect(),
+        label: "q".into(),
+        source: Some(("public".into(), table.into())),
+        origins: origins
+            .iter()
+            .map(|o| o.map(|(table_oid, attnum)| crate::grid::ColumnOrigin { table_oid, attnum }))
+            .collect(),
+    }
+}
+
+/// The leftmost column is unique on both sides too, but it isn't the
+/// key: a renamed user keyed on `name` read as one removed and one
+/// added; keyed on the real `id` it is one change.
+#[test]
+fn the_result_diff_keys_on_the_real_primary_key() {
+    use crate::query::row_diff::{diff_rows, RowKey};
+    let cache = diff_key_cache();
+    let o = [Some((100, 1)), Some((100, 2))];
+    let a = pin("users", &["name", "id"], &o, &[&["ann", "1"], &["bo", "2"]]);
+    let b = pin(
+        "users",
+        &["name", "id"],
+        &o,
+        &[&["anna", "1"], &["bo", "2"]],
+    );
+    let (key, is_pk) = choose_diff_key(&cache, &a, &b);
+    assert_eq!((key.clone(), is_pk), (RowKey::Columns(vec![1]), true));
+    let d = diff_rows(&a.rows, &b.rows, &key);
+    assert_eq!((d.changed.len(), d.added.len(), d.removed.len()), (1, 0, 0));
+    // Without origins (a panel, the demo) it is today's inference.
+    let mut a2 = a.clone();
+    let mut b2 = b.clone();
+    a2.origins.clear();
+    b2.origins.clear();
+    assert_eq!(
+        choose_diff_key(&cache, &a2, &b2),
+        (RowKey::Columns(vec![0]), false)
+    );
+}
+
+/// A composite key, in key order; and two results whose columns come
+/// from different places (the same names, a different table) fall back
+/// to inference.
+#[test]
+fn the_result_diff_keys_on_a_composite_key_and_only_when_both_sides_agree() {
+    use crate::query::row_diff::RowKey;
+    let cache = diff_key_cache();
+    let o = [Some((200, 3)), Some((200, 2)), Some((200, 1))];
+    let rows: &[&[&str]] = &[&["a", "1", "10"], &["b", "2", "10"]];
+    let a = pin("lines", &["sku", "line_no", "order_id"], &o, rows);
+    assert_eq!(
+        choose_diff_key(&cache, &a, &a.clone()),
+        (RowKey::Columns(vec![2, 1]), true)
+    );
+    let mut b = a.clone();
+    b.origins[0] = None;
+    assert_eq!(
+        choose_diff_key(&cache, &a, &b),
+        (RowKey::Columns(vec![0]), false)
+    );
+    // The key not in the result: inference.
+    let a = pin("lines", &["sku"], &[Some((200, 3))], &[&["a"], &["b"]]);
+    assert_eq!(
+        choose_diff_key(&cache, &a, &a.clone()),
+        (RowKey::Columns(vec![0]), false)
+    );
+}

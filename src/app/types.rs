@@ -487,6 +487,11 @@ pub struct PinnedResult {
     /// Short label for the header — the SQL that produced A
     /// (collapsed / truncated) or a fallback.
     pub label: String,
+    /// The grid's FROM table and column origins when it was pinned
+    /// (`GridView::source` / `origins`): what lets the diff key on the
+    /// table's real primary key.
+    pub source: Option<(String, String)>,
+    pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
 }
 
 /// Frozen state behind `Mode::ResultDiff`: the baseline (A), a
@@ -499,7 +504,12 @@ pub struct ResultDiffState {
     pub b_columns: Vec<String>,
     pub b_rows: Vec<Vec<crate::grid::Cell>>,
     pub b_label: String,
+    pub b_source: Option<(String, String)>,
+    pub b_origins: Vec<Option<crate::grid::ColumnOrigin>>,
     pub key: crate::query::row_diff::RowKey,
+    /// `key` is the source table's primary key, not an inferred unique
+    /// column.
+    pub key_is_pk: bool,
     pub diff: crate::query::row_diff::RowDiff,
 }
 /// In-progress `:param` collection while loading a saved query

@@ -814,6 +814,45 @@ pub trait CancelDispatcher: std::fmt::Debug + Send + Sync {
     fn dispatch(&self);
 }
 
+/// Pick the diff key for A against B, and whether it is the primary
+/// key. Keyed comparison compares non-key cells positionally, so it
+/// needs the same columns on both sides; then, when both were read from
+/// the same columns of one table (`origins` equal) whose primary key is
+/// all in the result, the key is that primary key
+/// (`query::cell_edit::resolve_key`). Otherwise the leftmost column
+/// unique on both sides, then the full row. Pure.
+pub fn choose_diff_key(
+    cache: &SchemaCache,
+    a: &PinnedResult,
+    b: &PinnedResult,
+) -> (crate::query::row_diff::RowKey, bool) {
+    use crate::query::row_diff::{infer_key_column, RowKey};
+    if a.columns != b.columns {
+        return (RowKey::FullRow, false);
+    }
+    if a.origins == b.origins {
+        let key = |p: &PinnedResult| {
+            crate::query::cell_edit::resolve_key(
+                cache,
+                p.source.as_ref(),
+                &p.columns,
+                &p.origins,
+                None,
+            )
+        };
+        if let (Ok(ka), Ok(kb)) = (key(a), key(b)) {
+            if ka == kb {
+                let cols = ka.pk.iter().map(|(idx, _)| *idx).collect();
+                return (RowKey::Columns(cols), true);
+            }
+        }
+    }
+    match infer_key_column(&a.rows, &b.rows, a.columns.len()) {
+        Some(col) => (RowKey::Columns(vec![col]), false),
+        None => (RowKey::FullRow, false),
+    }
+}
+
 /// Inspect `sql` for its FROM clause and return the single source
 /// table when there's exactly one. Joins / subqueries / no-FROM
 /// statements all return `None` — the row-as-INSERT yank only
@@ -4247,11 +4286,7 @@ impl App {
         match self.result_diff.pinned.take() {
             None => {
                 let n = self.grid.rows.len();
-                self.result_diff.pinned = Some(PinnedResult {
-                    columns: self.grid.columns.clone(),
-                    rows: self.grid.rows.clone(),
-                    label: self.current_result_label(),
-                });
+                self.result_diff.pinned = Some(self.current_result_pin());
                 self.last_status = Some(format!(
                     "pinned result A · {n} row(s) · run another query, then D to diff"
                 ));
@@ -4259,11 +4294,9 @@ impl App {
             Some(a) => {
                 // Baseline present — current grid is B. Put A back
                 // (it persists across diffs for iterative work).
-                let b_columns = self.grid.columns.clone();
-                let b_rows = self.grid.rows.clone();
-                let b_label = self.current_result_label();
-                let key = Self::choose_diff_key(&a, &b_columns, &b_rows);
-                let diff = crate::query::row_diff::diff_rows(&a.rows, &b_rows, &key);
+                let b = self.current_result_pin();
+                let (key, key_is_pk) = choose_diff_key(&self.schema_cache, &a, &b);
+                let diff = crate::query::row_diff::diff_rows(&a.rows, &b.rows, &key);
                 let summary = format!(
                     "diff · +{} -{} ~{} ={}",
                     diff.added.len(),
@@ -4273,10 +4306,13 @@ impl App {
                 );
                 self.result_diff.active = Some(ResultDiffState {
                     a: a.clone(),
-                    b_columns,
-                    b_rows,
-                    b_label,
+                    b_columns: b.columns,
+                    b_rows: b.rows,
+                    b_label: b.label,
+                    b_source: b.source,
+                    b_origins: b.origins,
                     key,
+                    key_is_pk,
                     diff,
                 });
                 self.result_diff.pinned = Some(a);
@@ -4287,23 +4323,16 @@ impl App {
         }
     }
 
-    /// Pick the diff key for A-vs-B. Use a single inferred unique
-    /// column (strong mode, with change-detection) only when the
-    /// column layouts match — comparing non-key cells positionally
-    /// requires aligned columns. Otherwise fall back to full-row
-    /// identity.
-    fn choose_diff_key(
-        a: &PinnedResult,
-        b_columns: &[String],
-        b_rows: &[Vec<Cell>],
-    ) -> crate::query::row_diff::RowKey {
-        use crate::query::row_diff::{infer_key_column, RowKey};
-        if a.columns == b_columns {
-            if let Some(col) = infer_key_column(&a.rows, b_rows, a.columns.len()) {
-                return RowKey::Columns(vec![col]);
-            }
+    /// The current grid as a diff side: its columns, rows, label, and
+    /// the source table and column origins the PK key needs.
+    fn current_result_pin(&self) -> PinnedResult {
+        PinnedResult {
+            columns: self.grid.columns.clone(),
+            rows: self.grid.rows.clone(),
+            label: self.current_result_label(),
+            source: self.grid_view.source.clone(),
+            origins: self.grid_view.origins.clone(),
         }
-        RowKey::FullRow
     }
 
     /// `Y` in Normal mode — copy the (sorted, filtered) grid to the
