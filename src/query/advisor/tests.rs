@@ -63,7 +63,26 @@ fn setting_bytes_reads_each_unit_pg_settings_uses() {
     };
     assert_eq!(plain.bytes(), None);
     assert_eq!(plain.display(), "0.2");
-    assert_eq!(mem("5000", "ms", "user").display(), "5000ms");
+    assert_eq!(mem("5000", "ms", "user").display(), "5s");
+}
+
+/// `SHOW`'s spelling: a time in its largest exact unit, zero and -1
+/// bare (Postgres prints `0`, not `0ms`, and `-1` for "off").
+#[test]
+fn setting_display_spells_times_and_zero_as_show_does() {
+    assert_eq!(mem("0", "ms", "user").display(), "0");
+    assert_eq!(mem("-1", "kB", "superuser").display(), "-1");
+    assert_eq!(mem("0", "kB", "superuser").display(), "0");
+    assert_eq!(mem("86400000", "ms", "user").display(), "1d");
+    assert_eq!(mem("3600000", "ms", "user").display(), "1h");
+    assert_eq!(mem("300000", "ms", "user").display(), "5min");
+    assert_eq!(mem("1500", "ms", "user").display(), "1500ms");
+    assert_eq!(mem("300", "s", "sighup").display(), "5min");
+    assert_eq!(mem("90", "s", "sighup").display(), "90s");
+    assert_eq!(mem("2", "min", "sighup").display(), "2min");
+    assert_eq!(mem("86400000", "ms", "user").millis(), Some(86_400_000));
+    assert_eq!(mem("300", "s", "sighup").millis(), Some(300_000));
+    assert_eq!(mem("4096", "kB", "user").millis(), None);
 }
 
 #[test]
@@ -81,6 +100,11 @@ fn format_span_keeps_the_two_largest_units() {
     assert_eq!(format_span(2.0 * 3600.0 + 600.0), "2h 10m");
     assert_eq!(format_span(3.0 * DAY + 4.0 * 3600.0 + 59.0), "3d 4h");
     assert_eq!(format_span(-5.0), "0s");
+    // A zero second unit is left off.
+    assert_eq!(format_span(3600.0), "1h");
+    assert_eq!(format_span(3600.0 + 59.0), "1h");
+    assert_eq!(format_span(2.0 * DAY + 59.0), "2d");
+    assert_eq!(format_span(DAY + 3600.0), "1d 1h");
 }
 
 #[test]
@@ -98,7 +122,7 @@ fn window_names_the_reset_or_the_server_start() {
     assert_eq!(never.secs(), 7200.0);
     assert_eq!(
         never.describe(),
-        "counters never reset: at least 2h 0m (server started 2026-10-23 06:00:00+00)"
+        "counters never reset: at least 2h (server started 2026-10-23 06:00:00+00)"
     );
 }
 
@@ -123,6 +147,7 @@ fn every_statement_is_tagged_and_a_select() {
         locks_sql(160_000),
         checkpoints_sql(160_000),
         checkpoints_sql(170_000),
+        WAL_SQL.to_string(),
     ] {
         assert!(sql.starts_with("/* pgman:advisor */ "), "{sql}");
         // The wizard runs these on the editor's session, which may be
@@ -166,6 +191,7 @@ fn settings_sql_names_every_mapped_setting() {
         assert!(sql.contains(&format!("'{}'", p.name)), "{}", p.name);
     }
     assert!(sql.contains("'autovacuum_vacuum_threshold'"));
+    assert!(sql.contains("'checkpoint_completion_target'"));
 }
 
 #[test]
@@ -185,15 +211,20 @@ fn a_young_window_gets_a_note_and_quiets_the_ratio_checks() {
     let young = db(1_000, 1_000_000, GIB, 3599.0);
     let note = young_window_note(&c, &young.window, &th).expect("note");
     assert_eq!(note.code, "ADV000");
-    assert!(note.detail.contains("wait until 1h 0m"), "{}", note.detail);
+    assert!(
+        note.detail.contains("wait until 1h have"),
+        "{}",
+        note.detail
+    );
     assert!(cache_hit_finding(&c, &young, None, &th).is_none());
     assert!(temp_spill_finding(&c, &young, None, &Spillers::Known(vec![]), &th).is_none());
     let cp = Checkpoints {
         timed: 1,
         requested: 100,
         window: win(3599.0),
+        wal: Err("not read".into()),
     };
-    assert!(checkpoint_finding(&c, &cp, None, &th).is_none());
+    assert!(checkpoint_finding(&c, &cp, None, None, &th).is_none());
 
     let grown = db(1_000, 1_000_000, GIB, 3600.0);
     assert!(young_window_note(&c, &grown.window, &th).is_none());
@@ -265,24 +296,38 @@ fn cache_hit_suggests_double_with_a_restart_self_hosted() {
     );
 }
 
+/// AWS's guidance is to keep RDS's ~25% default, so on RDS there is no
+/// command to double it: the advice is a larger instance class or less
+/// I/O, the default put back if the group lowered it.
 #[test]
-fn cache_hit_on_rds_gives_the_parameter_group_command_in_pages() {
+fn cache_hit_on_rds_says_keep_the_default_with_no_command() {
     let th = Thresholds::default();
     let c = ctx(ServerKind::Rds);
     let sb = mem("16384", "8kB", "postmaster");
     let f = cache_hit_finding(&c, &db(900_000, 100_000, 0, DAY), Some(&sb), &th).unwrap();
-    let s = f.suggestion.clone().unwrap();
-    assert!(s.starts_with("aws rds modify-db-parameter-group"), "{s}");
-    assert!(
-        s.contains("ParameterValue=32768,ApplyMethod=pending-reboot"),
-        "{s}"
-    );
+    assert!(f.suggestion.is_none(), "{:?}", f.suggestion);
     let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(
+        (ch.current.as_str(), ch.suggested.as_str()),
+        ("128MB", "128MB")
+    );
     assert!(
-        ch.reasoning.contains("RDS's default is already 25%"),
+        ch.reasoning
+            .starts_with("keep it near RDS's default, {DBInstanceClassMemory/32768}"),
         "{}",
         ch.reasoning
     );
+    assert!(
+        ch.reasoning.contains("a larger instance class"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(
+        ch.reasoning.contains("If the parameter group lowered it"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(!ch.reasoning.contains("double"), "{}", ch.reasoning);
 }
 
 #[test]
@@ -324,6 +369,12 @@ fn suggest_work_mem_covers_a_spill_within_two_to_four_times() {
     assert_eq!(suggest_work_mem(4 * MIB, Some(10 * MIB)).0, 16 * MIB);
     // Just under 4×: the power of two is 4× exactly.
     assert_eq!(suggest_work_mem(4 * MIB, Some(16 * MIB - 1)).0, 16 * MIB);
+    // Within reach: a first step, not a claim that it fits.
+    let (_, why) = suggest_work_mem(4 * MIB, Some(10 * MIB));
+    assert!(why.contains("a first step, not a fit"), "{why}");
+    assert!(why.contains("more than the bytes it spilled"), "{why}");
+    assert!(why.contains("parallel worker"), "{why}");
+    assert!(!why.contains("covers it"), "{why}");
     // 4× or more: twice, and the reasoning says look at the statement.
     let (v, why) = suggest_work_mem(4 * MIB, Some(16 * MIB));
     assert_eq!(v, 8 * MIB);
@@ -363,6 +414,48 @@ fn temp_spill_names_the_statements_and_their_role() {
     );
     assert!(a.evidence_sql.contains("pg_stat_statements"));
     assert!(a.change.as_ref().unwrap().rds.starts_with("per role:"));
+    // ALTER ROLE reaches new sessions only: a pool keeps its own.
+    assert!(
+        f.detail.contains("reaches new sessions only")
+            && f.detail
+                .contains("HikariCP's maxLifetime, 30 min by default"),
+        "{}",
+        f.detail
+    );
+    assert!(
+        !a.evidence.iter().any(|e| e.contains("pg_read_all_stats")),
+        "{:?}",
+        a.evidence
+    );
+}
+
+/// Without pg_read_all_stats, pg_stat_statements shows another role's
+/// statement as `<insufficient privilege>`: the evidence says why and
+/// how to see it, as ADV004 does.
+#[test]
+fn temp_spill_explains_insufficient_privilege() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let spillers = Spillers::Known(vec![Spiller {
+        query: "<insufficient privilege>".into(),
+        calls: 4,
+        temp_bytes: 40 * MIB,
+        role: "shop_app".into(),
+    }]);
+    let f = temp_spill_finding(&c, &db(1, 0, GIB, DAY), None, &spillers, &th).unwrap();
+    let a = advice(&f);
+    assert!(
+        a.evidence
+            .iter()
+            .any(|e| e.starts_with("<insufficient privilege>: pg_stat_statements shows other roles' statements only to pg_read_all_stats: GRANT pg_monitor TO")),
+        "{:?}",
+        a.evidence
+    );
+    // The role is still known: the suggestion names it.
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER ROLE shop_app SET work_mem = '16MB';")
+    );
 }
 
 #[test]
@@ -487,7 +580,7 @@ fn dead_tuples_under_the_trigger_blame_the_scale_factor() {
         "{:?}",
         a.evidence
     );
-    assert!(a.window.contains("last vacuumed 2h 0m ago"), "{}", a.window);
+    assert!(a.window.contains("last vacuumed 2h ago"), "{}", a.window);
     let ch = a.change.as_ref().unwrap();
     assert_eq!(
         (ch.current.as_str(), ch.suggested.as_str()),
@@ -703,16 +796,178 @@ fn an_idle_in_transaction_head_gets_the_idle_timeout_for_its_role() {
         a.evidence
     );
     assert_eq!(a.window, "a snapshot, now");
-    // With the timeout already set, the waiters get lock_timeout instead.
+    // With the timeout already set, the idle timeout isn't the advice.
     let on = Setting {
         setting: "60000".into(),
         ..off
     };
     let g = lock_finding(&c, &s, &idle_timeout(&on), &th).unwrap();
-    assert_eq!(
-        g.suggestion.as_deref(),
-        Some("ALTER ROLE shop_app SET lock_timeout = '5s';")
+    assert_ne!(
+        advice(&g).change.as_ref().unwrap().name,
+        "idle_in_transaction_session_timeout"
     );
+}
+
+fn plain(v: &str) -> Setting {
+    Setting {
+        setting: v.into(),
+        unit: None,
+        context: "superuser".into(),
+    }
+}
+
+/// A pile-up behind a running head: log_lock_waits first, as it changes
+/// no session's behaviour. A lock_timeout makes every statement it
+/// covers that waits longer fail, so it is offered only for the
+/// migration session, never yankable as ALTER ROLE for the application,
+/// and the caveat is in the suggestion itself.
+#[test]
+fn a_running_head_gets_log_lock_waits_then_lock_timeout_for_the_migration_only() {
+    let th = Thresholds::default();
+    let s = vec![
+        sess(10, "active", None, &[]),
+        sess(11, "active", Some(30.0), &[10]),
+    ];
+    let c = ctx(ServerKind::SelfHosted);
+    let off = Settings::from([("log_lock_waits".to_string(), plain("off"))]);
+    let f = lock_finding(&c, &s, &off, &th).unwrap();
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER SYSTEM SET log_lock_waits = 'on'; SELECT pg_reload_conf();")
+    );
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(
+        (ch.name, ch.current.as_str(), ch.suggested.as_str()),
+        ("log_lock_waits", "off", "on")
+    );
+    assert!(
+        ch.reasoning
+            .contains("changes no session's behaviour. For a migration or other DDL"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(
+        ch.reasoning
+            .contains("Java applications generally don't retry"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(!ch.restart);
+    // Unread: the same.
+    let f = lock_finding(&c, &s, &Settings::new(), &th).unwrap();
+    assert!(f.suggestion.unwrap().contains("log_lock_waits"));
+    // On RDS: the parameter group line.
+    let f = lock_finding(&ctx(ServerKind::Rds), &s, &off, &th).unwrap();
+    assert!(f
+        .suggestion
+        .unwrap()
+        .contains("ParameterName=log_lock_waits,ParameterValue=1,ApplyMethod=immediate"));
+
+    let on = Settings::from([("log_lock_waits".to_string(), plain("on"))]);
+    let f = lock_finding(&c, &s, &on, &th).unwrap();
+    let sql = f.suggestion.clone().unwrap();
+    assert!(
+        sql.starts_with("SET lock_timeout = '5s';  -- in the migration / DDL session only"),
+        "{sql}"
+    );
+    assert!(
+        sql.contains("Not ALTER ROLE for the application's role"),
+        "{sql}"
+    );
+    assert!(sql.contains("Flyway / Liquibase"), "{sql}");
+    assert!(!sql.starts_with("ALTER ROLE"), "{sql}");
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(ch.name, "lock_timeout");
+    assert_eq!(ch.suggested, "5s, in the migration session");
+    // Each sentence starts as one (found driving the wizard by hand).
+    assert!(
+        ch.reasoning
+            .contains("has the waits. For a migration or other DDL"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(
+        ch.reasoning
+            .contains("Java applications generally don't retry"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(ch.rds.starts_with("per session:"), "{}", ch.rds);
+}
+
+fn ms(v: &str) -> Setting {
+    mem(v, "ms", "user")
+}
+
+/// The timeout is as good as off when it is zero or unread, over an
+/// hour, or longer than the head's transaction has run.
+#[test]
+fn idle_timeout_is_effectively_off_when_too_long_to_have_helped() {
+    assert!(idle_timeout_effectively_off(None, Some(10.0)));
+    assert!(idle_timeout_effectively_off(Some(&ms("0")), Some(10.0)));
+    assert!(idle_timeout_effectively_off(Some(&ms("86400000")), None));
+    assert!(idle_timeout_effectively_off(Some(&ms("3600001")), None));
+    assert!(!idle_timeout_effectively_off(Some(&ms("3600000")), None));
+    assert!(!idle_timeout_effectively_off(
+        Some(&ms("3600000")),
+        Some(3600.0)
+    ));
+    assert!(idle_timeout_effectively_off(
+        Some(&ms("600000")),
+        Some(599.0)
+    ));
+    assert!(!idle_timeout_effectively_off(
+        Some(&ms("600000")),
+        Some(600.0)
+    ));
+    // In seconds or minutes, as a role could read it.
+    assert!(idle_timeout_effectively_off(
+        Some(&mem("7200", "s", "user")),
+        None
+    ));
+    assert!(!idle_timeout_effectively_off(
+        Some(&mem("5", "min", "user")),
+        Some(400.0)
+    ));
+}
+
+/// AWS's default parameter groups set the timeout to 24h: on RDS and
+/// Aurora that is the value a pile-up meets, and the advice must still
+/// come, saying what it is set to.
+#[test]
+fn a_day_long_idle_timeout_still_gets_the_idle_timeout_advice() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::Rds);
+    let s = vec![
+        sess(10, "idle in transaction", None, &[]),
+        sess(11, "active", Some(30.0), &[10]),
+    ];
+    let f = lock_finding(&c, &s, &idle_timeout(&ms("86400000")), &th).unwrap();
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER ROLE shop_app SET idle_in_transaction_session_timeout = '5min';")
+    );
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(ch.current, "1d (this session)");
+    assert!(
+        ch.reasoning.contains("It is set, to 1d = 24h, but that is far longer than a pile-up can wait (AWS's default parameter groups set 24h)"),
+        "{}",
+        ch.reasoning
+    );
+    // Ten minutes against a head four minutes in: it hasn't fired yet.
+    let f = lock_finding(&c, &s, &idle_timeout(&ms("600000")), &th).unwrap();
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(ch.name, "idle_in_transaction_session_timeout");
+    assert!(
+        ch.reasoning
+            .contains("set, to 10min, but that is longer than the head's transaction has run"),
+        "{}",
+        ch.reasoning
+    );
+    // Off: no note on its value.
+    let f = lock_finding(&c, &s, &idle_timeout(&ms("0")), &th).unwrap();
+    let ch = advice(&f).change.clone().unwrap();
+    assert!(!ch.reasoning.contains("It is set"), "{}", ch.reasoning);
 }
 
 fn idle_timeout(s: &Setting) -> Settings {
@@ -737,7 +992,7 @@ fn session_level_values_say_they_are_this_session_s() {
     let f = lock_finding(&c, &s, &idle_timeout(&off), &th).unwrap();
     assert_eq!(
         advice(&f).change.as_ref().unwrap().current,
-        "0ms (this session)"
+        "0 (this session)"
     );
     let wm = mem("4096", "kB", "user");
     let none = Spillers::Known(vec![]);
@@ -779,12 +1034,26 @@ fn without_pg_read_all_stats_the_lock_finding_says_what_is_hidden() {
 
 // --- ADV005 -------------------------------------------------------------
 
+/// Checkpoint counters over a day, with a GiB of WAL per requested
+/// checkpoint over the same window: plenty to have forced them all.
 fn cps(timed: i64, requested: i64) -> Checkpoints {
     Checkpoints {
         timed,
         requested,
         window: win(DAY),
+        wal: Ok(WalVolume {
+            bytes: requested * GIB,
+            window: win(DAY),
+        }),
     }
+}
+
+fn with_wal(mut c: Checkpoints, bytes: i64, age: f64) -> Checkpoints {
+    c.wal = Ok(WalVolume {
+        bytes,
+        window: win(age),
+    });
+    c
 }
 
 #[test]
@@ -792,16 +1061,24 @@ fn checkpoints_fire_over_a_fifth_requested_with_ten_of_them() {
     let th = Thresholds::default();
     let c = ctx(ServerKind::SelfHosted);
     let mw = mem("1024", "MB", "sighup");
-    assert!(checkpoint_finding(&c, &cps(8, 2), Some(&mw), &th).is_none());
-    let f = checkpoint_finding(&c, &cps(79, 21), Some(&mw), &th).unwrap();
+    assert!(checkpoint_finding(&c, &cps(8, 2), Some(&mw), None, &th).is_none());
+    let f = checkpoint_finding(&c, &cps(79, 21), Some(&mw), None, &th).unwrap();
     assert_eq!(f.code, "ADV005");
+    assert_eq!(f.severity, Severity::Medium);
+    assert!(f.title.contains("forced by WAL volume"), "{}", f.title);
     assert_eq!(
         f.suggestion.as_deref(),
         Some("ALTER SYSTEM SET max_wal_size = '2GB'; SELECT pg_reload_conf();")
     );
-    assert!(checkpoint_finding(&c, &cps(80, 20), Some(&mw), &th).is_none());
-    assert!(checkpoint_finding(&c, &cps(3, 6), Some(&mw), &th).is_none());
-    assert!(advice(&f).evidence[0].starts_with("pg_stat_bgwriter: 21 requested · 79 timed"));
+    assert!(checkpoint_finding(&c, &cps(80, 20), Some(&mw), None, &th).is_none());
+    assert!(checkpoint_finding(&c, &cps(3, 6), Some(&mw), None, &th).is_none());
+    let a = advice(&f);
+    assert!(a.evidence[0].starts_with("pg_stat_bgwriter: 21 requested · 79 timed"));
+    assert_eq!(
+        a.evidence[1],
+        "pg_stat_wal: 21 GB written over the same window"
+    );
+    assert!(a.evidence_sql.ends_with(WAL_SQL), "{}", a.evidence_sql);
 }
 
 #[test]
@@ -810,7 +1087,7 @@ fn checkpoints_name_pg_stat_checkpointer_on_pg17_and_skip_aurora() {
     let mut c = ctx(ServerKind::Rds);
     c.version_num = 170_002;
     let mw = mem("2048", "MB", "sighup");
-    let f = checkpoint_finding(&c, &cps(10, 90), Some(&mw), &th).unwrap();
+    let f = checkpoint_finding(&c, &cps(10, 90), Some(&mw), None, &th).unwrap();
     let a = advice(&f);
     assert!(a.evidence[0].starts_with("pg_stat_checkpointer:"));
     assert!(a.evidence_sql.contains("pg_stat_checkpointer"));
@@ -819,7 +1096,155 @@ fn checkpoints_name_pg_stat_checkpointer_on_pg17_and_skip_aurora() {
         s.contains("ParameterName=max_wal_size,ParameterValue=4096,ApplyMethod=immediate"),
         "{s}"
     );
-    assert!(checkpoint_finding(&ctx(ServerKind::Aurora), &cps(10, 90), Some(&mw), &th).is_none());
+    assert!(
+        checkpoint_finding(&ctx(ServerKind::Aurora), &cps(10, 90), Some(&mw), None, &th).is_none()
+    );
+}
+
+/// The compose primary as the release panel found it: 587 requested
+/// against 794 timed, but only 2.8 GB of WAL at max_wal_size 1GB —
+/// room for about five WAL-triggered checkpoints. The rest came from
+/// CREATE / DROP DATABASE and the like, which max_wal_size doesn't
+/// touch, so the finding must not suggest it.
+#[test]
+fn requested_checkpoints_without_the_wal_for_them_dont_blame_max_wal_size() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let mw = mem("1024", "MB", "sighup");
+    let cct = Setting {
+        setting: "0.9".into(),
+        unit: None,
+        context: "sighup".into(),
+    };
+    let cp = with_wal(cps(794, 587), 2_944_454_948, DAY);
+    let f = checkpoint_finding(&c, &cp, Some(&mw), Some(&cct), &th).unwrap();
+    assert_eq!(f.severity, Severity::Low);
+    assert_eq!(
+        f.title,
+        "43% of checkpoints requested, but not by WAL volume"
+    );
+    assert!(f.suggestion.is_none(), "{:?}", f.suggestion);
+    let a = advice(&f);
+    assert!(a.change.is_none());
+    assert!(
+        f.detail.contains("at most about 5 of the 587"),
+        "{}",
+        f.detail
+    );
+    assert!(f.detail.contains("CREATE DATABASE"), "{}", f.detail);
+    assert!(f.detail.contains("base backup"), "{}", f.detail);
+    assert!(f.detail.contains("manual CHECKPOINT"), "{}", f.detail);
+    assert!(
+        f.detail.contains("Raising max_wal_size won't change those"),
+        "{}",
+        f.detail
+    );
+    assert!(
+        a.evidence[2].contains("room for at most about 5 of the 587 requested"),
+        "{:?}",
+        a.evidence
+    );
+}
+
+/// WAL for at least half the requested checkpoints blames max_wal_size;
+/// a byte less, not. With a completion target of 1 a WAL-triggered
+/// checkpoint starts every max_wal_size / 2.
+#[test]
+fn checkpoints_blame_wal_from_half_of_them() {
+    let th = Thresholds::default();
+    let mw = 1024 * MIB;
+    assert_eq!(wal_trigger_bytes(mw, 1.0), 512.0 * MIB as f64);
+    assert_eq!(wal_trigger_bytes(mw, 0.0), mw as f64);
+    let half = with_wal(cps(80, 20), 5 * GIB, DAY);
+    assert!(matches!(
+        checkpoint_cause(&half, Some(mw), 1.0, &th),
+        CheckpointCause::WalVolume { wal_forced } if wal_forced == 10.0
+    ));
+    let short = with_wal(cps(80, 20), 5 * GIB - 1, DAY);
+    assert!(matches!(
+        checkpoint_cause(&short, Some(mw), 1.0, &th),
+        CheckpointCause::Other { .. }
+    ));
+}
+
+/// pg_stat_wal reset apart from the checkpoint counters: the WAL rate
+/// is carried over to their window, and the evidence says so.
+#[test]
+fn checkpoints_compare_wal_reset_apart_as_a_rate() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let mw = mem("1024", "MB", "sighup");
+    // 2.5 GiB in half a day is 5 GiB over the counters' day: room for 10
+    // at a completion target of 1, against 20 requested.
+    let cp = with_wal(cps(70, 20), 5 * GIB / 2, DAY / 2.0);
+    let one = Setting {
+        setting: "1".into(),
+        unit: None,
+        context: "sighup".into(),
+    };
+    assert!(matches!(
+        checkpoint_cause(&cp, Some(GIB), 1.0, &th),
+        CheckpointCause::WalVolume { wal_forced } if wal_forced == 10.0
+    ));
+    let f = checkpoint_finding(&c, &cp, Some(&mw), Some(&one), &th).unwrap();
+    let a = advice(&f);
+    assert!(
+        a.evidence[1].contains("compared as rates, an estimate"),
+        "{:?}",
+        a.evidence
+    );
+    // Within a minute is the same window.
+    let near = with_wal(cps(70, 20), 5 * GIB, DAY - 59.0);
+    assert!(
+        advice(&checkpoint_finding(&c, &near, Some(&mw), Some(&one), &th).unwrap()).evidence[1]
+            .ends_with("over the same window")
+    );
+    // Reset too recently to say anything.
+    let young = with_wal(cps(80, 20), 5 * GIB, 600.0);
+    assert!(matches!(
+        checkpoint_cause(&young, Some(GIB), 1.0, &th),
+        CheckpointCause::Unknown(why) if why.contains("reset too recently")
+    ));
+}
+
+/// Before PG14 there is no pg_stat_wal: pgman can't tell, so the finding
+/// hedges — LOW, the causes listed, max_wal_size only if the log agrees.
+#[test]
+fn checkpoints_before_pg14_hedge() {
+    let th = Thresholds::default();
+    let mut c = ctx(ServerKind::SelfHosted);
+    c.version_num = 130_011;
+    let mw = mem("1024", "MB", "sighup");
+    let mut cp = cps(79, 21);
+    cp.wal = Err("pg_stat_wal, which counts the WAL written, is PG14+".into());
+    let f = checkpoint_finding(&c, &cp, Some(&mw), None, &th).unwrap();
+    assert_eq!(f.severity, Severity::Low);
+    assert_eq!(f.title, "21% of checkpoints requested rather than timed");
+    assert!(f.detail.contains("can't tell how many came from WAL volume (pg_stat_wal, which counts the WAL written, is PG14+)"), "{}", f.detail);
+    assert!(
+        f.detail.contains("checkpoint starting: wal"),
+        "{}",
+        f.detail
+    );
+    assert!(f.detail.contains("CREATE DATABASE"), "{}", f.detail);
+    let a = advice(&f);
+    assert!(
+        !a.evidence_sql.contains("pg_stat_wal"),
+        "{}",
+        a.evidence_sql
+    );
+    assert_eq!(a.evidence.len(), 1, "{:?}", a.evidence);
+    let ch = a.change.as_ref().unwrap();
+    assert!(
+        ch.reasoning.starts_with("double it only if the server log"),
+        "{}",
+        ch.reasoning
+    );
+    // max_wal_size unread: also can't tell.
+    assert!(matches!(
+        checkpoint_cause(&cps(79, 21), None, 0.9, &th),
+        CheckpointCause::Unknown(_)
+    ));
 }
 
 // --- the mapping -------------------------------------------------------
@@ -836,6 +1261,7 @@ fn every_suggested_setting_has_an_rds_row() {
         "autovacuum_vacuum_scale_factor",
         "idle_in_transaction_session_timeout",
         "lock_timeout",
+        "log_lock_waits",
         "max_wal_size",
     ] {
         assert!(rds::lookup(name).is_some(), "{name}");

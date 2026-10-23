@@ -138,11 +138,30 @@ impl Setting {
         self.context == "postmaster"
     }
 
-    /// As Postgres would show it: sizes in their largest exact unit,
-    /// anything else as `setting` plus its unit.
+    /// The value in milliseconds, for the time settings.
+    pub fn millis(&self) -> Option<i64> {
+        let n: i64 = self.setting.parse().ok()?;
+        let mult = match self.unit.as_deref()? {
+            "ms" => 1,
+            "s" => 1000,
+            "min" => 60_000,
+            _ => return None,
+        };
+        n.checked_mul(mult)
+    }
+
+    /// As `SHOW` would show it: sizes and times in their largest exact
+    /// unit (`128MB`, `1d`, `5s`), zero and the negative "off" values
+    /// bare (`0`, `-1`), anything else as `setting` plus its unit.
     pub fn display(&self) -> String {
+        if self.setting.parse::<i64>().is_ok_and(|n| n <= 0) {
+            return self.setting.clone();
+        }
         if let Some(b) = self.bytes() {
             return pg_size(b);
+        }
+        if let Some(ms) = self.millis() {
+            return pg_time(ms);
         }
         match &self.unit {
             Some(u) => format!("{}{u}", self.setting),
@@ -165,20 +184,41 @@ pub fn pg_size(bytes: i64) -> String {
     }
 }
 
+/// A positive millisecond count in Postgres's time syntax, in the
+/// largest unit that divides it exactly (`1d`, `5min`, `1500ms`), as
+/// `SHOW` spells it.
+pub fn pg_time(ms: i64) -> String {
+    for (unit, size) in [
+        ("d", 86_400_000),
+        ("h", 3_600_000),
+        ("min", 60_000),
+        ("s", 1000),
+    ] {
+        if ms != 0 && ms % size == 0 {
+            return format!("{}{unit}", ms / size);
+        }
+    }
+    format!("{ms}ms")
+}
+
 /// A byte count for a person: one decimal, binary units.
 pub fn human_size(bytes: i64) -> String {
     crate::query::schema::format_bytes(bytes.max(0) as u64)
 }
 
 /// A span of seconds as the two largest units: `3d 4h`, `2h 10m`,
-/// `12m`, `40s`.
+/// `12m`, `40s`; a zero second unit is left off (`1h`, not `1h 0m`).
 pub fn format_span(secs: f64) -> String {
     let s = secs.max(0.0) as u64;
     let (d, h, m) = (s / 86_400, (s % 86_400) / 3600, (s % 3600) / 60);
-    if d > 0 {
+    if d > 0 && h > 0 {
         format!("{d}d {h}h")
-    } else if h > 0 {
+    } else if d > 0 {
+        format!("{d}d")
+    } else if h > 0 && m > 0 {
         format!("{h}h {m}m")
+    } else if h > 0 {
+        format!("{h}h")
     } else if m > 0 {
         format!("{m}m")
     } else {
@@ -260,10 +300,12 @@ pub fn server_kind(has_rds_extensions: bool, has_aurora_version: bool) -> Server
 }
 
 /// The settings the findings read: every row of the RDS table plus the
-/// autovacuum threshold the dead-tuple check needs.
+/// autovacuum threshold the dead-tuple check needs and the completion
+/// target the checkpoint check does.
 pub fn settings_sql() -> String {
     let mut names: Vec<&str> = rds::PARAMS.iter().map(|p| p.name).collect();
     names.push("autovacuum_vacuum_threshold");
+    names.push("checkpoint_completion_target");
     let list = names
         .iter()
         .map(|n| format!("'{n}'"))
@@ -461,7 +503,14 @@ pub fn cache_hit_finding(
     let (suggested, reasoning, suggestion) = match (ctx.kind, current) {
         (ServerKind::Aurora, _) => (
             shared_buffers.map(Setting::display).unwrap_or_else(|| "unchanged".into()),
-            "leave it: Aurora already gives it about 75% of instance memory, so the working set is bigger than the instance — a larger instance class, or fewer pages per query (the slow-queries panel's top statements)".to_string(),
+            "leave it: Aurora's default already gives it about two-thirds of instance memory, so the working set is bigger than the instance — a larger instance class, or fewer pages per query (the slow-queries panel's top statements)".to_string(),
+            None,
+        ),
+        // AWS's guidance is to keep RDS's ~25% default: the rest of the
+        // instance's memory is the OS page cache Postgres reads through.
+        (ServerKind::Rds, _) => (
+            shared_buffers.map(Setting::display).unwrap_or_else(|| "unchanged".into()),
+            "keep it near RDS's default, {DBInstanceClassMemory/32768} (about 25% of instance memory): AWS advises against raising it much, as Postgres also reads through the OS page cache, which needs the rest. If the parameter group lowered it, putting the default back is the change to make; otherwise the working set is bigger than the instance — a larger instance class, or fewer pages per query (the slow-queries panel's top statements)".to_string(),
             None,
         ),
         (kind, Some(cur)) => {
@@ -471,14 +520,9 @@ pub fn cache_hit_finding(
                 .from_bytes(next)
                 .map(|v| v.to_string())
                 .unwrap_or_default();
-            let why = if kind == ServerKind::Rds {
-                "double it if the instance has the memory: RDS's default is already 25% of instance memory, so if the parameter group hasn't lowered it the working set is bigger than the instance — a larger instance class, or fewer pages per query"
-            } else {
-                "double it, staying at or under about 25% of the machine's memory (pgman can't see the RAM); the rest is the OS page cache, which Postgres also reads through"
-            };
             (
                 pg_size(next),
-                why.to_string(),
+                "double it, staying at or under about 25% of the machine's memory (pgman can't see the RAM); the rest is the OS page cache, which Postgres also reads through".to_string(),
                 Some(server_suggestion(kind, p, &pg_size(next), &group, restart)),
             )
         }
@@ -520,6 +564,10 @@ pub fn cache_hit_finding(
     })
 }
 
+/// The query text `pg_stat_statements` and `pg_stat_activity` show for
+/// another role's statement without `pg_read_all_stats`.
+pub const INSUFFICIENT_PRIVILEGE: &str = "<insufficient privilege>";
+
 /// A statement `pg_stat_statements` says spilled to temp files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spiller {
@@ -555,7 +603,7 @@ pub fn suggest_work_mem(current: i64, worst_per_call: Option<i64>) -> (i64, Stri
             (
                 fit.clamp(lo, hi),
                 format!(
-                    "the worst statement spills {} a call; this covers it",
+                    "the worst statement spills {} a call; this is a first step, not a fit — sorting it in memory takes more than the bytes it spilled, and temp_blks_written per call sums every sort and hash node and parallel worker; watch the spills after",
                     human_size(p)
                 ),
             )
@@ -611,6 +659,11 @@ pub fn temp_spill_finding(
                     crate::grid::truncate_cell(&sp.query, 120)
                 ));
             }
+            if list.iter().any(|sp| sp.query == INSUFFICIENT_PRIVILEGE) {
+                evidence.push(format!(
+                    "{INSUFFICIENT_PRIVILEGE}: pg_stat_statements shows other roles' statements only to pg_read_all_stats: GRANT pg_monitor TO <your role>"
+                ));
+            }
             let worst = list.iter().max_by_key(|sp| sp.per_call());
             (
                 worst.map(Spiller::per_call),
@@ -631,7 +684,7 @@ pub fn temp_spill_finding(
         title: format!("queries spill to temp files ({} so far)", human_size(s.temp_bytes)),
         object: ctx.database.clone(),
         detail: format!(
-            "sorts and hashes bigger than work_mem ({}) write temp files. work_mem is per sort node per connection, so raise it for the role that spills rather than server-wide{}",
+            "sorts and hashes bigger than work_mem ({}) write temp files. work_mem is per sort node per connection, so raise it for the role that spills rather than server-wide. ALTER ROLE … SET reaches new sessions only: a connection pool keeps its connections until they are recycled (HikariCP's maxLifetime, 30 min by default) or the application restarts{}",
             pg_size(current),
             if matches!(spillers, Spillers::Unavailable(_)) {
                 "; log_temp_files = 0 logs each spilling statement"
@@ -975,6 +1028,57 @@ pub fn this_session(setting: Option<&Setting>) -> String {
     }
 }
 
+/// An idle-in-transaction timeout longer than this ends nothing a
+/// lock pile-up is waiting on. AWS's default parameter groups set 24h.
+pub const IDLE_TX_TIMEOUT_MAX_MS: i64 = 3_600_000;
+
+/// Whether `idle_in_transaction_session_timeout` is, for a pile-up
+/// behind a session idle in a transaction, as good as off: zero or
+/// unread, over [`IDLE_TX_TIMEOUT_MAX_MS`], or longer than the head's
+/// transaction has run (so it hasn't ended it, and the waiters wait).
+pub fn idle_timeout_effectively_off(
+    timeout: Option<&Setting>,
+    head_xact_secs: Option<f64>,
+) -> bool {
+    let Some(s) = timeout else {
+        return true;
+    };
+    match s.millis() {
+        Some(ms) => {
+            ms <= 0
+                || ms > IDLE_TX_TIMEOUT_MAX_MS
+                || head_xact_secs.is_some_and(|x| ms as f64 / 1000.0 > x)
+        }
+        None => s.setting == "0",
+    }
+}
+
+/// The reasoning's word on a timeout that is set but too long to help:
+/// its value, in hours when it is a day or more.
+fn idle_timeout_note(timeout: Option<&Setting>) -> String {
+    let Some(ms) = timeout.and_then(Setting::millis).filter(|ms| *ms > 0) else {
+        return String::new();
+    };
+    let hours = if ms >= 86_400_000 && ms % 3_600_000 == 0 {
+        format!(" = {}h", ms / 3_600_000)
+    } else {
+        String::new()
+    };
+    let why = if ms > IDLE_TX_TIMEOUT_MAX_MS {
+        "far longer than a pile-up can wait (AWS's default parameter groups set 24h)"
+    } else {
+        "longer than the head's transaction has run, so it hasn't ended it"
+    };
+    format!(
+        ". It is set, to {}{hours}, but that is {why}",
+        timeout.map(Setting::display).unwrap_or_default()
+    )
+}
+
+/// What a `lock_timeout` does to the statements it covers, said
+/// wherever ADV004 brings it up.
+const LOCK_TIMEOUT_CAVEAT: &str = "For a migration or other DDL, SET lock_timeout = '5s' in its session: the ALTER fails after 5s instead of queueing behind the head with everyone else queueing behind it, and the migration can be re-run. Not per role for the application: every statement of that role waiting over 5s would fail with an error — Flyway / Liquibase migrations run as it included — and Java applications generally don't retry. deadlock_timeout doesn't help a pile-up: it only decides when the deadlock check runs";
+
 /// ADV004: sessions waiting on locks for at least the threshold.
 pub fn lock_finding(
     ctx: &Context,
@@ -1045,7 +1149,7 @@ pub fn lock_finding(
     let head = chains.first().and_then(|c| by_pid.get(&c.root)).copied();
     let idle_in_tx = head.is_some_and(|h| h.state.starts_with("idle in transaction"));
     let idle_tx_timeout = settings.get("idle_in_transaction_session_timeout");
-    let timeout_off = idle_tx_timeout.is_none_or(|s| s.setting == "0");
+    let timeout_off = idle_timeout_effectively_off(idle_tx_timeout, head.and_then(|h| h.xact_secs));
     let (suggestion, change) = if idle_in_tx && timeout_off {
         let p = mapping("idle_in_transaction_session_timeout");
         let role = head.map(|h| h.user.as_str()).filter(|u| !u.is_empty());
@@ -1059,7 +1163,10 @@ pub fn lock_finding(
                 name: p.name,
                 current: this_session(idle_tx_timeout),
                 suggested: "5min".into(),
-                reasoning: "the head of the chain sits idle in a transaction, holding its locks: the timeout ends such a session (its transaction rolls back) — for the role the application connects as".into(),
+                reasoning: format!(
+                    "the head of the chain sits idle in a transaction, holding its locks: the timeout ends such a session (its transaction rolls back) — for the role the application connects as{}",
+                    idle_timeout_note(idle_tx_timeout)
+                ),
                 restart: false,
                 rds: format!(
                     "per role: the same on RDS and Aurora · server-wide: {}",
@@ -1067,23 +1174,43 @@ pub fn lock_finding(
                 ),
             },
         )
+    } else if settings
+        .get("log_lock_waits")
+        .is_none_or(|s| s.setting != "on")
+    {
+        // Logging the waits first: it changes no session's behaviour,
+        // where a lock_timeout makes statements fail.
+        let p = mapping("log_lock_waits");
+        let current = settings.get("log_lock_waits");
+        (
+            server_suggestion(ctx.kind, p, "on", "1", restart_of(current, p)),
+            SettingChange {
+                name: p.name,
+                current: current
+                    .map(Setting::display)
+                    .unwrap_or_else(|| "unknown".into()),
+                suggested: "on".into(),
+                reasoning: format!(
+                    "first see who waits on whom: it logs every lock wait longer than deadlock_timeout with the holder and the statement, and changes no session's behaviour. {LOCK_TIMEOUT_CAVEAT}"
+                ),
+                restart: restart_of(current, p),
+                rds: rds::describe(p, ctx.kind == ServerKind::Aurora),
+            },
+        )
     } else {
         let p = mapping("lock_timeout");
-        let role = waiters
-            .iter()
-            .map(|w| w.user.as_str())
-            .find(|u| !u.is_empty())
-            .unwrap_or("<app_role>");
         (
-            format!("ALTER ROLE {role} SET lock_timeout = '5s';"),
+            "SET lock_timeout = '5s';  -- in the migration / DDL session only: its statement then fails after 5s instead of queueing everyone behind it. Not ALTER ROLE for the application's role: every statement of that role waiting over 5s would fail, its Flyway / Liquibase migrations included".to_string(),
             SettingChange {
                 name: p.name,
                 current: this_session(settings.get("lock_timeout")),
-                suggested: "5s".into(),
-                reasoning: "a waiter gives up with an error after 5s instead of queueing behind the head and everything after it; the application retries. deadlock_timeout doesn't help here: it only decides when the deadlock check runs".into(),
+                suggested: "5s, in the migration session".into(),
+                reasoning: format!(
+                    "log_lock_waits is already on, so the server log has the waits. {LOCK_TIMEOUT_CAVEAT}"
+                ),
                 restart: false,
                 rds: format!(
-                    "per role: the same on RDS and Aurora · server-wide: {}",
+                    "per session: SET works the same on RDS and Aurora · server-wide: {}",
                     rds::describe(p, ctx.kind == ServerKind::Aurora)
                 ),
             },
@@ -1121,19 +1248,112 @@ pub fn lock_finding(
     })
 }
 
-/// The checkpoint counters.
+/// The checkpoint counters, and the WAL written over (about) the same
+/// window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Checkpoints {
     pub timed: i64,
     pub requested: i64,
     pub window: Window,
+    /// `pg_stat_wal` (PG14+); `Err` says why there is none.
+    pub wal: Result<WalVolume, String>,
 }
 
-/// ADV005: checkpoints forced by WAL volume rather than the timer.
+/// `pg_stat_wal.wal_bytes` and its own reset, which
+/// `pg_stat_reset_shared('wal')` moves apart from the checkpoint
+/// counters'.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WalVolume {
+    pub bytes: i64,
+    pub window: Window,
+}
+
+pub const WAL_SQL: &str = concat!(
+    tag!(),
+    "SELECT wal_bytes::bigint, date_trunc('second', stats_reset)::text, \
+     EXTRACT(EPOCH FROM clock_timestamp() - stats_reset)::float8 FROM pg_stat_wal"
+);
+
+/// Why ADV005's checkpoints were requested, as far as the WAL tells.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckpointCause {
+    /// The WAL written could have forced at least half of them:
+    /// `max_wal_size` is what spaces them out.
+    WalVolume { wal_forced: f64 },
+    /// Far too little WAL for them: something else asked.
+    Other { wal_forced: f64 },
+    /// pgman can't tell (before PG14, `pg_stat_wal` unreadable or too
+    /// newly reset, `max_wal_size` unknown).
+    Unknown(String),
+}
+
+/// Two counter windows that start within this many seconds of each
+/// other are the same window.
+const SAME_WINDOW_SECS: f64 = 60.0;
+
+/// The WAL a WAL-triggered checkpoint starts after: Postgres starts one
+/// when the WAL since the last reaches
+/// `max_wal_size / (1 + checkpoint_completion_target)`.
+pub fn wal_trigger_bytes(max_wal_size: i64, completion_target: f64) -> f64 {
+    max_wal_size as f64 / (1.0 + completion_target.clamp(0.0, 1.0))
+}
+
+/// How many of the requested checkpoints the WAL could have forced,
+/// and so whether `max_wal_size` is the setting to blame. An upper
+/// bound: it counts every byte as if no timed checkpoint used any.
+/// When `pg_stat_wal` was reset apart from the checkpoint counters,
+/// the WAL rate is carried over to the checkpoints' window.
+pub fn checkpoint_cause(
+    c: &Checkpoints,
+    max_wal_size: Option<i64>,
+    completion_target: f64,
+    th: &Thresholds,
+) -> CheckpointCause {
+    let wal = match &c.wal {
+        Ok(w) => w,
+        Err(why) => return CheckpointCause::Unknown(why.clone()),
+    };
+    let Some(mws) = max_wal_size.filter(|b| *b > 0) else {
+        return CheckpointCause::Unknown("max_wal_size couldn't be read".into());
+    };
+    if wal.window.young(th) {
+        return CheckpointCause::Unknown(format!(
+            "pg_stat_wal was reset too recently to compare ({})",
+            wal.window.describe()
+        ));
+    }
+    let scale = if same_window(&wal.window, &c.window) {
+        1.0
+    } else {
+        c.window.secs() / wal.window.secs().max(1.0)
+    };
+    let wal_forced = wal.bytes as f64 * scale / wal_trigger_bytes(mws, completion_target);
+    if wal_forced * 2.0 >= c.requested as f64 {
+        CheckpointCause::WalVolume { wal_forced }
+    } else {
+        CheckpointCause::Other { wal_forced }
+    }
+}
+
+fn same_window(a: &Window, b: &Window) -> bool {
+    match (a.reset_age_secs, b.reset_age_secs) {
+        (Some(x), Some(y)) => (x - y).abs() <= SAME_WINDOW_SECS,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// What asks for a checkpoint besides WAL volume.
+const OTHER_CHECKPOINT_CAUSES: &str = "CREATE DATABASE and DROP DATABASE (and ALTER DATABASE … SET TABLESPACE), a base backup (pg_basebackup, pg_backup_start), a manual CHECKPOINT, a shutdown or restart";
+
+/// ADV005: a large share of checkpoints requested rather than timed,
+/// blamed on `max_wal_size` only when the WAL written could have forced
+/// them.
 pub fn checkpoint_finding(
     ctx: &Context,
     c: &Checkpoints,
     max_wal_size: Option<&Setting>,
+    completion_target: Option<&Setting>,
     th: &Thresholds,
 ) -> Option<Finding> {
     if ctx.kind == ServerKind::Aurora || c.window.young(th) {
@@ -1149,60 +1369,129 @@ pub fn checkpoint_finding(
     }
     let p = mapping("max_wal_size");
     let current = max_wal_size.and_then(Setting::bytes);
+    let cct = completion_target
+        .and_then(|s| s.setting.parse::<f64>().ok())
+        .unwrap_or(0.9);
+    let cause = checkpoint_cause(c, current, cct, th);
     let restart = restart_of(max_wal_size, p);
-    let (suggested, suggestion) = match current {
-        Some(cur) => {
-            let next = cur.saturating_mul(2);
-            let group = p
-                .unit
-                .from_bytes(next)
-                .map(|v| v.to_string())
-                .unwrap_or_default();
-            (
-                pg_size(next),
-                Some(server_suggestion(
-                    ctx.kind,
-                    p,
-                    &pg_size(next),
-                    &group,
-                    restart,
-                )),
-            )
-        }
-        None => ("unknown".into(), None),
-    };
     let view = if ctx.version_num >= 170_000 {
         "pg_stat_checkpointer"
     } else {
         "pg_stat_bgwriter"
     };
-    Some(Finding {
-        severity: Severity::Medium,
-        code: "ADV005",
-        title: format!(
-            "{:.0}% of checkpoints forced by WAL volume",
-            share * 100.0
-        ),
-        object: "server".to_string(),
-        detail: "a checkpoint is requested when the WAL since the last one reaches max_wal_size; frequent ones write more (full-page images after each) and make I/O spiky. More room spaces them out to checkpoint_timeout; recovery after a crash takes longer in proportion".to_string(),
-        suggestion,
-        advice: Some(Box::new(Advice {
-            window: c.window.describe(),
-            evidence: vec![format!(
-                "{view}: {} requested · {} timed",
-                c.requested, c.timed
-            )],
-            evidence_sql: checkpoints_sql(ctx.version_num),
-            change: Some(SettingChange {
+    let mut evidence = vec![format!(
+        "{view}: {} requested · {} timed",
+        c.requested, c.timed
+    )];
+    if let Ok(w) = &c.wal {
+        evidence.push(format!(
+            "pg_stat_wal: {} written{}",
+            human_size(w.bytes),
+            if same_window(&w.window, &c.window) {
+                " over the same window".to_string()
+            } else {
+                format!(
+                    " — {}, not the checkpoint counters' window: compared as rates, an estimate",
+                    w.window.describe()
+                )
+            }
+        ));
+    }
+    if let (
+        Some(mws),
+        CheckpointCause::WalVolume { wal_forced } | CheckpointCause::Other { wal_forced },
+    ) = (current, &cause)
+    {
+        evidence.push(format!(
+            "a WAL-triggered checkpoint starts every {} (max_wal_size {} / (1 + checkpoint_completion_target {cct})): room for at most about {:.0} of the {} requested",
+            human_size(wal_trigger_bytes(mws, cct) as i64),
+            pg_size(mws),
+            wal_forced.floor(),
+            c.requested
+        ));
+    }
+    let evidence_sql = if ctx.version_num >= 140_000 {
+        format!("{};\n{WAL_SQL}", checkpoints_sql(ctx.version_num))
+    } else {
+        checkpoints_sql(ctx.version_num)
+    };
+    let doubled = current.map(|cur| {
+        let next = cur.saturating_mul(2);
+        let group = p
+            .unit
+            .from_bytes(next)
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        (
+            pg_size(next),
+            server_suggestion(ctx.kind, p, &pg_size(next), &group, restart),
+        )
+    });
+    let current_shown = max_wal_size
+        .map(Setting::display)
+        .unwrap_or_else(|| "unknown".into());
+    let pct = share * 100.0;
+    let (severity, title, detail, suggestion, change) = match &cause {
+        CheckpointCause::WalVolume { .. } => (
+            Severity::Medium,
+            format!("{pct:.0}% of checkpoints forced by WAL volume"),
+            "a checkpoint is requested when the WAL since the last one nears max_wal_size; frequent ones write more (full-page images after each) and make I/O spiky. More room spaces them out to checkpoint_timeout; recovery after a crash takes longer in proportion".to_string(),
+            doubled.as_ref().map(|(_, s)| s.clone()),
+            Some(SettingChange {
                 name: p.name,
-                current: max_wal_size
-                    .map(Setting::display)
+                current: current_shown,
+                suggested: doubled
+                    .as_ref()
+                    .map(|(v, _)| v.clone())
                     .unwrap_or_else(|| "unknown".into()),
-                suggested,
                 reasoning: "double it, then watch the requested share fall; it needs that much more disk for WAL at peak".into(),
                 restart,
                 rds: rds::describe(p, false),
             }),
+        ),
+        CheckpointCause::Other { wal_forced } => (
+            Severity::Low,
+            format!("{pct:.0}% of checkpoints requested, but not by WAL volume"),
+            format!(
+                "the WAL written could have forced at most about {:.0} of the {} requested checkpoints, so the rest were asked for: {OTHER_CHECKPOINT_CAUSES}. Raising max_wal_size won't change those; with log_checkpoints = on the server log names each checkpoint's reason",
+                wal_forced.floor(),
+                c.requested
+            ),
+            None,
+            None,
+        ),
+        CheckpointCause::Unknown(why) => (
+            Severity::Low,
+            format!("{pct:.0}% of checkpoints requested rather than timed"),
+            format!(
+                "pgman can't tell how many came from WAL volume ({why}). Only those does max_wal_size space out; the rest come from {OTHER_CHECKPOINT_CAUSES}. With log_checkpoints = on the server log says which: \"checkpoint starting: wal\" is WAL volume"
+            ),
+            doubled.as_ref().map(|(_, s)| s.clone()),
+            Some(SettingChange {
+                name: p.name,
+                current: current_shown,
+                suggested: doubled
+                    .as_ref()
+                    .map(|(v, _)| v.clone())
+                    .unwrap_or_else(|| "unknown".into()),
+                reasoning: "double it only if the server log shows most checkpoints starting for \"wal\"; it needs that much more disk for WAL at peak".into(),
+                restart,
+                rds: rds::describe(p, false),
+            }),
+        ),
+    };
+    Some(Finding {
+        severity,
+        code: "ADV005",
+        title,
+        object: "server".to_string(),
+        detail,
+        suggestion,
+        advice: Some(Box::new(Advice {
+            window: c.window.describe(),
+            evidence,
+            evidence_sql,
+            change,
         })),
     })
 }
@@ -1358,6 +1647,24 @@ async fn read_checkpoints(
             r.try_get(2).map_err(db_err)?,
             r.try_get(3).map_err(db_err)?,
         ),
+        wal: read_wal(client, ctx).await,
+    })
+}
+
+/// `pg_stat_wal`, which ADV005 needs to tell WAL-forced checkpoints
+/// from the rest. Its absence only hedges the finding.
+async fn read_wal(client: &tokio_postgres::Client, ctx: &Context) -> Result<WalVolume, String> {
+    if ctx.version_num < 140_000 {
+        return Err("pg_stat_wal, which counts the WAL written, is PG14+".into());
+    }
+    let r = client
+        .query_one(WAL_SQL, &[])
+        .await
+        .map_err(|e| format!("pg_stat_wal couldn't be read: {}", db_err(e)))?;
+    let g = |e: tokio_postgres::Error| format!("pg_stat_wal couldn't be read: {}", db_err(e));
+    Ok(WalVolume {
+        bytes: r.try_get(0).map_err(g)?,
+        window: window(ctx, r.try_get(1).map_err(g)?, r.try_get(2).map_err(g)?),
     })
 }
 
@@ -1435,6 +1742,7 @@ pub async fn fetch(client: &tokio_postgres::Client, th: &Thresholds) -> Result<R
                 &ctx,
                 &c,
                 settings.get("max_wal_size"),
+                settings.get("checkpoint_completion_target"),
                 th,
             )),
             Err(e) => report.errors.push(format!("ADV005: {e}")),

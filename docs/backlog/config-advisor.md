@@ -14,8 +14,8 @@ suggested setting, and the RDS / Aurora parameter-group mapping:
 | ADV001 | buffer cache hit ratio low → `shared_buffers` | `pg_stat_database` |
 | ADV002 | temp spills → `work_mem` (with the spilling statements when `pg_stat_statements` is there) | `pg_stat_database`, `pg_stat_statements` |
 | ADV003 | dead tuples past a table's autovacuum point → per-table `autovacuum_vacuum_scale_factor` | `pg_stat_user_tables`, `pg_class.reloptions` |
-| ADV004 | lock waits piling up → the blocking chain, `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
-| ADV005 | checkpoints forced by WAL volume → `max_wal_size` | `pg_stat_bgwriter` (≤ PG16) / `pg_stat_checkpointer` (PG17+) |
+| ADV004 | lock waits piling up → the blocking chain, `idle_in_transaction_session_timeout` / `log_lock_waits`, `lock_timeout` for the migration session only | `pg_stat_activity`, `pg_blocking_pids` |
+| ADV005 | checkpoints requested rather than timed → `max_wal_size` only when the WAL written could have forced them | `pg_stat_bgwriter` (≤ PG16) / `pg_stat_checkpointer` (PG17+), `pg_stat_wal` (PG14+) |
 
 Out of this round (stay in BACKLOG): fsync / `synchronous_commit`
 (needs `pg_stat_wal` timing, which is off by default), connection thrash
@@ -55,7 +55,12 @@ stay; ADV003's detail points at LINT104.
   failing does not stop the others, as `lint::fetch_live`).
 - `query::advisor::rds` — the parameter mapping as pure data: the
   parameter-group key, static (reboot) or dynamic, unit, and how Aurora
-  differs (`Same`, `Differs(why)`, `NotApplicable(why)`).
+  differs (`Same`, `Differs(why)`, `NotApplicable(why)`, or
+  `Unverified(why)` for one AWS's Aurora PostgreSQL parameter tables
+  don't list — `lock_timeout`: "set it per role or session; check your
+  parameter group"). A parameter both Aurora tables (cluster and
+  instance) list says an instance's DB parameter group can override the
+  cluster's value, and its cluster command carries that as a comment.
 - `lint::Finding` gains `advice: Option<Box<Advice>>` (evidence lines,
   the evidence SQL, the stats window, the setting with current and
   suggested value). Lint findings carry `None`.
@@ -93,19 +98,28 @@ neither depends on the window, and they say "now" instead.
   current database. Only with ≥ 100 000 block requests (≈ 800 MB of
   logical I/O — a quiet dev database is noise). < 0.99 → LOW, < 0.95 →
   MED. A "read" may still come from the OS page cache, so a low ratio
-  is a hint, not proof. Suggestion: twice the current `shared_buffers`,
-  bounded by "≤ 25 % of RAM" (pgman does not know the RAM). On RDS the
-  default is already 25 % and on Aurora about 75 %, so there the text
-  says the working set likely exceeds the instance and the fix is a
+  is a hint, not proof. Self-hosted, the suggestion is twice the
+  current `shared_buffers`, bounded by "≤ 25 % of RAM" (pgman does not
+  know the RAM). On RDS and Aurora there is no command: RDS's default
+  is already about 25 % of instance memory and AWS's guidance is to
+  keep it there, and Aurora's is larger still, so the text says keep
+  it (on RDS, put the default back if the parameter group lowered it)
+  — the working set likely exceeds the instance and the fix is a
   larger class or less I/O per query, not the parameter.
 - **ADV002** — `temp_bytes` in the current database. Nothing below 64
   MiB in total. ≥ 256 MiB per hour of the window → MED, else LOW.
   Suggested `work_mem`: twice the current; when `pg_stat_statements`
   names a top spiller whose per-call spill is under 4× the current
-  value, the next power of two above that spill (clamped to 2×–4×).
-  The suggestion is per role (`ALTER ROLE … SET work_mem`), not
-  global: `work_mem` is per sort node per connection. Up to three
-  spilling statements are listed (`temp_blks_written`, per call).
+  value, the next power of two above that spill (clamped to 2×–4×) —
+  a first step, not a fit: sorting in memory takes more than the bytes
+  spilled, and `temp_blks_written` per call sums every sort / hash node
+  and parallel worker. The suggestion is per role (`ALTER ROLE … SET
+  work_mem`), not global: `work_mem` is per sort node per connection;
+  the detail says it reaches new sessions only (a pool such as
+  HikariCP keeps its connections until `maxLifetime`, 30 min by
+  default). Up to three spilling statements are listed
+  (`temp_blks_written`, per call); one that reads `<insufficient
+  privilege>` gets the `pg_read_all_stats` / `GRANT pg_monitor` line.
 - **ADV003** — tables with ≥ 10 000 live rows whose dead tuples are ≥
   10 % of live. Cause, in order: autovacuum disabled (table reloption
   or global) → re-enable; dead past the table's own trigger
@@ -119,15 +133,42 @@ neither depends on the window, and they say "now" instead.
   The evidence is the chain: each root blocker (blocks others, is not
   itself blocked) with state, transaction age, its waiters and the
   start of its query. Root idle in transaction → suggest
-  `idle_in_transaction_session_timeout = '5min'` if it is off;
-  otherwise `ALTER ROLE <waiting user> SET lock_timeout = '5s'`.
+  `idle_in_transaction_session_timeout = '5min'` if it is off or as
+  good as off: zero, over an hour (AWS's default parameter groups set
+  it to 86400000 ms, 24 h, so on RDS / Aurora it is never `0`), or
+  longer than the head's transaction has run; the reasoning shows the
+  value (`1d = 24h`);
+  otherwise `log_lock_waits = on` if it is not (it logs each wait past
+  `deadlock_timeout` with the holder, and changes no session's
+  behaviour), and once it is, `SET lock_timeout = '5s'` **in the
+  migration / DDL session only**, with the caveat in the suggestion
+  itself: as `ALTER ROLE … SET` for the application, every statement of
+  that role waiting over 5 s would fail — its Flyway / Liquibase
+  migrations included — and Java applications generally don't retry.
   (`deadlock_timeout` does not help a pile-up: it only decides when a
   deadlock check runs.) Without `pg_read_all_stats` the other sessions'
   queries read `<insufficient privilege>`; the finding says so.
 - **ADV005** — requested checkpoints / all checkpoints > 20 % with ≥
-  10 checkpoints in the window → MED. Suggested `max_wal_size`: twice
-  the current. Not on Aurora: it has no checkpoints of its own (the
-  storage layer applies WAL), so the check is skipped there.
+  10 checkpoints in the window. A requested checkpoint is not always a
+  WAL-volume one: CREATE / DROP DATABASE, a base backup
+  (`pg_backup_start`), a manual `CHECKPOINT` and a shutdown all request
+  one, and `max_wal_size` changes none of them. So on PG14+ the check
+  reads `pg_stat_wal.wal_bytes` and bounds how many the WAL could have
+  forced: Postgres starts one each `max_wal_size / (1 +
+  checkpoint_completion_target)` of WAL, so at most `wal_bytes` / that
+  (an upper bound — timed checkpoints used some of the WAL too). At
+  least half the requested → MED, "forced by WAL volume", suggested
+  `max_wal_size` twice the current. Fewer → LOW, "not by WAL volume",
+  the other causes listed and no setting (on the compose primary: 587
+  requested, 2.8 GB of WAL at 1GB — room for about five).
+  `pg_stat_wal` has its own `stats_reset`: when it is more than a
+  minute from the checkpoint counters', the WAL rate is carried over to
+  their window and the evidence says it is an estimate; under an hour
+  old, or before PG14, or unreadable, the finding hedges (LOW, the
+  causes listed, double `max_wal_size` only if the server log's
+  `log_checkpoints` lines say `checkpoint starting: wal`). Not on
+  Aurora: it has no checkpoints of its own (the storage layer applies
+  WAL), so the check is skipped there.
 
 ## Privileges and missing pieces
 

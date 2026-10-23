@@ -54,8 +54,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Config advisor in the schema wizard (`W`): read-only findings from the
   server's statistics — buffer cache hit ratio, temp-file spills (with the
   spilling statements from `pg_stat_statements`), dead tuples and the
-  autovacuum setting behind them, lock-wait chains, and checkpoints forced
-  by WAL volume (`pg_stat_checkpointer` from PG17). Each shows its
+  autovacuum setting behind them, lock-wait chains, and requested
+  checkpoints (`pg_stat_checkpointer` from PG17), blamed on
+  `max_wal_size` only when `pg_stat_wal` shows the WAL to have forced
+  them. Each shows its
   evidence, how long the counters have accumulated, a conservative
   setting, and its RDS / Aurora parameter-group name, static or dynamic.
   `e` yanks a finding's evidence query.

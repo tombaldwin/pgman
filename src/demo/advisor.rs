@@ -6,7 +6,7 @@
 
 use crate::query::advisor::{
     self, Checkpoints, Context, DbStats, LockSession, Report, ServerKind, Setting, Spiller,
-    Spillers, TableVacuum, Thresholds, VacuumDefaults, Window,
+    Spillers, TableVacuum, Thresholds, VacuumDefaults, WalVolume, Window,
 };
 
 const MIB: i64 = 1024 * 1024;
@@ -88,10 +88,16 @@ pub fn advisor() -> Report {
             query: "UPDATE invoices SET status = 'paid', paid_at = now() WHERE id = 48207".into(),
         },
     ];
+    // 260 GiB of WAL in the week: one WAL-triggered checkpoint every
+    // 2GB / 1.9 has room for ~245, so the 187 requested are the load's.
     let checkpoints = Checkpoints {
         timed: 402,
         requested: 187,
-        window,
+        window: window.clone(),
+        wal: Ok(WalVolume {
+            bytes: 260 * 1024 * MIB,
+            window,
+        }),
     };
     let defaults = VacuumDefaults {
         enabled: true,
@@ -117,9 +123,10 @@ pub fn advisor() -> Report {
             &ctx,
             &locks,
             &advisor::Settings::from([
+                // AWS's default parameter group value: 24h.
                 (
                     "idle_in_transaction_session_timeout".to_string(),
-                    setting("0", "ms", "user"),
+                    setting("86400000", "ms", "user"),
                 ),
                 ("lock_timeout".to_string(), setting("0", "ms", "user")),
             ]),
@@ -129,6 +136,7 @@ pub fn advisor() -> Report {
             &ctx,
             &checkpoints,
             Some(&setting("2048", "MB", "sighup")),
+            Some(&setting("0.9", "", "sighup")),
             &th,
         ),
     ]

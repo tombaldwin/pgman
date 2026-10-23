@@ -47,10 +47,14 @@ impl GroupUnit {
     }
 }
 
-/// How Aurora PostgreSQL differs from RDS for one parameter.
+/// How Aurora PostgreSQL differs from RDS for one parameter, as AWS's
+/// Aurora PostgreSQL parameter reference lists it (the default cluster
+/// and instance parameter group tables).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Aurora {
     Same,
+    /// Not in AWS's Aurora tables: pgman can't say how Aurora takes it.
+    Unverified(&'static str),
     /// Exists on Aurora, but behaves or defaults differently.
     Differs(&'static str),
     /// Not modifiable, or meaningless, on Aurora.
@@ -68,6 +72,9 @@ pub struct ParamMapping {
     pub is_static: bool,
     pub unit: GroupUnit,
     pub aurora: Aurora,
+    /// In both Aurora's cluster and instance parameter group tables: an
+    /// instance's DB parameter group can override the cluster's value.
+    pub aurora_instance_too: bool,
 }
 
 /// Every setting the advisor can suggest, sorted by name.
@@ -78,6 +85,7 @@ pub const PARAMS: &[ParamMapping] = &[
         is_static: false,
         unit: GroupUnit::Plain,
         aurora: Aurora::Same,
+        aurora_instance_too: false,
     },
     ParamMapping {
         name: "autovacuum_vacuum_scale_factor",
@@ -85,6 +93,7 @@ pub const PARAMS: &[ParamMapping] = &[
         is_static: false,
         unit: GroupUnit::Plain,
         aurora: Aurora::Same,
+        aurora_instance_too: false,
     },
     ParamMapping {
         name: "idle_in_transaction_session_timeout",
@@ -92,13 +101,27 @@ pub const PARAMS: &[ParamMapping] = &[
         is_static: false,
         unit: GroupUnit::Ms,
         aurora: Aurora::Same,
+        aurora_instance_too: true,
     },
     ParamMapping {
         name: "lock_timeout",
         group_key: "lock_timeout",
         is_static: false,
         unit: GroupUnit::Ms,
+        // AWS's default Aurora PostgreSQL cluster and instance tables
+        // don't list it.
+        aurora: Aurora::Unverified(
+            "not in AWS's Aurora parameter group tables: set it per role or session, and check your parameter group",
+        ),
+        aurora_instance_too: false,
+    },
+    ParamMapping {
+        name: "log_lock_waits",
+        group_key: "log_lock_waits",
+        is_static: false,
+        unit: GroupUnit::Plain,
         aurora: Aurora::Same,
+        aurora_instance_too: true,
     },
     ParamMapping {
         name: "log_temp_files",
@@ -106,6 +129,7 @@ pub const PARAMS: &[ParamMapping] = &[
         is_static: false,
         unit: GroupUnit::Kb,
         aurora: Aurora::Same,
+        aurora_instance_too: true,
     },
     ParamMapping {
         name: "max_wal_size",
@@ -115,6 +139,7 @@ pub const PARAMS: &[ParamMapping] = &[
         aurora: Aurora::NotApplicable(
             "Aurora's storage layer applies the WAL itself: there are no checkpoints to space out, and the parameter is not modifiable",
         ),
+        aurora_instance_too: false,
     },
     ParamMapping {
         name: "shared_buffers",
@@ -122,8 +147,9 @@ pub const PARAMS: &[ParamMapping] = &[
         is_static: true,
         unit: GroupUnit::Pages8k,
         aurora: Aurora::Differs(
-            "Aurora's default is about 75% of instance memory ({DBInstanceClassMemory/12038}) against RDS's 25% ({DBInstanceClassMemory/32768}), as it has no OS page cache to share with",
+            "Aurora's default is about two-thirds of instance memory (SUM(DBInstanceClassMemory/12038,-50003) pages) against RDS's 25% ({DBInstanceClassMemory/32768}), as it has no OS page cache to share with",
         ),
+        aurora_instance_too: true,
     },
     ParamMapping {
         name: "work_mem",
@@ -131,6 +157,7 @@ pub const PARAMS: &[ParamMapping] = &[
         is_static: false,
         unit: GroupUnit::Kb,
         aurora: Aurora::Same,
+        aurora_instance_too: true,
     },
 ];
 
@@ -152,16 +179,30 @@ pub fn describe(p: &ParamMapping, aurora: bool) -> String {
         u => format!(", in {u}"),
     };
     let base = format!("parameter group key {} ({apply}{unit})", p.group_key);
-    match (p.aurora, aurora) {
+    let line = match (p.aurora, aurora) {
+        (Aurora::Same, _) if p.aurora_instance_too => {
+            return format!("{base} · same on Aurora, where {AURORA_INSTANCE_OVERRIDE}");
+        }
         (Aurora::Same, _) => format!("{base} · same on Aurora"),
+        (Aurora::Unverified(why), true) => format!("Aurora: {why} · {base}"),
+        (Aurora::Unverified(why), false) => format!("{base} · Aurora: {why}"),
         (Aurora::Differs(why), true) => format!("Aurora: {why} · {base}"),
         (Aurora::Differs(why), false) => format!("{base} · Aurora differs: {why}"),
         (Aurora::NotApplicable(why), true) => format!("Aurora: not applicable — {why}"),
         (Aurora::NotApplicable(why), false) => {
             format!("{base} · not on Aurora: {why}")
         }
+    };
+    if p.aurora_instance_too {
+        format!("{line} · on Aurora, {AURORA_INSTANCE_OVERRIDE}")
+    } else {
+        line
     }
 }
+
+/// Said of a parameter both Aurora parameter groups carry.
+const AURORA_INSTANCE_OVERRIDE: &str =
+    "an instance's DB parameter group can override the cluster's value";
 
 /// The `aws` command that sets `value` (already in the group's unit) in
 /// a parameter group, with the apply method the parameter allows. The
@@ -181,8 +222,13 @@ pub fn aws_cli(p: &ParamMapping, value: &str, aurora: bool) -> String {
     } else {
         ("modify-db-parameter-group", "--db-parameter-group-name")
     };
+    let note = if aurora && p.aurora_instance_too {
+        "  # an instance's DB parameter group can override the cluster's value"
+    } else {
+        ""
+    };
     format!(
-        "aws rds {cmd} {flag} <your-group> --parameters \"ParameterName={},ParameterValue={value},ApplyMethod={method}\"",
+        "aws rds {cmd} {flag} <your-group> --parameters \"ParameterName={},ParameterValue={value},ApplyMethod={method}\"{note}",
         p.group_key
     )
 }
@@ -253,20 +299,63 @@ mod tests {
             "{rds}"
         );
         assert!(
-            rds.contains("Aurora differs: Aurora's default is about 75%"),
+            rds.contains("Aurora differs: Aurora's default is about two-thirds"),
             "{rds}"
         );
         let aurora = describe(sb, true);
         assert!(aurora.starts_with("Aurora: Aurora's default"), "{aurora}");
+        assert!(
+            aurora.ends_with(
+                " · on Aurora, an instance's DB parameter group can override the cluster's value"
+            ),
+            "{aurora}"
+        );
     }
 
     #[test]
     fn describe_says_dynamic_and_same_on_aurora() {
+        let av = describe(lookup("autovacuum").unwrap(), false);
+        assert_eq!(
+            av,
+            "parameter group key autovacuum (dynamic: no reboot) · same on Aurora"
+        );
         let wm = describe(lookup("work_mem").unwrap(), false);
         assert_eq!(
             wm,
-            "parameter group key work_mem (dynamic: no reboot, in kB) · same on Aurora"
+            "parameter group key work_mem (dynamic: no reboot, in kB) · same on Aurora, where an instance's DB parameter group can override the cluster's value"
         );
+    }
+
+    /// AWS's Aurora tables don't list lock_timeout: pgman says so
+    /// rather than "same on Aurora".
+    #[test]
+    fn describe_doesnt_claim_what_the_aurora_tables_dont_list() {
+        let lt = lookup("lock_timeout").unwrap();
+        for aurora in [false, true] {
+            let d = describe(lt, aurora);
+            assert!(!d.contains("same on Aurora"), "{d}");
+            assert!(
+                d.contains("set it per role or session, and check your parameter group"),
+                "{d}"
+            );
+        }
+        assert!(describe(lt, true).starts_with("Aurora: not in AWS's"));
+    }
+
+    /// The parameters both of Aurora's group tables list, as AWS's
+    /// Aurora PostgreSQL parameter reference has them.
+    #[test]
+    fn aurora_instance_too_is_the_parameters_in_both_tables() {
+        const BOTH: &[&str] = &[
+            "idle_in_transaction_session_timeout",
+            "log_lock_waits",
+            "log_temp_files",
+            "shared_buffers",
+            "work_mem",
+        ];
+        for p in PARAMS {
+            assert_eq!(p.aurora_instance_too, BOTH.contains(&p.name), "{}", p.name);
+        }
     }
 
     #[test]
@@ -285,6 +374,11 @@ mod tests {
         ));
         let wm = aws_cli(lookup("work_mem").unwrap(), "8192", true);
         assert!(wm.contains("modify-db-cluster-parameter-group --db-cluster-parameter-group-name"));
-        assert!(wm.contains("ApplyMethod=immediate"));
+        assert!(
+            wm.contains("ApplyMethod=immediate\"  # an instance's DB parameter group can override"),
+            "{wm}"
+        );
+        assert!(!aws_cli(lookup("work_mem").unwrap(), "8192", false).contains('#'));
+        assert!(!aws_cli(lookup("autovacuum").unwrap(), "1", true).contains('#'));
     }
 }
