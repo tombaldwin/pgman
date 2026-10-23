@@ -24,6 +24,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
   Postgres connection no longer offers the post-quantum X25519MLKEM768
   key exchange, which only the aws-lc provider had.
+- Logs → SQL: a Postgres `FATAL:` or `PANIC:` followed by its
+  `STATEMENT:` (a read replica's `terminating connection due to
+  conflict with recovery`) is reconstructed as a failed query, like an
+  `ERROR:`'s.
 
 ### Fixed
 

@@ -48,8 +48,10 @@ Three input shapes are recognised:
   (Postgres 13+, `log_parameter_max_length_on_error`) or the backend's
   last `bind`. When `log_statement` already logged the statement before
   it ran, that query is the one marked failed rather than a second copy
-  appearing, so the failure doesn't read as a ×2 N+1 cluster. A `FATAL`'s
-  `STATEMENT:` isn't reconstructed.
+  appearing, so the failure doesn't read as a ×2 N+1 cluster. A `FATAL:`
+  or `PANIC:` followed by its `STATEMENT:` — a backend terminated
+  mid-statement, such as a read replica's `terminating connection due to
+  conflict with recovery` — is reconstructed the same way.
 - **Pasted JDBC** — no log at all, just a `?`-placeholder statement plus a
   typed parameter list you already have (a debugger watch, a
   `PreparedStatement` toString, whatever). See "Three ways in" below for the

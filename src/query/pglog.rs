@@ -21,7 +21,10 @@
 //!     from a `DETAIL:` / `CONTEXT:  … with parameters:` line in the report or
 //!     the backend's last `bind`. When `log_statement` already logged the
 //!     statement before it ran, that query is marked failed instead of a second
-//!     copy being emitted — two copies would read as an N+1 loop.
+//!     copy being emitted — two copies would read as an N+1 loop. A
+//!     `FATAL` / `PANIC` + `STATEMENT` (a backend terminated mid-statement,
+//!     e.g. a replica's `terminating connection due to conflict with
+//!     recovery`) is read the same way.
 //!
 //! Parameter values are logged by Postgres as quoted text regardless of type
 //! (`$1 = '42'`), so they are reconstructed as quoted literals — re-running
@@ -34,8 +37,7 @@
 //! a severity marker (`ERROR:  …` at column 0, e.g. the second line of a
 //! multi-line string literal in a paste that lost Postgres's tabs) reads
 //! as a record; backends with no `[%p]` in the prefix share one pairing
-//! bucket; a `FATAL` / `PANIC` + `STATEMENT` pair (a terminated backend)
-//! is not reconstructed, only `ERROR`.
+//! bucket.
 
 use crate::query::reconstruct::{BoundParam, ParamValue, ReconstructedQuery, Source};
 use crate::query::subst::{self, PlaceholderStyle};
@@ -132,7 +134,9 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
                 // A LOG line we don't recognise ends the current statement.
                 None => finalize(current.take(), &mut seen, &mut out),
             },
-            "ERROR" => {
+            // A FATAL / PANIC report ends with the statement that was
+            // running, as an ERROR's does.
+            "ERROR" | "FATAL" | "PANIC" => {
                 finalize(current.take(), &mut seen, &mut out);
                 seen.errors.insert(
                     pid,
@@ -167,7 +171,7 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
                     });
                 }
             }
-            // WARNING / HINT / FATAL / … end the current statement.
+            // WARNING / HINT / NOTICE / … end the current statement.
             _ => finalize(current.take(), &mut seen, &mut out),
         }
     }
@@ -1059,6 +1063,55 @@ mod tests {
         assert_eq!(
             q[0].raw_sql,
             "insert into notes values ('line one\n\tindented two')"
+        );
+    }
+
+    /// A replica cancelling a query for recovery conflict terminates the
+    /// backend: a FATAL report, then its STATEMENT. Reconstructed like an
+    /// ERROR's, alongside the ERROR + CONTEXT parameters next to it.
+    #[test]
+    fn a_fatal_and_its_statement_become_a_failed_query() {
+        let log = "\
+2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:LOG:  duration: 12.345 ms  execute S_1: select id, total from invoices where status = $1 and total > $2
+2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:DETAIL:  parameters: $1 = 'open', $2 = '100'
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:FATAL:  terminating connection due to conflict with recovery
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:DETAIL:  User query might have needed to see row versions that must be removed.
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:STATEMENT:  select l.id, l.amount from invoice_lines l where l.invoice_id = 7
+2026-10-21 09:12:50 UTC:10.0.1.24(51235):billing@ledger:[31841]:ERROR:  canceling statement due to statement timeout
+2026-10-21 09:12:50 UTC:10.0.1.24(51235):billing@ledger:[31841]:CONTEXT:  unnamed portal with parameters: $1 = '48202', $2 = 'it''s \"quoted\", really'
+2026-10-21 09:12:50 UTC:10.0.1.24(51235):billing@ledger:[31841]:STATEMENT:  select l.id, l.amount from invoice_lines l where l.invoice_id = $1 and l.note = $2
+2026-10-21 09:12:51 UTC [55] PANIC:  could not write to file \"pg_wal/xlogtemp.55\": No space left on device
+2026-10-21 09:12:51 UTC [55] STATEMENT:  insert into audit values (1)";
+        let got: Vec<(String, Option<String>)> = parse(log)
+            .into_iter()
+            .map(|q| (q.runnable_sql, q.error))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "select id, total from invoices where status = 'open' and total > '100'"
+                        .to_string(),
+                    None
+                ),
+                (
+                    "select l.id, l.amount from invoice_lines l where l.invoice_id = 7".to_string(),
+                    Some("terminating connection due to conflict with recovery".to_string())
+                ),
+                (
+                    "select l.id, l.amount from invoice_lines l where l.invoice_id = '48202' and l.note = 'it''s \"quoted\", really'"
+                        .to_string(),
+                    Some("canceling statement due to statement timeout".to_string())
+                ),
+                (
+                    "insert into audit values (1)".to_string(),
+                    Some(
+                        "could not write to file \"pg_wal/xlogtemp.55\": No space left on device"
+                            .to_string()
+                    )
+                ),
+            ]
         );
     }
 
