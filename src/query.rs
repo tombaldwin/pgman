@@ -27,6 +27,7 @@ pub mod lint;
 pub mod logdetect;
 pub mod migrations;
 pub mod nplus1;
+pub mod paging;
 pub mod params;
 pub mod patches;
 pub mod pglog;

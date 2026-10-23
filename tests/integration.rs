@@ -6063,3 +6063,348 @@ fn batch_json_script_with_a_select_explains_where_the_rows_went() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Paging past MAX_ROWS (query::paging, docs/backlog/paging.md)
+// ---------------------------------------------------------------------------
+
+/// The backend pid of `client`'s session.
+async fn backend_pid(client: &tokio_postgres::Client) -> i32 {
+    client
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .expect("read the backend pid")
+        .get(0)
+}
+
+/// `pg_stat_activity.state` of `pid`, read from another session, once it
+/// equals `want` or two seconds have passed: the view lags the backend's
+/// own state change by a moment. `pg_cursors` lists only the asking
+/// session's cursors, so the outside view is the state.
+async fn session_state(observer: &tokio_postgres::Client, pid: i32, want: &str) -> String {
+    let mut state = String::new();
+    for _ in 0..40 {
+        state = observer
+            .query_one(
+                "SELECT coalesce(state, '') FROM pg_stat_activity WHERE pid = $1",
+                &[&pid],
+            )
+            .await
+            .expect("read pg_stat_activity")
+            .get(0);
+        if state == want {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    state
+}
+
+/// Whether a simple-query probe ran as the first command of its own
+/// transaction — i.e. the session was not inside one. (Over the extended
+/// protocol each of Parse / Bind / Execute moves `statement_timestamp`,
+/// so this has to be a simple query, as the pager's own probe is.)
+async fn first_command_of_its_transaction(client: &tokio_postgres::Client) -> bool {
+    client
+        .simple_query("SELECT statement_timestamp() = transaction_timestamp()")
+        .await
+        .expect("probe runs")
+        .iter()
+        .any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(r) if r.get(0) == Some("t")))
+}
+
+/// 10 000 rows, inserted out of order, read back `ORDER BY id` a page at
+/// a time: every row exactly once, in order, the last page says there
+/// is no more, and the session is left idle — not idle in transaction.
+#[tokio::test]
+async fn paging_reads_ten_thousand_rows_in_order_without_gaps() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (writer, _w) = writable_client().await;
+    let table = it_name("paging_10k");
+    writer
+        .batch_execute(&format!(
+            "DROP TABLE IF EXISTS {table}; CREATE TABLE {table} (id int PRIMARY KEY, v text); \
+             INSERT INTO {table} SELECT g, 'v' || g FROM generate_series(1, 10000) g ORDER BY random()"
+        ))
+        .await
+        .expect("create the table");
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(format!("SELECT id, v FROM {table} ORDER BY id"), PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    assert_eq!(opened.grid.columns, vec!["id", "v"]);
+    assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
+    assert!(opened.grid.truncated, "more than a page exists");
+    assert!(opened.cursor.is_some(), "the cursor stays open");
+    assert!(!opened.in_transaction);
+    assert_eq!(
+        session_state(&writer, pid, "idle in transaction").await,
+        "idle in transaction"
+    );
+    let mut ids: Vec<i64> = opened
+        .grid
+        .rows
+        .iter()
+        .map(|r| r[0].as_deref().unwrap().parse().unwrap())
+        .collect();
+    let mut pages = 1;
+    loop {
+        let page = pager
+            .fetch(PAGE_ROWS)
+            .await
+            .expect("pager alive")
+            .expect("fetch runs");
+        pages += 1;
+        ids.extend(
+            page.rows
+                .iter()
+                .map(|r| r[0].as_deref().unwrap().parse::<i64>().unwrap()),
+        );
+        if !page.more {
+            break;
+        }
+        assert_eq!(page.rows.len(), PAGE_ROWS, "a full page while more exist");
+    }
+    let _ = writer.batch_execute(&format!("DROP TABLE {table}")).await;
+    assert_eq!(pages, 10, "10 000 rows are ten pages of 1000");
+    assert_eq!(ids, (1..=10_000).collect::<Vec<i64>>());
+    assert_eq!(session_state(&writer, pid, "idle").await, "idle");
+}
+
+/// A result that fits in a page never holds a transaction open.
+#[tokio::test]
+async fn a_small_result_commits_at_once() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    for n in [0, 1, PAGE_ROWS] {
+        let opened = pager
+            .open(
+                format!("SELECT g FROM generate_series(1, {n}) g"),
+                PAGE_ROWS,
+            )
+            .await
+            .expect("pager alive")
+            .expect("open runs");
+        assert_eq!(opened.grid.rows.len(), n);
+        assert!(!opened.grid.truncated, "{n} rows: complete");
+        assert!(opened.cursor.is_none(), "{n} rows: no cursor left open");
+        assert_eq!(session_state(&observer, pid, "idle").await, "idle", "{n}");
+    }
+}
+
+/// Any other database work waits at the pager's barrier, which closes
+/// the open cursor first: the session goes from idle in transaction to
+/// idle before the work's statement runs, and that statement is not in
+/// the cursor's transaction.
+#[tokio::test]
+async fn a_new_statement_closes_the_cursor_first() {
+    use pgman::query::paging::{Db, Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 5000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    assert_eq!(
+        session_state(&observer, pid, "idle in transaction").await,
+        "idle in transaction"
+    );
+    // Queued before the work is spawned, as `App::db` does.
+    let db = Db::new(client.clone(), Some(&pager));
+    let work = tokio::spawn(async move {
+        let client = db.ready().await;
+        // First command of its own transaction: the cursor's is gone.
+        first_command_of_its_transaction(&client).await
+    });
+    assert!(
+        work.await.unwrap(),
+        "the work ran inside the cursor's transaction"
+    );
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+    // The cursor is gone: a fetch says so rather than reading anything.
+    let err = pager.fetch(PAGE_ROWS).await.unwrap().unwrap_err();
+    assert!(err.msg.contains("closed"), "{}", err.msg);
+    // And a plain `close` (the idle timer's) of a cursor that is open
+    // ends its transaction too.
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 5000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    pager.close();
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+}
+
+/// Ctrl-C during a fetch: the FETCH is cancelled, the pager rolls the
+/// transaction back, and the session is usable again.
+#[tokio::test]
+async fn cancelling_a_fetch_rolls_back_and_leaves_the_session_usable() {
+    use pgman::query::paging::{Db, Pager, PAGE_ROWS};
+    use std::time::{Duration, Instant};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    // The first page (and its look-ahead row) is quick; the row after
+    // that sleeps far longer than the test waits.
+    let opened = pager
+        .open(
+            "SELECT g, CASE WHEN g > 1001 THEN pg_sleep(30)::text END \
+             FROM generate_series(1, 3000) g"
+                .to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
+    let cancel = client.cancel_token();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = cancel.cancel_query(tokio_postgres::NoTls).await;
+    });
+    let started = Instant::now();
+    let err = pager.fetch(PAGE_ROWS).await.unwrap().unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(10), "cancelled");
+    assert_eq!(
+        err.detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("57014"),
+        "{}",
+        err.msg
+    );
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+    let client = Db::new(client.clone(), Some(&pager)).ready().await;
+    let one: i32 = client.query_one("SELECT 1", &[]).await.unwrap().get(0);
+    assert_eq!(one, 1);
+}
+
+/// The cursor's transaction inherits a read-only session's
+/// `default_transaction_read_only`, and a writable session's cursor
+/// works the same.
+#[tokio::test]
+async fn the_cursor_transaction_keeps_the_sessions_read_only_setting() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let sql = "SELECT current_setting('transaction_read_only'), g \
+               FROM generate_series(1, 2000) g";
+    let (ro, _t) = lib_client().await;
+    let opened = Pager::spawn(ro)
+        .open(sql.to_string(), PAGE_ROWS)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    assert_eq!(opened.grid.rows[0][0].as_deref(), Some("on"));
+    let (rw, _w) = writable_client().await;
+    let opened = Pager::spawn(rw)
+        .open(sql.to_string(), PAGE_ROWS)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    assert_eq!(opened.grid.rows[0][0].as_deref(), Some("off"));
+}
+
+/// The opening round trip reads the server's
+/// `idle_in_transaction_session_timeout` and closes well before it:
+/// pgman's own idle limit comes back at half the server's.
+#[tokio::test]
+async fn the_idle_limit_undercuts_the_servers_idle_in_transaction_timeout() {
+    use pgman::query::paging::{Pager, IDLE_CLOSE, PAGE_ROWS};
+    use std::time::Duration;
+    let (client, _t) = lib_client().await;
+    client
+        .batch_execute("SET idle_in_transaction_session_timeout = '8s'")
+        .await
+        .unwrap();
+    let opened = Pager::spawn(client.clone())
+        .open(
+            "SELECT g FROM generate_series(1, 2000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let limits = opened.cursor.expect("the cursor stays open");
+    assert_eq!(limits.idle, Duration::from_secs(4));
+    assert!(limits.idle < IDLE_CLOSE);
+}
+
+/// A session already inside a transaction — a `BEGIN` the operator typed
+/// — gets no cursor: the statement runs the old way, capped, and the
+/// operator's transaction is left exactly as it was, still open.
+#[tokio::test]
+async fn a_session_already_in_a_transaction_runs_unpaged_and_untouched() {
+    use pgman::query::paging::{Db, Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    client.batch_execute("BEGIN").await.unwrap();
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 5000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.in_transaction);
+    assert!(opened.cursor.is_none());
+    assert!(opened.grid.truncated);
+    assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
+    // The barrier has no cursor to close, so it must not COMMIT theirs.
+    let client = Db::new(client.clone(), Some(&pager)).ready().await;
+    assert_eq!(
+        session_state(&observer, pid, "idle in transaction").await,
+        "idle in transaction"
+    );
+    assert!(
+        !first_command_of_its_transaction(&client).await,
+        "the operator's transaction was ended"
+    );
+    client.batch_execute("ROLLBACK").await.unwrap();
+}
+
+/// A statement that fails while the cursor opens leaves no transaction
+/// behind, and the error is the server's.
+#[tokio::test]
+async fn a_failing_open_rolls_back() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let err = pager
+        .open(
+            "SELECT 1 / (g - 5) FROM generate_series(1, 10) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(
+        err.detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("22012"),
+        "{}",
+        err.msg
+    );
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+}

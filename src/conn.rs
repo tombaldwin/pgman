@@ -1170,16 +1170,24 @@ async fn stream_text_rows(
             truncated = true;
             break;
         }
-        // Read only what the row carries (see `run_statement_typed`):
-        // `SimpleQueryRow::get` panics past the row's own width.
-        let cells: Vec<Option<String>> = (0..row.columns().len())
-            .map(|i| row.try_get(i).ok().flatten().map(str::to_string))
-            .collect();
-        // Lined up with the `n_columns` Describe promised; SQL NULL
-        // stays `None`, never the empty string.
-        out.push(project_cells(cells, n_columns));
+        out.push(text_row_cells(&row, n_columns));
     }
     Ok((out, truncated))
+}
+
+/// One text-wire row as grid cells, lined up with the `n_columns`
+/// Describe promised. Reads only what the row carries (see
+/// `run_statement_typed`): `SimpleQueryRow::get` panics past the row's
+/// own width. SQL NULL stays `None`, never the empty string. Shared with
+/// `query::paging`, whose `FETCH` rows arrive the same way.
+pub(crate) fn text_row_cells(
+    row: &tokio_postgres::SimpleQueryRow,
+    n_columns: usize,
+) -> Vec<crate::grid::Cell> {
+    let cells: Vec<Option<String>> = (0..row.columns().len())
+        .map(|i| row.try_get(i).ok().flatten().map(str::to_string))
+        .collect();
+    project_cells(cells, n_columns)
 }
 
 /// Column names + Postgres [`Type`]s, plus the text-wire value of every
@@ -1275,10 +1283,7 @@ pub async fn run_statement_typed_capped(
             // — aborting `--batch --format json` mid-document. Read
             // only what the row actually carries and let
             // `project_cells` pad the rest with SQL NULL.
-            let cells: Vec<Option<String>> = (0..row.columns().len())
-                .map(|i| row.try_get(i).ok().flatten().map(str::to_string))
-                .collect();
-            rows.push(project_cells(cells, columns.len()));
+            rows.push(text_row_cells(&row, columns.len()));
         }
     }
     let typed = TypedRows {
