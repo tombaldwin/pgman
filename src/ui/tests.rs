@@ -1677,6 +1677,73 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
     assert!(footer.contains("y run · n / esc cancel"), "{footer}");
 }
 
+/// A typo'd statement's confirm card says it's unrecognised — not that a
+/// read-only session will refuse a write — and still asks before sending.
+#[test]
+fn the_confirm_card_calls_a_typo_unrecognised_not_a_refused_write() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.read_only = true;
+    let decision =
+        crate::safety::evaluate(&crate::safety::SafetyConfig::default(), "db", "selec 1;");
+    assert_eq!(decision.guard, crate::safety::Guard::Confirm);
+    app.pending_run = Some(crate::app::PendingRun {
+        sql: "selec 1;".into(),
+        kind: crate::app::RunKind::Run,
+        decision,
+        is_batch: false,
+        summary: None,
+    });
+    app.mode = crate::app::Mode::Confirm;
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let cell = |x: u16, y: u16| buf[(x, y)].symbol().to_string();
+        let row = |y: u16| (0..buf.area.width).map(|x| cell(x, y)).collect::<Vec<_>>();
+        // The confirm box: its top border carries the title.
+        let y0 = (0..buf.area.height)
+            .find(|&y| row(y).concat().contains("[ ◆ confirm"))
+            .expect("confirm box drawn");
+        let top = row(y0);
+        let title_at = (0..top.len())
+            .find(|&x| top[x..].concat().starts_with("[ ◆ confirm"))
+            .unwrap();
+        let x0 = (0..title_at).rev().find(|&x| top[x] == "╭").unwrap();
+        let x1 = (title_at..top.len()).find(|&x| top[x] == "╮").unwrap();
+        let mut inner = String::new();
+        for y in y0 + 1..buf.area.height {
+            if row(y)[x0] == "╰" {
+                break;
+            }
+            inner.push_str(&row(y)[x0 + 1..x1].concat());
+            inner.push(' ');
+        }
+        let squashed = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            squashed.contains("`selec` isn't an SQL statement pgman recognises"),
+            "{w}x{h}: {squashed}"
+        );
+        assert!(
+            squashed.contains("likely be a syntax error"),
+            "{w}x{h}: {squashed}"
+        );
+        assert!(
+            !squashed.contains("Postgres will refuse it"),
+            "{w}x{h}: {squashed}"
+        );
+        assert!(
+            squashed.contains("y = send it anyway"),
+            "{w}x{h}: {squashed}"
+        );
+    }
+}
+
 /// A write refused by a read-only connection at 80x24: the footer
 /// names `safety.toml` in at most two rows and never its path — a full
 /// path made it three and was cut anyway — and the F2 overlay carries

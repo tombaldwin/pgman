@@ -27,6 +27,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A typo like `selec 1;` no longer reads as a guarded write. It is still
+  guarded (pgman never assumes an unrecognised statement is safe), but the
+  confirm card now says "`selec` isn't an SQL statement pgman recognises —
+  send it to Postgres anyway? (it will likely be a syntax error)" rather
+  than that a read-only session will refuse it, and `pgman query` says it
+  isn't a statement pgman recognises (typo?) — re-run with `--yes` to send
+  it anyway.
 - After loading a query from the log picker, `Ctrl-L` / `F8` said "no
   queries found", because the loaded query had replaced the log in the
   buffer. With no log in the buffer it now reopens the last log's picker

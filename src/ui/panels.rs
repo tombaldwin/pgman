@@ -175,6 +175,17 @@ pub(crate) fn confirm_action_line(read_only: bool) -> &'static str {
     }
 }
 
+/// The confirm card's headline for a statement whose leading word no
+/// Postgres statement starts with: it is guarded (unknown is never
+/// assumed safe), but the likely story is a typo, not a write — so say
+/// that instead of "read-only, Postgres will refuse it". Pure.
+pub(crate) fn confirm_typo_line(word: &str) -> String {
+    format!(
+        "`{word}` isn't an SQL statement pgman recognises — send it to Postgres anyway? \
+         (it will likely be a syntax error)"
+    )
+}
+
 /// Modal for a guarded run. Shows the statement, the safety classification,
 /// and asks y/n.
 pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
@@ -187,6 +198,17 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
         None => pending.decision.kind.describe(),
     };
     let wrap_note = confirm_wrap_note(app.read_only, pending.decision.wrap_in_tx);
+    // A batch's statements are summarised, not shown one by one, so only
+    // a single statement gets the typo wording.
+    let typo = if pending.is_batch {
+        None
+    } else {
+        crate::safety::unrecognised_statement_word(&pending.sql)
+    };
+    let headline = match &typo {
+        Some(word) => confirm_typo_line(word),
+        None => format!("{} ({detail}){wrap_note}", pending.kind.label()),
+    };
     // For batch runs the SQL can be long — show the first 8 lines and an
     // ellipsis. Single statements show as-is.
     let sql_preview = if pending.is_batch {
@@ -204,10 +226,7 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     // and a modal that spends its first row restating its own title
     // spends a row it then has to take off the statement.
     let mut lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            format!("{} ({detail}){wrap_note}", pending.kind.label()),
-            Style::default().fg(theme.accent),
-        )),
+        Line::from(Span::styled(headline, Style::default().fg(theme.accent))),
         Line::from(""),
     ];
     for sql_line in sql_preview.lines() {
@@ -218,7 +237,7 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        confirm_action_line(app.read_only),
+        confirm_action_line(app.read_only || typo.is_some()),
         Style::default().fg(theme.muted),
     )));
     // Size to the content — every line, not just the SQL: the
