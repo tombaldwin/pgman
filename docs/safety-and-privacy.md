@@ -242,14 +242,14 @@ typed choice and behaves as it always has.
 | `~/.config/pgman/safety.toml` | Your personal guard-rail configuration. No secrets. |
 | `~/.config/pgman/config.toml` | UI defaults (`redact_default`). No secrets; pgman never writes it. |
 | `<repo>/.pgman/pgman.toml` | Project-committed connection URLs (host/port/dbname/user) and safety overrides. **Never a resolved password** — only an optional `password_env` variable *name*. |
-| `~/.local/share/pgman/draft.sql` | The editor buffer, auto-saved on quit and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. |
+| `~/.local/share/pgman/draft.sql` | The editor buffer, auto-saved on quit and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. `draft-YYYYMMDD-HHMMSS.sql` beside it is the same, from a second pgman window that would otherwise have overwritten the first one's draft. |
 | `~/.local/share/pgman/history.log` | Up to the last 50 statements you've run, one per line (multi-line entries escaped onto one line). Same caveat: literal values in your `WHERE`/`INSERT` bodies persist here. |
 | `~/.local/share/pgman/saved.toml` | Named queries you explicitly saved. |
 | `~/.cache/pgman/pgman.log.YYYY-MM-DD` | Application log, rotated daily. Connection strings are always logged with the password masked (see "Redaction of connection strings" below). Resolved passwords are never logged. |
 | `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
 | `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. `--batch` drops control characters other than `\t`, `\n` and `\r` from everything it prints that the server or a checkout supplied — `csv` / `tsv` / `expanded` cells and column names, the `error:` line, `[NOTICE]` lines, the statement summary in a refusal, the connect-failure line — for the same reason: the output is written to be piped, `cat`ed or read in a terminal, and a value carrying an ESC would otherwise be a terminal-escape-sequence injection at that point (a `RAISE NOTICE` used to be able to retitle your terminal). Every value a report renders is escaped for its format, headers included: for Markdown that means `\`, `|`, `` ` ``, `[`, `]` and the HTML-significant characters, so text arriving from a JDBC tap cannot become a link, a live `<script>`, or an extra table column in the shared artifact. |
 
-The files pgman itself writes — `draft.sql`, `history.log`,
+The files pgman itself writes — `draft.sql` (and its `draft-*.sql` siblings), `history.log`,
 `saved.toml`, `update_check.json`, the daily `pgman.log.YYYY-MM-DD`,
 and `\report`/`\fixture` output — are `0600` (owner read/write only)
 regardless of your umask; `draft.sql`, `history.log`, `saved.toml`,
