@@ -2535,7 +2535,7 @@ impl App {
         // tab's SQL under the name just typed.
         if alt && !typing_mode {
             if let KeyCode::Char(c) = key.code {
-                if self.jump_to_tab_digit(c) {
+                if self.mode != Mode::Help && self.jump_to_tab_digit(c) {
                     return;
                 }
             }
@@ -2562,7 +2562,9 @@ impl App {
                     self.cycle_tab(false);
                     return;
                 }
-                if self.jump_to_tab_digit(c) {
+                // Not behind the help overlay: the tab would change
+                // unseen, under the page being read.
+                if self.mode != Mode::Help && self.jump_to_tab_digit(c) {
                     return;
                 }
             }

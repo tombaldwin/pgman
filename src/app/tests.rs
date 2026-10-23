@@ -10207,6 +10207,15 @@ fn digit_keys_jump_to_a_tab_and_say_so_past_the_last_one() {
 }
 
 #[test]
+fn digits_do_not_switch_tabs_behind_the_help_overlay() {
+    let mut a = three_tabs(Mode::Help);
+    press(&mut a, KeyCode::Char('1'));
+    assert_eq!((a.active_tab, a.mode), (2, Mode::Help));
+    a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
+    assert_eq!((a.active_tab, a.mode), (2, Mode::Help));
+}
+
+#[test]
 fn brackets_and_digits_switch_tabs_from_the_sessions_and_slow_query_panels() {
     for mode in [Mode::Sessions, Mode::SlowQueries] {
         let mut a = three_tabs(mode);

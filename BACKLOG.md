@@ -115,7 +115,6 @@ small-UX, correctness and environments findings landed on branch
   then drops the leading segment, so the prompt and the cursor go
   missing. A typing prompt should keep its head and show the pattern's
   tail.
-- **Digits `1`–`9` switch editor tabs behind the open help overlay.**
 - **Log formats not yet read**: Log4j's bracketed logger (`DEBUG
   [org.hibernate.SQL] select …`); p6spy's multi-line Spring Boot
   starter format; Hibernate 5 ARRAY binds (only Hibernate 6's form is
