@@ -91,6 +91,21 @@ small-UX, correctness and environments findings landed on branch
   here; a Ctrl-K command palette on top of the `:` bar.
 
 ### After v0.1.0 — Tom's decisions (2026-10-22)
+- **Leaving read-only is quit, edit, relaunch** (0.1.1 product panel).
+  `:readonly off` points at `safety.toml`; running a write then shows a
+  confirm popup for a statement the popup says Postgres will refuse,
+  and `y` gets SQLSTATE 25006 with the same hint. Options: a typed,
+  session-only `:readonly off` (with its own confirm), and skipping the
+  popup when the session is read-only. A safety posture call — Tom's.
+- **The title's date reads as unexplained** (`pgman 0.1.0 · 2026-10-22`
+  on a later day). Say it is the release date, or drop it.
+- **Postgres-log parameters are all typed `text`**: `select $1 + $2`
+  reconstructs as `'1' + '2'` (operator is not unique). JDBC binds are
+  typed; leaving numeric-looking values bare would fix that case and
+  break a text column holding `007`. Needs a rule.
+- **Tap: 64 silent connections lock a real client out for up to 30 s**
+  (documented trade-off of the connection cap). A per-connection idle
+  timeout shorter than 30 s, or evicting the oldest idle connection.
 - **Require CI checks on `main`.** Branch protection blocks force-push
   and deletion but requires no status checks, so a PR can merge red.
   Require `ci.yml`'s jobs once the release is out.
