@@ -640,6 +640,72 @@ pub fn is_transaction_control(sql: &str) -> bool {
     }
 }
 
+/// Whether `sql` may run behind a server-side cursor
+/// (`query::paging`, docs/backlog/paging.md): a statement
+/// [`classify`] calls `Select`, that `DECLARE … CURSOR FOR` accepts —
+/// it starts `SELECT`, `TABLE`, `VALUES` or `WITH`, so not `SHOW` or an
+/// `EXPLAIN` — and that takes no row locks. A locking clause (`FOR
+/// UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR KEY SHARE`)
+/// anywhere in the code, a subquery's included, would hold its locks for
+/// as long as the cursor stays open. Over-matching only costs paging.
+/// Pure.
+pub fn is_pageable_select(sql: &str) -> bool {
+    if !matches!(classify(sql), StatementKind::Select) {
+        return false;
+    }
+    let toks = code_tokens(&strip_sql_comments(sql));
+    if !matches!(
+        toks.first().map(String::as_str),
+        Some("select" | "table" | "values" | "with")
+    ) {
+        return false;
+    }
+    !toks
+        .windows(2)
+        .any(|w| w[0] == "for" && matches!(w[1].as_str(), "update" | "share" | "no" | "key"))
+}
+
+#[cfg(test)]
+mod pageable_tests {
+    use super::is_pageable_select;
+
+    #[test]
+    fn plain_reads_page() {
+        for sql in [
+            "SELECT * FROM t",
+            "select id from t order by id",
+            "TABLE t",
+            "VALUES (1), (2)",
+            "WITH x AS (SELECT 1) SELECT * FROM x",
+            "-- a comment first\nSELECT 1",
+            "SELECT substring(name FROM 1 FOR 3) FROM t",
+            "SELECT 'for update' FROM t",
+        ] {
+            assert!(is_pageable_select(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn locks_writes_and_non_queries_do_not_page() {
+        for sql in [
+            "SELECT * FROM t FOR UPDATE",
+            "SELECT * FROM t FOR NO KEY UPDATE",
+            "SELECT * FROM t FOR SHARE",
+            "SELECT * FROM t FOR KEY SHARE",
+            "SELECT * FROM (SELECT * FROM t FOR UPDATE) s",
+            "SHOW search_path",
+            "EXPLAIN SELECT 1",
+            "SELECT * INTO t2 FROM t",
+            "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d",
+            "INSERT INTO t VALUES (1)",
+            "SELECT pg_terminate_backend(42)",
+            "",
+        ] {
+            assert!(!is_pageable_select(sql), "{sql}");
+        }
+    }
+}
+
 /// A token of [`call_tokens`]: just enough structure to find a function
 /// call in code and read its first argument.
 #[derive(Debug, Clone, PartialEq, Eq)]
