@@ -40,7 +40,7 @@ class Pgman < Formula
   end
 
   test do
-    # pgman prints "pgman 0.1.0 · beta" — a substring match, since the
+    # pgman prints "pgman <version> · beta" — a substring match, since the
     # trailing beta tag isn't part of the version this formula tracks.
     assert_match "pgman #{version}", shell_output("#{bin}/pgman --version")
   end
