@@ -2327,6 +2327,17 @@ fn row_insert_sql_quotes_schema_and_table() {
     );
 }
 
+/// A backslash makes it an `E'…'` string with the backslash doubled,
+/// which reads the same whatever `standard_conforming_strings` is; a
+/// value without one stays a plain literal.
+#[test]
+fn format_sql_literal_escapes_a_backslash_in_an_e_string() {
+    assert_eq!(format_sql_literal(Some("a\\b")), "E'a\\\\b'");
+    assert_eq!(format_sql_literal(Some("\\x0102")), "E'\\\\x0102'");
+    assert_eq!(format_sql_literal(Some("it's \\n")), "E'it''s \\\\n'");
+    assert_eq!(format_sql_literal(Some("plain")), "'plain'");
+}
+
 #[test]
 fn format_sql_literal_writes_null_for_null_and_quotes_the_empty_string() {
     assert_eq!(format_sql_literal(None), "NULL");

@@ -5856,3 +5856,59 @@ async fn a_fixture_of_mixed_case_and_reserved_columns_applies_back() {
     applied.unwrap_or_else(|e| panic!("{script}: {e}"));
     assert_eq!(after.expect("select again").rows, before.rows, "{script}");
 }
+
+/// A value with a backslash — text, and a bytea, whose text form is
+/// `\x…` — comes back the same through the `I` yank and the fixture
+/// apply with `standard_conforming_strings` on or off. A plain `'…'`
+/// literal read `\x0102` as the escape `\x01` with it off.
+#[tokio::test]
+async fn backslashes_survive_the_yank_and_fixture_under_either_string_setting() {
+    let (client, _tunnel) = writable_client().await;
+    let table = it_name("bslash");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int PRIMARY KEY, t text, b bytea); \
+             INSERT INTO {table} VALUES (1, E'C:\\\\dir\\\\n''q', '\\x0102ff'::bytea)"
+        ))
+        .await
+        .expect("create the table");
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    assert_eq!(before.rows[0][2].as_deref(), Some("\\x0102ff"));
+    let mut failures = Vec::new();
+    for scs in ["on", "off"] {
+        let insert = pgman::app::row_insert_sql("public", &table, &before.columns, &before.rows[0]);
+        let fixture = pgman::dbunit::fixture_from_rows(&table, &before.columns, &before.rows)
+            .expect("names round-trip");
+        let apply =
+            pgman::dbunit::generate_apply_script(&fixture, pgman::dbunit::CleanMode::DeleteFrom);
+        for (what, sql) in [
+            ("yank", format!("DELETE FROM {table}; {insert}")),
+            ("fixture", apply),
+        ] {
+            // The SET in a message of its own: a simple-query message
+            // is lexed whole before any of it runs, so a SET sharing
+            // one with the INSERT would not change how its literals read.
+            client
+                .batch_execute(&format!("SET standard_conforming_strings = {scs}"))
+                .await
+                .expect("set standard_conforming_strings");
+            let ran = client.batch_execute(&sql).await;
+            client
+                .batch_execute("SET standard_conforming_strings = on")
+                .await
+                .expect("reset standard_conforming_strings");
+            let after = pgman::conn::run_statement(&client, &select).await;
+            match (ran, after) {
+                (Ok(()), Ok(after)) if after.rows == before.rows => {}
+                (ran, after) => {
+                    failures.push(format!("{what} scs={scs}: {ran:?} {after:?}\n{sql}"))
+                }
+            }
+        }
+    }
+    let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
+    assert!(failures.is_empty(), "{failures:#?}");
+}

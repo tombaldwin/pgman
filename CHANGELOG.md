@@ -47,6 +47,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   rest of the line as the path, so a path with spaces works; a
   double-quoted path has its quotes removed. They took the first word,
   so `:fixture my dir/f.xml` wrote `./my`.
+- `I` (row as INSERT), `F` (FK follow) and the fixture apply script
+  write a value holding a backslash as an `E'…'` string with the
+  backslash doubled, so it inserts the same value whatever
+  `standard_conforming_strings` is. With it off, a bytea's `\x0102`
+  was read as the escape `\x01`.
 - Sorting a column (`s`) decides once per column whether to compare
   numbers or text: a column that is all numbers sorts by exact value
   (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in

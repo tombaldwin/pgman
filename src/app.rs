@@ -839,17 +839,26 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
 /// target column's type (`'42'` into an `integer`, `'t'` into a
 /// `boolean`). Bare, `007` in a text column came back as `7`, `1e3` as
 /// `1000`, `TRUE` as `true`, and `NaN` was read as a column name.
+///
+/// A value holding a backslash is written as an escape string,
+/// `E'…'`, with each backslash doubled: a plain `'…'` means the same
+/// value only while `standard_conforming_strings` is on, and with it
+/// off a bytea's `\x0102` text read as the escape `\x01`. `E'…'`
+/// reads the same under either setting.
 pub fn format_sql_literal(cell: Option<&str>) -> String {
     let Some(s) = cell else {
         return "NULL".to_string();
     };
-    let mut out = String::with_capacity(s.len() + 2);
+    let mut out = String::with_capacity(s.len() + 3);
+    if s.contains('\\') {
+        out.push('E');
+    }
     out.push('\'');
     for c in s.chars() {
-        if c == '\'' {
-            out.push_str("''");
-        } else {
-            out.push(c);
+        match c {
+            '\'' => out.push_str("''"),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
         }
     }
     out.push('\'');

@@ -356,7 +356,7 @@ fn insert_sql(row: &Row) -> String {
     let vals: Vec<String> = row
         .columns
         .iter()
-        .map(|(_, v)| format!("'{}'", v.replace('\'', "''")))
+        .map(|(_, v)| crate::app::format_sql_literal(Some(v)))
         .collect();
     format!(
         "INSERT INTO {} ({}) VALUES ({})",
@@ -544,6 +544,18 @@ mod tests {
         assert_eq!(
             generate_inserts(&f),
             vec!["INSERT INTO users (id, full_name) VALUES ('1', 'x')"]
+        );
+    }
+
+    /// The apply script writes values as the yank does: a backslash in an
+    /// `E'…'` string, doubled, so `standard_conforming_strings` can't
+    /// change what it inserts.
+    #[test]
+    fn apply_writes_a_backslash_as_an_escape_string() {
+        let f = parse_flat_xml(r#"<dataset><t b="\x0102" s="it's"/></dataset>"#).unwrap();
+        assert_eq!(
+            generate_inserts(&f),
+            vec!["INSERT INTO t (b, s) VALUES (E'\\\\x0102', 'it''s')"]
         );
     }
 
