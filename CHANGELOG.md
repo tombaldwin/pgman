@@ -55,9 +55,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   at the end of the result; `M` then re-runs the query. On a standby
   no cursor is held at all (a recovery conflict would end the session):
   the first page commits at once and `M` re-runs the query for more.
-  `EXPLAIN`, scripts, `\watch`, locking `SELECT`s, a `SELECT` that calls a function other than a short list of read-only
-  built-ins (`count`, `coalesce`, `lower`, `now`, …), and a `SELECT`
-  inside an open transaction stay capped at 1000 as before.
+  `EXPLAIN`, scripts, `\watch`, locking `SELECT`s, a `SELECT` that calls
+  a function other than a short list of read-only built-ins (`count`,
+  `coalesce`, `lower`, `now`, …), and a `SELECT` inside an open
+  transaction stay capped at 1000 as before.
 - Config advisor in the schema wizard (`W`): read-only findings from the
   server's statistics — buffer cache hit ratio, temp-file spills (with the
   spilling statements from `pg_stat_statements`), dead tuples and the
