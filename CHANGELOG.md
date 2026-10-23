@@ -62,7 +62,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   the first page commits at once and `M` re-runs the query for more.
   `EXPLAIN`, scripts, `\watch`, locking `SELECT`s, a `SELECT` that calls
   a function other than a short list of read-only built-ins (`count`,
-  `coalesce`, `lower`, `now`, …), and a `SELECT` inside an open
+  `coalesce`, `lower`, `now`, …) — or one of those names that a schema
+  has its own function for — and a `SELECT` inside an open
   transaction stay capped at 1000 as before.
 - Config advisor in the schema wizard (`W`): read-only findings from the
   server's statistics — buffer cache hit ratio, temp-file spills (with the

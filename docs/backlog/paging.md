@@ -56,10 +56,18 @@ uncommitted while the cursor is open: `SELECT log_visit(i) FROM
 generate_series(1, 3000) i` would make 1001 calls, invisible to every
 other session until the close, where 0.1.0 made all 3000 and committed
 them at once. So a user function, `nextval`, `random`, or a name
-qualified by any schema but `pg_catalog` runs today's way, unpaged. The
-check reads the statement's text, so a function a *view* calls is out
-of its sight; `pg_proc.provolatile` would see only the functions named
-in the statement too, and a lexical list needs no round trip. And only
+qualified by any schema but `pg_catalog` runs today's way, unpaged. A
+listed name is still not proof of the built-in: the server resolves an
+unqualified call by signature across `search_path`, so a schema's own
+`log(text)` answers `log('…')` (`pg_catalog.log` has no text overload)
+and may write — the 0.2.0 re-review reproduced 1001 of 3000 such
+writes committed. So the probe `open` already pipelines with the
+`prepare` asks whether any schema but `pg_catalog` has a function by a
+listed name the statement calls unqualified (lower-cased, so a quoted
+`"Log"` counts), and a yes runs it unpaged; no extra round trip. The
+check reads the statement's text, so a function a *view* calls, a
+column-notation call (`t.f`), a user operator or a cast to a user type
+is out of its sight. And only
 for a plain `Run` from the editor: `EXPLAIN`, multi-statement scripts, a write's
 auto-tx, `\watch` re-runs and every other path keep today's behaviour.
 

@@ -6593,6 +6593,75 @@ async fn on_a_standby_the_pager_commits_after_the_first_page() {
     }
 }
 
+/// A schema's own function by a built-in's name is what an unqualified
+/// call reaches when its signature fits better: here `log(text)`, which
+/// `pg_catalog.log` lacks, and which writes. Paged, it would run for
+/// the 1001 rows fetched and leave them uncommitted behind the cursor;
+/// pgman asks first and runs it unpaged, every row written and
+/// committed. Without the shadowing function the same query pages.
+#[tokio::test]
+async fn a_built_in_name_a_schema_shadows_runs_unpaged() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _t1) = writable_client().await;
+    let (client, _t2) = writable_client().await;
+    let pid = backend_pid(&client).await;
+    let schema = format!("pgman_it_shadow_{pid}");
+    let sql = "SELECT log(10, 1000) AS n, i FROM generate_series(1, 3000) i".to_string();
+
+    // Before the schema exists, the call is the built-in: it pages.
+    // (Asked about any schema, so another test's shadow would show here;
+    // the name is this backend's own.)
+    let pager = Pager::spawn(client.clone());
+    let before = pager
+        .open(sql.clone(), PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    let shadowed_elsewhere = before.cursor.is_none();
+    // Closes the cursor, so the SET below runs outside its transaction.
+    let _ = pager.barrier().await;
+
+    observer
+        .batch_execute(&format!(
+            "CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.notes (note text);
+             CREATE FUNCTION {schema}.log(note text) RETURNS text LANGUAGE plpgsql AS $$
+             BEGIN INSERT INTO {schema}.notes VALUES (note); RETURN note; END $$;"
+        ))
+        .await
+        .expect("create the shadowing function");
+    client
+        .batch_execute(&format!("SET search_path = {schema}, public"))
+        .await
+        .expect("put it on the path");
+    let writing = "SELECT log('row ' || i) FROM generate_series(1, 3000) i".to_string();
+    let opened = pager
+        .open(writing, PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    // The grid stops reading at 1000 rows; the server runs the rest and
+    // commits when the statement ends, so wait for that.
+    let state = session_state(&observer, pid, "idle").await;
+    let written: i64 = observer
+        .query_one(&format!("SELECT count(*) FROM {schema}.notes"), &[])
+        .await
+        .expect("count the notes")
+        .get(0);
+    observer
+        .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .expect("drop the schema");
+
+    assert!(
+        !shadowed_elsewhere,
+        "the built-in log paged before the shadow existed"
+    );
+    assert!(opened.cursor.is_none(), "no cursor behind a shadowed call");
+    assert_eq!(written, 3000, "every row's write ran and was committed");
+    assert_eq!(state, "idle", "not idle in transaction");
+}
+
 /// A session the server ends under pgman — `pg_terminate_backend` from
 /// another connection here; a recovery conflict or an idle timeout in the
 /// field — hands its parting FATAL to the notice channel, which then

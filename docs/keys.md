@@ -197,8 +197,15 @@ a short list of built-ins that never write — `count`, `sum`, `min`,
 function, `nextval`, `random`, a name in any schema but `pg_catalog`)
 runs the old way, every row computed and committed at once, because
 behind a cursor a function runs only for the rows fetched and its writes
-stay uncommitted until the cursor closes. pgman cannot see a function a
-view calls: a `SELECT` from a view whose definition writes still pages. For every row, run it outside the TUI with
+stay uncommitted until the cursor closes. A listed name is the
+built-in only if no schema has a function of its own by that name: the
+server picks a call's function by its arguments, so a schema's
+`log(text)` answers `log('…')`. Before paging pgman asks the server, and
+if any schema but `pg_catalog` has a function by a name the statement
+calls, it runs unpaged. pgman cannot see a function a view calls, a
+column-notation call (`SELECT t.f FROM t`), or a user operator or cast:
+a `SELECT` that reaches a writing function that way still pages. For
+every row, run it outside the TUI with
 `pgman query 'SQL' --json` (or `--batch --format json`), which isn't
 capped; see [commands](commands.md). How the cursor works is in
 [docs/backlog/paging.md](backlog/paging.md).

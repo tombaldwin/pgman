@@ -45,7 +45,7 @@ pub const LIFETIME_CLOSE: Duration = Duration::from_secs(10 * 60);
 /// timeouts: the main loop's clock is no finer than this.
 const MIN_CLOSE: Duration = Duration::from_millis(500);
 
-/// Two answers in one row, read with the `prepare` the run already does.
+/// Three answers in one row, read with the `prepare` the run already does.
 ///
 /// The first is `true` exactly when it runs as the first command of its
 /// transaction — which, sent on its own, means the session was not
@@ -60,16 +60,32 @@ const MIN_CLOSE: Duration = Duration::from_millis(500);
 /// reader) the server terminates the whole session. There pgman fetches
 /// the page and commits, and `M` re-runs the query. Asked per run, not
 /// at connect, so a standby promoted since is a primary again.
-const PROBE_SQL: &str =
-    "SELECT statement_timestamp() = transaction_timestamp(), pg_is_in_recovery()";
+///
+/// The third, [`crate::safety::shadowing_sql`], says some schema has its
+/// own function by the name of a built-in the statement calls
+/// unqualified. The server resolves such a call by signature, so it may
+/// reach that function — which may write — and the statement runs
+/// unpaged.
+pub fn probe_sql(sql: &str) -> String {
+    let names = crate::safety::pageable_calls(sql).unwrap_or_default();
+    format!(
+        "SELECT statement_timestamp() = transaction_timestamp(), pg_is_in_recovery(), {}",
+        crate::safety::shadowing_sql(&names)
+    )
+}
 
-/// What [`PROBE_SQL`] said, from its two text columns: `(idle,
-/// standby)`. No answer (the probe failed — an aborted transaction) is
-/// "not idle", which runs the statement unpaged. Pure.
-pub fn read_probe(row: Option<(Option<&str>, Option<&str>)>) -> (bool, bool) {
+/// What [`probe_sql`] said, from its three text columns: `(idle,
+/// standby, shadowed)`. No answer (the probe failed — an aborted
+/// transaction) is "not idle", which runs the statement unpaged; a
+/// shadowing answer that isn't `f` counts as shadowed. Pure.
+pub fn read_probe(row: Option<[Option<&str>; 3]>) -> (bool, bool, bool) {
     match row {
-        Some((idle, standby)) => (idle == Some("t"), standby == Some("t")),
-        None => (false, false),
+        Some([idle, standby, shadowed]) => (
+            idle == Some("t"),
+            standby == Some("t"),
+            shadowed != Some("f"),
+        ),
+        None => (false, false, true),
     }
 }
 
@@ -178,7 +194,7 @@ pub struct Opened {
     /// result was complete, ran unpaged, or ran on a standby.
     pub cursor: Option<Limits>,
     /// The server is a standby, so no cursor was held past the first
-    /// page (see [`PROBE_SQL`]): `M` re-runs the query.
+    /// page (see [`probe_sql`]): `M` re-runs the query.
     pub standby: bool,
     /// The session was already inside a transaction (pgman's auto-tx,
     /// or a `BEGIN` the operator typed), so the statement ran the old
@@ -356,8 +372,9 @@ async fn open(
 ) -> Result<(Opened, Option<OpenCursor>), QueryErr> {
     // Pipelined: tokio-postgres sends both before awaiting either, so
     // the probe costs no round trip of its own.
+    let probe_sql = probe_sql(sql);
     let (stmt, probe) =
-        futures::future::join(client.prepare(sql), client.simple_query(PROBE_SQL)).await;
+        futures::future::join(client.prepare(sql), client.simple_query(&probe_sql)).await;
     let stmt = stmt.map_err(QueryErr::from)?;
     let columns: Vec<String> = stmt
         .columns()
@@ -366,17 +383,18 @@ async fn open(
         .collect();
     let origins = crate::conn::column_origins(stmt.columns());
     let probe = probe.ok();
-    let (idle, standby) = read_probe(probe.as_deref().and_then(|msgs| {
+    let (idle, standby, shadowed) = read_probe(probe.as_deref().and_then(|msgs| {
         msgs.iter().find_map(|m| match m {
             tokio_postgres::SimpleQueryMessage::Row(r) => {
-                Some((r.try_get(0).ok().flatten(), r.try_get(1).ok().flatten()))
+                Some([0, 1, 2].map(|i| r.try_get(i).ok().flatten()))
             }
             _ => None,
         })
     }));
-    if !idle || columns.is_empty() {
+    if !idle || shadowed || columns.is_empty() {
         // Today's path. A zero-column `SELECT FROM t` reports its row
-        // count, which a cursor would not.
+        // count, which a cursor would not; a call that may reach a
+        // schema's own function must run for every row and commit.
         let grid = crate::conn::run_statement(client, sql).await?;
         return Ok((
             Opened {
@@ -534,12 +552,25 @@ mod tests {
     }
 
     #[test]
-    fn the_probe_reads_idle_and_standby_and_no_answer_is_neither() {
-        assert_eq!(read_probe(Some((Some("t"), Some("f")))), (true, false));
-        assert_eq!(read_probe(Some((Some("t"), Some("t")))), (true, true));
-        assert_eq!(read_probe(Some((Some("f"), Some("t")))), (false, true));
-        assert_eq!(read_probe(Some((None, None))), (false, false));
-        assert_eq!(read_probe(None), (false, false));
+    fn the_probe_reads_idle_standby_and_shadowed_and_no_answer_is_unpaged() {
+        let f = Some("f");
+        let t = Some("t");
+        assert_eq!(read_probe(Some([t, f, f])), (true, false, false));
+        assert_eq!(read_probe(Some([t, t, f])), (true, true, false));
+        assert_eq!(read_probe(Some([f, t, f])), (false, true, false));
+        assert_eq!(read_probe(Some([t, f, t])), (true, false, true));
+        assert_eq!(read_probe(Some([None, None, None])), (false, false, true));
+        assert_eq!(read_probe(None), (false, false, true));
+    }
+
+    /// The probe asks about the built-ins the statement calls
+    /// unqualified, and asks nothing when it calls none.
+    #[test]
+    fn the_probe_asks_whether_a_called_built_in_is_shadowed() {
+        let q = probe_sql("SELECT log('x' || i) FROM generate_series(1, 3) i");
+        assert!(q.ends_with(")"), "{q}");
+        assert!(q.contains("IN ('generate_series', 'log')"), "{q}");
+        assert!(probe_sql("SELECT * FROM t").ends_with("pg_is_in_recovery(), false"));
     }
 
     #[test]

@@ -707,8 +707,11 @@ pub fn is_transaction_control(sql: &str) -> bool {
 /// run 1001 times, not 3000, and nobody else would see even those until
 /// the cursor closed. Any other call — a user function, `nextval`, a
 /// name qualified by any schema but `pg_catalog` — runs the old way,
-/// unpaged, every row computed and committed at once. A function a
-/// *view* calls is out of sight here (docs/backlog/paging.md says so).
+/// unpaged, every row computed and committed at once. A listed name a
+/// schema has its own function for is caught at run time, by
+/// `query::paging`'s probe ([`pageable_calls`], [`shadowing_sql`]). A
+/// function a *view* calls, a column-notation call (`t.f`) and a user
+/// operator are out of sight here (docs/backlog/paging.md says so).
 /// Over-matching only costs paging. Pure.
 pub fn is_pageable_select(sql: &str) -> bool {
     if !matches!(classify(sql), StatementKind::Select) {
@@ -784,30 +787,80 @@ const NOT_A_CALL_BEFORE_PAREN: &str = concat!(
 );
 
 /// `true` if every function `sql` calls is one of [`PAGEABLE_FUNCTIONS`]
-/// — unqualified or qualified by `pg_catalog`. A word before `(` is a
-/// call unless it is in [`NOT_A_CALL_BEFORE_PAREN`], follows `AS` (a
-/// column-alias list, `AS g(i)`), or names a CTE's columns (`x(a) AS (`).
+/// — unqualified or qualified by `pg_catalog`.
 fn calls_only_pageable_functions(sql: &str) -> bool {
+    pageable_calls(sql).is_some()
+}
+
+/// The [`PAGEABLE_FUNCTIONS`] names `sql` calls unqualified, sorted and
+/// without repeats, or `None` if it calls anything else. A word before
+/// `(` is a call unless it is in [`NOT_A_CALL_BEFORE_PAREN`], follows
+/// `AS` (a column-alias list, `AS g(i)`), or names a CTE's columns
+/// (`x(a) AS (`).
+///
+/// The names matter because an unqualified call is resolved by the
+/// server, by signature, across `search_path`: a schema's own
+/// `log(text)` wins over `pg_catalog.log`, which has no text overload,
+/// and may write. `query::paging` asks the server whether any schema
+/// but `pg_catalog` has a function by one of these names before it
+/// pages ([`shadowing_sql`]). Pure.
+pub fn pageable_calls(sql: &str) -> Option<Vec<String>> {
     let toks = call_tokens(sql);
     let word = |i: usize| match toks.get(i) {
         Some(CallTok::Word(w)) => Some(w.as_str()),
         _ => None,
     };
-    (0..toks.len()).all(|i| {
+    let mut unqualified = Vec::new();
+    for i in 0..toks.len() {
         let Some(w) = word(i) else {
-            return true;
+            continue;
         };
         if toks.get(i + 1) != Some(&CallTok::Punct('(')) {
-            return true;
+            continue;
         }
         if i >= 1 && toks[i - 1] == CallTok::Dot {
-            return i >= 2 && word(i - 2) == Some("pg_catalog") && listed(PAGEABLE_FUNCTIONS, w);
+            if i >= 2 && word(i - 2) == Some("pg_catalog") && listed(PAGEABLE_FUNCTIONS, w) {
+                continue;
+            }
+            return None;
         }
-        listed(NOT_A_CALL_BEFORE_PAREN, w)
+        if listed(NOT_A_CALL_BEFORE_PAREN, w)
             || (i >= 1 && word(i - 1) == Some("as"))
             || names_cte_columns(&toks, i + 1)
-            || listed(PAGEABLE_FUNCTIONS, w)
-    })
+        {
+            continue;
+        }
+        if !listed(PAGEABLE_FUNCTIONS, w) {
+            return None;
+        }
+        unqualified.push(w.to_string());
+    }
+    unqualified.sort();
+    unqualified.dedup();
+    Some(unqualified)
+}
+
+/// A query answering whether any schema but `pg_catalog` has a function
+/// named one of `names` (compared lower-cased, so a quoted `"Log"`
+/// counts too): if one does, an unqualified call may reach it, and the
+/// statement runs unpaged. `false` for no names. Only names on
+/// [`PAGEABLE_FUNCTIONS`] are put in the query — plain lower-case words,
+/// nothing to quote. Pure.
+pub fn shadowing_sql(names: &[String]) -> String {
+    let list: Vec<String> = names
+        .iter()
+        .filter(|n| listed(PAGEABLE_FUNCTIONS, n))
+        .map(|n| format!("'{n}'"))
+        .collect();
+    if list.is_empty() {
+        return "false".into();
+    }
+    format!(
+        "EXISTS (SELECT 1 FROM pg_catalog.pg_proc p \
+         WHERE lower(p.proname) IN ({}) \
+         AND p.pronamespace <> 'pg_catalog'::regnamespace)",
+        list.join(", ")
+    )
 }
 
 /// Whether `word` is one of the space-separated words of `list`.
@@ -843,7 +896,49 @@ fn names_cte_columns(toks: &[CallTok], open: usize) -> bool {
 
 #[cfg(test)]
 mod pageable_tests {
-    use super::is_pageable_select;
+    use super::{is_pageable_select, pageable_calls, shadowing_sql};
+
+    /// The unqualified built-in names a statement calls are what the
+    /// server is asked about: a schema may have its own `log(text)`.
+    /// `pg_catalog.`-qualified calls are the built-in and aren't asked
+    /// about; a call off the list is `None`.
+    #[test]
+    fn pageable_calls_names_what_the_server_resolves() {
+        let v = |xs: &[&str]| Some(xs.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        assert_eq!(pageable_calls("SELECT * FROM t"), v(&[]));
+        assert_eq!(
+            pageable_calls("SELECT log('row ' || i), LOG(2, 8), count(*) FROM generate_series(1, 3) i GROUP BY 1"),
+            v(&["count", "generate_series", "log"])
+        );
+        assert_eq!(
+            pageable_calls("SELECT pg_catalog.lower(name) FROM t"),
+            v(&[])
+        );
+        assert_eq!(pageable_calls("SELECT \"Log\"(1)"), v(&["log"]));
+        assert_eq!(
+            pageable_calls("SELECT x FROM generate_series(1, 2) AS g(x)"),
+            v(&["generate_series"])
+        );
+        assert_eq!(pageable_calls("SELECT log_visit(1)"), None);
+        assert_eq!(pageable_calls("SELECT public.log('x')"), None);
+    }
+
+    /// The shadowing query lists the names lower-case, compares
+    /// lower-cased, skips pg_catalog, and is a bare `false` with nothing
+    /// to ask. A name off the list never reaches the SQL.
+    #[test]
+    fn shadowing_sql_asks_about_the_listed_names_only() {
+        let names = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(shadowing_sql(&[]), "false");
+        let q = shadowing_sql(&names(&["count", "log"]));
+        assert!(q.contains("lower(p.proname) IN ('count', 'log')"), "{q}");
+        assert!(
+            q.contains("p.pronamespace <> 'pg_catalog'::regnamespace"),
+            "{q}"
+        );
+        assert_eq!(shadowing_sql(&names(&["x'); DROP TABLE t; --"])), "false");
+        assert_eq!(shadowing_sql(&names(&["log_visit"])), "false");
+    }
 
     #[test]
     fn plain_reads_page() {
