@@ -1017,6 +1017,53 @@ pub fn this_session(setting: Option<&Setting>) -> String {
     }
 }
 
+/// An idle-in-transaction timeout longer than this ends nothing a
+/// lock pile-up is waiting on. AWS's default parameter groups set 24h.
+pub const IDLE_TX_TIMEOUT_MAX_MS: i64 = 3_600_000;
+
+/// Whether `idle_in_transaction_session_timeout` is, for a pile-up
+/// behind a session idle in a transaction, as good as off: zero or
+/// unread, over [`IDLE_TX_TIMEOUT_MAX_MS`], or longer than the head's
+/// transaction has run (so it hasn't ended it, and the waiters wait).
+pub fn idle_timeout_effectively_off(
+    timeout: Option<&Setting>,
+    head_xact_secs: Option<f64>,
+) -> bool {
+    let Some(s) = timeout else {
+        return true;
+    };
+    match s.millis() {
+        Some(ms) => {
+            ms <= 0
+                || ms > IDLE_TX_TIMEOUT_MAX_MS
+                || head_xact_secs.is_some_and(|x| ms as f64 / 1000.0 > x)
+        }
+        None => s.setting == "0",
+    }
+}
+
+/// The reasoning's word on a timeout that is set but too long to help:
+/// its value, in hours when it is a day or more.
+fn idle_timeout_note(timeout: Option<&Setting>) -> String {
+    let Some(ms) = timeout.and_then(Setting::millis).filter(|ms| *ms > 0) else {
+        return String::new();
+    };
+    let hours = if ms >= 86_400_000 && ms % 3_600_000 == 0 {
+        format!(" = {}h", ms / 3_600_000)
+    } else {
+        String::new()
+    };
+    let why = if ms > IDLE_TX_TIMEOUT_MAX_MS {
+        "far longer than a pile-up can wait (AWS's default parameter groups set 24h)"
+    } else {
+        "longer than the head's transaction has run, so it hasn't ended it"
+    };
+    format!(
+        ". It is set, to {}{hours}, but that is {why}",
+        timeout.map(Setting::display).unwrap_or_default()
+    )
+}
+
 /// ADV004: sessions waiting on locks for at least the threshold.
 pub fn lock_finding(
     ctx: &Context,
@@ -1087,7 +1134,7 @@ pub fn lock_finding(
     let head = chains.first().and_then(|c| by_pid.get(&c.root)).copied();
     let idle_in_tx = head.is_some_and(|h| h.state.starts_with("idle in transaction"));
     let idle_tx_timeout = settings.get("idle_in_transaction_session_timeout");
-    let timeout_off = idle_tx_timeout.is_none_or(|s| s.setting == "0");
+    let timeout_off = idle_timeout_effectively_off(idle_tx_timeout, head.and_then(|h| h.xact_secs));
     let (suggestion, change) = if idle_in_tx && timeout_off {
         let p = mapping("idle_in_transaction_session_timeout");
         let role = head.map(|h| h.user.as_str()).filter(|u| !u.is_empty());
@@ -1101,7 +1148,10 @@ pub fn lock_finding(
                 name: p.name,
                 current: this_session(idle_tx_timeout),
                 suggested: "5min".into(),
-                reasoning: "the head of the chain sits idle in a transaction, holding its locks: the timeout ends such a session (its transaction rolls back) — for the role the application connects as".into(),
+                reasoning: format!(
+                    "the head of the chain sits idle in a transaction, holding its locks: the timeout ends such a session (its transaction rolls back) — for the role the application connects as{}",
+                    idle_timeout_note(idle_tx_timeout)
+                ),
                 restart: false,
                 rds: format!(
                     "per role: the same on RDS and Aurora · server-wide: {}",

@@ -119,7 +119,11 @@ neither depends on the window, and they say "now" instead.
   The evidence is the chain: each root blocker (blocks others, is not
   itself blocked) with state, transaction age, its waiters and the
   start of its query. Root idle in transaction → suggest
-  `idle_in_transaction_session_timeout = '5min'` if it is off;
+  `idle_in_transaction_session_timeout = '5min'` if it is off or as
+  good as off: zero, over an hour (AWS's default parameter groups set
+  it to 86400000 ms, 24 h, so on RDS / Aurora it is never `0`), or
+  longer than the head's transaction has run; the reasoning shows the
+  value (`1d = 24h`);
   otherwise `ALTER ROLE <waiting user> SET lock_timeout = '5s'`.
   (`deadlock_timeout` does not help a pile-up: it only decides when a
   deadlock check runs.) Without `pg_read_all_stats` the other sessions'

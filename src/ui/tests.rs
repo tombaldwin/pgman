@@ -2420,7 +2420,7 @@ fn the_advisor_detail_strip_leads_with_what_to_do() {
     let rows = text(super::schema::lint_detail_lines(&adv, 70, &theme));
     assert!(rows[0].starts_with("  ADV004 · "), "{rows:?}");
     assert!(
-        rows[1].starts_with("  setting:  idle_in_transaction_session_timeout 0 (this session)"),
+        rows[1].starts_with("  setting:  idle_in_transaction_session_timeout 1d (this session)"),
         "{rows:?}"
     );
     // The setting wraps with a hanging indent; the suggestion follows it.

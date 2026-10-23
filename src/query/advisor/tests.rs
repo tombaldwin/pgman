@@ -746,6 +746,81 @@ fn an_idle_in_transaction_head_gets_the_idle_timeout_for_its_role() {
     );
 }
 
+fn ms(v: &str) -> Setting {
+    mem(v, "ms", "user")
+}
+
+/// The timeout is as good as off when it is zero or unread, over an
+/// hour, or longer than the head's transaction has run.
+#[test]
+fn idle_timeout_is_effectively_off_when_too_long_to_have_helped() {
+    assert!(idle_timeout_effectively_off(None, Some(10.0)));
+    assert!(idle_timeout_effectively_off(Some(&ms("0")), Some(10.0)));
+    assert!(idle_timeout_effectively_off(Some(&ms("86400000")), None));
+    assert!(idle_timeout_effectively_off(Some(&ms("3600001")), None));
+    assert!(!idle_timeout_effectively_off(Some(&ms("3600000")), None));
+    assert!(!idle_timeout_effectively_off(
+        Some(&ms("3600000")),
+        Some(3600.0)
+    ));
+    assert!(idle_timeout_effectively_off(
+        Some(&ms("600000")),
+        Some(599.0)
+    ));
+    assert!(!idle_timeout_effectively_off(
+        Some(&ms("600000")),
+        Some(600.0)
+    ));
+    // In seconds or minutes, as a role could read it.
+    assert!(idle_timeout_effectively_off(
+        Some(&mem("7200", "s", "user")),
+        None
+    ));
+    assert!(!idle_timeout_effectively_off(
+        Some(&mem("5", "min", "user")),
+        Some(400.0)
+    ));
+}
+
+/// AWS's default parameter groups set the timeout to 24h: on RDS and
+/// Aurora that is the value a pile-up meets, and the advice must still
+/// come, saying what it is set to.
+#[test]
+fn a_day_long_idle_timeout_still_gets_the_idle_timeout_advice() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::Rds);
+    let s = vec![
+        sess(10, "idle in transaction", None, &[]),
+        sess(11, "active", Some(30.0), &[10]),
+    ];
+    let f = lock_finding(&c, &s, &idle_timeout(&ms("86400000")), &th).unwrap();
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER ROLE shop_app SET idle_in_transaction_session_timeout = '5min';")
+    );
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(ch.current, "1d (this session)");
+    assert!(
+        ch.reasoning.contains("It is set, to 1d = 24h, but that is far longer than a pile-up can wait (AWS's default parameter groups set 24h)"),
+        "{}",
+        ch.reasoning
+    );
+    // Ten minutes against a head four minutes in: it hasn't fired yet.
+    let f = lock_finding(&c, &s, &idle_timeout(&ms("600000")), &th).unwrap();
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(ch.name, "idle_in_transaction_session_timeout");
+    assert!(
+        ch.reasoning
+            .contains("set, to 10min, but that is longer than the head's transaction has run"),
+        "{}",
+        ch.reasoning
+    );
+    // Off: no note on its value.
+    let f = lock_finding(&c, &s, &idle_timeout(&ms("0")), &th).unwrap();
+    let ch = advice(&f).change.clone().unwrap();
+    assert!(!ch.reasoning.contains("It is set"), "{}", ch.reasoning);
+}
+
 fn idle_timeout(s: &Setting) -> Settings {
     Settings::from([("idle_in_transaction_session_timeout".to_string(), s.clone())])
 }

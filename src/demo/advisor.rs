@@ -123,9 +123,10 @@ pub fn advisor() -> Report {
             &ctx,
             &locks,
             &advisor::Settings::from([
+                // AWS's default parameter group value: 24h.
                 (
                     "idle_in_transaction_session_timeout".to_string(),
-                    setting("0", "ms", "user"),
+                    setting("86400000", "ms", "user"),
                 ),
                 ("lock_timeout".to_string(), setting("0", "ms", "user")),
             ]),
