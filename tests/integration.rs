@@ -6424,12 +6424,28 @@ fn advisor_runs_every_check_against_a_real_server() {
                 "{advice:?}"
             );
             assert!(advice.evidence_sql.contains("FROM pg_stat_wal"));
+            // The segment size is the server's (the 16 MB default here),
+            // read, not assumed.
+            assert!(
+                advice
+                    .evidence
+                    .iter()
+                    .any(|e| e.contains("in 16 MB segments, less one")),
+                "{advice:?}"
+            );
         }
         let wal = reader
             .query_one(pgman::query::advisor::WAL_SQL, &[])
             .await
             .unwrap();
         assert!(wal.get::<_, i64>(0) > 0);
+        let shown: String = reader
+            .query_one("SHOW wal_segment_size", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "16MB");
+        assert_eq!(wal.get::<_, i64>(3), 16 * 1024 * 1024, "wal_segment_size");
     });
 }
 

@@ -1266,12 +1266,16 @@ pub struct Checkpoints {
 pub struct WalVolume {
     pub bytes: i64,
     pub window: Window,
+    /// `wal_segment_size` in bytes: Postgres counts checkpoint distance
+    /// in whole segments.
+    pub segment: i64,
 }
 
 pub const WAL_SQL: &str = concat!(
     tag!(),
     "SELECT wal_bytes::bigint, date_trunc('second', stats_reset)::text, \
-     EXTRACT(EPOCH FROM clock_timestamp() - stats_reset)::float8 FROM pg_stat_wal"
+     EXTRACT(EPOCH FROM clock_timestamp() - stats_reset)::float8, \
+     pg_size_bytes(current_setting('wal_segment_size'))::bigint FROM pg_stat_wal"
 );
 
 /// Why ADV005's checkpoints were requested, as far as the WAL tells.
@@ -1291,11 +1295,16 @@ pub enum CheckpointCause {
 /// other are the same window.
 const SAME_WINDOW_SECS: f64 = 60.0;
 
-/// The WAL a WAL-triggered checkpoint starts after: Postgres starts one
-/// when the WAL since the last reaches
-/// `max_wal_size / (1 + checkpoint_completion_target)`.
-pub fn wal_trigger_bytes(max_wal_size: i64, completion_target: f64) -> f64 {
-    max_wal_size as f64 / (1.0 + completion_target.clamp(0.0, 1.0))
+/// The WAL a WAL-triggered checkpoint starts after. Postgres sets
+/// `CheckPointSegments` to `max_wal_size / (1 + checkpoint_completion_target)`
+/// in whole segments (at least one) and starts a checkpoint once the WAL
+/// since the last has crossed one segment fewer than that.
+pub fn wal_trigger_bytes(max_wal_size: i64, completion_target: f64, segment: i64) -> f64 {
+    let seg = segment.max(1) as f64;
+    let segments = (max_wal_size as f64 / seg / (1.0 + completion_target.clamp(0.0, 1.0)))
+        .floor()
+        .max(1.0);
+    (segments - 1.0).max(1.0) * seg
 }
 
 /// How many of the requested checkpoints the WAL could have forced,
@@ -1327,7 +1336,8 @@ pub fn checkpoint_cause(
     } else {
         c.window.secs() / wal.window.secs().max(1.0)
     };
-    let wal_forced = wal.bytes as f64 * scale / wal_trigger_bytes(mws, completion_target);
+    let wal_forced =
+        wal.bytes as f64 * scale / wal_trigger_bytes(mws, completion_target, wal.segment);
     if wal_forced * 2.0 >= c.requested as f64 {
         CheckpointCause::WalVolume { wal_forced }
     } else {
@@ -1400,12 +1410,14 @@ pub fn checkpoint_finding(
     if let (
         Some(mws),
         CheckpointCause::WalVolume { wal_forced } | CheckpointCause::Other { wal_forced },
-    ) = (current, &cause)
+        Ok(w),
+    ) = (current, &cause, &c.wal)
     {
         evidence.push(format!(
-            "a WAL-triggered checkpoint starts every {} (max_wal_size {} / (1 + checkpoint_completion_target {cct})): room for at most about {:.0} of the {} requested",
-            human_size(wal_trigger_bytes(mws, cct) as i64),
+            "a WAL-triggered checkpoint starts every {} (max_wal_size {} / (1 + checkpoint_completion_target {cct}) in {} segments, less one): room for at most about {:.0} of the {} requested",
+            human_size(wal_trigger_bytes(mws, cct, w.segment) as i64),
             pg_size(mws),
+            human_size(w.segment),
             wal_forced.floor(),
             c.requested
         ));
@@ -1665,6 +1677,7 @@ async fn read_wal(client: &tokio_postgres::Client, ctx: &Context) -> Result<WalV
     Ok(WalVolume {
         bytes: r.try_get(0).map_err(g)?,
         window: window(ctx, r.try_get(1).map_err(g)?, r.try_get(2).map_err(g)?),
+        segment: r.try_get(3).map_err(g)?,
     })
 }
 

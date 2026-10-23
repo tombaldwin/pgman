@@ -89,7 +89,8 @@ pub fn advisor() -> Report {
         },
     ];
     // 260 GiB of WAL in the week: one WAL-triggered checkpoint every
-    // 2GB / 1.9 has room for ~245, so the 187 requested are the load's.
+    // 66 segments of 16MB (2GB / 1.9, less one) has room for ~252, so
+    // the 187 requested are the load's.
     let checkpoints = Checkpoints {
         timed: 402,
         requested: 187,
@@ -97,6 +98,7 @@ pub fn advisor() -> Report {
         wal: Ok(WalVolume {
             bytes: 260 * 1024 * MIB,
             window,
+            segment: 16 * MIB,
         }),
     };
     let defaults = VacuumDefaults {

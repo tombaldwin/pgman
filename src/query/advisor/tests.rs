@@ -1044,6 +1044,7 @@ fn cps(timed: i64, requested: i64) -> Checkpoints {
         wal: Ok(WalVolume {
             bytes: requested * GIB,
             window: win(DAY),
+            segment: 16 * MIB,
         }),
     }
 }
@@ -1052,6 +1053,7 @@ fn with_wal(mut c: Checkpoints, bytes: i64, age: f64) -> Checkpoints {
     c.wal = Ok(WalVolume {
         bytes,
         window: win(age),
+        segment: 16 * MIB,
     });
     c
 }
@@ -1147,20 +1149,29 @@ fn requested_checkpoints_without_the_wal_for_them_dont_blame_max_wal_size() {
 }
 
 /// WAL for at least half the requested checkpoints blames max_wal_size;
-/// a byte less, not. With a completion target of 1 a WAL-triggered
-/// checkpoint starts every max_wal_size / 2.
+/// a byte less, not. With a completion target of 1 and 16 MB segments a
+/// WAL-triggered checkpoint starts every max_wal_size / 2 less a segment.
 #[test]
 fn checkpoints_blame_wal_from_half_of_them() {
     let th = Thresholds::default();
     let mw = 1024 * MIB;
-    assert_eq!(wal_trigger_bytes(mw, 1.0), 512.0 * MIB as f64);
-    assert_eq!(wal_trigger_bytes(mw, 0.0), mw as f64);
-    let half = with_wal(cps(80, 20), 5 * GIB, DAY);
+    assert_eq!(wal_trigger_bytes(mw, 1.0, 16 * MIB), 496.0 * MIB as f64);
+    assert_eq!(wal_trigger_bytes(mw, 0.0, 16 * MIB), 1008.0 * MIB as f64);
+    // 1GB / 1.9 is 33.7 segments: 33, less one.
+    assert_eq!(wal_trigger_bytes(mw, 0.9, 16 * MIB), 512.0 * MIB as f64);
+    // 64 MB segments, as some managed servers use: 1GB / 2 is 8, less one.
+    assert_eq!(wal_trigger_bytes(mw, 1.0, 64 * MIB), 448.0 * MIB as f64);
+    // Never under one segment.
+    assert_eq!(
+        wal_trigger_bytes(16 * MIB, 1.0, 16 * MIB),
+        16.0 * MIB as f64
+    );
+    let half = with_wal(cps(80, 20), 4960 * MIB, DAY);
     assert!(matches!(
         checkpoint_cause(&half, Some(mw), 1.0, &th),
         CheckpointCause::WalVolume { wal_forced } if wal_forced == 10.0
     ));
-    let short = with_wal(cps(80, 20), 5 * GIB - 1, DAY);
+    let short = with_wal(cps(80, 20), 4960 * MIB - 1, DAY);
     assert!(matches!(
         checkpoint_cause(&short, Some(mw), 1.0, &th),
         CheckpointCause::Other { .. }
@@ -1174,9 +1185,9 @@ fn checkpoints_compare_wal_reset_apart_as_a_rate() {
     let th = Thresholds::default();
     let c = ctx(ServerKind::SelfHosted);
     let mw = mem("1024", "MB", "sighup");
-    // 2.5 GiB in half a day is 5 GiB over the counters' day: room for 10
-    // at a completion target of 1, against 20 requested.
-    let cp = with_wal(cps(70, 20), 5 * GIB / 2, DAY / 2.0);
+    // 2480 MiB in half a day is 4960 MiB over the counters' day: room for
+    // 10 at a completion target of 1 (one every 496 MiB), against 20.
+    let cp = with_wal(cps(70, 20), 2480 * MIB, DAY / 2.0);
     let one = Setting {
         setting: "1".into(),
         unit: None,

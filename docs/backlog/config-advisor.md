@@ -155,8 +155,10 @@ neither depends on the window, and they say "now" instead.
   one, and `max_wal_size` changes none of them. So on PG14+ the check
   reads `pg_stat_wal.wal_bytes` and bounds how many the WAL could have
   forced: Postgres starts one each `max_wal_size / (1 +
-  checkpoint_completion_target)` of WAL, so at most `wal_bytes` / that
-  (an upper bound — timed checkpoints used some of the WAL too). At
+  checkpoint_completion_target)` of WAL, counted in whole
+  `wal_segment_size` segments less one (`CheckPointSegments - 1`; the
+  segment size is read, not assumed 16 MB), so at most `wal_bytes` /
+  that (an upper bound — timed checkpoints used some of the WAL too). At
   least half the requested → MED, "forced by WAL volume", suggested
   `max_wal_size` twice the current. Fewer → LOW, "not by WAL volume",
   the other causes listed and no setting (on the compose primary: 587
