@@ -375,6 +375,67 @@ pub async fn handle_otlp_conn(
     Ok(())
 }
 
+/// The request body as JSON bytes, per its `Content-Encoding`. Pure.
+///
+/// `gzip` is inflated — the OTel Collector's `otlphttp` exporter
+/// compresses by default, and its bodies used to fail as `not utf-8`.
+/// The inflated size is capped at `max`, the same cap the raw body
+/// has: a few KiB of gzip can inflate to gigabytes. No encoding (or
+/// `identity`) passes through; anything else is a 415 that says what
+/// to set.
+pub fn decode_otlp_body<'a>(
+    encoding: Option<&str>,
+    body: &'a [u8],
+    max: usize,
+) -> Result<std::borrow::Cow<'a, [u8]>, HttpResponse> {
+    let encoding = encoding.map(str::trim).unwrap_or("");
+    if encoding.is_empty() || encoding.eq_ignore_ascii_case("identity") {
+        return Ok(std::borrow::Cow::Borrowed(body));
+    }
+    if !(encoding.eq_ignore_ascii_case("gzip") || encoding.eq_ignore_ascii_case("x-gzip")) {
+        return Err(HttpResponse {
+            status: 415,
+            reason: "Unsupported Media Type",
+            body: format!(
+                "Content-Encoding {encoding:?} not supported; send gzip or none \
+                 (collector: compression: gzip or none)"
+            ),
+        });
+    }
+    match inflate_gzip_capped(body, max) {
+        Err(e) => Err(HttpResponse {
+            status: 400,
+            reason: "Bad Request",
+            body: format!("Content-Encoding gzip, but the body does not inflate: {e}"),
+        }),
+        Ok(None) => Err(HttpResponse {
+            status: 413,
+            reason: "Payload Too Large",
+            body: format!(
+                "gzip body inflates past the {} MiB cap",
+                max / (1024 * 1024)
+            ),
+        }),
+        Ok(Some(inflated)) => Ok(std::borrow::Cow::Owned(inflated)),
+    }
+}
+
+/// Inflate the gzip stream `input`; `Ok(None)` when it inflates past
+/// `max` bytes. Stops one byte past the cap, so a bomb costs `max`
+/// of memory and as much of the input as that takes — not its whole
+/// inflated size.
+pub(crate) fn inflate_gzip_capped(
+    input: impl std::io::Read,
+    max: usize,
+) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let mut inflated = Vec::new();
+    let n = flate2::read::GzDecoder::new(input)
+        .take(max as u64 + 1)
+        .read_to_end(&mut inflated)?;
+    Ok((n <= max).then_some(inflated))
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct HttpResponse {
     pub status: u16,
@@ -444,7 +505,15 @@ pub fn process_otlp_request(
             ),
         };
     }
-    let (mut events, skipped) = match parse_otlp_json(&req.body) {
+    let body = match decode_otlp_body(
+        req.headers.get("content-encoding").map(String::as_str),
+        &req.body,
+        OTLP_MAX_BODY_BYTES,
+    ) {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let (mut events, skipped) = match parse_otlp_json(&body) {
         Ok(pair) => pair,
         Err(e) => {
             return HttpResponse {

@@ -2275,6 +2275,108 @@ mod tests {
         assert!(e.received_at_unix_micros > 0);
     }
 
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(bytes).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn process_otlp_request_inflates_a_gzip_body() {
+        // The OTel Collector's otlphttp exporter gzips by default; the
+        // body used to fail as `400 not utf-8`.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
+        let span = r#"{
+            "startTimeUnixNano": "1700000000000000000",
+            "endTimeUnixNano":   "1700000000010000000",
+            "attributes": [
+                {"key":"db.system","value":{"stringValue":"postgresql"}},
+                {"key":"db.statement","value":{"stringValue":"SELECT 7"}}
+            ]
+        }"#;
+        let req = HttpRequest {
+            method: "POST".into(),
+            path: "/v1/traces".into(),
+            headers: [
+                ("content-type".into(), "application/json".into()),
+                ("content-encoding".into(), "gzip".into()),
+            ]
+            .into_iter()
+            .collect(),
+            body: gzip(otlp_envelope("svc", span).as_bytes()),
+        };
+        let resp = process_otlp_request(req, &tx);
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        assert_eq!(rx.try_recv().unwrap().sql.as_deref(), Some("SELECT 7"));
+    }
+
+    #[test]
+    fn decode_otlp_body_passes_identity_through() {
+        for enc in [None, Some(""), Some("identity"), Some("Identity")] {
+            let got = decode_otlp_body(enc, b"{}", 16).unwrap();
+            assert!(matches!(got, std::borrow::Cow::Borrowed(b"{}")), "{enc:?}");
+        }
+    }
+
+    #[test]
+    fn decode_otlp_body_caps_the_inflated_size() {
+        // A zip bomb: 1 MiB of zeros gzips to about a kilobyte.
+        let bomb = gzip(&vec![0u8; 1024 * 1024]);
+        assert!(bomb.len() < 4096);
+        let err = decode_otlp_body(Some("gzip"), &bomb, 1024 * 1024 - 1).unwrap_err();
+        assert_eq!(err.status, 413);
+        // Exactly at the cap is fine.
+        let ok = decode_otlp_body(Some("gzip"), &bomb, 1024 * 1024).unwrap();
+        assert_eq!(ok.len(), 1024 * 1024);
+    }
+
+    #[test]
+    fn inflating_stops_at_the_cap_instead_of_reading_the_whole_stream() {
+        /// Counts the compressed bytes the decoder pulls.
+        struct Counting<'a>(&'a [u8], std::rc::Rc<std::cell::Cell<usize>>);
+        impl std::io::Read for Counting<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.0.read(buf)?;
+                self.1.set(self.1.get() + n);
+                Ok(n)
+            }
+        }
+        // Barely compressible bytes, so the compressed stream is long
+        // enough (2 MiB) to see how much of it the decoder reads — it
+        // pulls its input in buffer-sized chunks.
+        let mut state = 0x2545_f491_u32;
+        let noise: Vec<u8> = (0..2 * 1024 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        let stream = gzip(&noise);
+        let pulled = std::rc::Rc::new(std::cell::Cell::new(0));
+        let got = otlp::inflate_gzip_capped(Counting(&stream, pulled.clone()), 64 * 1024).unwrap();
+        assert!(got.is_none(), "2 MiB inflated is past a 64 KiB cap");
+        // A 64 KiB cap needs a sliver of the stream, not all of it.
+        assert!(
+            pulled.get() < stream.len() / 4,
+            "read {} of {} compressed bytes",
+            pulled.get(),
+            stream.len()
+        );
+    }
+
+    #[test]
+    fn decode_otlp_body_rejects_bad_gzip_and_unknown_encodings() {
+        let err = decode_otlp_body(Some("gzip"), b"not gzip at all", 1024).unwrap_err();
+        assert_eq!(err.status, 400);
+        assert!(err.body.contains("does not inflate"), "{}", err.body);
+        let err = decode_otlp_body(Some("br"), b"{}", 1024).unwrap_err();
+        assert_eq!(err.status, 415);
+        assert!(err.body.contains("send gzip or none"), "{}", err.body);
+    }
+
     #[test]
     fn process_otlp_request_rejects_get_with_405() {
         let (tx, _rx) = tokio::sync::mpsc::channel::<TapEvent>(64);

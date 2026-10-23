@@ -42,6 +42,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   and the listener a Java project turns on by itself. The status line
   used to announce the port as listening while the failure went only
   to the log.
+- `--tap-otlp` accepts gzip-compressed bodies, which the OpenTelemetry
+  Collector's `otlphttp` exporter sends by default; they failed with
+  `400 not utf-8`. The inflated body has the same 4 MiB cap as the raw
+  one. Any other `Content-Encoding` gets a 415 saying to send gzip or
+  none.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2
