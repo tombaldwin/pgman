@@ -240,7 +240,9 @@ fn grid_with_filter_active() {
 #[test]
 fn help_overlay() {
     let mut a = settle_app();
-    a.mode = Mode::Help;
+    // `:help all`: every section on one page, the overlay as it was
+    // before it had sections.
+    a.open_help_all(Mode::Normal);
     // Tall viewport — the help popup is centered_pct(area, 70, 70)
     // so the visible content area is ~70% of the test height. With
     // ~70 help lines we need ~100 rows to fit them all.

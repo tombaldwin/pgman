@@ -774,11 +774,10 @@ fn grid_render_shows_filtered_count_in_title() {
 #[test]
 fn help_overlay_lists_key_bindings() {
     let mut a = settle_app();
-    a.mode = Mode::Help;
-    // Tall viewport so the whole help text fits without scrolling —
-    // the assertions below cover bindings from multiple sections.
-    // Help body grew with the schema wizard / lint / bookmarks etc.
-    // — bump the height to accommodate.
+    // `:help all` — every section on one page. Tall viewport so the
+    // whole help text fits without scrolling — the assertions below
+    // cover bindings from multiple sections.
+    a.open_help_all(Mode::Normal);
     let buf = render(&mut a, 120, 200);
     let rendered = dump(&buf);
     for binding in &["ctrl-r", "ctrl-w", "ctrl-x", "ctrl-f", "F5"] {
@@ -960,35 +959,33 @@ fn sessions_panel_left_aligns_text_columns_and_right_aligns_numbers() {
     );
 }
 
-/// `draw_help` pre-scrolls to the section matching the mode help was
-/// opened from. It used to STORE that anchor row unclamped and only
-/// clamp it for display, so an anchor near the end of the document
-/// left `help.scroll` above `help.max_scroll` — and the first few `k`
-/// presses walked the stored value back down through a range that all
-/// renders identically, so the overlay looked frozen.
+/// The help overlay clamps the scroll it STORES, not only the one it
+/// draws. An unclamped stored scroll past `max_scroll` — once from
+/// the anchor pass, now possible whenever the terminal grows under a
+/// scrolled section — left the first few `k` presses walking the value
+/// back down through a range that all renders identically, so the
+/// overlay looked frozen.
 #[test]
-fn help_anchor_is_clamped_when_stored_not_only_when_rendered() {
-    // "schema wizard" is the last anchored section in `help_body`, so
-    // its row is past `max_scroll` at any realistic overlay height.
-    // A tall terminal makes the viewport big enough that the last
-    // section's row sits past the end of the scroll range — exactly
-    // the case the unclamped store got wrong.
+fn help_scroll_is_clamped_when_stored_not_only_when_rendered() {
     let mut a = settle_app();
-    a.open_help_from(Mode::SchemaLint);
-    let _ = render(&mut a, 200, 80);
-    assert!(a.help.max_scroll > 0, "help body should be scrollable");
+    a.open_help_from(Mode::Editor);
+    let _ = render(&mut a, 80, 24);
+    assert!(a.help.max_scroll > 0, "the editor section scrolls at 80x24");
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    assert_eq!(a.help.scroll, a.help.max_scroll);
+    // A bigger terminal: the same section needs less scroll.
+    let _ = render(&mut a, 200, 50);
     assert!(
         a.help.scroll <= a.help.max_scroll,
-        "anchor stored an unclamped scroll: {} > max {}",
+        "stored an unclamped scroll: {} > max {}",
         a.help.scroll,
         a.help.max_scroll
     );
-    // And it really did anchor somewhere near the end, rather than
-    // passing by accident because it never scrolled at all.
-    assert_eq!(
-        a.help.scroll, a.help.max_scroll,
-        "expected the last section to anchor at the bottom of the range"
-    );
+    let before = a.help.scroll;
+    a.on_key(KeyEvent::from(KeyCode::Char('k')));
+    if before > 0 {
+        assert_eq!(a.help.scroll, before - 1, "one k is one row");
+    }
 }
 
 /// Opening help from a mode scrolls to that mode's section — and the
@@ -2414,4 +2411,161 @@ fn help_footer_shows_the_overlay_keys_not_a_stale_status() {
             "{w}x{h}: the footer names the overlay's keys: {footer:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------
+// The sectioned help overlay (docs/backlog/help-overlay.md)
+// ---------------------------------------------------------------
+
+/// Rows of the render, with the help popup's borders and padding
+/// trimmed off — what the operator reads.
+fn help_rows(buf: &Buffer) -> Vec<String> {
+    dump(buf)
+        .lines()
+        .map(|l| {
+            l.trim_matches(|c: char| c == '│' || c.is_whitespace())
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn narrow_help_lists_every_section_with_its_teaser_then_opens_one() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('?')));
+    let buf = render(&mut a, 80, 24);
+    let text = dump(&buf);
+    assert!(text.contains("help · 22 sections"), "{text}");
+    assert!(
+        text.contains("▸ grid                     the results: move, sort, filter, find, yank"),
+        "the selected section, marked, with its teaser:\n{text}"
+    );
+    assert!(
+        text.contains("↓ 9 more"),
+        "the list says there is more:\n{text}"
+    );
+    // Walk to the bottom: the list follows the selection.
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("▸ help"), "{text}");
+    assert!(text.contains("↑ 9 more"), "{text}");
+    // Enter opens the selected section full width, heading on row 0.
+    a.on_key(KeyEvent::from(KeyCode::Char('g')));
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    let buf = render(&mut a, 80, 24);
+    let rows = help_rows(&buf);
+    let title = rows
+        .iter()
+        .position(|r| r.contains("help · editor"))
+        .unwrap();
+    assert!(rows[title + 1].starts_with("pgman — keys"), "{rows:#?}");
+    assert_eq!(rows[title + 2], "editor", "{rows:#?}");
+    assert!(
+        !dump(&buf).contains("the results: move"),
+        "a narrow section is full width, without the list"
+    );
+}
+
+#[test]
+fn wide_help_draws_the_list_beside_the_section() {
+    let mut a = settle_app();
+    a.open_help_from(Mode::SchemaBrowser);
+    let buf = render(&mut a, 120, 40);
+    let text = dump(&buf);
+    assert!(a.help.split, "120 columns is a split overlay");
+    assert!(text.contains("help · schema browser"), "{text}");
+    assert!(
+        text.contains("│ ▸ schema browser"),
+        "the list marks the section:\n{text}"
+    );
+    let first = text
+        .lines()
+        .skip_while(|l| !l.contains("pgman — keys"))
+        .nth(1)
+        .expect("a row under the preamble");
+    assert!(
+        first.contains("│   schema browser"),
+        "the section's heading heads the pane, right of the rule: {first:?}"
+    );
+    assert!(
+        text.contains("in-tree filter"),
+        "and its body below:\n{text}"
+    );
+    // Tab moves to the next section, list and pane together.
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    let text = dump(&render(&mut a, 120, 40));
+    assert!(text.contains("help · EXPLAIN tree"), "{text}");
+    assert!(text.contains("▸ EXPLAIN tree"), "{text}");
+    assert!(!text.contains("in-tree filter"), "{text}");
+}
+
+#[test]
+fn the_help_filter_shows_matching_rows_under_their_headings() {
+    let mut a = settle_app();
+    a.open_help_from(Mode::Editor);
+    a.on_key(KeyEvent::from(KeyCode::Char('/')));
+    for c in "clipboard".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    let buf = render(&mut a, 120, 40);
+    let rows = help_rows(&buf);
+    let text = dump(&buf);
+    assert!(text.contains("help · filter"), "{text}");
+    assert!(
+        text.contains("filter: /clipboard"),
+        "the footer is the filter prompt:\n{text}"
+    );
+    let summary = rows
+        .iter()
+        .find(|r| r.contains("match 'clipboard'"))
+        .unwrap_or_else(|| panic!("a summary row:\n{text}"));
+    assert!(summary.contains("sections"), "{summary}");
+    // Grid, row detail, cell detail and notifications all copy to the
+    // clipboard: each heading, then its matching rows only.
+    let pane: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.split_once("│ ").map(|(_, right)| right.trim()))
+        .collect();
+    let at = |h: &str| pane.iter().position(|r| *r == h);
+    let grid = at("grid").unwrap_or_else(|| panic!("grid heading:\n{text}"));
+    assert!(pane[grid + 1].contains("clipboard"), "{pane:#?}");
+    assert!(at("row detail").is_some(), "{pane:#?}");
+    assert!(at("notifications").is_some(), "{pane:#?}");
+    assert!(
+        at("editor").is_none(),
+        "a section with no match is not shown:\n{pane:#?}"
+    );
+    assert!(
+        !text.contains("move column cursor"),
+        "rows that don't match are not shown"
+    );
+    // No match says so.
+    for c in "zzz".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    let text = dump(&render(&mut a, 120, 40));
+    assert!(
+        text.contains("no help row matches 'clipboardzzz'"),
+        "{text}"
+    );
+}
+
+#[test]
+fn help_all_is_the_old_single_page() {
+    let mut a = settle_app();
+    a.open_help_all(Mode::Normal);
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("pgman — keys"), "{text}");
+    assert!(text.contains("  grid"), "{text}");
+    assert!(text.contains("more below"), "{text}");
+    assert!(!text.contains("sections"), "no list:\n{text}");
+    assert!(!text.contains("help · grid"), "no section title:\n{text}");
+    // `]` jumps down the page heading by heading — the grid's, then the
+    // editor's, which a single section (the grid's) does not have.
+    a.on_key(KeyEvent::from(KeyCode::Char(']')));
+    a.on_key(KeyEvent::from(KeyCode::Char(']')));
+    let rows = help_rows(&render(&mut a, 80, 24));
+    assert!(rows.iter().any(|r| r == "editor"), "{rows:#?}");
 }

@@ -20,6 +20,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- Help is a list of sections and one section at a time instead of one
+  ~275-row page: from 110 columns the list sits beside the section, and
+  on a narrower terminal the list comes first, each section with a
+  one-line summary, and `Enter` opens one. `Tab` / `]` / `[` move between
+  sections, `/` filters every section live (matching rows under their
+  headings), and `:help all` keeps the single page. `:help <topic>`
+  takes any section name or the start of one, and an unknown topic lists
+  every section.
 - One TLS crypto provider (ring) instead of two: no cmake / C build of
   aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
   Postgres connection no longer offers the post-quantum X25519MLKEM768
