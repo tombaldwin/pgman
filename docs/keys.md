@@ -393,7 +393,7 @@ bar itself). See [docs/commands.md](commands.md) for what each command does.
 | Key | Action |
 |---|---|
 | `Enter` | Run the command |
-| `Tab` | Complete the command name (unique name fills in; several are listed) |
+| `Tab` | Complete the command name (unique name fills in; several are listed); after `:help `, the section name |
 | `Esc` | Cancel — returns to the mode you opened it from |
 | `←` / `→` / `Home` / `End` | Move the cursor |
 | `Backspace` / `Ctrl-W` | Delete char / word |
@@ -421,7 +421,7 @@ mode's section; opened from the grid, the list.
 | `?` / `q` / `F1` | Close — returns to the mode you opened help from |
 
 Open it at a section with `:help <topic>`: a section's name, or the start
-of one (`:help sch` is the schema browser) — the earlier one-word topics
+of one (`:help sch` is the schema browser; `Tab` completes the names) — the earlier one-word topics
 (`schema`, `saved`, `tap`, `wizard`, …) still work. `:help all` shows every
 section on one scrolling page, as help was before it had sections.
 

@@ -2682,7 +2682,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                  enter runs · esc cancels · tab completes the command name"),
+        row("                  enter runs · esc cancels · tab completes the command name and :help's topic"),
         &mut lines,
     );
     push(row("    :about          the About card"), &mut lines);

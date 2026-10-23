@@ -363,7 +363,12 @@ impl App {
     /// their common prefix and are listed in the status line.
     fn complete_command_bar(&mut self, bar: &mut CommandBarUi) {
         let typed = bar.input.text().to_string();
-        if typed.contains(char::is_whitespace) {
+        if let Some((name, arg)) = typed.split_once(char::is_whitespace) {
+            // `:help <topic>` is the one argument this bar can
+            // complete: the topics are the help's section names.
+            if name.eq_ignore_ascii_case("help") {
+                self.complete_help_topic(bar, arg.trim_start());
+            }
             return;
         }
         let candidates = crate::app::cmd::command_candidates(&typed);
@@ -384,6 +389,28 @@ impl App {
                     bar.input = TextInput::with_text(prefix);
                 }
                 Some(candidates.join(" · "))
+            }
+        };
+    }
+
+    /// Tab after `:help `: complete the section name, the way the
+    /// command name completes — one candidate fills in, several fill
+    /// their common prefix and are listed beside the bar.
+    fn complete_help_topic(&mut self, bar: &mut CommandBarUi, arg: &str) {
+        let candidates = crate::app::cmd::help_topic_candidates(arg);
+        self.command_bar_completions = match candidates.len() {
+            0 => Some(format!("no help section starts with {arg}")),
+            1 => {
+                bar.input = TextInput::with_text(format!("help {}", candidates[0]));
+                None
+            }
+            _ => {
+                let names: Vec<&str> = candidates.iter().map(String::as_str).collect();
+                let prefix = crate::app::cmd::longest_common_prefix(&names);
+                if prefix.len() > arg.len() {
+                    bar.input = TextInput::with_text(format!("help {prefix}"));
+                }
+                Some(names.join(" · "))
             }
         };
     }

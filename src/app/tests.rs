@@ -12690,3 +12690,74 @@ fn an_unknown_help_topic_lists_every_section() {
     }
     assert!(err.ends_with(", all"), "{err:?}");
 }
+
+#[test]
+fn help_topic_candidates_are_every_section_name_a_prefix_picks() {
+    use crate::app::cmd::help_topic_candidates;
+    assert_eq!(
+        help_topic_candidates("sch"),
+        vec!["schema browser", "schema wizard"]
+    );
+    assert_eq!(help_topic_candidates("SCHEMA W"), vec!["schema wizard"]);
+    assert_eq!(help_topic_candidates("comm"), vec!["commands"]);
+    assert_eq!(help_topic_candidates("al"), vec!["all"]);
+    assert!(help_topic_candidates("zz").is_empty());
+    assert_eq!(
+        help_topic_candidates("").len(),
+        crate::ui::HELP_SECTIONS.len() + 1,
+        "every section, and all"
+    );
+}
+
+#[test]
+fn tab_after_colon_help_completes_the_section_name() {
+    let bar_text = |a: &App| a.command_bar.as_ref().map(|b| b.input.text().to_string());
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "help sch");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(
+        bar_text(&a).as_deref(),
+        Some("help schema "),
+        "the common prefix"
+    );
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("schema browser · schema wizard")
+    );
+    type_str(&mut a, "w");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("help schema wizard"));
+    assert_eq!(a.command_bar_completions, None);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        (a.mode, a.help.section),
+        (Mode::Help, section_of("schema wizard"))
+    );
+
+    // Nothing typed yet: every topic is listed, the input left alone.
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "help ");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("help "));
+    let listed = a.command_bar_completions.clone().unwrap_or_default();
+    assert!(
+        listed.starts_with("grid · editor · confirm") && listed.ends_with("help · all"),
+        "{listed}"
+    );
+    // No match says so.
+    type_str(&mut a, "zz");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("no help section starts with zz")
+    );
+    // Another command's argument is not completed.
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "connect ed");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("connect ed"));
+    assert_eq!(a.command_bar_completions, None);
+}

@@ -62,6 +62,16 @@ pub(crate) fn resolve_help_topic(topic: &str) -> Option<usize> {
         })
 }
 
+/// Tab completion for `:help <typed>`: every [`help_topic_names`]
+/// entry `typed` is a prefix of (case-insensitively). Pure.
+pub(crate) fn help_topic_candidates(typed: &str) -> Vec<String> {
+    let typed = typed.to_ascii_lowercase();
+    help_topic_names()
+        .into_iter()
+        .filter(|n| n.starts_with(&typed))
+        .collect()
+}
+
 /// The status after `\\report` / `\\fixture` wrote `path`: the file's
 /// name first and its directory after, the home directory as `~`. A
 /// full path at the end of the line was what the footer cut, mid-name,
