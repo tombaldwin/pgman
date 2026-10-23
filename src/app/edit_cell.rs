@@ -631,6 +631,19 @@ mod tests {
         assert!(a.edit_awaiting_tx.is_none());
     }
 
+    /// `:` over an edit's confirm cancels it back to the grid, like `n`.
+    #[test]
+    fn the_command_bar_over_an_edits_confirm_goes_back_to_the_grid() {
+        let mut a = editing(Some("bo"));
+        typed(&mut a, "!");
+        a.on_key(key(KeyCode::Enter));
+        assert_eq!(a.mode, Mode::Confirm);
+        a.on_key(key(KeyCode::Char(':')));
+        a.on_key(key(KeyCode::Esc));
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a.pending_run.is_none());
+    }
+
     /// No connection (or `--demo`) refuses `u` before the editor opens.
     #[test]
     fn u_refuses_without_a_connection() {

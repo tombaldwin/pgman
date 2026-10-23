@@ -251,12 +251,16 @@ impl App {
         let mut origin = self.mode;
         let cancelled_run = origin == Mode::Confirm;
         if cancelled_run {
-            self.pending_run = None;
+            let pending = self.pending_run.take();
             self.last_status = Some("cancelled".to_string());
             // Esc out of the bar must not land back on a modal with
             // nothing behind it — `draw_confirm` renders nothing
-            // without a `pending_run`, and its y/n would no-op.
-            origin = Mode::Editor;
+            // without a `pending_run`, and its y/n would no-op. A cell
+            // edit's goes back where the edit began, as `n` does.
+            origin = match pending.and_then(|p| p.cell_edit) {
+                Some(edit) => edit.return_to,
+                None => Mode::Editor,
+            };
         }
         if origin == Mode::Help {
             // The bar opened over the help overlay. Its origin is
