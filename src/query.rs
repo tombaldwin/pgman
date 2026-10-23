@@ -3,7 +3,8 @@
 //! Three input sources, one output type (`reconstruct::ReconstructedQuery`):
 //!
 //! - [`hibernate`] — application-side Hibernate logs (`?` placeholders + binds).
-//! - [`pglog`] — Postgres / RDS server logs (`$N` placeholders + `parameters:`).
+//! - [`pglog`] — Postgres / RDS server logs (`$N` placeholders + `parameters:`),
+//!   stderr format or `csvlog` / `jsonlog` ([`pglog_structured`]).
 //! - [`jdbc`] — pasted JDBC: SQL plus a typed parameter list.
 //!
 //! [`subst`] does the type-aware placeholder substitution shared by all three.
@@ -28,6 +29,7 @@ pub mod nplus1;
 pub mod params;
 pub mod patches;
 pub mod pglog;
+pub mod pglog_structured;
 pub mod preflight;
 pub mod probe;
 pub mod reconstruct;

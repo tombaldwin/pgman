@@ -39,14 +39,36 @@
 //! as a record; backends with no `[%p]` in the prefix share one pairing
 //! bucket.
 
+use crate::query::pglog_structured;
 use crate::query::reconstruct::{BoundParam, ParamValue, ReconstructedQuery, Source};
 use crate::query::subst::{self, PlaceholderStyle};
 use std::collections::HashMap;
 
-/// Parse a Postgres server log into reconstructed queries.
+/// Parse a Postgres server log into reconstructed queries: the stderr
+/// format, or `csvlog` / `jsonlog` (see [`super::pglog_structured`]).
 pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
     // A log viewed through a colouring tool keeps its escapes when copied.
     let log = &*crate::query::logdetect::strip_sgr(log);
+    let Some(format) = pglog_structured::sniff(log) else {
+        return parse_stderr(log);
+    };
+    let (text, origin) = pglog_structured::to_stderr(log, format);
+    let mut out = parse_stderr(&text);
+    for q in &mut out {
+        if let Some(&line) = origin.get(q.src_line.wrapping_sub(1)) {
+            q.src_line = line;
+        }
+    }
+    out
+}
+
+/// True if `s` is a severity marker Postgres prints (`LOG`, `ERROR`, …).
+pub(crate) fn is_severity(s: &str) -> bool {
+    LEVELS.contains(&s)
+}
+
+/// [`parse`] for the stderr format.
+fn parse_stderr(log: &str) -> Vec<ReconstructedQuery> {
     let mut out: Vec<ReconstructedQuery> = Vec::new();
     let mut seen = Seen::default();
     let mut current: Option<Pending> = None;

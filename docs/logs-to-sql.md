@@ -40,6 +40,12 @@ Three input shapes are recognised:
   include `%p` in it so a `bind`'s parameters pair with the right backend's
   `execute`.
 
+  `log_destination = 'csvlog'` and `'jsonlog'` (Postgres 15+) work too:
+  pgman recognises the format from the first line and reads each record's
+  message, detail, context and statement fields the same way, pairing by
+  the record's pid. A csvlog field that spans lines (a multi-line
+  statement) is one record.
+
   A failed statement is reconstructed too: an `ERROR:` followed by its
   `STATEMENT:` from the same backend — which the default
   `log_min_error_statement = error` logs with nothing else turned on —
@@ -184,5 +190,6 @@ loop you are looking for. They still appear in the all-queries list.
 
 ## Implementation notes
 
-Reconstruction: `src/query/hibernate.rs`, `src/query/pglog.rs`,
+Reconstruction: `src/query/hibernate.rs`, `src/query/pglog.rs` (csvlog / jsonlog:
+`src/query/pglog_structured.rs`),
 `src/query/jdbc.rs`. Clustering: `src/query/nplus1.rs`.

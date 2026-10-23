@@ -17,6 +17,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `log_min_error_statement` logs with nothing else on. A statement
   `log_statement` already logged is marked failed rather than listed
   twice. The log picker marks a failed pick `✗` and shows its error.
+- Logs → SQL reads Postgres's `csvlog` and `jsonlog` (PG 15+) formats as
+  well as stderr: same pairing of parameters and errors, by pid.
 
 ### Changed
 

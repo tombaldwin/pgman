@@ -132,6 +132,10 @@ pub fn detect_log(text: &str) -> Option<LogKind> {
     if text.lines().any(super::pglog::is_query_record) {
         return Some(LogKind::PgServer);
     }
+    // csvlog / jsonlog: one record can span lines, so ask the parser.
+    if super::pglog_structured::sniff(text).is_some() && !super::pglog::parse(text).is_empty() {
+        return Some(LogKind::PgServer);
+    }
     // A log of failures only (the default `log_min_error_statement`
     // with nothing else on): whether an `ERROR:` + `STATEMENT:` pair
     // reconstructs depends on the records around it, so ask the parser
