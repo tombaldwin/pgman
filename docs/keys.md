@@ -162,12 +162,18 @@ rows only` when there are more. A fetched page keeps the active sort
 and filter. `Ctrl-C` cancels a fetch that is taking too long, keeping
 the rows already there.
 
-The cursor holds a read transaction open on the server, so pgman closes
-it after 60 s without a fetch, or 10 min after the query ran (sooner
-when the server's `idle_in_transaction_session_timeout` or
-`transaction_timeout` is shorter), and as soon as anything else talks
-to the database: the next query, a panel such as `L` or `T`, a
-reconnect, closing the tab. The title then says `cursor closed · M
+While a partial result's cursor is open, the session is **idle in
+transaction**, holding an `ACCESS SHARE` lock on every table the query
+reads. Reads and writes go on around it, but DDL on those tables — a
+migration, `ALTER TABLE`, `TRUNCATE`, `VACUUM FULL`, `REINDEX` — waits
+for the lock, and every later statement on those tables queues behind
+that waiting DDL. The open transaction also holds back vacuum. So pgman
+closes the cursor after 60 s without a fetch, or 10 min after the query
+ran (sooner when the server's `idle_in_transaction_session_timeout` or
+`transaction_timeout` is shorter), when the last row is fetched, and as
+soon as anything else talks to the database: the next query, a panel
+such as `L` or `T`, a reconnect, closing the tab. On a standby no cursor
+is held at all (below). The title then says `cursor closed · M
 re-runs`, and `M` runs the query again for the rows already held plus
 1000 more, as a fresh snapshot.
 

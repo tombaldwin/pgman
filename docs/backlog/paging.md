@@ -144,6 +144,17 @@ as primary bindings).
 
 ## Choice 6: limits and closing
 
+What an open cursor costs, plainly: while it is open the session is
+**idle in transaction**, holding an `ACCESS SHARE` lock on every table
+(and index) the query reads, until the close. `ACCESS SHARE` conflicts
+only with `ACCESS EXCLUSIVE`, so reads and writes carry on — but DDL
+does not: a migration, `ALTER TABLE`, `TRUNCATE`, `VACUUM FULL`,
+`REINDEX` waits for pgman, and every later statement on those tables
+queues behind that waiting DDL. The transaction also pins the xmin
+horizon, holding back vacuum. The limits below are what bounds it: 60 s
+idle, 10 min in all, any other work, or the end of the result. On a
+standby none of this applies, because no cursor is held (Choice 3).
+
 - **Ceiling: 100 000 rows held** (`paging::MAX_HELD_ROWS`). At the
   ceiling pgman closes the cursor and the title says `partial · stopped
   at pgman's 100000-row limit`; `M` points at `pgman query … --json`,

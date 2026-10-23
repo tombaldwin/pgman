@@ -2079,7 +2079,7 @@ impl App {
                 .then(|| draft_save_at(self.draft_last_save, DRAFT_SAVE_GAP));
             // An open result cursor closes on its deadline even when
             // nothing else wakes the loop: an idle pgman must not leave
-            // the session idle in transaction.
+            // the session idle in transaction past it.
             let cursor_close_at = self.cursor_deadline();
             tokio::select! {
                 ev = events.recv() => {
@@ -3959,8 +3959,9 @@ impl App {
             .map(|c| c.deadline())
     }
 
-    /// Close a cursor that has outlived its limits — never leave a
-    /// production session idle in transaction — and say so.
+    /// Close a cursor that has outlived its limits — the session is idle
+    /// in transaction while it is open, holding its tables' locks — and
+    /// say so.
     pub(crate) fn tick_cursor_timeout(&mut self, now: Instant) {
         if self.query_running {
             return;

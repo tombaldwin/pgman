@@ -24,11 +24,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - `M` in the results fetches past the first 1000 rows. A plain `SELECT`
   from the editor now reads through a server-side cursor; while it has
   more, the title says `partial · M fetches more`, and each `M` appends
-  1000 rows (up to 100 000 held), keeping the sort and filter. pgman
-  closes the cursor — never leaving the session idle in transaction —
-  after 60 s without a fetch or 10 min open (sooner if the server's own
-  timeouts are), and before any other database work; `M` then re-runs
-  the query. On a standby no cursor is held at all (a recovery conflict
+  1000 rows (up to 100 000 held), keeping the sort and filter. While
+  the cursor is open the session is idle in transaction, holding an
+  `ACCESS SHARE` lock on the tables the query reads: DDL on them (a
+  migration, `ALTER`, `TRUNCATE`, `VACUUM FULL`, `REINDEX`) waits behind
+  it, and later statements on those tables queue behind that DDL. pgman
+  closes the cursor after 60 s without a fetch or 10 min open (sooner if
+  the server's own timeouts are), before any other database work, and
+  at the end of the result; `M` then re-runs the query. On a standby no cursor is held at all (a recovery conflict
   would end the session): the first page commits at once and `M`
   re-runs the query for more. `EXPLAIN`, scripts, `\watch`, locking `SELECT`s, a
   `SELECT` that calls a function other than a short list of read-only
