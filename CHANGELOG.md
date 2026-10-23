@@ -161,6 +161,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   so the section opened on its first key.
 - The help overlay's footer shows its own keys; a status left from before
   help opened used to take the footer instead.
+- The digits `1`–`9` no longer switch editor tabs while help is open:
+  the tab changed unseen, behind the page being read.
 - `I` (row as INSERT) named a quoted mixed-case table bare: a row
   yanked from `"OrderLine"` was inserted into a lowercase twin
   `orderline` if there was one, and failed otherwise. The FROM parse
