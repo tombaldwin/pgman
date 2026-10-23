@@ -273,7 +273,7 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
 
     if include_recent {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(" recent", muted_style)));
+        lines.push(Line::from(Span::styled(recent_label(width), muted_style)));
         for entry in app.history.iter().rev().take(RECENT_MAX_ROWS) {
             let one_line = entry.split_whitespace().collect::<Vec<_>>().join(" ");
             let truncated = crate::grid::truncate_cell(
@@ -288,6 +288,18 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     }
 
     lines
+}
+
+/// The `recent` section's label, with the keys that bring an entry back
+/// when they fit: the list itself isn't selectable, and nothing on the
+/// card said how to reuse one. Pure.
+fn recent_label(width: usize) -> &'static str {
+    const WITH_KEYS: &str = " recent · in the editor, ctrl-p recalls · ctrl-r searches";
+    if display_width(WITH_KEYS) <= width {
+        WITH_KEYS
+    } else {
+        " recent"
+    }
 }
 
 /// Choose the F8 hint description: the long form if it (plus, in
@@ -568,6 +580,22 @@ mod tests {
         // Long form needs far more than 40 columns.
         assert_eq!(pick_f8_desc(false, 40), F8_DESC_SHORT);
         assert_eq!(pick_f8_desc(false, 200), F8_DESC_LONG);
+    }
+
+    #[test]
+    fn recent_label_names_the_recall_keys_when_they_fit() {
+        assert_eq!(
+            recent_label(80),
+            " recent · in the editor, ctrl-p recalls · ctrl-r searches"
+        );
+        assert_eq!(recent_label(40), " recent");
+        let mut a = app();
+        a.history = vec!["select 1".into()];
+        let text = plain(&landing_lines(&a, 80, 30));
+        assert!(
+            text.iter().any(|l| l.contains("ctrl-p recalls")),
+            "{text:?}"
+        );
     }
 
     #[test]

@@ -20,6 +20,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- The start card's `recent` list says how to bring an entry back: `in
+  the editor, ctrl-p recalls · ctrl-r searches`.
 - Loading a saved query (after its `:param` values, if any) ends the
   status with the key that runs it: `⏎ runs it`, or `alt-⏎ runs it` when
   the statement has no `;` and Enter would be a newline.
