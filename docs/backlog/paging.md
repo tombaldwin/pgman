@@ -45,10 +45,10 @@ ones `DECLARE` accepts and that are safe to hold open:
 `safety::is_pageable_select` says yes to `SELECT` / `TABLE` / `VALUES` /
 a read-only `WITH`, and no to `SHOW` (not a query), to anything with a
 locking clause (`FOR UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR
-KEY SHARE`, anywhere in the code — a lock held for as long as the cursor
-is open is exactly what must not happen on a production database) and to
-a statement `classify` would not call `Select` — and to any statement
-that calls a function outside `safety::PAGEABLE_FUNCTIONS`, a short list
+KEY SHARE`, anywhere in the code — row locks held for as long as the
+cursor is open would block every writer of those rows; the `ACCESS SHARE`
+lock any read holds is cost enough, Choice 6), to a statement `classify`
+would not call `Select`, and to any statement that calls a function outside `safety::PAGEABLE_FUNCTIONS`, a short list
 of built-ins that read and never write (aggregates, window functions,
 `coalesce`, string, number, date, array and JSON functions). Behind a
 cursor a function runs only for the rows fetched, and its writes stay
@@ -59,8 +59,8 @@ them at once. So a user function, `nextval`, `random`, or a name
 qualified by any schema but `pg_catalog` runs today's way, unpaged. The
 check reads the statement's text, so a function a *view* calls is out
 of its sight; `pg_proc.provolatile` would see only the functions named
-in the statement too, and a lexical list needs no round trip. And only for a plain
-`Run` from the editor: `EXPLAIN`, multi-statement scripts, a write's
+in the statement too, and a lexical list needs no round trip. And only
+for a plain `Run` from the editor: `EXPLAIN`, multi-statement scripts, a write's
 auto-tx, `\watch` re-runs and every other path keep today's behaviour.
 
 ## Choice 3: the transaction
