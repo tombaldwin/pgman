@@ -364,6 +364,20 @@ impl App {
         });
     }
 
+    /// Push a statement that is about to run onto the history ring:
+    /// consecutive duplicates skipped, capped at `HISTORY_CAP` entries
+    /// (shared with the persistence side so the in-memory and on-disk
+    /// rings can never drift), and any history browsing reset.
+    pub(super) fn remember_in_history(&mut self, sql: &str) {
+        if self.history.last().map(String::as_str) != Some(sql) {
+            self.history.push(sql.to_string());
+            if self.history.len() > HISTORY_CAP {
+                self.history.remove(0);
+            }
+        }
+        self.history_pos = None;
+    }
+
     pub(super) fn spawn_run(
         &mut self,
         sql: String,
@@ -375,16 +389,7 @@ impl App {
             self.last_error = Some(self.not_connected_message());
             return;
         };
-        // Push to history (skip consecutive duplicates, cap at
-        // HISTORY_CAP entries — shared with the persistence side
-        // so the in-memory + on-disk rings can never drift).
-        if self.history.last() != Some(&sql) {
-            self.history.push(sql.clone());
-            if self.history.len() > HISTORY_CAP {
-                self.history.remove(0);
-            }
-        }
-        self.history_pos = None;
+        self.remember_in_history(&sql);
         // Track the SQL of the most recent plain-Run so the
         // QueryOk handler can re-parse it for the source table.
         // EXPLAIN-wrapped runs hand back a JSON cell whose FROM is
@@ -446,15 +451,7 @@ impl App {
     /// DELETE without WHERE hits `Guard::Block` same as it would
     /// live and never gets here.
     pub(super) fn spawn_run_demo(&mut self, sql: String, kind: RunKind) {
-        // Same history bookkeeping as `spawn_run` (skip consecutive
-        // duplicates, cap at HISTORY_CAP).
-        if self.history.last() != Some(&sql) {
-            self.history.push(sql.clone());
-            if self.history.len() > HISTORY_CAP {
-                self.history.remove(0);
-            }
-        }
-        self.history_pos = None;
+        self.remember_in_history(&sql);
         self.last_run_sql = if matches!(kind, RunKind::Run) {
             Some(sql.clone())
         } else {
