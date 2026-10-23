@@ -150,17 +150,19 @@ batch.
   yet; once we do, apply per-line.
 
 ### Result grid
-- **Cell editing → UPDATE generation** — Enter on a cell in the
-  grid (when the result is from a single table with a primary key)
-  opens an inline editor; on save, generates `UPDATE … SET col =
-  newval WHERE pk = …` and routes through the existing safety
-  guard for confirmation. Every GUI tool has this; matches what
-  TablePlus / DataGrip operators expect.
-- **Result diff — PK refinement.** Key on the *actual*
-  source-table PK (from the catalog) rather than the
-  inferred-unique-column heuristic — would need the schema cache
-  to carry PK columns (same gap as "Indexes under each table").
-  The heuristic already covers the common id-column case.
+- **A failed cell save loses what was typed.** An UPDATE the server
+  rejects (an invalid numeric) closes the editor; it should reopen
+  with the value.
+- **Cells holding a line break or control character can't be edited
+  inline** (refused with a reason); a multi-line editor would.
+- **`--demo` can't edit cells**: its grids carry no column origins.
+- **Editing several cells of one row** as a single UPDATE.
+- **An edit doesn't re-apply the filter or sort** to the edited cell,
+  and a tab switched away from mid-save keeps its old snapshot.
+- **An edit waiting on a row lock** can only be cancelled from the
+  editor (`e`, then `Ctrl-C`).
+- **Possible flake**: `a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently`
+  failed once in a full parallel integration run; not reproduced.
 
 ### Performance / DBA — follow-ups
 - **Paging: one unexplained cursor close while hand-driving.** After

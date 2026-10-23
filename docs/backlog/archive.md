@@ -1796,3 +1796,9 @@ itself is done.
 - Paging past `MAX_ROWS`: `M` fetches the next 1000 rows of a plain
   SELECT through a server-side cursor, closed on idle / other work /
   the end (`docs/backlog/paging.md`).
+- Cell editing: `u` edits the focused cell as a one-row UPDATE keyed
+  on the table's primary key, with the column found from the server's
+  RowDescription origin, routed through `safety.rs` and rolled back
+  unless exactly one row changed (`docs/backlog/cell-editing.md`).
+- Result diff keys on the table's real primary key when both sides
+  come from the same columns of one table.
