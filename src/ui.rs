@@ -1350,6 +1350,54 @@ fn end_ellipsis(s: &str, width: usize) -> String {
     format!("{keep}…")
 }
 
+/// Is this ` · ` segment a `key action` hint (`y run`, `+ / − expand-all`,
+/// `ctrl-t new`, `J/K next row`) rather than prose (`find: pro`,
+/// `loaded query`)? Its first word, and each `/ alt` alternative, must
+/// look like a key: at most two characters (`?`, `[`, `F2`), a slash pair
+/// of those (`J/K`), a named key, or a modifier chord — and not a bare
+/// count (`3 matches`, `1/3 match`). A key hint is
+/// fitted whole or not at all — cut, it shows its label without its key.
+/// Pure.
+pub(crate) fn is_key_hint(segment: &str) -> bool {
+    const NAMED: &[&str] = &[
+        "enter",
+        "esc",
+        "tab",
+        "space",
+        "home",
+        "end",
+        "pgup",
+        "pgdn",
+        "del",
+        "backspace",
+        "shift-tab",
+    ];
+    let looks_like_key = |w: &str| {
+        let lower = w.to_ascii_lowercase();
+        // A count (`3 matches`, `1/3 match`) is prose, not a key.
+        if w.chars().any(|c| c.is_ascii_digit())
+            && w.chars().all(|c| c.is_ascii_digit() || c == '/')
+        {
+            return false;
+        }
+        w.chars().count() <= 2
+            || (w.contains('/')
+                && w.split('/')
+                    .all(|p| !p.is_empty() && p.chars().count() <= 2))
+            || NAMED.contains(&lower.as_str())
+            || ["ctrl-", "alt-", "shift-"]
+                .iter()
+                .any(|m| lower.starts_with(m))
+            || (lower.len() >= 2
+                && lower.starts_with('f')
+                && lower[1..].chars().all(|c| c.is_ascii_digit()))
+    };
+    match hint_key(segment) {
+        Some((key, _)) => key.split(" / ").all(looks_like_key),
+        None => false,
+    }
+}
+
 /// Fit a ` · `-joined status/error line into `width` columns without ever
 /// cutting a word mid-letter. Unlike [`fit_hints`] (whole hint items,
 /// dropped from the tail), the *last* segment here is load-bearing — it
@@ -1363,6 +1411,10 @@ fn end_ellipsis(s: &str, width: usize) -> String {
 ///    other than the last (`"abc…xyz"`, keeping both ends) until either
 ///    the join fits or every other segment has been collapsed to a bare
 ///    `"…"`.
+///    Key hints ([`is_key_hint`]) are never shrunk: a cut one keeps its
+///    label and loses its key (`… expand-all/collapse-all`).
+///    Then, still too wide, drop whole middle segments: prose first,
+///    then key hints from the end.
 /// 3. Still too wide → drop whole leading segments (the ones already
 ///    reduced to `"…"` first, by construction) until only the last
 ///    segment remains.
@@ -1404,7 +1456,7 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
         let longest = segments
             .iter()
             .enumerate()
-            .filter(|(i, s)| *i != last_idx && display_width(s) >= MIN_SHRINK)
+            .filter(|(i, s)| *i != last_idx && display_width(s) >= MIN_SHRINK && !is_key_hint(s))
             .max_by_key(|(_, s)| display_width(s));
         let Some((i, s)) = longest else { break };
         let target_len = display_width(s).saturating_sub(over).max(1);
@@ -1414,13 +1466,19 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     // Step 2b: nothing left to shrink. Drop whole segments from the
     // second onwards — the first is the context (`find: pro`), the
     // last is the action keys; what sits between is the most
-    // dispensable.
+    // dispensable. Prose goes before key hints (`1/3 match` before
+    // `enter accept`), and key hints go from the end: they are listed
+    // most useful first.
     while segments.len() > 2 {
         let candidate = segments.join(SEP);
         if display_width(&candidate) <= width {
             return candidate;
         }
-        segments.remove(1);
+        let last = segments.len() - 1;
+        let drop = (1..last)
+            .find(|&i| !is_key_hint(&segments[i]))
+            .unwrap_or(last - 1);
+        segments.remove(drop);
     }
 
     // Step 3: every other segment is now "…" (or there were none) —

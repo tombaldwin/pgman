@@ -1082,6 +1082,53 @@ fn middle_ellipsis_keeps_the_character_cut_for_a_statement() {
 }
 
 #[test]
+fn is_key_hint_tells_keys_from_prose() {
+    for hint in [
+        "y run",
+        "? full keys",
+        "n / esc cancel",
+        "+ / − expand-all/collapse-all",
+        "/ filter",
+        "[ ] jump schema",
+        "J/K next/prev row",
+        "ctrl-t new",
+        "enter loads selected",
+        "F2 detail",
+        "esc / q close",
+    ] {
+        assert!(is_key_hint(hint), "{hint}");
+    }
+    for prose in [
+        "tip",
+        "find: pro",
+        "loaded query",
+        "3 matches",
+        "1/3 match",
+        "run (DELETE without WHERE)",
+        "connecting…",
+        "",
+    ] {
+        assert!(!is_key_hint(prose), "{prose}");
+    }
+}
+
+#[test]
+fn fit_status_drops_whole_key_hints_from_the_end_never_a_key_alone() {
+    let tip = "tip · / filter · [ ] jump schema · + / − expand-all/collapse-all · ? full keys";
+    let fitted = fit_status(tip, display_width(tip) - 1);
+    assert_eq!(fitted, "tip · / filter · [ ] jump schema · ? full keys");
+    // Tighter: the next one from the end goes, whole.
+    let fitted = fit_status(tip, 40);
+    assert_eq!(fitted, "tip · / filter · ? full keys");
+    for w in 10..display_width(tip) {
+        let fitted = fit_status(tip, w);
+        assert!(display_width(&fitted) <= w, "{w}: {fitted}");
+        assert!(!fitted.contains("… expand"), "{w}: {fitted}");
+        assert!(!fitted.contains("…ollapse"), "{w}: {fitted}");
+    }
+}
+
+#[test]
 fn fit_status_never_cuts_a_prose_segment_mid_word() {
     let text = "confirm: run (DELETE without WHERE) · y run · n / esc cancel";
     let fitted = fit_status(text, 45);
