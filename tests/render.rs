@@ -2797,6 +2797,15 @@ fn the_cell_editor_names_the_cell_and_shows_null_as_the_grid_does() {
     }
 }
 
+/// An empty string reads as one, not as nothing, and not as NULL.
+#[test]
+fn the_cell_editor_shows_an_empty_string_as_one() {
+    let mut a = cell_edit_app(Some(""));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("│(empty string)"), "{text}");
+    assert!(!text.contains("│NULL"), "{text}");
+}
+
 /// A value wider than the box scrolls to keep the cursor (at its end)
 /// in view: the tail shows, not the head.
 #[test]

@@ -2933,7 +2933,17 @@ pub(super) fn draw_cell_edit(f: &mut Frame, area: Rect, app: &App) {
     };
     let w = 72u16.min(area.width.saturating_sub(2)).max(20);
     let h = 6u16.min(area.height);
-    let popup = centered(area, w, h);
+    let centred = centered(area, w, h);
+    // Keep the row being edited in view: the box goes to the bottom of
+    // the screen (above the footer) while the row is near the top of the
+    // results, and to the top otherwise.
+    let rel = app
+        .grid_state
+        .selected()
+        .unwrap_or(0)
+        .saturating_sub(app.grid_state.offset());
+    let y = cell_edit_box_y(area, h, rel);
+    let popup = Rect { y, ..centred };
     f.render_widget(Clear, popup);
     let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
@@ -2961,6 +2971,18 @@ pub(super) fn draw_cell_edit(f: &mut Frame, area: Rect, app: &App) {
             ),
             0,
         )
+    } else if ui.input.is_empty() {
+        // An empty string, shown as one so it never reads as "nothing
+        // there" — the cursor sits on the placeholder's first column.
+        (
+            Span::styled(
+                "(empty string)",
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            0,
+        )
     } else {
         let (window, x) = input_window(ui.input.text(), ui.input.cursor_col(), width);
         (
@@ -2981,6 +3003,20 @@ pub(super) fn draw_cell_edit(f: &mut Frame, area: Rect, app: &App) {
     let y = inner.y + input_row;
     if x < inner.x + inner.width && y < inner.y + inner.height {
         f.set_cursor_position((x, y));
+    }
+}
+
+/// The top row of `u`'s box (`h` rows) when the edited row is `rel`
+/// rows below the first one on screen: the bottom of `area`, one row
+/// clear of the footer, while the row is in the top quarter of the
+/// screen — where a short result's rows are, below the header and the
+/// editor — and just below the header otherwise. Pure.
+pub(crate) fn cell_edit_box_y(area: Rect, h: u16, rel: usize) -> u16 {
+    const HEADER_ROWS: u16 = 5;
+    if rel < (area.height / 4) as usize {
+        area.bottom().saturating_sub(h + 1).max(area.y)
+    } else {
+        (area.y + HEADER_ROWS).min(area.bottom().saturating_sub(h))
     }
 }
 
@@ -3420,6 +3456,21 @@ fn push_kv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cell_edit_box_moves_away_from_the_edited_row() {
+        let area = Rect::new(0, 0, 80, 24);
+        // A row near the top of the results: the box sits on the bottom,
+        // clear of the footer row.
+        assert_eq!(cell_edit_box_y(area, 6, 0), 17);
+        assert_eq!(cell_edit_box_y(area, 6, 5), 17);
+        // Further down: just below the header.
+        assert_eq!(cell_edit_box_y(area, 6, 6), 5);
+        // A screen too short for either stays inside it.
+        let tiny = Rect::new(0, 0, 40, 6);
+        assert_eq!(cell_edit_box_y(tiny, 6, 0), 0);
+        assert_eq!(cell_edit_box_y(tiny, 6, 9), 0);
+    }
 
     #[test]
     fn input_window_keeps_the_cursor_in_view() {
