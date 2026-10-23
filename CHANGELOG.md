@@ -29,6 +29,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The completion popup's title was cut to `Tab to cyc`: its width was
+  measured without the title's decoration.
 - Counts read as English: `1 match · Tab to cycle`, `4 saved queries`,
   `2 environments · 6 databases` (the bare first number now says what it
   counts), and the row-detail title `row 1 of 50 · field 1 of 24` like

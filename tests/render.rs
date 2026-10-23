@@ -2423,7 +2423,7 @@ fn completion_popup_with_one_candidate_says_one_match() {
         auto: false,
     });
     let screen = dump(&render(&mut a, 80, 18));
-    assert!(screen.contains(" 1 match · Tab"), "{screen}");
+    assert!(screen.contains(" 1 match · Tab to cycle "), "{screen}");
 }
 
 /// Row detail's `↓ N more fields below` counts the fields the operator
