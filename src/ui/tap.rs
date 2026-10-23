@@ -470,7 +470,7 @@ pub(crate) fn event_detail_rows(fields: &[DetailField], width: usize) -> Vec<Det
 /// bordered box titled with its keys and, when it scrolls, which rows
 /// are showing. Writes `max_scroll` back for the key handler.
 fn draw_tap_event_detail(f: &mut Frame, area: Rect, app: &mut App) {
-    let theme = app.theme.clone();
+    let theme = &app.theme;
     let Some(detail) = app.tap_nav.event_detail.as_mut() else {
         return;
     };
@@ -493,11 +493,11 @@ fn draw_tap_event_detail(f: &mut Frame, area: Rect, app: &mut App) {
     };
     let title = format!("event — j/k scroll · esc back{position}");
     let budget = (area.width.saturating_sub(2) as usize)
-        .saturating_sub(crate::ui::chrome::panel_title_overhead(&theme, "event"));
-    let block = crate::ui::chrome::panel_block(&theme)
+        .saturating_sub(crate::ui::chrome::panel_title_overhead(theme, "event"));
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
         .title(crate::ui::chrome::panel_title(
-            &theme,
+            theme,
             &format!(" {} ", fit_title(&title, budget)),
         ));
     let inner = block.inner(area);

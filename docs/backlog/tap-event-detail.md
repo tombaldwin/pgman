@@ -45,9 +45,9 @@ moving the cursor is still worth having.
   under the reader at line rate.
 - **State:** `TapNavUi::event_detail: Option<TapEventDetail>` (the
   event and a scroll offset), not a new `Mode`: it is a layer of the
-  List view, and the monitor's other keys (`v`, `c`, `s`) are held off
-  while it is open. Reset when the monitor opens and when the view
-  cycles.
+  List view, and the monitor's other keys (`v`, `c`, `s`, Shift-B) are
+  held off while it is open — so the view can't cycle under it. Reset
+  when the monitor opens.
 - **Content**, one labelled field per row, values wrapped under a
   hanging indent: kind; started (`ts_unix_micros`, UTC); duration;
   rows; app; pool; conn; txn; sql (whole, its line breaks kept);
@@ -58,4 +58,6 @@ moving the cursor is still worth having.
   Built by a pure function, so the wording is pinned by unit tests and
   the layout by render tests.
 - **Discoverability:** the footer says `enter detail` in the List view,
-  and the overlay's footer gives its own keys.
+  and the overlay's footer gives its own keys. The monitor writes its
+  status line into the footer while it is open, which hides those
+  hints, so the params strip's rule also reads `enter: the whole event`.
