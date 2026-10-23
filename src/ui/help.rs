@@ -196,7 +196,10 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
             width: list_w,
             ..body
         };
-        draw_section_list(f, list, theme, section, false);
+        // The filter's page spans every section, so no one entry in
+        // the list is the one shown: none is marked.
+        let marked = app.help.filter.is_none().then_some(section);
+        draw_section_list(f, list, theme, marked, false);
         // A rule between the list and the section.
         let rule_x = body.x + list_w + 1;
         let rule: Vec<Line> = (0..body.height)
@@ -217,7 +220,7 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
             ..body
         }
     } else if in_list {
-        draw_section_list(f, body, theme, section, true);
+        draw_section_list(f, body, theme, Some(section), true);
         app.help.max_scroll = 0;
         app.help.heading_rows.clear();
         return;
@@ -286,17 +289,23 @@ fn filter_lines(
     (lines, heads)
 }
 
-/// The section list: one row per section, the selected one marked. With
+/// The section list: one row per section, `selected` (if any) marked. With
 /// `teasers` (the narrow terminal's level 1) each name is followed by
 /// its one-line teaser, cut with an ellipsis where it doesn't fit.
-fn draw_section_list(f: &mut Frame, area: Rect, theme: &Theme, selected: usize, teasers: bool) {
+fn draw_section_list(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    selected: Option<usize>,
+    teasers: bool,
+) {
     let count = HELP_SECTIONS.len();
     // A list taller than the area gives up its last row to say how
     // many entries are out of sight, rather than ending mid-list with
     // nothing to show there is more.
     let overflow = count > area.height as usize && area.height >= 2;
     let height = area.height as usize - usize::from(overflow);
-    let offset = help_list_offset(selected, height);
+    let offset = help_list_offset(selected.unwrap_or(0), height);
     let name_w = HELP_SECTIONS
         .iter()
         .map(|(t, _)| display_width(t))
@@ -309,7 +318,7 @@ fn draw_section_list(f: &mut Frame, area: Rect, theme: &Theme, selected: usize, 
         .skip(offset)
         .take(height)
         .map(|(i, (title, teaser))| {
-            let chosen = i == selected;
+            let chosen = Some(i) == selected;
             let marker = if chosen { "▸ " } else { "  " };
             let name = crate::grid::truncate_cell(
                 &format!("{marker}{title}"),

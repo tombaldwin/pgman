@@ -2514,6 +2514,10 @@ fn the_help_filter_shows_matching_rows_under_their_headings() {
     let text = dump(&buf);
     assert!(text.contains("help · filter"), "{text}");
     assert!(
+        !text.contains("▸"),
+        "the matches span sections, so the list marks none:\n{text}"
+    );
+    assert!(
         text.contains("filter: /clipboard"),
         "the footer is the filter prompt:\n{text}"
     );
