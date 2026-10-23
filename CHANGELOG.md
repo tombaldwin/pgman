@@ -27,6 +27,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `pgman --dsn X query 'SQL'` failed with clap's "unexpected argument":
+  a sub-command (`query`, `env`, `mcp`) now works after global options.
+  `--help`'s Usage lists the three sub-commands, and `query`'s no-DSN
+  error mentions Spring `application*.yml` alongside the other configs
+  it reads.
 - The no-connection start card wraps at 80 columns instead of cutting
   its lines off mid-word.
 - `--redact` blocked out pgman's own name — the title read `▓▓▓▓▓ 0.1.0`

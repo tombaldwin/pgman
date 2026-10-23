@@ -155,6 +155,10 @@ applies (`--dsn`, `--format`, `--discovered`, `--yes`):
 pgman query 'SELECT id, email FROM users LIMIT 5' --json --dsn postgres://app@localhost/appdb
 ```
 
+Global options may come before the sub-command too: `pgman --dsn
+postgres://app@localhost/appdb query 'SELECT 1'` is the same command. The
+same holds for `env` and `mcp`.
+
 `pgman mcp serve [--read-only] [--project-connections]` runs the stdio
 MCP server instead of the TUI — read-only queries, plus `apply_patches`
 once you confirm it; see [MCP server](mcp.md).
