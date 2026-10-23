@@ -8,6 +8,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- Config advisor in the schema wizard (`W`): read-only findings from the
+  server's statistics — buffer cache hit ratio, temp-file spills (with the
+  spilling statements from `pg_stat_statements`), dead tuples and the
+  autovacuum setting behind them, lock-wait chains, and checkpoints forced
+  by WAL volume (`pg_stat_checkpointer` from PG17). Each shows its
+  evidence, how long the counters have accumulated, a conservative
+  setting, and its RDS / Aurora parameter-group name, static or dynamic.
+  `e` yanks a finding's evidence query.
 - `sslrootcert=<file>` in a connection string pins the trusted CAs, as
   in libpq (and `require` with a CA file checks the chain). It used to
   be ignored, with the default trust store used instead. `sslcrl` and

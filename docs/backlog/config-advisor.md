@@ -1,7 +1,7 @@
 # Design note: the config advisor
 
-Status: decided 2026-10-23, first round (read-only server-stats findings)
-of the "L3 — tuning advisor" backlog block.
+Status: decided and landed 2026-10-23, first round (read-only
+server-stats findings) of the "L3 — tuning advisor" backlog block.
 
 ## Scope of this round
 
@@ -36,9 +36,11 @@ and sort (severity, then code, then object), use the same keys (`j/k`,
 `e` yanks the evidence query, so the operator can run it themselves in
 the editor.
 
-The detail strip grows for an advisor finding (it carries evidence,
-the stats window, the setting and the RDS line) and keeps its 7 rows
-for a lint finding.
+The detail strip grows for an advisor finding (up to all but the
+list's five rows) and keeps its 7 rows for a lint finding. What to do
+comes first — the setting (current → suggested, restart or not) and
+the suggestion — so 80×24 shows it; then the stats window and the
+evidence, the reasoning, the RDS / Aurora line, and the prose.
 
 ADV003 and LINT104 can both name a table. They say different things:
 LINT104 is "reclaim it now" (`VACUUM`), ADV003 is "this table's
@@ -59,6 +61,9 @@ stay; ADV003's detail points at LINT104.
   suggested value). Lint findings carry `None`.
 - `AppMsg::AdvisorLoaded` mirrors `LiveLintLoaded`. `--demo` answers
   from a fixture.
+- It runs on the editor's session, after the live lint, so ages use
+  `clock_timestamp()`: inside an open transaction `now()` is the
+  transaction's start.
 
 The server kind comes from the advisor's own context query: Aurora
 when `aurora_version()` exists, RDS when the `rds.extensions` setting
