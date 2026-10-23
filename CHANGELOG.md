@@ -64,6 +64,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   told the operator to start pgman with `--tap-otlp :4318` even with a
   listener — that one included — already bound; the hint now points
   the JVM at the bound OTLP port.
+- The tap monitor's title is no longer cut mid-word by its border: the
+  room it was fitted to left out the decoration round the panel name.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

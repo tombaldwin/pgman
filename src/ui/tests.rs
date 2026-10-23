@@ -644,6 +644,27 @@ fn tap_monitor_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
         .collect()
 }
 
+/// The tap monitor's title is fitted into its border whole segments at
+/// a time; the border must never cut it mid-word. Its budget left out
+/// the `[ ◆ … ◆ ]` decoration, so it did, by that much.
+#[test]
+fn the_tap_monitor_title_is_never_cut_by_its_border() {
+    for w in (60..=180).step_by(7) {
+        let mut a = settled_app(false, false);
+        let rows = tap_monitor_rows(&mut a, w, 30);
+        let row = rows
+            .iter()
+            .find(|r| r.contains("heartbeat"))
+            .unwrap_or_else(|| panic!("no title at {w}:\n{}", rows.join("\n")));
+        let inside = row.split('╮').next().unwrap();
+        let text = inside.trim_end_matches('─').trim_end();
+        assert!(
+            text.ends_with("q close") || text.ends_with('…'),
+            "title cut by the border at width {w}: {row}"
+        );
+    }
+}
+
 #[test]
 fn tap_app_cell_is_exactly_the_column_wide_in_display_columns() {
     use crate::ui::tap::tap_app_cell;

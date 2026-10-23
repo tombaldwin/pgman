@@ -12,7 +12,7 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                                         │
 │  FROM invoices                                                                                                       │
-│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · Shift-B baseline ╮    │
+│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · … ───────────────╮    │
 │  OR│   CALLS    ERR        P50        P95        P99  FINGERPRINT · LAST CALLER                                 │    │
 │    │       8      0      465µs      525µs      525µs  select id, description, quan… · InvoiceService.loadLines:1│    │
 ╰────│       1      0      2.3ms      2.3ms      2.3ms  update subscriptions set sta… · DunningJob.advance:77     │────╯

@@ -36,10 +36,12 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
         count_label(app.tap_health.query_count, "query", "queries"),
         count_label(app.tap_health.heartbeat_count, "heartbeat", "heartbeats"),
     );
-    // Room between the block's two corner glyphs, less the space on
-    // either side of the title text. Without this the border cut the
-    // title mid-word (`… Shift-B base┐`).
-    let title_budget = (popup.width.saturating_sub(4)) as usize;
+    // Room between the block's two corner glyphs, less what the title's
+    // decoration and padding add to its text. Without this the border
+    // cut the title mid-word (`… Shift-B base┐`) — and still did by the
+    // decoration's width while only the padding was taken off.
+    let title_budget = (popup.width.saturating_sub(2) as usize)
+        .saturating_sub(crate::ui::chrome::panel_title_overhead(theme, "JDBC tap"));
     let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
         .title(crate::ui::chrome::panel_title(
