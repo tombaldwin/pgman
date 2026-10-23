@@ -129,6 +129,33 @@ Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
 
 ### From the v0.2.0 release panel (2026-10-23) — LOWs left for later
+- **Paging misses functions it can't see**: a function called inside a
+  view, through `t.func` attribute notation, or a user overload of a
+  built-in name called unqualified (`public.lower(mytype)`) still pages.
+  An xid check after the first FETCH would catch writes (not `nextval`).
+- **The header says `Session: writable` on a standby** in the paging
+  view's status; read the pinned read-only state there too.
+- **The cell-edit confirm shows a stale column name** (`SET b`) before
+  the server-side identity check refuses it. Warn at plan time when an
+  unaliased result column's name differs from the schema cache.
+- **A standby pin outlives a promotion** across a same-DSN reconnect, as
+  an environment's replica pin does. Re-ask `pg_is_in_recovery()` and
+  unpin when it says no.
+- **MCP read-only refusals carry no hint** since the 25006 hint moved out
+  of `QueryErr::from`; give MCP its own (it forces read-only itself).
+- **The 25006 hint footer at 80 columns** (panel's 3c) didn't reproduce
+  for the fix agent at heights 16–30 in editor, grid and row detail. Get
+  the panel's exact steps and size before closing it.
+- **Advisor RDS facts to confirm**: the 24 h `idle_in_transaction_session_timeout`
+  default is confirmed for Aurora only, not from AWS's RDS docs. Aurora's
+  `autovacuum_vacuum_scale_factor` default is 0.1 (ADV003 reads
+  pg_settings, so harmless). `aws_cli` always targets the Aurora cluster
+  group; a future instance-only parameter would need the instance group.
+- **Untested by mutation** (hand-driven only, need a real client): the
+  `standby` plumbing in `spawn_run`; the lost-connection client drop;
+  the `Failed` refusals in `db` / `spawn_run` / `spawn_page_request`.
+- **`a_cell_edit_that_is_not_one_row_changes_nothing` flaked once** in a
+  full integration run with other worktrees sharing the database.
 - **`D` after closing a diff diffs a new result against the stale pinned A**,
   even from another table; only the title's A label shows it. Pin instead
   when the new grid's columns/source differ, or say A is still pinned.
