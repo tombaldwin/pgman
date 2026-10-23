@@ -1359,6 +1359,10 @@ pub struct App {
     pub tx_open: bool,
     /// Log-import pick state (reconstructed queries, view, clusters, cursor).
     pub log_pick: LogPickUi,
+    /// The log picker as it was when last closed (Enter or Esc). Loading
+    /// a pick replaces the log in the buffer, so a later Ctrl-L that
+    /// finds no log reopens this instead; a new log replaces it.
+    pub last_log_pick: Option<LogPickUi>,
     /// A short status line shown in the footer after a run (e.g. "EXPLAIN ok").
     pub last_status: Option<String>,
     /// A query / safety error to surface to the user.
@@ -1759,6 +1763,7 @@ impl App {
             pending_run: None,
             tx_open: false,
             log_pick: LogPickUi::default(),
+            last_log_pick: None,
             last_status: None,
             last_error: None,
             query_running: false,
@@ -3262,14 +3267,21 @@ impl App {
         self.editor.cursor = self.editor.buffer.len();
         self.mode = Mode::Editor;
         self.start_log_import();
+        // This entry bypasses `on_key`, so spend the picker's
+        // first-visit tip here — on the first view, where it helps —
+        // rather than on a later Ctrl-L, where it would hide the
+        // "reopened the last log" status.
+        self.note_mode_entry(self.mode);
     }
 
     /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
     /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
     /// Ctrl-L / F8 outside the editor: reconstruct the log already in it,
-    /// or open it to paste one.
+    /// reopen the last log picker, or open the editor to paste one.
     pub(super) fn log_import_from_normal(&mut self) {
-        if query::logdetect::detect_log(&self.editor.buffer).is_some() {
+        if query::logdetect::detect_log(&self.editor.buffer).is_some()
+            || self.last_log_pick.is_some()
+        {
             return self.start_log_import();
         }
         self.mode = Mode::Editor;
@@ -3292,6 +3304,16 @@ impl App {
             }
         }
         if picks.is_empty() {
+            if let Some(last) = self.last_log_pick.take() {
+                self.last_error = None;
+                self.last_status = Some(format!(
+                    "reopened the last log · {}",
+                    crate::ui::count_label(last.picks.len() as u64, "query", "queries")
+                ));
+                self.log_pick = last;
+                self.mode = Mode::LogPick;
+                return;
+            }
             self.last_error = Some(
                 "no queries found (paste a Hibernate or Postgres log into the editor first)"
                     .to_string(),

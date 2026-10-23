@@ -12535,3 +12535,121 @@ async fn quitting_an_untouched_window_leaves_another_windows_draft_alone() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Two JDBC-shaped pastes the importer reconstructs — enough to tell a
+/// reopened picker from a fresh one.
+const LOG_A: &str = "select * from orders where id = ?\n\nINTEGER:42";
+const LOG_B: &str = "select * from invoices where id = ?\n\nINTEGER:7";
+
+fn ctrl_l() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)
+}
+
+/// Paste `log` into the editor and Ctrl-L it, the way an operator does
+/// (so the picker's first-visit tip is spent before the reopen).
+fn open_log_by_hand(a: &mut App, log: &str) {
+    a.mode = Mode::Editor;
+    a.editor.buffer = log.into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+}
+
+#[test]
+fn ctrl_l_after_loading_a_pick_reopens_the_last_log() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "select * from orders where id = 42;");
+
+    // The buffer now holds the loaded query, not the log.
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick, "{:?}", a.last_error);
+    assert!(a.last_error.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+    assert_eq!(a.log_pick.picks.len(), 1);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from orders where id = 42"
+    );
+}
+
+#[test]
+fn esc_from_the_log_picker_also_keeps_it_for_reopening() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+}
+
+#[test]
+fn ctrl_l_from_normal_mode_reopens_the_last_log_too() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.mode = Mode::Normal;
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+}
+
+#[test]
+fn a_new_log_in_the_buffer_replaces_the_last_one() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.editor.buffer = LOG_B.into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from invoices where id = 7"
+    );
+    // And it is B, not A, that a later Ctrl-L reopens.
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.on_key(ctrl_l());
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from invoices where id = 7"
+    );
+}
+
+#[test]
+fn a_log_preloaded_at_startup_reopens_with_the_reopened_status() {
+    // `--log` enters the picker without a key, so its first-visit tip
+    // must not wait for (and hide) the reopen status.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.preload_log(LOG_A.to_string());
+    assert!(a.last_status.as_deref().unwrap_or("").starts_with("tip"));
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.on_key(ctrl_l());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+}
+
+#[test]
+fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "select 1".into();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(a
+        .last_error
+        .as_deref()
+        .unwrap_or("")
+        .starts_with("no queries found"));
+}

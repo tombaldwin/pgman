@@ -27,6 +27,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- After loading a query from the log picker, `Ctrl-L` / `F8` said "no
+  queries found", because the loaded query had replaced the log in the
+  buffer. With no log in the buffer it now reopens the last log's picker
+  (`reopened the last log · N queries`); a new log replaces it.
 - Two pgman windows no longer lose each other's editor draft. A window
   that never changed the draft writes nothing when it quits, so it can't
   overwrite what another window saved meanwhile; and a window with edits

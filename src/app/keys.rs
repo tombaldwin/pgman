@@ -1074,11 +1074,7 @@ impl App {
     /// editor, Esc cancels, `c` toggles cluster view.
     pub(super) fn on_log_pick_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.log_pick.picks.clear();
-                self.log_pick.clusters.clear();
-                self.mode = Mode::Editor;
-            }
+            KeyCode::Esc | KeyCode::Char('q') => self.close_log_pick(),
             KeyCode::Char('c') => self.toggle_log_pick_view(),
             KeyCode::Char('j') | KeyCode::Down => self.log_pick.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.log_pick.select_prev(),
@@ -1103,12 +1099,17 @@ impl App {
                         status.push_str(&crate::ui::footer_text(&err));
                     }
                 }
-                self.log_pick.picks.clear();
-                self.log_pick.clusters.clear();
-                self.mode = Mode::Editor;
+                self.close_log_pick();
             }
             _ => {}
         }
+    }
+
+    /// Leave the log picker for the editor, keeping it (selection and
+    /// all) so a Ctrl-L with no log in the buffer can reopen it.
+    fn close_log_pick(&mut self) {
+        self.last_log_pick = Some(std::mem::take(&mut self.log_pick));
+        self.mode = Mode::Editor;
     }
 
     pub(super) fn on_result_diff_key(&mut self, key: KeyEvent) {
