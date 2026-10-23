@@ -10,7 +10,7 @@ mod spawn;
 mod tabs;
 mod types;
 mod yank;
-pub use crate::app::msg::AppMsg;
+pub use crate::app::msg::{AppMsg, PageOutcome, RunPaging};
 use crate::conn::{self, Dsn};
 use crate::grid::{cell_text, Cell, Grid};
 use crate::inventory::patching::RunMode;
@@ -1662,7 +1662,21 @@ pub struct App {
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
     history_draft: String,
+    /// The live connection. Database work reaches it only through
+    /// [`App::db`], which queues the work behind `pager` — see
+    /// `the_client_is_reached_only_through_db` in the tests.
     client: Option<Arc<tokio_postgres::Client>>,
+    /// The live connection's pager (`query::paging`): owns the result
+    /// cursor and orders every piece of database work behind it. Set
+    /// with `client` on every `Booted`; dropping it ends the task.
+    pager: Option<crate::query::paging::Pager>,
+    /// The open result cursor, as the UI sees it. Taken by [`App::db`]
+    /// (the barrier closes the real one) and by every other close.
+    pub(crate) cursor: Option<CursorMirror>,
+    /// How the active tab's result can continue (`M`).
+    pub(crate) result_paging: Option<ResultPaging>,
+    /// The last [`ResultPaging::id`] handed out.
+    result_ids: u64,
     /// Cancel-side of the live connection. Set on every `Booted`
     /// alongside `client`. Cleared on disconnect. Trait-abstracted so
     /// tests can inject a recording fake to verify Ctrl-C routes
@@ -1899,6 +1913,10 @@ impl App {
             },
             pending_tunnel: None,
             client: None,
+            pager: None,
+            cursor: None,
+            result_paging: None,
+            result_ids: 0,
             cancel_dispatcher: None,
             tunnel: None,
             safety_config,
@@ -2012,6 +2030,10 @@ impl App {
             // the terminal lost it.
             let draft_save_at = (!self.demo && self.draft_dirty)
                 .then(|| draft_save_at(self.draft_last_save, DRAFT_SAVE_GAP));
+            // An open result cursor closes on its deadline even when
+            // nothing else wakes the loop: an idle pgman must not leave
+            // the session idle in transaction.
+            let cursor_close_at = self.cursor_deadline();
             tokio::select! {
                 ev = events.recv() => {
                     match ev {
@@ -2048,7 +2070,11 @@ impl App {
                 _ = tokio::time::sleep_until(
                     tokio::time::Instant::from_std(draft_save_at.unwrap_or_else(Instant::now)),
                 ), if draft_save_at.is_some() => {}
+                _ = tokio::time::sleep_until(
+                    tokio::time::Instant::from_std(cursor_close_at.unwrap_or_else(Instant::now)),
+                ), if cursor_close_at.is_some() => {}
             }
+            self.tick_cursor_timeout(Instant::now());
             // Deferred actions that need `&mut TuiHost`. `\e`
             // (external editor) sets the flag from the editor key
             // handler; we do the suspend / fork / resume here so the
@@ -2424,6 +2450,13 @@ impl App {
             && key.code == KeyCode::Char('c')
             && self.mode != Mode::Editor
         {
+            // From the results, a running query or `M` fetch is what
+            // Ctrl-C stops, as it does from the editor; quitting stays
+            // a second press once nothing runs (and `q` either way).
+            if self.mode == Mode::Normal && self.query_running {
+                self.cancel_running_query();
+                return;
+            }
             if armed == Some(ArmedChord::Quit) {
                 self.should_quit = true;
             } else {
@@ -3355,7 +3388,7 @@ impl App {
 
     /// Spawn a `COMMIT` or `ROLLBACK` of the open transaction.
     fn close_tx(&mut self, commit: bool) {
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.tx_open = false;
             self.mode = Mode::Editor;
             return;
@@ -3369,6 +3402,7 @@ impl App {
             "rolling back…".to_string()
         });
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = if commit {
                 conn::tx_commit(&client).await
             } else {
@@ -3804,6 +3838,341 @@ impl App {
             "not connected · start pgman with --dsn postgres://… or inside a Spring project"
                 .to_string()
         }
+    }
+
+    /// The client for one piece of database work, queued behind the
+    /// pager so that it never runs inside the result cursor's
+    /// transaction: the pager closes the cursor first
+    /// (docs/backlog/paging.md, "one session, many tasks"). The place in
+    /// the queue is taken here, on the UI thread, so the order of calls
+    /// is the order on the wire. The spawned task awaits
+    /// [`crate::query::paging::Db::ready`] before its first statement.
+    ///
+    /// The only reader of `self.client` for database work; the cursor's
+    /// own requests go to the pager directly.
+    pub(crate) fn db(&mut self) -> Option<crate::query::paging::Db> {
+        // The barrier closes the cursor (and with no client there is
+        // none); the title follows.
+        self.cursor = None;
+        let client = self.client.clone()?;
+        Some(crate::query::paging::Db::new(client, self.pager.as_ref()))
+    }
+
+    /// Close the open result cursor, if any, without waiting — the
+    /// pager queues the `COMMIT` ahead of whatever comes next.
+    pub(crate) fn close_cursor(&mut self) {
+        if self.cursor.take().is_some() {
+            if let Some(pager) = &self.pager {
+                pager.close();
+            }
+        }
+    }
+
+    /// The grid was replaced by something that is not a run's result
+    /// (`\l`, the bootstrap after a connect, the demo's `\df`): drop
+    /// the old result's paging record, and its cursor, which now feeds
+    /// nothing.
+    pub(crate) fn forget_result_paging(&mut self) {
+        if self.result_more() == crate::grid::More::CursorOpen {
+            self.close_cursor();
+        }
+        self.result_paging = None;
+    }
+
+    /// How the active result can continue past the rows it holds.
+    pub fn result_more(&self) -> crate::grid::More {
+        result_more(
+            self.result_paging.as_ref(),
+            self.cursor.map(|c| c.result_id),
+        )
+    }
+
+    /// When the main loop must wake to close an idle cursor. `None`
+    /// while a fetch runs: the pager is busy with it, and the limits
+    /// restart when it lands.
+    pub(crate) fn cursor_deadline(&self) -> Option<Instant> {
+        (!self.query_running)
+            .then_some(self.cursor)
+            .flatten()
+            .map(|c| c.deadline())
+    }
+
+    /// Close a cursor that has outlived its limits — never leave a
+    /// production session idle in transaction — and say so.
+    pub(crate) fn tick_cursor_timeout(&mut self, now: Instant) {
+        if self.query_running {
+            return;
+        }
+        let Some(why) = self.cursor.and_then(|c| c.expired(now)) else {
+            return;
+        };
+        let limits = self.cursor.map(|c| c.limits);
+        self.close_cursor();
+        let after = match (why, limits) {
+            (CursorExpiry::Idle, Some(l)) => format!("{}s idle", l.idle.as_secs().max(1)),
+            (CursorExpiry::Lifetime, Some(l)) => {
+                format!("{} min open", (l.lifetime.as_secs() / 60).max(1))
+            }
+            (_, None) => String::new(),
+        };
+        self.last_status = Some(format!(
+            "result cursor closed after {after} · M re-runs the query for more rows"
+        ));
+    }
+
+    /// `M` in the grid: the next page from the open cursor, or — once
+    /// it has closed — a re-run that fetches as many rows as are held
+    /// plus a page (docs/backlog/paging.md).
+    pub(crate) fn fetch_more(&mut self) {
+        use crate::grid::More;
+        use crate::query::paging::{MAX_HELD_ROWS, PAGE_ROWS};
+        if !self.grid.truncated {
+            self.last_status = Some(if self.grid.columns.is_empty() {
+                "no result to fetch more of".into()
+            } else {
+                "all rows are already fetched".into()
+            });
+            return;
+        }
+        if self.query_running {
+            self.last_status = Some("a query is already running · ctrl-c cancels it".into());
+            return;
+        }
+        let held = self.grid.row_count();
+        match self.result_more() {
+            More::Unpaged => {
+                self.last_status = Some(
+                    "only a plain SELECT run from the editor pages · pgman query '…' --json returns every row"
+                        .into(),
+                );
+            }
+            More::InTransaction => {
+                self.last_status = Some(
+                    "a transaction was open when this ran, so it can't page · commit or roll back, then run it again"
+                        .into(),
+                );
+            }
+            More::Ceiling => {
+                self.last_status = Some(format!(
+                    "pgman holds at most {MAX_HELD_ROWS} rows · pgman query '…' --json returns every row"
+                ));
+            }
+            More::CursorOpen => {
+                let want = PAGE_ROWS.min(MAX_HELD_ROWS.saturating_sub(held));
+                self.spawn_page_request(PageRequest::Fetch(want));
+                self.last_status = Some(format!("fetching rows {}–{}…", held + 1, held + want));
+            }
+            More::CursorClosed => {
+                // The statement passed `is_pageable_select` when it first
+                // ran — a plain SELECT, which every guard allows — and that
+                // classification is a pure function of the text.
+                let Some(sql) = self.result_paging.as_ref().map(|p| p.sql.clone()) else {
+                    return;
+                };
+                let want = (held + PAGE_ROWS).min(MAX_HELD_ROWS);
+                self.spawn_page_request(PageRequest::Rerun(sql, want));
+                self.last_status = Some(format!(
+                    "the cursor had closed · re-running for {want} rows…"
+                ));
+            }
+        }
+    }
+
+    /// Send a `M` request to the pager; the answer lands as
+    /// `AppMsg::PageLoaded` for the active result.
+    fn spawn_page_request(&mut self, req: PageRequest) {
+        let (Some(pager), Some(result_id)) = (
+            self.pager.clone(),
+            self.result_paging.as_ref().map(|p| p.id),
+        ) else {
+            self.last_error = Some(self.not_connected_message());
+            return;
+        };
+        let tx = self.msg_tx.clone();
+        let generation = self.generation;
+        self.query_running = true;
+        self.query_started = Some(Instant::now());
+        self.last_error = None;
+        let gone = || conn::QueryErr::msg("the connection's pager stopped");
+        match req {
+            PageRequest::Fetch(want) => {
+                let rx = pager.fetch(want);
+                tokio::spawn(async move {
+                    let outcome = match rx.await {
+                        Ok(result) => result.map(PageOutcome::More),
+                        Err(_) => Err(gone()),
+                    };
+                    let _ = tx.send(AppMsg::PageLoaded {
+                        generation,
+                        result_id,
+                        outcome,
+                    });
+                });
+            }
+            PageRequest::Rerun(sql, want) => {
+                self.cursor = None;
+                let rx = pager.open(sql, want);
+                tokio::spawn(async move {
+                    let outcome = match rx.await {
+                        Ok(result) => result.map(PageOutcome::Rerun),
+                        Err(_) => Err(gone()),
+                    };
+                    let _ = tx.send(AppMsg::PageLoaded {
+                        generation,
+                        result_id,
+                        outcome,
+                    });
+                });
+            }
+        }
+    }
+
+    /// `M`'s answer landed: add the page, or replace the rows with the
+    /// re-run, and say where that leaves the result.
+    pub(crate) fn on_page_loaded(
+        &mut self,
+        result_id: u64,
+        outcome: Result<PageOutcome, conn::QueryErr>,
+    ) {
+        use crate::query::paging::MAX_HELD_ROWS;
+        self.query_running = false;
+        self.query_started = None;
+        let asked = std::mem::take(&mut self.cancel_requested);
+        if self.result_paging.as_ref().map(|p| p.id) != Some(result_id) {
+            // The result changed under the fetch (tab switches and new
+            // runs wait for it, so this is a stale answer): nothing to
+            // add it to, and its cursor feeds nothing.
+            if self.cursor.is_some_and(|c| c.result_id == result_id) {
+                self.close_cursor();
+            }
+            return;
+        }
+        let before = self.grid.row_count();
+        let rerun = matches!(outcome, Ok(PageOutcome::Rerun(_)));
+        let more = match outcome {
+            Err(e) => {
+                // The pager rolled the cursor's transaction back.
+                self.cursor = None;
+                let cancelled =
+                    asked && e.detail.as_ref().and_then(|d| d.code.as_deref()) == Some("57014");
+                if cancelled {
+                    self.last_status =
+                        Some("fetch cancelled · the cursor is closed · M re-runs the query".into());
+                } else {
+                    self.last_error = Some(format!(
+                        "fetching more rows failed: {} · M re-runs the query",
+                        e.msg
+                    ));
+                    self.last_error_detail = e.detail;
+                }
+                return;
+            }
+            Ok(PageOutcome::More(page)) => {
+                self.append_rows(page.rows);
+                self.grid.truncated = page.more;
+                page.more
+            }
+            Ok(PageOutcome::Rerun(opened)) => {
+                let in_transaction = opened.in_transaction;
+                self.replace_rows(opened.grid);
+                if let Some(p) = self.result_paging.as_mut() {
+                    p.in_transaction = in_transaction;
+                }
+                let now = Instant::now();
+                self.cursor = opened.cursor.map(|limits| CursorMirror {
+                    result_id,
+                    opened: now,
+                    last_fetch: now,
+                    limits,
+                });
+                self.grid.truncated
+            }
+        };
+        if !more {
+            self.cursor = None;
+        } else if let Some(c) = self.cursor.as_mut() {
+            c.last_fetch = Instant::now();
+        }
+        let held = self.grid.row_count();
+        if more && held >= MAX_HELD_ROWS {
+            self.close_cursor();
+            if let Some(p) = self.result_paging.as_mut() {
+                p.ceiling = true;
+            }
+        }
+        let added = held.saturating_sub(before);
+        let tail = if self.grid.truncated {
+            format!(
+                " · {}",
+                crate::grid::partial_status_note(self.result_more())
+            )
+        } else {
+            " · that is every row".to_string()
+        };
+        self.last_status = Some(if rerun {
+            format!("re-ran the query · {held} row(s){tail}")
+        } else {
+            format!("+{added} row(s) · {held} held{tail}")
+        });
+    }
+
+    /// Add a fetched page to the held rows, keeping the active sort and
+    /// filter: the sort's original-order copy grows too, and the rows
+    /// are re-sorted, so the page lands where the sort says. Without a
+    /// sort or filter the selection moves to the first new row.
+    fn append_rows(&mut self, rows: Vec<Vec<Cell>>) {
+        let first_new = self.grid.rows.len();
+        if rows.is_empty() {
+            return;
+        }
+        if let Some(raw) = self.grid_view.raw_rows.as_mut() {
+            raw.extend(rows.iter().cloned());
+        }
+        self.grid.rows.extend(rows);
+        self.resort_rows();
+        self.rebuild_visible_rows();
+        if self.grid_view.sort.is_none() && self.grid_view.filter.is_none() {
+            self.grid_state.select(Some(first_new));
+        }
+    }
+
+    /// A re-run's rows in place of the held ones. The same columns keep
+    /// the sort, filter and column cursor; different ones are a new
+    /// result to the view.
+    fn replace_rows(&mut self, grid: Grid) {
+        if grid.columns != self.grid.columns {
+            self.grid = grid;
+            self.grid_state
+                .select(if self.grid.is_empty() { None } else { Some(0) });
+            self.reset_grid_view();
+            return;
+        }
+        self.grid_view.raw_rows = self.grid_view.sort.map(|_| grid.rows.clone());
+        self.grid = grid;
+        self.resort_rows();
+        // Bookmarks name rows of the old snapshot.
+        self.bookmarks.clear();
+        self.rebuild_visible_rows();
+    }
+
+    /// Re-apply the active sort to `grid.rows` from its original-order
+    /// copy. Bookmarks key on row indices, which a re-sort moves, so
+    /// they go when there is a sort to re-apply.
+    fn resort_rows(&mut self) {
+        let Some((col, asc)) = self.grid_view.sort else {
+            return;
+        };
+        if let Some(raw) = &self.grid_view.raw_rows {
+            self.grid.rows = raw.clone();
+        }
+        crate::grid::sort_rows(&mut self.grid.rows, col, asc);
+        self.bookmarks.clear();
+    }
+
+    /// A fresh id for a result that ran through the cursor.
+    fn next_result_id(&mut self) -> u64 {
+        self.result_ids = self.result_ids.wrapping_add(1);
+        self.result_ids
     }
 
     fn request_run(&mut self, kind: RunKind) {
@@ -4321,8 +4690,9 @@ impl App {
         match yank::write_clipboard(&csv) {
             Ok(()) => {
                 self.last_status = Some(format!(
-                    "copied {} row(s) to clipboard as CSV",
-                    export.rows.len()
+                    "copied {} row(s) to clipboard as CSV{}",
+                    export.rows.len(),
+                    crate::grid::fetched_only_note(self.grid.truncated)
                 ));
                 self.last_error = None;
             }
@@ -4535,10 +4905,11 @@ impl App {
         if self.demo {
             self.on_live_lint_loaded(Ok(crate::demo::live_lint()));
             self.on_advisor_loaded(Ok(crate::demo::advisor()));
-        } else if let Some(client) = self.client.clone() {
+        } else if let Some(db) = self.db() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;
             tokio::spawn(async move {
+                let client = db.ready().await;
                 let result = crate::query::lint::fetch_live(&client).await;
                 let _ = tx.send(AppMsg::LiveLintLoaded { generation, result });
                 let th = crate::query::advisor::Thresholds::default();
@@ -4571,7 +4942,7 @@ impl App {
             self.mode = Mode::SlowQueries;
             return self.on_slow_queries_loaded(Ok(crate::demo::slow_queries()));
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -4579,7 +4950,7 @@ impl App {
         self.slow_queries.error = None;
         self.mode = Mode::SlowQueries;
         self.last_status = Some("loading pg_stat_statements…".into());
-        self.spawn_slow_queries_load(client);
+        self.spawn_slow_queries_load(db);
     }
 
     /// `r` inside the slow-queries panel — refresh in place.
@@ -4587,11 +4958,11 @@ impl App {
         if self.demo {
             return self.start_slow_queries();
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             return;
         };
         self.last_status = Some("refreshing pg_stat_statements…".into());
-        self.spawn_slow_queries_load(client);
+        self.spawn_slow_queries_load(db);
     }
 
     /// `E` from Normal: open the environments overview and gather. Needs
@@ -5302,25 +5673,25 @@ impl App {
             self.mode = Mode::Sessions;
             return self.on_sessions_loaded(Ok(crate::demo::sessions()));
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
         self.sessions.cursor = 0;
         self.mode = Mode::Sessions;
         self.last_status = Some("loading pg_stat_activity…".into());
-        self.spawn_sessions_load(client);
+        self.spawn_sessions_load(db);
     }
 
     fn refresh_sessions(&mut self) {
         if self.demo {
             return self.start_sessions();
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             return;
         };
         self.last_status = Some("refreshing pg_stat_activity…".into());
-        self.spawn_sessions_load(client);
+        self.spawn_sessions_load(db);
     }
 
     /// Capital-K in the Sessions panel — open a confirmation
@@ -6143,6 +6514,30 @@ pub(crate) fn split_editor_command(s: &str) -> (String, Vec<String>) {
     let prog = parts.next().unwrap_or("vi").to_string();
     let args: Vec<String> = parts.map(str::to_string).collect();
     (prog, args)
+}
+
+/// How a result can continue: from its paging record and the result the
+/// open cursor (if any) belongs to. Pure.
+pub(crate) fn result_more(
+    paging: Option<&ResultPaging>,
+    cursor_result: Option<u64>,
+) -> crate::grid::More {
+    use crate::grid::More;
+    match paging {
+        None => More::Unpaged,
+        Some(p) if p.in_transaction => More::InTransaction,
+        Some(p) if p.ceiling => More::Ceiling,
+        Some(p) if cursor_result == Some(p.id) => More::CursorOpen,
+        Some(_) => More::CursorClosed,
+    }
+}
+
+/// What `M` asks the pager for.
+enum PageRequest {
+    /// The next `n` rows of the open cursor.
+    Fetch(usize),
+    /// The statement again, behind a fresh cursor, for its first `n` rows.
+    Rerun(String, usize),
 }
 
 /// Build and run the effective SQL for `kind`, honouring the safety decision.

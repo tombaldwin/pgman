@@ -11,6 +11,7 @@ impl App {
             grid_selected: self.grid_state.selected(),
             grid_view: self.grid_view.clone(),
             last_run_sql: self.last_run_sql.clone(),
+            result_paging: self.result_paging.clone(),
             pinned_result: self.result_diff.pinned.clone(),
             bookmarks: self.bookmarks.clone(),
             editor_lines: self.editor_lines,
@@ -33,6 +34,7 @@ impl App {
         self.grid_state.select(snap.grid_selected);
         self.grid_view = snap.grid_view;
         self.last_run_sql = snap.last_run_sql;
+        self.result_paging = snap.result_paging;
         self.result_diff.pinned = snap.pinned_result;
         self.bookmarks = snap.bookmarks;
         self.editor_lines = snap.editor_lines;
@@ -92,6 +94,10 @@ impl App {
             return;
         }
         self.dismiss_result_diff();
+        // The result cursor goes with the tab whose result it feeds.
+        if self.result_more() == crate::grid::More::CursorOpen {
+            self.close_cursor();
+        }
         self.tabs.remove(self.active_tab);
         if self.active_tab >= self.tabs.len() {
             self.active_tab = self.tabs.len() - 1;

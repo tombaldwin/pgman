@@ -1094,6 +1094,7 @@ impl App {
             KeyCode::Char('Q') => self.open_saved_queries(),
             KeyCode::Char('D') => self.pin_or_diff_result(),
             KeyCode::Char('I') => self.yank_row_as_insert(),
+            KeyCode::Char('M') => self.fetch_more(),
             KeyCode::Char('m') => {
                 self.pending_mark_set = true;
                 self.last_status = Some("set mark · press a-z".into());

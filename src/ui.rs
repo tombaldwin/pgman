@@ -2495,6 +2495,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    M             fetch the next 1000 rows of a partial result"),
+        &mut lines,
+    );
+    push(
         row("    D             pin result as A · run another query, D again to diff as B"),
         &mut lines,
     );

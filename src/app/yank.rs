@@ -234,7 +234,7 @@ impl App {
             self.on_ddl_loaded(&label, result);
             return;
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -242,6 +242,7 @@ impl App {
         let generation = self.generation;
         self.last_status = Some(format!("reading the DDL of {label}…"));
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = crate::query::ddl::fetch(&client, &schema, &table).await;
             let _ = tx.send(AppMsg::DdlLoaded {
                 generation,

@@ -404,6 +404,61 @@ pub struct GridFind {
     pub accepted: Option<String>,
 }
 
+/// A result that ran through the result cursor (`query::paging`,
+/// docs/backlog/paging.md), so `M` can fetch more of it. Per tab: it
+/// travels in the tab's snapshot with the grid it describes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultPaging {
+    /// Matches [`CursorMirror::result_id`] while this result's cursor
+    /// is open.
+    pub id: u64,
+    /// The statement, for `M` to re-run once the cursor has closed.
+    pub sql: String,
+    /// Stopped at `paging::MAX_HELD_ROWS`.
+    pub ceiling: bool,
+    /// The session was inside a transaction when it ran, so it ran
+    /// unpaged.
+    pub in_transaction: bool,
+}
+
+/// The open result cursor, as the UI sees it — at most one per
+/// session; the pager holds the real one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorMirror {
+    /// The [`ResultPaging::id`] it was opened for.
+    pub result_id: u64,
+    pub opened: Instant,
+    pub last_fetch: Instant,
+    pub limits: crate::query::paging::Limits,
+}
+
+/// Why pgman closed a cursor on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorExpiry {
+    /// Unfetched for `limits.idle`.
+    Idle,
+    /// Open for `limits.lifetime`.
+    Lifetime,
+}
+
+impl CursorMirror {
+    /// When pgman closes it unless something else does first. Pure.
+    pub fn deadline(&self) -> Instant {
+        (self.last_fetch + self.limits.idle).min(self.opened + self.limits.lifetime)
+    }
+
+    /// Whether it has outlived a limit by `now`, and which. Pure.
+    pub fn expired(&self, now: Instant) -> Option<CursorExpiry> {
+        if now >= self.opened + self.limits.lifetime {
+            Some(CursorExpiry::Lifetime)
+        } else if now >= self.last_fetch + self.limits.idle {
+            Some(CursorExpiry::Idle)
+        } else {
+            None
+        }
+    }
+}
+
 /// Per-tab snapshot of the editor + result-grid state. The
 /// connection, schema cache, history, saved queries, theme,
 /// notifications, and safety profile are SHARED across tabs and
@@ -422,6 +477,8 @@ pub struct TabSnapshot {
     pub grid_selected: Option<usize>,
     pub grid_view: GridView,
     pub last_run_sql: Option<String>,
+    /// How this tab's result can continue past its held rows.
+    pub result_paging: Option<ResultPaging>,
     /// Diff baseline ("A") pinned with `D`. Per-tab so pinning in one
     /// tab can't leak into another (a fresh tab starts unpinned). The
     /// transient `Mode::ResultDiff` overlay is NOT snapshotted — it is

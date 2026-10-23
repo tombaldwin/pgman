@@ -838,6 +838,66 @@ fn tap_monitor_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
         .collect()
 }
 
+/// A result behind an open cursor says it is partial and names `M`;
+/// once the cursor has closed, it says so and that `M` re-runs — at
+/// 80 columns, whole.
+#[test]
+fn a_paged_result_title_names_m() {
+    let mut a = settled_app(false, false);
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.conn_state = crate::app::ConnState::Connected {
+        server_version: "16.0".into(),
+    };
+    a.mode = crate::app::Mode::Normal;
+    a.grid = crate::grid::Grid {
+        columns: vec!["id".into()],
+        rows: (0..1000).map(|i| vec![Some(i.to_string())]).collect(),
+        truncated: true,
+    };
+    a.grid_view.visible_rows = (0..1000).collect();
+    a.result_paging = Some(crate::app::ResultPaging {
+        id: 3,
+        sql: "SELECT id FROM t".into(),
+        ceiling: false,
+        in_transaction: false,
+    });
+    let now = std::time::Instant::now();
+    a.cursor = Some(crate::app::CursorMirror {
+        result_id: 3,
+        opened: now,
+        last_fetch: now,
+        limits: crate::query::paging::Limits {
+            idle: std::time::Duration::from_secs(60),
+            lifetime: std::time::Duration::from_secs(600),
+        },
+    });
+    let screen = |a: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| draw(f, a)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let shown = screen(&mut a);
+    assert!(
+        shown.contains("result · 1000 row(s) · partial · M fetches more"),
+        "{shown}"
+    );
+    a.cursor = None;
+    let shown = screen(&mut a);
+    assert!(
+        shown.contains("result · 1000 row(s) · partial · cursor closed · M re-runs"),
+        "{shown}"
+    );
+}
+
 /// The tap monitor's title is fitted into its border whole segments at
 /// a time; the border must never cut it mid-word. Its budget left out
 /// the `[ ◆ … ◆ ]` decoration, so it did, by that much.

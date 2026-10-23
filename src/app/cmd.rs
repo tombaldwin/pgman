@@ -445,11 +445,8 @@ impl App {
             return;
         }
         let state = if want { "on" } else { "off" };
-        let live = match (&self.conn_state, self.client.clone()) {
-            (ConnState::Connected { .. }, Some(client)) => Some(client),
-            _ => None,
-        };
-        if live.is_some() && self.tx_open {
+        let live = matches!(self.conn_state, ConnState::Connected { .. }) && self.client.is_some();
+        if live && self.tx_open {
             // The open transaction would keep what it began with, so the
             // header would say one thing and the server do another.
             self.last_error = Some(format!(
@@ -461,7 +458,7 @@ impl App {
         // picked database's profile, which used to discard this the
         // moment the operator reconnected.
         self.read_only_override = Some(want);
-        let Some(client) = live else {
+        let Some(db) = live.then(|| self.db()).flatten() else {
             self.read_only = want;
             self.last_status = Some(format!(
                 "read-only {state} · the next connection opens with it {state}"
@@ -477,6 +474,7 @@ impl App {
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = crate::conn::set_session_read_only(&client, want).await;
             let _ = tx.send(AppMsg::ReadOnlyApplied {
                 generation,
@@ -495,6 +493,7 @@ impl App {
             let grid = crate::demo::functions_grid(pattern.as_deref());
             let n = grid.rows.len();
             self.grid = grid;
+            self.forget_result_paging();
             self.grid_state.select((n > 0).then_some(0));
             self.reset_grid_view();
             self.last_status = Some(format!("\\df → {n} function(s)"));
@@ -579,6 +578,7 @@ impl App {
                 .collect(),
             truncated: false,
         };
+        self.forget_result_paging();
         self.grid_state
             .select(if self.grid.is_empty() { None } else { Some(0) });
         self.reset_grid_view();
@@ -798,6 +798,10 @@ impl App {
         } else {
             format!("{} row(s)", fixture.rows.len())
         };
+        let what = format!(
+            "{what}{}",
+            crate::grid::fetched_only_note(self.grid.truncated)
+        );
         let ok = wrote_status(&what, &path, std::env::var_os("HOME").as_deref());
         self.write_export(&path, &xml, "\\fixture", ok);
     }

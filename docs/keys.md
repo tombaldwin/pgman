@@ -48,7 +48,7 @@ once a query has run share one key map.
 
 | Key | Action |
 |---|---|
-| `q` | Quit (`Ctrl-C` twice also quits, except from the editor, where it cancels a running query) |
+| `q` | Quit (`Ctrl-C` twice also quits, except from the editor — and from the results while a query or `M` fetch runs — where it cancels the running query) |
 | `?` / `F1` | Toggle help (both work from every non-typing mode) |
 | `:` | Open the command bar — see [Command bar](#command-bar-) |
 | `A` | About pgman |
@@ -147,14 +147,33 @@ other key closes the popup and leaves the buffer as it is.
 Sort, filter, find, yank, FK-follow and diff are dispatched from Normal
 mode on the grid; row/cell detail and the diff view are their own modes.
 
-The grid holds at most **1000 rows** of a result. When a query returns
-more, pgman stops reading there, and both the grid's title and the
-footer say `capped at 1000`. Sort, filter, find, `Y` and the diff all
-work on those 1000 rows, not the whole result. The TUI has no way to
-fetch past the cap. To see other rows, narrow the query (`WHERE`,
-`ORDER BY … LIMIT … OFFSET …`). For every row, run it outside the TUI
-with `pgman query 'SQL' --json` (or `--batch --format json`), which
-isn't capped; see [commands](commands.md).
+A result arrives **1000 rows** at a time. A plain `SELECT` run from the
+editor reads through a server-side cursor: when it has more rows, the
+title says `partial · M fetches more`, and `M` appends the next 1000
+(through to the end of the result, or pgman's ceiling of 100 000 rows
+held). Sort, filter, find, the row detail, `Y`, `I`, `:fixture` and the
+diff work on the rows fetched so far; `Y` and `:fixture` say `fetched
+rows only` when there are more. A fetched page keeps the active sort
+and filter. `Ctrl-C` cancels a fetch that is taking too long, keeping
+the rows already there.
+
+The cursor holds a read transaction open on the server, so pgman closes
+it after 60 s without a fetch, or 10 min after the query ran (sooner
+when the server's `idle_in_transaction_session_timeout` or
+`transaction_timeout` is shorter), and as soon as anything else talks
+to the database: the next query, a panel such as `L` or `T`, a
+reconnect, closing the tab. The title then says `cursor closed · M
+re-runs`, and `M` runs the query again for the rows already held plus
+1000 more, as a fresh snapshot.
+
+Everything else stops at 1000 rows with `capped at 1000 · more rows not
+fetched` in the title: `EXPLAIN`, scripts of several statements,
+`\watch`, `SELECT … FOR UPDATE` / `FOR SHARE` (a cursor would hold the
+locks), and a `SELECT` run while a transaction is open (`in a
+transaction, so no paging`). For every row, run it outside the TUI with
+`pgman query 'SQL' --json` (or `--batch --format json`), which isn't
+capped; see [commands](commands.md). How the cursor works is in
+[docs/backlog/paging.md](backlog/paging.md).
 
 A NULL is drawn as a dimmed, italic `NULL` (`theme.null_cell`) and an
 empty string as nothing, so the two never look alike; row and cell
@@ -172,6 +191,7 @@ whole word `null` (any case), so `/null` finds them; `/nu` does not.
 | `F` | Follow the FK on the focused cell → new tab, `SELECT * FROM parent WHERE pk=value` (a NULL references nothing: no tab) |
 | `Y` | Copy the (filtered) grid to clipboard as CSV (NULL an empty field, an empty string `""`) |
 | `I` | Yank the focused row as an `INSERT` (single-table SELECTs only): NULL as `NULL`, every value quoted, `''` included |
+| `M` | Fetch the next 1000 rows of a partial result; once its cursor has closed, re-run the query for them (see above) |
 | `D` | Pin the current result as baseline A; press again after running another query to diff B against A |
 | `Enter` | Open row detail |
 

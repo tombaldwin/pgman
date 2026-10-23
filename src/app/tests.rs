@@ -5932,6 +5932,7 @@ fn query_ok_clears_last_error_detail() {
         },
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     assert!(a.last_error_detail.is_none());
 }
@@ -5951,6 +5952,7 @@ fn query_ok_status_flags_truncated_grids() {
         },
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
@@ -5977,6 +5979,7 @@ fn query_ok_status_omits_cap_when_not_truncated() {
         },
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(!status.contains("capped"), "unexpected cap hint: {status}");
@@ -6171,6 +6174,7 @@ fn expanded_on_lands_new_query_result_in_row_detail() {
         },
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     assert_eq!(a.mode, Mode::RowDetail);
 }
@@ -6189,6 +6193,7 @@ fn expanded_off_leaves_new_query_result_in_grid_mode() {
         },
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     assert_eq!(a.mode, Mode::Editor);
 }
@@ -9213,6 +9218,7 @@ fn a_query_ok_landing_mid_command_bar_leaves_no_stale_bar_behind() {
         grid: Grid::default(),
         kind_label: "run".into(),
         tx_open_after: true,
+        paging: None,
     });
     assert_eq!(a.mode, Mode::TxDecision);
     assert!(a.tx_open);
@@ -13651,6 +13657,520 @@ fn a_log_preloaded_at_startup_reopens_with_the_reopened_status() {
     assert_eq!(
         a.last_status.as_deref(),
         Some("reopened the last log · 1 query")
+    );
+}
+
+// --- Paging past MAX_ROWS (docs/backlog/paging.md) -----------------------
+
+fn id_rows(range: std::ops::Range<usize>) -> Vec<Vec<Cell>> {
+    range.map(|i| vec![Some(i.to_string())]).collect()
+}
+
+fn cursor_limits() -> crate::query::paging::Limits {
+    crate::query::paging::Limits {
+        idle: Duration::from_secs(60),
+        lifetime: Duration::from_secs(600),
+    }
+}
+
+/// An app showing the first page of a paged result whose cursor is open.
+fn app_with_open_cursor() -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: Some(RunPaging {
+            sql: "SELECT id FROM t ORDER BY id".into(),
+            cursor: Some(cursor_limits()),
+            in_transaction: false,
+        }),
+    });
+    a.mode = Mode::Normal;
+    a
+}
+
+fn page(rows: Vec<Vec<Cell>>, more: bool) -> PageOutcome {
+    PageOutcome::More(crate::query::paging::Page { rows, more })
+}
+
+#[test]
+fn only_a_plain_editor_select_runs_behind_the_cursor() {
+    use super::spawn::runs_behind_cursor;
+    let sql = "SELECT * FROM t";
+    assert!(runs_behind_cursor(RunKind::Run, false, false, false, sql));
+    assert!(!runs_behind_cursor(
+        RunKind::Explain,
+        false,
+        false,
+        false,
+        sql
+    ));
+    assert!(!runs_behind_cursor(
+        RunKind::ExplainAnalyze,
+        false,
+        false,
+        false,
+        sql
+    ));
+    assert!(
+        !runs_behind_cursor(RunKind::Run, true, false, false, sql),
+        "batch"
+    );
+    assert!(
+        !runs_behind_cursor(RunKind::Run, false, true, false, sql),
+        "auto-tx"
+    );
+    assert!(
+        !runs_behind_cursor(RunKind::Run, false, false, true, sql),
+        "\\watch"
+    );
+    assert!(!runs_behind_cursor(
+        RunKind::Run,
+        false,
+        false,
+        false,
+        "SELECT * FROM t FOR UPDATE"
+    ));
+}
+
+#[test]
+fn a_paged_result_names_m_and_how_it_continues() {
+    use crate::grid::More;
+    let p = ResultPaging {
+        id: 7,
+        sql: "SELECT 1".into(),
+        ceiling: false,
+        in_transaction: false,
+    };
+    assert_eq!(super::result_more(None, Some(7)), More::Unpaged);
+    assert_eq!(super::result_more(Some(&p), Some(7)), More::CursorOpen);
+    assert_eq!(super::result_more(Some(&p), Some(8)), More::CursorClosed);
+    assert_eq!(super::result_more(Some(&p), None), More::CursorClosed);
+    let ceiling = ResultPaging {
+        ceiling: true,
+        ..p.clone()
+    };
+    assert_eq!(super::result_more(Some(&ceiling), Some(7)), More::Ceiling);
+    let in_tx = ResultPaging {
+        in_transaction: true,
+        ..p
+    };
+    assert_eq!(super::result_more(Some(&in_tx), None), More::InTransaction);
+
+    let a = app_with_open_cursor();
+    assert_eq!(a.result_more(), More::CursorOpen);
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.ends_with("partial · M fetches more"), "{status}");
+}
+
+#[test]
+fn a_cursor_closes_at_its_idle_or_lifetime_limit() {
+    let t0 = Instant::now();
+    let c = CursorMirror {
+        result_id: 1,
+        opened: t0,
+        last_fetch: t0 + Duration::from_secs(590),
+        limits: cursor_limits(),
+    };
+    // The lifetime (600 s from the open) comes before the idle limit
+    // (60 s after the last fetch).
+    assert_eq!(c.deadline(), t0 + Duration::from_secs(600));
+    assert_eq!(c.expired(t0 + Duration::from_secs(599)), None);
+    assert_eq!(
+        c.expired(t0 + Duration::from_secs(600)),
+        Some(CursorExpiry::Lifetime)
+    );
+    let c = CursorMirror {
+        last_fetch: t0 + Duration::from_secs(10),
+        ..c
+    };
+    assert_eq!(c.deadline(), t0 + Duration::from_secs(70));
+    assert_eq!(c.expired(t0 + Duration::from_secs(69)), None);
+    assert_eq!(
+        c.expired(t0 + Duration::from_secs(70)),
+        Some(CursorExpiry::Idle)
+    );
+}
+
+#[test]
+fn the_idle_timer_closes_the_cursor_and_m_then_re_runs() {
+    let mut a = app_with_open_cursor();
+    let opened = a.cursor.expect("open").opened;
+    // Not while a fetch runs: the limits restart when it lands.
+    a.query_running = true;
+    assert_eq!(a.cursor_deadline(), None);
+    a.tick_cursor_timeout(opened + Duration::from_secs(61));
+    assert!(a.cursor.is_some());
+    a.query_running = false;
+    assert_eq!(a.cursor_deadline(), Some(opened + Duration::from_secs(60)));
+    a.tick_cursor_timeout(opened + Duration::from_secs(59));
+    assert!(a.cursor.is_some(), "closed early");
+    a.tick_cursor_timeout(opened + Duration::from_secs(60));
+    assert!(a.cursor.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("result cursor closed after 60s idle · M re-runs the query for more rows")
+    );
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+    assert_eq!(a.cursor_deadline(), None);
+}
+
+#[test]
+fn m_explains_itself_where_it_cannot_fetch() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert_eq!(a.last_status.as_deref(), Some("no result to fetch more of"));
+    a.grid = crate::grid::Grid {
+        columns: vec!["id".into()],
+        rows: id_rows(0..3),
+        truncated: false,
+    };
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("all rows are already fetched")
+    );
+    a.grid.truncated = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("only a plain SELECT run from the editor pages"),
+        "{:?}",
+        a.last_status
+    );
+    a.result_paging = Some(ResultPaging {
+        id: 1,
+        sql: "SELECT 1".into(),
+        ceiling: false,
+        in_transaction: true,
+    });
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("a transaction was open when this ran"),
+        "{:?}",
+        a.last_status
+    );
+    a.result_paging.as_mut().unwrap().in_transaction = false;
+    a.result_paging.as_mut().unwrap().ceiling = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("pgman holds at most 100000 rows"),
+        "{:?}",
+        a.last_status
+    );
+    a.query_running = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("a query is already running · ctrl-c cancels it")
+    );
+}
+
+#[test]
+fn a_fetched_page_is_appended_and_the_selection_moves_to_it() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.query_running = true;
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(1000..2000), true)),
+    });
+    assert!(!a.query_running);
+    assert_eq!(a.grid.rows, id_rows(0..2000));
+    assert!(a.grid.truncated);
+    assert_eq!(a.grid_view.visible_rows.len(), 2000);
+    assert_eq!(a.grid_state.selected(), Some(1000), "on the first new row");
+    assert!(a.cursor.is_some(), "more rows: still open");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("+1000 row(s) · 2000 held · partial · M fetches more")
+    );
+    // The last page: complete, cursor gone, no partial note.
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(2000..2500), false)),
+    });
+    assert_eq!(a.grid.rows, id_rows(0..2500));
+    assert!(!a.grid.truncated);
+    assert!(a.cursor.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("+500 row(s) · 2500 held · that is every row")
+    );
+}
+
+#[test]
+fn a_page_landing_under_a_sort_and_filter_is_sorted_and_filtered_in() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.cycle_sort(); // ASC
+    a.cycle_sort(); // DESC
+    a.grid_view.filter = Some("99".into());
+    a.rebuild_visible_rows();
+    a.bookmarks.insert('a', GridBookmark { row: 0, col: 0 });
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(1000..2000), true)),
+    });
+    // Sorted descending as text over all 2000 rows; the original order
+    // kept for clearing the sort.
+    let mut want = id_rows(0..2000);
+    crate::grid::sort_rows(&mut want, 0, false);
+    assert_eq!(a.grid.rows, want);
+    assert_eq!(a.grid_view.raw_rows.as_ref(), Some(&id_rows(0..2000)));
+    // The filter sees the new rows (`1099`, `1990`… contain "99").
+    let shown: Vec<&str> = a
+        .grid_view
+        .visible_rows
+        .iter()
+        .map(|&i| a.grid.rows[i][0].as_deref().unwrap())
+        .collect();
+    assert!(shown.contains(&"1990"), "{shown:?}");
+    assert!(shown.iter().all(|s| s.contains("99")), "{shown:?}");
+    // A re-sort moves rows under the bookmarks.
+    assert!(a.bookmarks.is_empty());
+    // Clearing the sort restores fetch order.
+    a.cycle_sort();
+    assert_eq!(a.grid.rows, id_rows(0..2000));
+}
+
+#[test]
+fn reaching_the_ceiling_closes_the_cursor_and_says_why() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.grid.rows = id_rows(0..99_000);
+    a.rebuild_visible_rows();
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(99_000..100_000), true)),
+    });
+    assert_eq!(a.grid.row_count(), crate::query::paging::MAX_HELD_ROWS);
+    assert!(a.grid.truncated);
+    assert!(a.cursor.is_none(), "closed at the ceiling");
+    assert_eq!(a.result_more(), crate::grid::More::Ceiling);
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .ends_with("partial · stopped at pgman's 100000-row limit · pgman query '…' --json returns every row"),
+        "{:?}",
+        a.last_status
+    );
+}
+
+#[test]
+fn a_failed_or_cancelled_fetch_keeps_the_rows_and_closes_the_cursor() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.query_running = true;
+    a.cancel_requested = true;
+    let cancelled = conn::QueryErr {
+        msg: "canceling statement due to user request".into(),
+        position: None,
+        detail: Some(conn::QueryErrDetail {
+            code: Some("57014".into()),
+            ..Default::default()
+        }),
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Err(cancelled),
+    });
+    assert_eq!(a.grid.row_count(), 1000, "the held rows stay");
+    assert!(a.cursor.is_none());
+    assert!(a.last_error.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("fetch cancelled · the cursor is closed · M re-runs the query")
+    );
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Err(conn::QueryErr::msg("server closed the connection")),
+    });
+    assert!(a.cursor.is_none());
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("fetching more rows failed: server closed the connection · M re-runs the query")
+    );
+}
+
+#[test]
+fn a_page_for_another_result_is_dropped() {
+    let mut a = app_with_open_cursor();
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: 999,
+        outcome: Ok(page(id_rows(1000..2000), true)),
+    });
+    assert_eq!(a.grid.row_count(), 1000);
+}
+
+#[test]
+fn a_re_run_replaces_the_rows_and_keeps_the_sort() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.close_cursor();
+    a.cycle_sort(); // ASC
+    let opened = crate::query::paging::Opened {
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..2000),
+            truncated: true,
+        },
+        cursor: Some(cursor_limits()),
+        in_transaction: false,
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(opened)),
+    });
+    let mut want = id_rows(0..2000);
+    crate::grid::sort_rows(&mut want, 0, true);
+    assert_eq!(a.grid.rows, want);
+    assert_eq!(a.grid_view.sort, Some((0, true)));
+    assert_eq!(a.result_more(), crate::grid::More::CursorOpen);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("re-ran the query · 2000 row(s) · partial · M fetches more")
+    );
+}
+
+#[test]
+fn closing_the_tab_closes_its_cursor_and_switching_keeps_it() {
+    let mut a = app_with_open_cursor();
+    a.new_tab();
+    assert!(a.cursor.is_some(), "another tab leaves it open");
+    assert_eq!(a.result_more(), crate::grid::More::Unpaged);
+    a.switch_to_tab(0);
+    assert_eq!(a.result_more(), crate::grid::More::CursorOpen);
+    // Close the other tab: this tab's cursor stays.
+    a.switch_to_tab(1);
+    a.close_active_tab();
+    assert!(a.cursor.is_some());
+    // Close the tab that owns it: it goes.
+    a.new_tab();
+    a.switch_to_tab(0);
+    a.close_active_tab();
+    assert!(a.cursor.is_none());
+}
+
+#[test]
+fn other_database_work_closes_the_cursor() {
+    // `L` (sessions) is database work: it goes through `App::db`, whose
+    // barrier closes the cursor, and the title follows at once.
+    let mut a = app_with_open_cursor();
+    a.on_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
+    assert!(a.cursor.is_none());
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+}
+
+#[tokio::test]
+async fn a_reconnect_closes_the_cursor_on_the_session_it_leaves() {
+    let mut a = app_with_open_cursor();
+    a.dsn = Some(crate::conn::Dsn::parse("postgres://127.0.0.1:1/ledger").unwrap());
+    a.start_connect();
+    assert!(a.cursor.is_none());
+}
+
+#[test]
+fn a_grid_that_is_not_a_run_result_drops_the_paging_and_its_cursor() {
+    // `\l` puts the database list where the paged result was.
+    let mut a = app_with_open_cursor();
+    a.databases = vec![DatabaseInfo {
+        name: "ledger".into(),
+        size: "8 MB".into(),
+    }];
+    a.editor.buffer = "\\l".into();
+    a.request_run(RunKind::Run);
+    assert_eq!(a.grid.columns, vec!["database", "size"]);
+    assert!(a.result_paging.is_none());
+    assert!(a.cursor.is_none());
+}
+
+#[test]
+fn ctrl_c_from_the_results_cancels_a_running_fetch() {
+    let mut a = app_with_open_cursor();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
+        calls: calls.clone(),
+    }));
+    a.query_running = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(a.last_status.as_deref(), Some("cancelling query…"));
+    assert!(!a.should_quit);
+    // Nothing running: the quit chord as before.
+    a.query_running = false;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(a.last_status.as_deref(), Some("ctrl-c again to quit"));
+}
+
+/// Every piece of database work reaches the client through `App::db`,
+/// which queues it behind the pager so that it never runs inside the
+/// result cursor's transaction (docs/backlog/paging.md). A new
+/// `self.client.clone()` elsewhere would skip the queue: its statement
+/// could land inside the cursor's transaction, or race the `COMMIT`
+/// that closes it. Asking whether there *is* a client is fine.
+#[test]
+fn the_client_is_reached_only_through_db() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![dir.join("app.rs")];
+    for entry in std::fs::read_dir(dir.join("app")).expect("src/app") {
+        let path = entry.expect("dir entry").path();
+        if path.file_name().is_some_and(|n| n != "tests.rs") {
+            files.push(path);
+        }
+    }
+    let mut readers = Vec::new();
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("read source");
+        for (n, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let mut rest = line;
+            while let Some(at) = rest.find("self.client") {
+                let after = &rest[at + "self.client".len()..];
+                let is_field = !after.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+                let harmless = [".is_none()", ".is_some()", " = Some("]
+                    .iter()
+                    .any(|ok| after.starts_with(ok));
+                if is_field && !harmless {
+                    readers.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                }
+                rest = after;
+            }
+        }
+    }
+    assert!(
+        readers.len() == 1 && readers[0].ends_with(": let client = self.client.clone()?;"),
+        "only App::db may read the client: {readers:#?}"
     );
 }
 

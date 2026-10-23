@@ -38,14 +38,14 @@ expression: dump(&buf)
 │                             │   schema wizard           │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value               │                             │
 │                             │   help                    │     Y             copy the (filtered) grid to clipboard as CSV                                               │                             │
 │                             │                           │     I             yank focused row as INSERT (single-table SELECTs)                                          │                             │
+│                             │                           │     M             fetch the next 1000 rows of a partial result                                               │                             │
 │                             │                           │     D             pin result as A · run another query, D again to diff as B                                  │                             │
 │                             │                           │     m<a-z>        set bookmark at focused (row, col)                                                         │                             │
 │                             │                           │     '<a-z>        jump to bookmark                                                                           │                             │
 │                             │                           │     j / k  ↑ ↓    move selection                                                                             │                             │
 │                             │                           │     g / G         first / last row                                                                           │                             │
 │                             │                           │     enter         expand selected row (psql \x style)                                                        │                             │
-│                             │                           │     z             zoom the results · z again restores the split                                              │                             │
-│                             │                           │ ↓ 2 more below                                                                                               │                             │
+│                             │                           │ ↓ 3 more below                                                                                               │                             │
 │                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
