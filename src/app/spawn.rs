@@ -77,9 +77,11 @@ impl App {
         self.pager = None;
         self.cancel_dispatcher = None;
         self.mode = Mode::Normal;
-        // The last run's status ("… · M fetches more") speaks of a session
-        // that is gone; the card says what happened.
+        // The last run's status ("… · M fetches more") and error speak of a
+        // session that is gone; the card says what happened.
         self.last_status = None;
+        self.last_error = None;
+        self.last_error_detail = None;
         self.conn_state = ConnState::Failed(reason);
     }
 

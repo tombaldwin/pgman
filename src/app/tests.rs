@@ -14587,6 +14587,7 @@ fn a_lost_connection_leaves_connected_for_the_failure_card() {
     a.query_running = true;
     a.tx_open = true;
     a.last_status = Some("run ok · 1000 row(s) · partial · M fetches more".into());
+    a.last_error = Some("the table changed since pgman read it".into());
     a.on_msg(AppMsg::ConnectionLost {
         generation: a.generation,
         reason: "connection lost · terminating connection due to administrator command".into(),
@@ -14607,6 +14608,10 @@ fn a_lost_connection_leaves_connected_for_the_failure_card() {
     assert_eq!(
         a.last_status, None,
         "the last run's status is the old session's"
+    );
+    assert_eq!(
+        a.last_error, None,
+        "the last error is the old session's too"
     );
     assert!(
         !a.tx_open,
