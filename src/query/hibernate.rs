@@ -11,8 +11,8 @@
 //!   - Hibernate 6: `binding parameter (1:INTEGER) <- [42]`
 //!     (logger `org.hibernate.orm.jdbc.bind`).
 //!
-//! Lines are grouped by thread token (the first `[…]` group, before the
-//! logger) so interleaved requests pair correctly. Each SQL line opens a
+//! Lines are grouped by thread token (the last `[…]` group before the
+//! logger, see [`extract_thread`]) so interleaved requests pair correctly. Each SQL line opens a
 //! statement for its thread; subsequent bind lines on that thread attach to it
 //! until the next SQL line.
 //!
@@ -152,15 +152,34 @@ fn looks_like_continuation(line: &str) -> bool {
     !line.contains('[')
 }
 
-/// The thread token — the first `[…]` group in `prefix` (the text before the
-/// logger / message). Empty when the log pattern carries no thread.
+/// The thread token — the last `[…]` group in `prefix` (the text before
+/// the logger / message), skipping a bracketed log level. Empty when the
+/// log pattern carries no thread.
+///
+/// The last, not the first: Spring Boot 3.2's default pattern puts the
+/// application name first (`--- [billing-api] [nio-8080-exec-1]
+/// org.hibernate.SQL`), and keyed by that every thread shares one
+/// bucket and binds pair with another thread's statement. The thread is
+/// the group nearest the logger in every common pattern. A level
+/// (`[DEBUG]`) differs between a statement and its binds, so it is not
+/// the key.
 fn extract_thread(prefix: &str) -> String {
-    if let Some(start) = prefix.find('[') {
-        if let Some(rel_end) = prefix[start + 1..].find(']') {
-            return prefix[start + 1..start + 1 + rel_end].trim().to_string();
-        }
+    let mut groups = Vec::new();
+    let mut rest = prefix;
+    while let Some(start) = rest.find('[') {
+        let Some(len) = rest[start + 1..].find(']') else {
+            break;
+        };
+        groups.push(rest[start + 1..start + 1 + len].trim());
+        rest = &rest[start + 1 + len + 1..];
     }
-    String::new()
+    const LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR"];
+    groups
+        .into_iter()
+        .rev()
+        .find(|g| !LEVELS.iter().any(|l| g.eq_ignore_ascii_case(l)))
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// `hibernate.show_sql=true` writes `Hibernate: select …` straight to
@@ -472,6 +491,44 @@ binding parameter [1] as [BIGINT] - [7]
                 "select o.id from orders o where o.created_at > '2026-01-01 10:00:00'::timestamptz and o.customer_id=43",
                 "select 1 from dual where 1=1",
             ]
+        );
+    }
+
+    /// Spring Boot 3.2+'s default pattern puts `[appName]` before the
+    /// thread: every line has the same first group, so the thread is the
+    /// group nearest the logger.
+    #[test]
+    fn spring_boot_3_2_app_name_group_does_not_merge_threads() {
+        let log = "\
+2026-10-21T09:12:48.001Z DEBUG 4242 --- [billing-api] [nio-8080-exec-1] org.hibernate.SQL                        : select i1_0.id,i1_0.total from invoices i1_0 where i1_0.customer_id=?
+2026-10-21T09:12:48.002Z DEBUG 4242 --- [billing-api] [nio-8080-exec-2] org.hibernate.SQL                        : select u1_0.id,u1_0.email from users u1_0 where u1_0.id=?
+2026-10-21T09:12:48.003Z TRACE 4242 --- [billing-api] [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [2107]
+2026-10-21T09:12:48.004Z DEBUG 4242 --- [billing-api] [nio-8080-exec-3] org.hibernate.SQL                        : delete from sessions s1_0 where s1_0.user_id=?
+2026-10-21T09:12:48.005Z TRACE 4242 --- [billing-api] [nio-8080-exec-2] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [777]
+2026-10-21T09:12:48.006Z TRACE 4242 --- [billing-api] [nio-8080-exec-3] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [31]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                "select i1_0.id,i1_0.total from invoices i1_0 where i1_0.customer_id=2107",
+                "select u1_0.id,u1_0.email from users u1_0 where u1_0.id=777",
+                "delete from sessions s1_0 where s1_0.user_id=31",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bracketed_level_is_not_the_thread() {
+        // `[%thread] [%level]`: the statement is DEBUG and its bind TRACE.
+        let log = "\
+[2026-10-21 09:12:48,001] [exec-1] [DEBUG] org.hibernate.SQL - select * from a where id=?
+[2026-10-21 09:12:48,002] [exec-2] [DEBUG] org.hibernate.SQL - select * from b where id=?
+[2026-10-21 09:12:48,003] [exec-1] [TRACE] o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [INTEGER] - [1]
+[2026-10-21 09:12:48,004] [exec-2] [TRACE] o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [INTEGER] - [2]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            ["select * from a where id=1", "select * from b where id=2"]
         );
     }
 

@@ -70,6 +70,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   (`%logger{36} - %msg`) are read whole. pgman cut the statement at
   its first `:` (`like 'ref:%'`, a `10:00:00` timestamp), or dropped a
   statement with no `:` in it.
+- Logs → SQL: under Spring Boot 3.2's default log pattern, which puts
+  `[appName]` before the thread, a Hibernate bind paired with whichever
+  thread logged a statement last. The thread is now the bracket group
+  nearest the logger.
 
 ## [0.1.0] — 2026-10-22
 
