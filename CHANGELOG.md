@@ -8,6 +8,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `sslrootcert=<file>` in a connection string pins the trusted CAs, as
+  in libpq (and `require` with a CA file checks the chain). It used to
+  be ignored, with the default trust store used instead. `sslcrl` and
+  `sslcrldir` are refused rather than ignored.
 - The JDBC tap's List view shows the focused statement's bound
   parameters beneath the list, labelled `params (some redacted)` when
   the producer masked a value and `params (withheld by source)` for
@@ -27,6 +31,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `lo_from_bytea`, `lo_put`, `lo_unlink`, `lo_creat`, `lowrite` and
+  `lo_truncate` classified as plain reads, so a writable connection ran
+  them with no confirmation. They now need one, like other writes.
+- If the TLS connector couldn't be built, a `require` / `verify-*`
+  connection fell back to plaintext. It now fails instead.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

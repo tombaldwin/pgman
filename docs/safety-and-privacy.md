@@ -376,6 +376,19 @@ come from the OS keychain (`rustls-native-certs`) unioned with the
 Mozilla bundle (`webpki-roots`), so a fresh container with no
 populated system trust store still connects to RDS.
 
+`sslrootcert=<file>` pins the CAs instead: the PEM file's certificates
+are then the only ones trusted, and — as in libpq — `require` with a
+CA file checks the chain as `verify-ca` does. `sslrootcert=system`
+means the default store. A file that can't be read or holds no
+certificate fails the connection rather than falling back to the
+default store. `sslcrl` / `sslcrldir` are refused (pgman can't check
+revocation lists, and ignoring one would accept a certificate you
+asked to refuse); `sslcert` / `sslkey` are ignored with a log line,
+since pgman doesn't send client certificates.
+
+If the TLS connector itself can't be built, only `disable`, `allow`
+and `prefer` go ahead in plaintext; `require` and `verify-*` fail.
+
 **An unrecognised `sslmode` is a hard parse error, not a silent
 downgrade.** Values are trimmed and ASCII-lowercased before matching
 (so `VERIFY-FULL`, and a value with a stray trailing space or `\r`
