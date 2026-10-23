@@ -7241,6 +7241,88 @@ async fn update_check_disabled_never_spawns() {
     );
 }
 
+/// Counts draws, and ends the loop once `target` tap queries have
+/// landed — so it runs exactly as many frames as the backlog needs.
+struct DrawUntilTui {
+    draws: usize,
+    target: u64,
+    keys: mpsc::UnboundedSender<Event>,
+}
+
+impl crate::tui::TuiHost for DrawUntilTui {
+    fn draw(&mut self, app: &mut App) -> std::io::Result<()> {
+        self.draws += 1;
+        if app.tap_health.query_count >= self.target {
+            // Quit, and wake the loop's `select!` so it notices.
+            app.should_quit = true;
+            let _ = self.keys.send(Event::FocusGained);
+        }
+        Ok(())
+    }
+    fn suspend(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn resume(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Queue `n` tap queries on the app's message channel, run the loop
+/// until they have all landed, and return how many frames it drew.
+async fn draws_to_fold_queued_tap_events(n: u64) -> usize {
+    let mut app = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    scratch_persistence(&mut app);
+    app.mode = Mode::Normal;
+    // The splash's animation ticks would add frames of their own.
+    app.splash_visible = false;
+    let tx = app.msg_tx_clone();
+    for i in 0..n {
+        tx.send(AppMsg::TapEvent {
+            event: tap_query("select 1", i + 1),
+        })
+        .unwrap();
+    }
+    let (keys, rx) = mpsc::unbounded_channel::<Event>();
+    let mut tui = DrawUntilTui {
+        draws: 0,
+        target: n,
+        keys,
+    };
+    tokio::time::timeout(Duration::from_secs(5), app.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate once the backlog has landed")
+        .unwrap();
+    assert_eq!(app.tap_health.query_count, n);
+    tui.draws
+}
+
+#[tokio::test]
+async fn run_loop_folds_a_queued_tap_backlog_in_one_frame() {
+    // One frame before anything lands, one after the whole backlog —
+    // not one per event, which is what held a burst in the channel.
+    assert_eq!(draws_to_fold_queued_tap_events(500).await, 2);
+}
+
+#[tokio::test]
+async fn run_loop_caps_the_messages_applied_per_frame() {
+    // A backlog past the cap takes more than one frame, so key input
+    // gets a turn between batches.
+    let n = 2 * MSG_DRAIN_PER_FRAME as u64 + 1;
+    assert_eq!(draws_to_fold_queued_tap_events(n).await, 4);
+}
+
+#[test]
+fn on_tap_events_bumps_the_generation_once_per_batch() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let before = a.tap_generation;
+    a.on_tap_events((1..=5).map(|i| tap_query("select 1", i)));
+    assert_eq!(a.tap_events.len(), 5);
+    assert_eq!(a.tap_generation, before.wrapping_add(1));
+    // Heartbeats never touch the ring, so they never invalidate it.
+    a.on_tap_events([tap_heartbeat(0, 10), tap_heartbeat(0, 11)]);
+    assert_eq!(a.tap_generation, before.wrapping_add(1));
+}
+
 // --- --demo mode: request_run answers synthetically (no client) ---
 //
 // `crate::demo::app()` builds a fully-populated demo App with `demo =

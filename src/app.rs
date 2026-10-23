@@ -1973,6 +1973,11 @@ impl App {
                 }
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
+                    // Everything else already queued lands before the
+                    // next draw: one frame per message held a tap burst
+                    // in the channel, redrawing — and re-aggregating —
+                    // for every event.
+                    self.drain_pending_msgs(&mut msg_rx);
                 }
                 _ = tokio::time::sleep_until(
                     tokio::time::Instant::from_std(draft_save_at.unwrap_or_else(Instant::now)),
@@ -2109,6 +2114,35 @@ impl App {
             || self.demo_tap_feed.is_some()
     }
 
+    /// Apply up to [`MSG_DRAIN_PER_FRAME`] − 1 messages already waiting
+    /// on `rx`, without blocking, so a backlog costs one draw rather
+    /// than one per message. Consecutive tap events fold as one batch
+    /// ([`Self::on_tap_events`]); any other message is applied in its
+    /// place in the stream, after the tap events queued ahead of it.
+    /// The cap keeps a firehose from starving key input: the loop goes
+    /// back to `select!` — and the key channel — after each batch.
+    fn drain_pending_msgs(&mut self, rx: &mut UnboundedReceiver<AppMsg>) {
+        let mut taps: Vec<crate::tap::TapEvent> = Vec::new();
+        for _ in 1..MSG_DRAIN_PER_FRAME {
+            if self.should_quit {
+                break;
+            }
+            match rx.try_recv() {
+                Ok(AppMsg::TapEvent { event }) => taps.push(event),
+                Ok(msg) => {
+                    if !taps.is_empty() {
+                        self.on_tap_events(std::mem::take(&mut taps));
+                    }
+                    self.on_msg(msg);
+                }
+                Err(_) => break,
+            }
+        }
+        if !taps.is_empty() {
+            self.on_tap_events(taps);
+        }
+    }
+
     /// One frame of `--demo`'s tap feed: from its `due` time on, the
     /// next event arrives through [`Self::on_tap_event`], as a live
     /// tap's would. The feed is dropped with its last event, which
@@ -2138,6 +2172,16 @@ impl App {
     ///   update `tap_health` with the dropped-events counter
     ///   and bump the heartbeat-count tally.
     pub fn on_tap_event(&mut self, event: crate::tap::TapEvent) {
+        self.on_tap_events(std::iter::once(event));
+    }
+
+    /// Fold a batch of tap events — what the run loop hands over when
+    /// it drains everything queued behind one frame
+    /// ([`Self::drain_pending_msgs`]). The ring generation is bumped
+    /// once for the whole batch, not per event, so the memoised
+    /// aggregates (Hotspots, Callers, N+1) are recomputed at most once
+    /// per drawn frame however many events the batch carried.
+    pub fn on_tap_events(&mut self, events: impl IntoIterator<Item = crate::tap::TapEvent>) {
         // The monitor writes its summary into the status line when it
         // opens; an event landing while it is open must refresh that
         // line, or "no events yet" outlives the events. Only the
@@ -2146,13 +2190,21 @@ impl App {
         let shown_summary = (self.mode == Mode::TapMonitor)
             .then(|| self.tap_health.monitor_status())
             .filter(|s| self.last_status.as_deref() == Some(s.as_str()));
-        self.fold_tap_event(event);
+        let mut ring_changed = false;
+        for event in events {
+            ring_changed |= self.fold_tap_event(event);
+        }
+        if ring_changed {
+            self.bump_tap_generation();
+        }
         if shown_summary.is_some() {
             self.last_status = Some(self.tap_health.monitor_status());
         }
     }
 
-    fn fold_tap_event(&mut self, event: crate::tap::TapEvent) {
+    /// Fold one event; `true` when it went onto the ring, so the caller
+    /// owes a generation bump.
+    fn fold_tap_event(&mut self, event: crate::tap::TapEvent) -> bool {
         self.tap_health.last_event_at_unix_micros = event.received_at_unix_micros;
         match event.kind {
             crate::tap::TapKind::Heartbeat => {
@@ -2160,6 +2212,7 @@ impl App {
                 if let Some(d) = event.dropped_events_total {
                     self.tap_health.dropped_events_total = d;
                 }
+                false
             }
             crate::tap::TapKind::Query | crate::tap::TapKind::TxnBoundary => {
                 if matches!(event.kind, crate::tap::TapKind::Query) {
@@ -2175,10 +2228,10 @@ impl App {
                     TAP_CAP,
                     crate::tap::TAP_RING_MAX_BYTES,
                 );
-                self.bump_tap_generation();
                 // Cursor follows the eviction so a viewer parked on the
                 // oldest row doesn't suddenly jump forward in content.
                 self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(evicted);
+                true
             }
         }
     }
@@ -5729,6 +5782,13 @@ pub const NOTIFICATION_CAP: usize = 200;
 /// MiB — so the ring's *text* is budgeted too, by
 /// `tap::TAP_RING_MAX_BYTES` (`tap::push_bounded`).
 pub const TAP_CAP: usize = 2000;
+
+/// Most messages the run loop applies between two draws: the one it
+/// waited for, plus up to this many − 1 already queued behind it
+/// ([`App::drain_pending_msgs`]). Large enough that a tap burst lands
+/// in a handful of frames, small enough that a key press waits at most
+/// one batch.
+pub const MSG_DRAIN_PER_FRAME: usize = 1024;
 
 /// Encode a multi-line SQL entry to a single line: `\\` → `\\\\`,
 /// `\n` → `\\n`. Operation is reversible via [`decode_history_line`].
