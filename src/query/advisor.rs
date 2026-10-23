@@ -814,7 +814,7 @@ pub fn dead_tuple_finding(
         ),
         VacuumCause::Behind => (
             format!(
-                "that is past the point autovacuum should have run ({} dead), so it is behind: a long transaction holding back the xmin horizon (the sessions panel, `s`) or workers busy elsewhere",
+                "that is past the point autovacuum should have run ({} dead), so it is behind: a long transaction holding back the xmin horizon (the sessions panel, `L`) or workers busy elsewhere",
                 trigger as i64
             ),
             lower_scale.then(|| set_scale.clone()),
@@ -1080,7 +1080,7 @@ pub fn lock_finding(
             .map(|r| format!("pid {r}"))
             .unwrap_or_else(|| ctx.database.clone()),
         detail: format!(
-            "{} — the sessions panel (`s`) shows them and can terminate the head",
+            "{} — the sessions panel (`L`) shows them and can terminate the head",
             match head {
                 Some(h) if idle_in_tx => format!(
                     "pid {} holds the locks while idle in a transaction: something opened a transaction and stopped talking",
