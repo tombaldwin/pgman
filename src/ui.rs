@@ -1552,7 +1552,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // The confirm modal says what it's asking itself; its footer is
         // the keys that answer it. A status left from the editor (a
         // completion's, the cost preview's) hid `y run · n / esc cancel`.
-        .filter(|_| app.mode != Mode::Confirm)
+        //
+        // Help is the same: its footer is the overlay's own keys. A
+        // status from before it opened (`connected to …`, a yank's
+        // `copied …`) sat there instead, and at 200 columns it read as
+        // something the overlay had said.
+        .filter(|_| !matches!(app.mode, Mode::Confirm | Mode::Help))
     {
         let sp = SPINNER[app.anim_tick % SPINNER.len()];
         let prefix = if app.query_running {

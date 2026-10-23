@@ -2393,3 +2393,25 @@ fn row_detail_and_cell_detail_say_null_and_empty_string_apart() {
         assert_eq!(buf[at[0]].fg, colour, "field {field}:\n{rendered}");
     }
 }
+
+/// The help overlay's footer is its own keys. A status left from before
+/// help opened used to own the footer instead — at 200x50 a reviewer
+/// read a leftover status under the help overlay as something it said.
+#[test]
+fn help_footer_shows_the_overlay_keys_not_a_stale_status() {
+    for (w, h) in [(80, 24), (200, 50)] {
+        let mut a = settle_app();
+        a.last_status = Some("copied 3 rows to the clipboard".into());
+        a.open_help_from(Mode::Editor);
+        let buf = render(&mut a, w, h);
+        let footer = row_text(&buf, h - 1);
+        assert!(
+            !footer.contains("copied 3 rows"),
+            "{w}x{h}: stale status in the help footer: {footer:?}"
+        );
+        assert!(
+            footer.contains("close help"),
+            "{w}x{h}: the footer names the overlay's keys: {footer:?}"
+        );
+    }
+}
