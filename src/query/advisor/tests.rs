@@ -323,7 +323,7 @@ fn suggest_work_mem_covers_a_spill_within_two_to_four_times() {
     // 4× or more: twice, and the reasoning says look at the statement.
     let (v, why) = suggest_work_mem(4 * MIB, Some(16 * MIB));
     assert_eq!(v, 8 * MIB);
-    assert!(why.contains("won't cover it"), "{why}");
+    assert!(why.contains("no safe work_mem covers"), "{why}");
 }
 
 #[test]

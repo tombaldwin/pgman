@@ -563,7 +563,7 @@ pub fn suggest_work_mem(current: i64, worst_per_call: Option<i64>) -> (i64, Stri
         Some(p) => (
             lo,
             format!(
-                "the worst statement spills {} a call, more than 4× work_mem: raising work_mem won't cover it — look at that statement (an index, or less data per sort)",
+                "the worst statement spills {} a call, more than 4× work_mem: twice helps the smaller spills, but no safe work_mem covers that one — look at the statement (an index, or less data per sort)",
                 human_size(p)
             ),
         ),
