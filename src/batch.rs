@@ -142,6 +142,9 @@ pub enum Refusal {
         kind: String,
         db: String,
         stmt: String,
+        /// The statement's leading word when no Postgres statement starts
+        /// with it — most likely a typo ([`crate::safety::unrecognised_statement_word`]).
+        unrecognised: Option<String>,
     },
     /// A `Block` guard.
     Block {
@@ -196,6 +199,7 @@ pub fn check_statements(
                     kind: decision.kind.describe(),
                     db: db.to_string(),
                     stmt: stmt_summary(stmt),
+                    unrecognised: crate::safety::unrecognised_statement_word(stmt),
                 });
             }
             // Not a category guard: the profile asked for a read-only
@@ -225,7 +229,15 @@ pub fn check_batch_safety(
         Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
         Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
         Refusal::ServerControl => crate::safety::SERVER_CONTROL_REFUSAL.to_string(),
-        Refusal::Confirm { kind, db, stmt } => format!(
+        Refusal::Confirm {
+            unrecognised: Some(word),
+            stmt,
+            ..
+        } => format!(
+            "blocked by safety: `{word}` isn't a statement pgman recognises (typo?) \
+             — re-run with --yes to send it anyway (statement: {stmt})"
+        ),
+        Refusal::Confirm { kind, db, stmt, .. } => format!(
             "blocked by safety: {kind} on '{db}' would need confirmation \
              — re-run with --yes to allow guarded writes in batch mode (statement: {stmt})"
         ),
@@ -240,6 +252,30 @@ pub fn check_batch_safety(
 mod read_only_batch_tests {
     use super::check_batch_safety;
     use crate::safety::{SafetyConfig, READ_ONLY_ESCAPE_REFUSAL};
+
+    #[test]
+    fn a_typo_is_refused_as_unrecognised_not_as_a_guarded_write() {
+        let err =
+            check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", false).unwrap_err();
+        assert!(
+            err.starts_with(
+                "blocked by safety: `selec` isn't a statement pgman recognises (typo?)"
+            ),
+            "{err}"
+        );
+        assert!(err.contains("re-run with --yes to send it anyway"), "{err}");
+        // Still guarded: --yes is what lets it through, as before.
+        assert!(check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", true).is_ok());
+        // A known write keeps the guarded-write wording.
+        let write = check_batch_safety(
+            &SafetyConfig::default(),
+            "db",
+            "merge into t using s on true when matched then delete",
+            false,
+        )
+        .unwrap_err();
+        assert!(write.contains("would need confirmation"), "{write}");
+    }
 
     #[test]
     fn server_control_is_refused_under_a_read_only_profile_even_with_yes() {

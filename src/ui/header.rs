@@ -163,6 +163,10 @@ pub(crate) fn draw_tall_header(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
     ];
+    if crate::ui::shows_replica_badge(app) {
+        status.push(Span::raw(" "));
+        status.push(pill("replica", theme.row_alt_bg, theme.health_yellow));
+    }
     if app.tx_open || app.mode == Mode::TxDecision {
         status.push(Span::raw(" "));
         status.push(pill("TX", theme.row_alt_bg, theme.health_yellow));

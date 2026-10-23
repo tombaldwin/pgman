@@ -1877,6 +1877,27 @@ fn param_prompt_collects_values_and_substitutes() {
     assert_eq!(a.mode, Mode::Editor);
     assert_eq!(a.editor.buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
     assert!(a.saved_ui.param_prompt.is_none());
+    // No `;`, so a plain Enter would be a newline: name the key that runs.
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("loaded 'two' with 2 param(s) · alt-⏎ runs it")
+    );
+}
+
+#[test]
+fn a_loaded_saved_query_names_the_key_that_runs_it() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.load_saved_query(saved("byid", "SELECT * FROM t WHERE id = :id;"));
+    type_str(&mut a, "42");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Editor);
+    // Terminated: a plain Enter runs it.
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("loaded 'byid' with 1 param(s) · ⏎ runs it")
+    );
+    // And it does.
+    assert!(crate::app::editor::enter_runs(&a.editor.buffer));
 }
 
 #[test]
@@ -5783,6 +5804,11 @@ fn query_ok_status_flags_truncated_grids() {
         status.contains(&format!("capped at {}", crate::grid::MAX_ROWS)),
         "expected truncation hint in status, got: {status}"
     );
+    assert!(status.contains("more rows not fetched"), "{status}");
+    assert!(
+        status.ends_with("pgman query '…' --json returns every row"),
+        "{status}"
+    );
     assert!(a.grid.truncated);
 }
 
@@ -7063,7 +7089,8 @@ fn bootstrap_grid(rows: &[(&str, &str)]) -> Grid {
 
 #[test]
 fn parse_bootstrap_databases_extracts_name_and_size_in_row_order() {
-    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    // BOOTSTRAP_SQL sends byte counts; the card shows them formatted.
+    let grid = bootstrap_grid(&[("main", "1288490189"), ("analytics", "314572800")]);
     let got = parse_bootstrap_databases(&grid);
     assert_eq!(
         got,
@@ -7119,7 +7146,8 @@ fn parse_bootstrap_databases_empty_grid_yields_empty_vec() {
 #[test]
 fn bootstrap_result_populates_databases_and_leaves_grid_empty() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    // BOOTSTRAP_SQL sends byte counts; the card shows them formatted.
+    let grid = bootstrap_grid(&[("main", "1288490189"), ("analytics", "314572800")]);
     a.apply_bootstrap_grid(grid);
     assert_eq!(
         a.databases,
@@ -10421,7 +10449,7 @@ fn environments_open_without_a_connection_and_load_the_installed_rows() {
     assert!(!a.environments.loading);
     assert_eq!(
         a.last_status.as_deref(),
-        Some("environments · 4 · 8 databases")
+        Some("4 environments · 8 databases")
     );
     // The cursor walks databases, not headings, and stops at the ends.
     for _ in 0..8 {
@@ -10477,14 +10505,12 @@ fn environments_status_counts_failures() {
         environments_status(0, 0, 0),
         "environments · none configured"
     );
-    assert_eq!(
-        environments_status(2, 6, 0),
-        "environments · 2 · 6 databases"
-    );
+    assert_eq!(environments_status(2, 6, 0), "2 environments · 6 databases");
     assert_eq!(
         environments_status(2, 4, 1),
-        "environments · 2 · 4 databases · 1 failed"
+        "2 environments · 4 databases · 1 failed"
     );
+    assert_eq!(environments_status(1, 1, 0), "1 environment · 1 database");
 }
 
 #[test]
@@ -13070,4 +13096,292 @@ fn tab_after_colon_help_completes_the_section_name() {
     press(&mut a, KeyCode::Tab);
     assert_eq!(bar_text(&a).as_deref(), Some("connect ed"));
     assert_eq!(a.command_bar_completions, None);
+}
+
+/// A fresh scratch dir for the draft tests — never the real data dir.
+fn draft_scratch(tag: &str) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "pgman-draft-{tag}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A window whose persistence all points into `dir`, with the draft
+/// restored from `dir/draft.sql` the way `main` does at startup.
+fn draft_window(dir: &std::path::Path) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.draft_file = dir.join("draft.sql");
+    a.history_file = dir.join("history.log");
+    a.saved_queries_file = dir.join("saved.toml");
+    a.restore_draft();
+    a
+}
+
+#[test]
+fn plan_draft_write_covers_each_case() {
+    // Untouched: skip, whatever the disk holds.
+    assert_eq!(plan_draft_write("a", "a", "a"), DraftWrite::Skip);
+    assert_eq!(plan_draft_write("a", "a", "other"), DraftWrite::Skip);
+    assert_eq!(plan_draft_write("", "", ""), DraftWrite::Skip);
+    // Edited, disk unchanged since we synced: write.
+    assert_eq!(plan_draft_write("ab", "a", "a"), DraftWrite::Write);
+    // A deliberate clear is an edit too, and is written.
+    assert_eq!(plan_draft_write("", "a", "a"), DraftWrite::Write);
+    // Disk already holds exactly our text: writing is harmless.
+    assert_eq!(plan_draft_write("ab", "a", "ab"), DraftWrite::Write);
+    // Edited, and the disk moved under us (or vanished): divert.
+    assert_eq!(plan_draft_write("ab", "a", "ac"), DraftWrite::Divert);
+    assert_eq!(plan_draft_write("ab", "a", ""), DraftWrite::Divert);
+}
+
+#[test]
+fn draft_sibling_path_is_a_utc_stamp_beside_the_draft() {
+    let base = std::path::Path::new("/x/pgman/draft.sql");
+    let secs = 1_792_750_507;
+    assert_eq!(format_unix_secs_utc(secs), "2026-10-23T10:15:07Z");
+    assert_eq!(
+        draft_sibling_path(base, secs, 1),
+        std::path::Path::new("/x/pgman/draft-20261023-101507.sql")
+    );
+    assert_eq!(
+        draft_sibling_path(base, secs, 2),
+        std::path::Path::new("/x/pgman/draft-20261023-101507-2.sql")
+    );
+}
+
+#[test]
+fn an_untouched_window_never_overwrites_another_windows_draft() {
+    let dir = draft_scratch("untouched");
+    std::fs::write(dir.join("draft.sql"), "select 1").unwrap();
+    let mut a = draft_window(&dir);
+    let mut b = draft_window(&dir);
+    assert_eq!(b.editor.buffer, "select 1", "B restored the old draft");
+
+    a.editor.buffer = "select 1, 2 -- A's work".into();
+    a.save_draft().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "select 1, 2 -- A's work"
+    );
+
+    // B never touched its buffer: saving (auto-save or exit) is a no-op.
+    b.save_draft().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "select 1, 2 -- A's work",
+        "B must not clobber A's draft"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_edited_window_diverts_to_a_sibling_when_another_window_saved_first() {
+    let dir = draft_scratch("divert");
+    std::fs::write(dir.join("draft.sql"), "select 1").unwrap();
+    let mut a = draft_window(&dir);
+    let mut b = draft_window(&dir);
+
+    a.editor.buffer = "A's work".into();
+    a.save_draft().unwrap();
+    b.editor.buffer = "B's work".into();
+    b.save_draft().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "A's work",
+        "A's draft survives"
+    );
+    let sibling = b.draft_file.clone();
+    assert_ne!(sibling, dir.join("draft.sql"));
+    assert_eq!(sibling.parent(), Some(dir.as_path()));
+    assert!(sibling
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("draft-"));
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "B's work");
+    assert!(b
+        .last_status
+        .as_deref()
+        .unwrap_or("")
+        .contains("another pgman window"));
+
+    // B's later saves keep going to the same sibling, not a new one each tick.
+    b.editor.buffer = "B's work, more".into();
+    b.save_draft().unwrap();
+    assert_eq!(b.draft_file, sibling);
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "B's work, more");
+    let files = std::fs::read_dir(&dir).unwrap().count();
+    assert_eq!(files, 2, "draft.sql + one sibling");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_window_saving_twice_in_a_row_keeps_writing_the_draft() {
+    // Its own previous write is not "another window's change".
+    let dir = draft_scratch("twice");
+    let mut a = draft_window(&dir);
+    a.editor.buffer = "one".into();
+    a.save_draft().unwrap();
+    a.editor.buffer = "two".into();
+    a.save_draft().unwrap();
+    assert_eq!(a.draft_file, dir.join("draft.sql"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "two"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn quitting_an_untouched_window_leaves_another_windows_draft_alone() {
+    // The reported data loss, through the real exit path.
+    let dir = draft_scratch("exit");
+    std::fs::write(dir.join("draft.sql"), "old draft").unwrap();
+    let mut b = draft_window(&dir);
+    b.mode = Mode::Normal;
+    // Window A saves its work after B opened.
+    std::fs::write(dir.join("draft.sql"), "A's newer work").unwrap();
+
+    let mut tui = crate::tui::HeadlessTui::default();
+    let (tx, rx) = mpsc::unbounded_channel::<Event>();
+    tx.send(Event::Key(KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(2), b.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate quickly")
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "A's newer work"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two JDBC-shaped pastes the importer reconstructs — enough to tell a
+/// reopened picker from a fresh one.
+const LOG_A: &str = "select * from orders where id = ?\n\nINTEGER:42";
+const LOG_B: &str = "select * from invoices where id = ?\n\nINTEGER:7";
+
+fn ctrl_l() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)
+}
+
+/// Paste `log` into the editor and Ctrl-L it, the way an operator does
+/// (so the picker's first-visit tip is spent before the reopen).
+fn open_log_by_hand(a: &mut App, log: &str) {
+    a.mode = Mode::Editor;
+    a.editor.buffer = log.into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+}
+
+#[test]
+fn ctrl_l_after_loading_a_pick_reopens_the_last_log() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "select * from orders where id = 42;");
+
+    // The buffer now holds the loaded query, not the log.
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick, "{:?}", a.last_error);
+    assert!(a.last_error.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+    assert_eq!(a.log_pick.picks.len(), 1);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from orders where id = 42"
+    );
+}
+
+#[test]
+fn esc_from_the_log_picker_also_keeps_it_for_reopening() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+}
+
+#[test]
+fn ctrl_l_from_normal_mode_reopens_the_last_log_too() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.mode = Mode::Normal;
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+}
+
+#[test]
+fn a_new_log_in_the_buffer_replaces_the_last_one() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.editor.buffer = LOG_B.into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from invoices where id = 7"
+    );
+    // And it is B, not A, that a later Ctrl-L reopens.
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.on_key(ctrl_l());
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from invoices where id = 7"
+    );
+}
+
+#[test]
+fn a_log_preloaded_at_startup_reopens_with_the_reopened_status() {
+    // `--log` enters the picker without a key, so its first-visit tip
+    // must not wait for (and hide) the reopen status.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.preload_log(LOG_A.to_string());
+    assert!(a.last_status.as_deref().unwrap_or("").starts_with("tip"));
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.on_key(ctrl_l());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+}
+
+#[test]
+fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "select 1".into();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(a
+        .last_error
+        .as_deref()
+        .unwrap_or("")
+        .starts_with("no queries found"));
 }

@@ -15,6 +15,9 @@ pub enum AppMsg {
     Booted {
         generation: u64,
         server_version: String,
+        /// The server is a standby (`pg_is_in_recovery()`); `None` if
+        /// unknown.
+        in_recovery: Option<bool>,
         grid: Grid,
         client: Arc<tokio_postgres::Client>,
         schema_cache: SchemaCache,

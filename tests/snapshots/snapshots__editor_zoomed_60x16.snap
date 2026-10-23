@@ -1,10 +1,10 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 825
+assertion_line: 847
 expression: text
 ---
  pgman X.X.X · YYYY-MM-DD │ test  connected · pg 16.0
- 1 SELECT id, email  ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT id, email          [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor ◆ ] · zoomed (esc, z) ─────────────────────────╮
 │> SELECT id, email                                        │
 │  FROM users                                              │

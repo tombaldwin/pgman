@@ -1,10 +1,10 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 326
+assertion_line: 343
 expression: dump(&buf)
 ---
  pgman X.X.X · YYYY-MM-DD │ test  connected · pg 16.0
- 1 SELECT count(*) F…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT count(*) F…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor ◆ ]────────────────────────────────────────────────────────────────╮
 │> SELECT count(*) FROM users                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────╯

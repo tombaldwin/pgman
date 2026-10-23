@@ -340,6 +340,84 @@ pub fn classify(sql: &str) -> StatementKind {
     kind
 }
 
+/// Every word a Postgres statement can start with — the first keyword of
+/// each command in the SQL Commands reference (`ABORT` … `WITH`), as the
+/// grammar's top-level `stmt` rule accepts them. Lower-case, sorted.
+pub const STATEMENT_KEYWORDS: &[&str] = &[
+    "abort",
+    "alter",
+    "analyse",
+    "analyze",
+    "begin",
+    "call",
+    "checkpoint",
+    "close",
+    "cluster",
+    "comment",
+    "commit",
+    "copy",
+    "create",
+    "deallocate",
+    "declare",
+    "delete",
+    "discard",
+    "do",
+    "drop",
+    "end",
+    "execute",
+    "explain",
+    "fetch",
+    "grant",
+    "import",
+    "insert",
+    "listen",
+    "load",
+    "lock",
+    "merge",
+    "move",
+    "notify",
+    "prepare",
+    "reassign",
+    "refresh",
+    "reindex",
+    "release",
+    "reset",
+    "revoke",
+    "rollback",
+    "savepoint",
+    "security",
+    "select",
+    "set",
+    "show",
+    "start",
+    "table",
+    "truncate",
+    "unlisten",
+    "update",
+    "vacuum",
+    "values",
+    "with",
+];
+
+/// The statement's leading word, as typed, when it is a word but not one
+/// any Postgres statement starts with ([`STATEMENT_KEYWORDS`]) — `selec`
+/// in `selec 1`. `None` for a recognised keyword, or a statement that
+/// doesn't open with a word (`(select 1)`, empty). Wording only: it never
+/// changes [`classify`], so an unrecognised statement stays guarded. Pure.
+pub fn unrecognised_statement_word(sql: &str) -> Option<String> {
+    let stripped = strip_sql_comments(sql);
+    let word: String = stripped
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let known = word.is_empty()
+        || STATEMENT_KEYWORDS
+            .binary_search(&word.to_ascii_lowercase().as_str())
+            .is_ok();
+    (!known).then_some(word)
+}
+
 /// `true` if `sql` has a `U&"…"` identifier or a `U&'…'` string. Postgres
 /// decodes their escapes (`U&"pg_\0074erminate_backend"` is
 /// `pg_terminate_backend`, `UESCAPE` picks another escape character) and
@@ -2685,5 +2763,87 @@ mod tests {
                 "describe() leaked Debug syntax for {kind:?}: {d:?}"
             );
         }
+    }
+
+    #[test]
+    fn statement_keywords_are_sorted_lowercase_and_unique() {
+        // `unrecognised_statement_word` binary-searches the list.
+        let mut sorted = STATEMENT_KEYWORDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted, STATEMENT_KEYWORDS);
+        assert!(STATEMENT_KEYWORDS
+            .iter()
+            .all(|k| k.chars().all(|c| c.is_ascii_lowercase())));
+    }
+
+    #[test]
+    fn every_keyword_classify_knows_is_a_statement_keyword() {
+        for sql in [
+            "select 1",
+            "table t",
+            "values (1)",
+            "show all",
+            "insert into t values (1)",
+            "update t set a = 1",
+            "delete from t",
+            "truncate t",
+            "drop table t",
+            "alter table t add c int",
+            "create table t ()",
+            "comment on table t is 'x'",
+            "grant select on t to r",
+            "revoke select on t from r",
+            "reindex table t",
+            "vacuum",
+            "analyze",
+            "analyse",
+            "cluster t",
+            "refresh materialized view v",
+            "merge into t using s on true when matched then delete",
+            "do $$ begin end $$",
+            "call p()",
+            "explain select 1",
+            "with x as (select 1) select * from x",
+            "begin",
+            "commit",
+            "rollback",
+            "set search_path = x",
+            "copy t to stdout",
+            "listen c",
+            "lock table t",
+        ] {
+            assert_eq!(unrecognised_statement_word(sql), None, "{sql}");
+        }
+    }
+
+    #[test]
+    fn a_typo_d_leading_word_is_reported_as_typed() {
+        assert_eq!(
+            unrecognised_statement_word("selec 1;"),
+            Some("selec".into())
+        );
+        assert_eq!(
+            unrecognised_statement_word("  SELCT * from t"),
+            Some("SELCT".into())
+        );
+        assert_eq!(
+            unrecognised_statement_word("-- note\n/* x */ updte t set a = 1"),
+            Some("updte".into())
+        );
+        // Case doesn't make a keyword unknown.
+        assert_eq!(unrecognised_statement_word("SeLeCt 1"), None);
+        // Not opening with a word: nothing to call a typo.
+        assert_eq!(unrecognised_statement_word("(select 1)"), None);
+        assert_eq!(unrecognised_statement_word(""), None);
+        assert_eq!(unrecognised_statement_word("   "), None);
+    }
+
+    #[test]
+    fn an_unrecognised_statement_stays_guarded() {
+        // The wording changes; the safety invariant does not.
+        assert_eq!(classify("selec 1"), StatementKind::Other);
+        let d = evaluate(&SafetyConfig::default(), "db", "selec 1");
+        assert_eq!(d.guard, Guard::Confirm);
     }
 }

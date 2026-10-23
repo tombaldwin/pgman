@@ -33,6 +33,7 @@ impl App {
             }
             AppMsg::Booted {
                 server_version,
+                in_recovery,
                 grid,
                 client,
                 schema_cache,
@@ -40,6 +41,7 @@ impl App {
                 ..
             } => {
                 self.conn_state = ConnState::Connected { server_version };
+                self.in_recovery = in_recovery;
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
                 // without touching the Client. Replaced on every new
                 // Booted so the dispatcher always matches the live
@@ -117,13 +119,15 @@ impl App {
                 } else {
                     String::new()
                 };
+                // The cap note goes last: its CLI pointer is the way out,
+                // and the footer's fitting keeps the last segment.
                 let cap_suffix = if self.grid.truncated {
-                    format!(" · capped at {}", crate::grid::MAX_ROWS)
+                    format!(" · {}", crate::grid::cap_status_note())
                 } else {
                     String::new()
                 };
                 self.last_status = Some(format!(
-                    "{kind_label} ok · {} row(s){cap_suffix}{timing_suffix}",
+                    "{kind_label} ok · {} row(s){timing_suffix}{cap_suffix}",
                     self.grid.row_count()
                 ));
                 // EXPLAIN / EXPLAIN ANALYZE: parse the JSON we asked

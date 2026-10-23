@@ -8,7 +8,7 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                        │
 │   8 rows in 6 sections match 'yank'                                                              │

@@ -4,7 +4,7 @@ assertion_line: 250
 expression: dump(&buf)
 ---
  pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
- 1 SELECT number, cu…               ] [ switch · ctrl-t new
+ 1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh ·╮  │
 │ │  SEV    CODE     object                             │  │
@@ -18,4 +18,4 @@ expression: dump(&buf)
 │I╰─────────────────────────────────────────────────────╯  │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   tip · … · y… suggestion · ? full keys
+ RO   TAP   N+1 ×1   tip · ? full keys

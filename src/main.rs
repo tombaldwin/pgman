@@ -16,6 +16,7 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (beta)",
+    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman env discover [--save]\n       pgman mcp serve",
     after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
 )]
 struct Cli {
@@ -111,12 +112,62 @@ struct Cli {
     no_tap: bool,
 }
 
+/// The words that start a sub-command rather than name a DSN.
+const SUBCOMMANDS: &[&str] = &["query", "env", "mcp"];
+
+/// `argv` with a sub-command that follows global options moved to the
+/// front: `pgman --dsn X query 'SQL'` becomes `pgman query 'SQL' --dsn X`.
+/// Only the first positional argument can be one — a later bare word is
+/// the DSN's, or the sub-command's own. `takes_value` says whether a flag
+/// (long name, or a short letter) consumes the next argument, so a flag's
+/// value is never mistaken for the sub-command. Pure.
+fn hoist_subcommand(argv: Vec<String>, takes_value: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut i = 1;
+    while let Some(arg) = argv.get(i).map(String::as_str) {
+        if arg == "--" {
+            break;
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            if !long.contains('=') && takes_value(long) {
+                i += 1;
+            }
+        } else if let Some(short) = arg.strip_prefix('-').filter(|s| s.len() == 1) {
+            if takes_value(short) {
+                i += 1;
+            }
+        } else if !arg.starts_with('-') {
+            if i > 1 && SUBCOMMANDS.contains(&arg) {
+                let mut out = vec![argv[0].clone(), argv[i].clone()];
+                out.extend(argv[i + 1..].iter().cloned());
+                out.extend(argv[1..i].iter().cloned());
+                return out;
+            }
+            break;
+        }
+        i += 1;
+    }
+    argv
+}
+
+/// Does `Cli`'s flag `name` (long, or a one-letter short) take a value?
+fn cli_flag_takes_value(name: &str) -> bool {
+    use clap::CommandFactory;
+    Cli::command().get_arguments().any(|a| {
+        let named = a.get_long() == Some(name)
+            || (name.chars().count() == 1 && a.get_short() == name.chars().next());
+        named && a.get_action().takes_values()
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // `pgman mcp serve` is a sub-command the flat flag set can't express
     // (clap would read `mcp` as the positional DSN). stdout belongs to
     // the protocol, so diagnostics go to the rolling log file.
-    let argv: Vec<String> = std::env::args().collect();
+    // A sub-command after global options (`pgman --dsn X query 'SQL'`)
+    // is moved to the front, its options after it, so the checks below
+    // see it where they look.
+    let argv = hoist_subcommand(std::env::args().collect(), cli_flag_takes_value);
     if argv.get(1).map(String::as_str) == Some("mcp") {
         if pgman::mcp::wants_help(&argv[2..]) {
             println!("{}", pgman::mcp::USAGE);
@@ -434,10 +485,7 @@ async fn main() -> anyhow::Result<()> {
         !cli.no_update_check && std::env::var_os("PGMAN_NO_UPDATE_CHECK").is_none();
     // Restore the editor draft from the last session (best-effort).
     // Cursor lands at the end so the operator can keep typing.
-    if let Some(draft) = app::load_draft() {
-        application.editor.cursor = draft.len();
-        application.editor.buffer = draft;
-    }
+    application.restore_draft();
     // `--log PATH`: preload the editor with a log and run the same
     // importer F8 / ctrl-l use, so pgman opens straight into the
     // reconstructed-query picker (`Mode::LogPick`) once the splash
@@ -1027,7 +1075,8 @@ fn batch_dsn_from_picks(
     let picks = collapse_same_connection(picks);
     match picks.len() {
         0 => Err(
-            "no DSN — pass --dsn or run from a project with .pgman/pgman.toml or .idea/dataSources.xml"
+            "no DSN — pass --dsn or run from a project with .pgman/pgman.toml, \
+             .idea/dataSources.xml or a Spring application*.yml"
                 .into(),
         ),
         1 => {
@@ -1974,11 +2023,66 @@ mod main_tests {
         assert!(err.contains("no usable connection URL"), "got: {err}");
     }
 
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn hoist_subcommand_moves_it_past_global_options() {
+        let h = |a: &[&str]| hoist_subcommand(args(a), cli_flag_takes_value);
+        assert_eq!(
+            h(&["pgman", "--dsn", "postgres://h/d", "query", "select 1"]),
+            args(&["pgman", "query", "select 1", "--dsn", "postgres://h/d"])
+        );
+        assert_eq!(
+            h(&["pgman", "--dsn=postgres://h/d", "--json", "query"]),
+            args(&["pgman", "query", "--dsn=postgres://h/d", "--json"])
+        );
+        assert_eq!(
+            h(&["pgman", "--theme", "light", "mcp", "serve"]),
+            args(&["pgman", "mcp", "serve", "--theme", "light"])
+        );
+        assert_eq!(
+            h(&["pgman", "--redact", "env", "discover"]),
+            args(&["pgman", "env", "discover", "--redact"])
+        );
+    }
+
+    #[test]
+    fn hoist_subcommand_leaves_everything_else_alone() {
+        let h = |a: &[&str]| hoist_subcommand(args(a), cli_flag_takes_value);
+        for a in [
+            // Already first.
+            &["pgman", "query", "select 1", "--dsn", "x"][..],
+            // A flag's value that happens to be a sub-command's name.
+            &["pgman", "--dsn", "query"],
+            &["pgman", "--theme", "env", "--demo"],
+            // The first positional is the DSN: a later `query` is not ours.
+            &["pgman", "postgres://h/d", "query"],
+            // No sub-command at all.
+            &["pgman", "--demo"],
+            &["pgman"],
+            // After `--`, everything is positional.
+            &["pgman", "--", "query"],
+        ] {
+            assert_eq!(h(a), args(a), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn cli_flag_takes_value_reads_clap_s_own_definition() {
+        assert!(cli_flag_takes_value("dsn"));
+        assert!(cli_flag_takes_value("theme"));
+        assert!(!cli_flag_takes_value("demo"));
+        assert!(!cli_flag_takes_value("yes"));
+        assert!(!cli_flag_takes_value("no-such-flag"));
+    }
+
     #[test]
     fn batch_refuses_zero_or_ambiguous_candidates() {
-        assert!(batch_dsn_from_picks(Vec::new(), true)
-            .unwrap_err()
-            .contains("no DSN"));
+        let none = batch_dsn_from_picks(Vec::new(), true).unwrap_err();
+        assert!(none.contains("no DSN"), "{none}");
+        assert!(none.contains("Spring application*.yml"), "{none}");
         let err = batch_dsn_from_picks(
             vec![
                 batch_pick("a", "postgres://app@a/main"),

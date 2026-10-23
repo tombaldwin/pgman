@@ -31,7 +31,7 @@ pub const STATUS_SQL: &str = concat!(
     lag_secs_sql!(),
     " AS lag_secs, \
      (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()) AS sessions, \
-     pg_size_pretty(pg_database_size(current_database())) AS size, \
+     pg_database_size(current_database()) AS size, \
      (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
         AND cardinality(pg_blocking_pids(pid)) > 0) AS blocked, \
      CASE WHEN pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') THEN \
@@ -64,7 +64,8 @@ pub struct Probe {
     pub files_error: Option<String>,
     /// Backends connected to this database, the probe's own included.
     pub sessions: Option<i64>,
-    /// The database's size, as `pg_size_pretty` puts it.
+    /// The database's size, through pgman's one formatter
+    /// (`query::schema::format_bytes`).
     pub size: Option<String>,
     /// Sessions waiting on another session's lock.
     pub blocked: Option<i64>,
@@ -111,7 +112,7 @@ pub fn parse_status(rows: &TypedRows) -> Probe {
         in_recovery: cell(1).map(|v| v == "t" || v == "true"),
         lag_secs: cell(2).and_then(|v| v.parse().ok()),
         sessions: cell(3).and_then(|v| v.parse().ok()),
-        size: cell(4),
+        size: cell(4).map(|v| crate::query::schema::format_size_cell(&v)),
         blocked: cell(5).and_then(|v| v.parse().ok()),
         long_tx: cell(6).and_then(|v| v.parse().ok()),
         ..Probe::default()
@@ -215,13 +216,13 @@ mod tests {
             Some("t"),
             Some("0.42"),
             Some("7"),
-            Some("1203 MB"),
+            Some("1261436928"),
             Some("2"),
             Some("1"),
         ]));
         assert_eq!((p.blocked, p.long_tx), (Some(2), Some(1)));
         assert_eq!(p.server_version.as_deref(), Some("16.10"));
-        assert_eq!((p.sessions, p.size.as_deref()), (Some(7), Some("1203 MB")));
+        assert_eq!((p.sessions, p.size.as_deref()), (Some(7), Some("1.2 GB")));
         assert_eq!(p.in_recovery, Some(true));
         assert_eq!(p.lag_secs, Some(0.42));
 

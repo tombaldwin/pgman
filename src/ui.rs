@@ -356,6 +356,16 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
         Span::styled(state, state_style),
     ];
+    if shows_replica_badge(app) {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            " replica ",
+            Style::default()
+                .bg(theme.health_yellow)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if let Some(update) = &app.update_available {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
@@ -387,6 +397,13 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     ];
     head.append(&mut spans);
     f.render_widget(Paragraph::new(Line::from(head)), area);
+}
+
+/// Connected to a standby: the header says `replica`, whichever way the
+/// connection was made — `:connect` and `--dsn` too, not only an
+/// environment whose inventory names one. Pure.
+pub(crate) fn shows_replica_badge(app: &App) -> bool {
+    matches!(app.conn_state, ConnState::Connected { .. }) && app.in_recovery == Some(true)
 }
 
 /// What follows "pgman" in the header: ` 0.1.0 · 2026-10-19`, or without
@@ -459,9 +476,13 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                     // way to connect.
                     lines.push(Line::from("no connection — press c to choose a connection"));
                 }
+                // Wrapped, not clipped: at 80 columns the discovery and
+                // `:connect` lines cut off mid-word. The card fills the
+                // whole body, so the wrapped rows have the room.
                 f.render_widget(
                     Paragraph::new(Text::from(lines))
                         .style(Style::default().fg(app.theme.muted))
+                        .wrap(ratatui::widgets::Wrap { trim: false })
                         .block(bordered(&app.theme, "pgman")),
                     area,
                 );
@@ -845,12 +866,13 @@ const ERROR_ICON: &str = " ⚠ ";
 pub(crate) const ERROR_FOOTER_MAX_ROWS: u16 = 3;
 
 /// The pointer to the error overlay that ends the footer's error: `!`
-/// where no character is being typed; F2 (fn-F2 on a Mac) in the
-/// editor and the prompts, where `!` is a character. Empty when there
-/// is no detail to open.
+/// where no character is being typed; in the editor and the prompts,
+/// where `!` is a character, F2 — and `:error`, since F2 takes fn on a
+/// Mac and an F-key must never be the only way. Empty when there is no
+/// detail to open.
 fn error_pointer(app: &App) -> &'static str {
     match app.last_error_detail {
-        Some(_) if app.mode.is_text_input() => " · F2 detail",
+        Some(_) if app.mode.is_text_input() => " · F2 / :error detail",
         Some(_) => " · ! detail",
         None => "",
     }
@@ -1370,6 +1392,54 @@ fn end_ellipsis(s: &str, width: usize) -> String {
     format!("{keep}…")
 }
 
+/// Is this ` · ` segment a `key action` hint (`y run`, `+ / − expand-all`,
+/// `ctrl-t new`, `J/K next row`) rather than prose (`find: pro`,
+/// `loaded query`)? Its first word, and each `/ alt` alternative, must
+/// look like a key: at most two characters (`?`, `[`, `F2`), a slash pair
+/// of those (`J/K`), a named key, or a modifier chord — and not a bare
+/// count (`3 matches`, `1/3 match`). A key hint is
+/// fitted whole or not at all — cut, it shows its label without its key.
+/// Pure.
+pub(crate) fn is_key_hint(segment: &str) -> bool {
+    const NAMED: &[&str] = &[
+        "enter",
+        "esc",
+        "tab",
+        "space",
+        "home",
+        "end",
+        "pgup",
+        "pgdn",
+        "del",
+        "backspace",
+        "shift-tab",
+    ];
+    let looks_like_key = |w: &str| {
+        let lower = w.to_ascii_lowercase();
+        // A count (`3 matches`, `1/3 match`) is prose, not a key.
+        if w.chars().any(|c| c.is_ascii_digit())
+            && w.chars().all(|c| c.is_ascii_digit() || c == '/')
+        {
+            return false;
+        }
+        w.chars().count() <= 2
+            || (w.contains('/')
+                && w.split('/')
+                    .all(|p| !p.is_empty() && p.chars().count() <= 2))
+            || NAMED.contains(&lower.as_str())
+            || ["ctrl-", "alt-", "shift-"]
+                .iter()
+                .any(|m| lower.starts_with(m))
+            || (lower.len() >= 2
+                && lower.starts_with('f')
+                && lower[1..].chars().all(|c| c.is_ascii_digit()))
+    };
+    match hint_key(segment) {
+        Some((key, _)) => key.split(" / ").all(looks_like_key),
+        None => false,
+    }
+}
+
 /// Fit a ` · `-joined status/error line into `width` columns without ever
 /// cutting a word mid-letter. Unlike [`fit_hints`] (whole hint items,
 /// dropped from the tail), the *last* segment here is load-bearing — it
@@ -1383,6 +1453,10 @@ fn end_ellipsis(s: &str, width: usize) -> String {
 ///    other than the last (`"abc…xyz"`, keeping both ends) until either
 ///    the join fits or every other segment has been collapsed to a bare
 ///    `"…"`.
+///    Key hints ([`is_key_hint`]) are never shrunk: a cut one keeps its
+///    label and loses its key (`… expand-all/collapse-all`).
+///    Then, still too wide, drop whole middle segments: prose first,
+///    then key hints from the end.
 /// 3. Still too wide → drop whole leading segments (the ones already
 ///    reduced to `"…"` first, by construction) until only the last
 ///    segment remains.
@@ -1396,7 +1470,7 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
         return text.to_string();
     }
     let mut segments: Vec<String> = text.split(SEP).map(str::to_string).collect();
-    let last_idx = segments.len() - 1;
+    let mut last_idx = segments.len() - 1;
 
     // Step 2: shrink the longest non-last segment, repeatedly, until the
     // join fits or nothing non-last is left to shrink. Only segments
@@ -1424,23 +1498,38 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
         let longest = segments
             .iter()
             .enumerate()
-            .filter(|(i, s)| *i != last_idx && display_width(s) >= MIN_SHRINK)
+            .filter(|(i, s)| *i != last_idx && display_width(s) >= MIN_SHRINK && !is_key_hint(s))
             .max_by_key(|(_, s)| display_width(s));
         let Some((i, s)) = longest else { break };
         let target_len = display_width(s).saturating_sub(over).max(1);
-        segments[i] = middle_ellipsis(s, target_len);
+        // Shrunk to a stub (`r…` of `replicas under their primary`), a
+        // middle segment says nothing: drop it whole instead. The first
+        // is the context, so it keeps whatever of itself fits.
+        const MIN_KEEP: usize = 8;
+        if i > 0 && target_len < MIN_KEEP {
+            segments.remove(i);
+            last_idx -= 1;
+        } else {
+            segments[i] = middle_ellipsis(s, target_len);
+        }
     }
 
     // Step 2b: nothing left to shrink. Drop whole segments from the
     // second onwards — the first is the context (`find: pro`), the
     // last is the action keys; what sits between is the most
-    // dispensable.
+    // dispensable. Prose goes before key hints (`1/3 match` before
+    // `enter accept`), and key hints go from the end: they are listed
+    // most useful first.
     while segments.len() > 2 {
         let candidate = segments.join(SEP);
         if display_width(&candidate) <= width {
             return candidate;
         }
-        segments.remove(1);
+        let last = segments.len() - 1;
+        let drop = (1..last)
+            .find(|&i| !is_key_hint(&segments[i]))
+            .unwrap_or(last - 1);
+        segments.remove(drop);
     }
 
     // Step 3: every other segment is now "…" (or there were none) —
@@ -2056,6 +2145,43 @@ pub(crate) fn diff_cell(cell: &grid::Cell) -> &str {
 /// Given the per-field line counts, where each field starts in the line
 /// stream and the desired scroll offset that keeps `focus_field` fully in
 /// view inside a `body_height`-row viewport. Pure / testable.
+/// How many fields of a row-detail body start out of view: before the
+/// first line the operator can see, and at or after the end of what
+/// they can see — `visible`, which leaves out a line the `↑` / `↓`
+/// indicator is drawn over. Fields, not lines — the title counts fields
+/// (`field 3 of 24`), and a long wrapped value is one field however many
+/// lines it takes. Pure.
+pub(crate) fn fields_out_of_view(
+    field_line_counts: &[u16],
+    visible: std::ops::Range<u16>,
+) -> (usize, usize) {
+    let (scroll, end) = (visible.start, visible.end);
+    let mut top: u16 = 0;
+    let (mut above, mut below) = (0, 0);
+    for &n in field_line_counts {
+        if top < scroll {
+            above += 1;
+        } else if top >= end {
+            below += 1;
+        }
+        top = top.saturating_add(n);
+    }
+    (above, below)
+}
+
+/// The `↑ N more fields above` / `↓ N more fields below` indicator. With
+/// none wholly out of view (a long value continues), just `↓ more below`.
+/// Pure.
+pub(crate) fn more_fields_label(arrow: &str, n: usize, side: &str) -> String {
+    match n {
+        0 => format!("{arrow} more {side}"),
+        n => format!(
+            "{arrow} {} {side}",
+            count_label(n as u64, "more field", "more fields")
+        ),
+    }
+}
+
 pub(crate) fn auto_scroll_to_field(
     field_line_counts: &[u16],
     focus_field: usize,
@@ -2989,8 +3115,10 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
 
 /// Right-aligned on the tab bar, most important first: how to switch,
 /// open and close tabs. Whole pieces drop from the right when the tabs
-/// need the room, so a crowded bar still says `] [ switch`.
-const TAB_BAR_HINT_PIECES: &[&str] = &["] [ switch", "ctrl-t new", "ctrl-w close"];
+/// need the room, so a crowded bar still says `[ ] prev/next tab`. The
+/// keys go in their own order, prev before next: `] [ switch` read as
+/// a stray pair of brackets.
+const TAB_BAR_HINT_PIECES: &[&str] = &["[ ] prev/next tab", "ctrl-t new", "ctrl-w close"];
 
 /// The tab-bar hint that fits in `free` columns, one of which is the
 /// gap before it: the longest prefix of `TAB_BAR_HINT_PIECES` joined

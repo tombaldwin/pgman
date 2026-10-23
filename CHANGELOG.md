@@ -39,6 +39,20 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   headings), and `:help all` keeps the single page. `:help <topic>`
   takes any section name or the start of one, and an unknown topic lists
   every section.
+- One size format everywhere: database sizes on the start card and in
+  the environments overview, and table sizes in the schema browser, read
+  `9.0 MB` / `212 MB` / `1.2 GB`. The start card used `pg_size_pretty`,
+  which stays in kB up to 10 MB (`10199 kB` beside `10 MB`), and the
+  schema browser used `MiB` with two decimals.
+- In the editor and the prompts the error footer points at `F2 / :error
+  detail`, not F2 alone: F2 takes fn on a Mac.
+- The start card's `recent` list says how to bring an entry back: `in
+  the editor, ctrl-p recalls · ctrl-r searches`.
+- Loading a saved query (after its `:param` values, if any) ends the
+  status with the key that runs it: `⏎ runs it`, or `alt-⏎ runs it` when
+  the statement has no `;` and Enter would be a newline.
+- The tab bar's hint reads `[ ] prev/next tab` instead of `] [ switch`,
+  which looked like a stray pair of brackets.
 - One TLS crypto provider (ring) instead of two: no cmake / C build of
   aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
   Postgres connection no longer offers the post-quantum X25519MLKEM768
@@ -104,6 +118,52 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   Postgres); any other column sorts as text, byte by byte. Deciding per
   pair was not an order (`2 < 10 < 1a < 2`), so ascending and descending
   disagreed, and text such as `inf` or `nan` sorted as a number.
+- Connected to a standby by `:connect` or `--dsn`, nothing said it was
+  one; only an environment naming a replica did. Every connect now asks
+  `pg_is_in_recovery()`, and the header wears a `replica` badge on a
+  standby whichever way it was reached.
+- A result stopped at 1000 rows said only `capped at 1000`, which read as
+  though that was the whole table. It now says `more rows not fetched`,
+  and the status line adds that `pgman query '…' --json` returns every
+  row.
+- The completion popup's title was cut to `Tab to cyc`: its width was
+  measured without the title's decoration.
+- Counts read as English: `1 match · Tab to cycle`, `4 saved queries`,
+  `2 environments · 6 databases` (the bare first number now says what it
+  counts), and the row-detail title `row 1 of 50 · field 1 of 24` like
+  the cell detail's. Row detail's `↓ N more below` counts fields, as the
+  title does, rather than wrapped lines of text (`↓ 3 more fields
+  below`); the cell detail says `more lines`.
+- A footer tip too wide for the terminal cut a key hint down to its
+  label (`… expand-all/collapse-all`, `y… suggestion`). Key hints are now
+  dropped whole, from the end; prose goes before them, and a prose
+  segment that would shrink to a stub (`r…`) is dropped whole too.
+- `pgman --dsn X query 'SQL'` failed with clap's "unexpected argument":
+  a sub-command (`query`, `env`, `mcp`) now works after global options.
+  `--help`'s Usage lists the three sub-commands, and `query`'s no-DSN
+  error mentions Spring `application*.yml` alongside the other configs
+  it reads.
+- The no-connection start card wraps at 80 columns instead of cutting
+  its lines off mid-word.
+- `--redact` blocked out pgman's own name — the title read `▓▓▓▓▓ 0.1.0`
+  — when a database name had `pgman` in it (`pgman_test`). The product
+  name is now never redacted; the rest of such a name still is.
+- A typo like `selec 1;` no longer reads as a guarded write. It is still
+  guarded (pgman never assumes an unrecognised statement is safe), but the
+  confirm card now says "`selec` isn't an SQL statement pgman recognises —
+  send it to Postgres anyway? (it will likely be a syntax error)" rather
+  than that a read-only session will refuse it, and `pgman query` says it
+  isn't a statement pgman recognises (typo?) — re-run with `--yes` to send
+  it anyway.
+- After loading a query from the log picker, `Ctrl-L` / `F8` said "no
+  queries found", because the loaded query had replaced the log in the
+  buffer. With no log in the buffer it now reopens the last log's picker
+  (`reopened the last log · N queries`); a new log replaces it.
+- Two pgman windows no longer lose each other's editor draft. A window
+  that never changed the draft writes nothing when it quits, so it can't
+  overwrite what another window saved meanwhile; and a window with edits
+  of its own, finding `draft.sql` changed by another window, saves to a
+  sibling `draft-YYYYMMDD-HHMMSS.sql` and says so, instead of clobbering it.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

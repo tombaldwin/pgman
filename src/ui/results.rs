@@ -145,7 +145,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     let visible = app.grid_view.visible_rows.len();
     let total = grid.row_count();
     let cap = if grid.truncated {
-        format!(" · capped at {}", crate::grid::MAX_ROWS)
+        format!(" · {}", crate::grid::cap_title_note())
     } else {
         String::new()
     };
@@ -283,11 +283,19 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
         max_scroll,
     );
     app.row_detail.scroll = effective_scroll;
+    // The indicators are drawn over the first / last visible line, so
+    // a field starting on one of those lines is hidden too.
+    let first_seen = effective_scroll + u16::from(effective_scroll > 0);
+    let end_seen = (effective_scroll + inner_height)
+        .saturating_sub(u16::from(effective_scroll < max_scroll))
+        .max(first_seen);
+    let (fields_above, fields_below) =
+        crate::ui::fields_out_of_view(&field_line_counts, first_seen..end_seen);
 
     // Position within the visible (filtered, sorted) rows — the order
     // `J` / `K` step through — not the raw index into `grid.rows`.
     let title = format!(
-        " row {} / {} · field {}/{} ",
+        " row {} of {} · field {} of {} ",
         app.grid_state.selected().map_or(0, |s| s + 1),
         app.grid_view.visible_rows.len(),
         focus + 1,
@@ -319,7 +327,7 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
         f.render_widget(Clear, row_rect);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("↑ {} more above", effective_scroll),
+                crate::ui::more_fields_label("↑", fields_above, "above"),
                 hint_style,
             ))),
             row_rect,
@@ -335,7 +343,7 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
         f.render_widget(Clear, row_rect);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("↓ {} more below", max_scroll - effective_scroll),
+                crate::ui::more_fields_label("↓", fields_below, "below"),
                 hint_style,
             ))),
             row_rect,
@@ -415,7 +423,7 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
 
     let title = if is_json {
         format!(
-            " {} · row {} of {} · field {}/{} · JSON ",
+            " {} · row {} of {} · field {} of {} · JSON ",
             column,
             idx + 1,
             app.grid.row_count(),
@@ -424,7 +432,7 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
         )
     } else {
         format!(
-            " {} · row {} of {} · field {}/{} ",
+            " {} · row {} of {} · field {} of {} ",
             column,
             idx + 1,
             app.grid.row_count(),
@@ -459,7 +467,10 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
         f.render_widget(Clear, row);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("↑ {} more above", effective_scroll),
+                format!(
+                    "↑ {} above",
+                    crate::ui::count_label(effective_scroll.into(), "more line", "more lines")
+                ),
                 hint_style,
             ))),
             row,
@@ -475,7 +486,14 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
         f.render_widget(Clear, row);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("↓ {} more below", max_scroll - effective_scroll),
+                format!(
+                    "↓ {} below",
+                    crate::ui::count_label(
+                        (max_scroll - effective_scroll).into(),
+                        "more line",
+                        "more lines"
+                    )
+                ),
                 hint_style,
             ))),
             row,

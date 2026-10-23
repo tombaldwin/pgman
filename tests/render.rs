@@ -739,6 +739,11 @@ fn grid_render_shows_capped_hint_when_truncated() {
         "expected `capped at {}` in title; full render:\n{rendered}",
         pgman::grid::MAX_ROWS,
     );
+    let rendered = dump(&render(&mut a, 80, 24));
+    assert!(
+        rendered.contains("capped at 1000 · more rows not fetched"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -1676,7 +1681,7 @@ fn tab_bar_is_visible_with_a_single_tab_once_connected() {
         "row 1 is the tab bar: {bar:?}"
     );
     assert!(
-        bar.ends_with("] [ switch · ctrl-t new · ctrl-w close"),
+        bar.ends_with("[ ] prev/next tab · ctrl-t new · ctrl-w close"),
         "the tab keys are right-aligned: {bar:?}"
     );
     // Columns, not bytes: the hint's `·` separators are multi-byte.
@@ -1962,6 +1967,56 @@ fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
         "arn:aws:rds",
     ] {
         assert!(on.contains(kept), "{kept} missing:\n{on}");
+    }
+}
+
+/// A database named after the product: redaction blocks out its own
+/// part (`acme`) but never pgman's chrome — the title kept reading
+/// `▓▓▓▓▓ 0.1.0` because `pgman_test`'s `pgman` matched it.
+#[test]
+fn redaction_never_blocks_out_the_product_name_in_the_chrome() {
+    let title = format!("pgman {}", env!("CARGO_PKG_VERSION"));
+    for connected in [true, false] {
+        let mut a = settle_app();
+        a.dsn = Some(Dsn::parse("postgres://app@db.example.internal:5432/pgman_acme").unwrap());
+        if !connected {
+            a.conn_state = ConnState::Disconnected;
+        }
+        a.redact = true;
+        for (w, h) in [(80, 24), (120, 40)] {
+            let screen = dump(&render(&mut a, w, h));
+            let at = format!("{w}x{h} connected={connected}");
+            assert!(screen.contains(&title), "{at} title redacted:\n{screen}");
+            assert!(!screen.contains("acme"), "{at} acme leaked:\n{screen}");
+            if connected {
+                // The name is on screen, its own part blocked out.
+                assert!(screen.contains("pgman_▓▓▓▓"), "{at}:\n{screen}");
+            } else {
+                assert!(
+                    screen.contains("start pgman with --dsn"),
+                    "{at} hint redacted:\n{screen}"
+                );
+            }
+        }
+    }
+}
+
+/// Connected to a standby, the header wears a `replica` badge — tall
+/// and one-row headers alike — and not on a primary or before it's known.
+#[test]
+fn the_header_marks_a_standby_as_a_replica() {
+    for (w, h) in [(80, 24), (120, 40), (80, 16)] {
+        let mut a = settle_app();
+        a.in_recovery = Some(true);
+        let screen = dump(&render(&mut a, w, h));
+        let header: String = screen.lines().take(5).collect::<Vec<_>>().join("\n");
+        assert!(header.contains("replica"), "{w}x{h}:\n{header}");
+        for not in [Some(false), None] {
+            a.in_recovery = not;
+            let screen = dump(&render(&mut a, w, h));
+            let header: String = screen.lines().take(5).collect::<Vec<_>>().join("\n");
+            assert!(!header.contains("replica"), "{w}x{h} {not:?}:\n{header}");
+        }
     }
 }
 
@@ -2256,14 +2311,14 @@ fn a_long_error_footer_keeps_badges_start_and_pointer_at_60_80_120() {
             dump(&buf)
         );
         assert!(
-            last.ends_with("· F2 detail"),
+            last.trim_end().ends_with("F2 / :error detail"),
             "{w}x{h}: the pointer ends the footer:\n{}",
             dump(&buf)
         );
         let shown: String = footer.concat();
         if !shown.contains("does not exist") {
             assert!(
-                shown.contains("… · F2 detail"),
+                shown.contains("… · F2 / :error detail"),
                 "{w}x{h}: a cut message says so:\n{}",
                 dump(&buf)
             );
@@ -2570,4 +2625,58 @@ fn help_all_is_the_old_single_page() {
     a.on_key(KeyEvent::from(KeyCode::Char(']')));
     let rows = help_rows(&render(&mut a, 80, 24));
     assert!(rows.iter().any(|r| r == "editor"), "{rows:#?}");
+}
+
+/// One completion candidate is `1 match`, not `1 matches`.
+#[test]
+fn completion_popup_with_one_candidate_says_one_match() {
+    use pgman::query::complete::{Candidate, CandidateKind};
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT * FROM us".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.completion = Some(pgman::app::CompletionCycle {
+        start: a.editor.cursor - 2,
+        end: a.editor.cursor,
+        origin: "us".into(),
+        origin_prefix: "us".into(),
+        origin_cursor: a.editor.cursor,
+        candidates: vec![Candidate {
+            display: "users".into(),
+            insert: "users".into(),
+            kind: CandidateKind::Table,
+            context: None,
+        }],
+        selected: None,
+        auto: false,
+    });
+    let screen = dump(&render(&mut a, 80, 18));
+    assert!(screen.contains(" 1 match · Tab to cycle "), "{screen}");
+}
+
+/// Row detail's `↓ N more fields below` counts the fields the operator
+/// can't see — including the one under the indicator itself — and says
+/// fields, as the title does, not wrapped lines.
+#[test]
+fn row_detail_more_below_counts_the_fields_out_of_sight() {
+    let mut a = settle_app();
+    let columns: Vec<String> = (1..=30).map(|i| format!("col{i:02}")).collect();
+    let row: Vec<Option<String>> = (1..=30).map(|i| Some(format!("value{i:02}"))).collect();
+    a.grid = Grid {
+        columns,
+        rows: vec![row],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.mode = Mode::RowDetail;
+    for (w, h) in [(80, 24), (120, 40)] {
+        let screen = dump(&render(&mut a, w, h));
+        let seen = (1..=30)
+            .filter(|i| screen.contains(&format!("col{i:02} ")))
+            .count();
+        let want = format!("↓ {} more fields below", 30 - seen);
+        assert!(screen.contains(&want), "{w}x{h} want {want}:\n{screen}");
+        assert!(screen.contains("field 1 of 30"), "{w}x{h}:\n{screen}");
+    }
 }

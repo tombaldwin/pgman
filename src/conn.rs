@@ -750,12 +750,17 @@ fn mask_password_params(s: String) -> String {
 /// never grants: only those the user may connect to are sized.
 pub const BOOTSTRAP_SQL: &str = "select datname as database, \
     case when has_database_privilege(datname, 'CONNECT') \
-         then pg_size_pretty(pg_database_size(datname)) end as size \
+         then pg_database_size(datname) end as size \
     from pg_database where not datistemplate order by datname";
 
 /// A successful connection's bootstrap result.
 pub struct Booted {
     pub server_version: String,
+    /// `pg_is_in_recovery()`: the server is a standby (a read replica).
+    /// `None` when the probe failed. Every connection asks — `:connect`
+    /// and `--dsn` included, not only an environment that names a
+    /// replica.
+    pub in_recovery: Option<bool>,
     pub grid: Grid,
     /// The live client — handed to `App` so subsequent queries run on the
     /// same session (and the read-only / statement-timeout settings stick).
@@ -953,14 +958,21 @@ pub async fn connect_and_bootstrap(
     // connection) instead of serially, cutting time-to-interactive on a
     // high-latency / tunnelled link.
     let (version_res, grid_res, schema_cache) = tokio::join!(
-        client.query_one("SHOW server_version", &[]),
+        client.query_one(
+            "SELECT current_setting('server_version'), pg_is_in_recovery()",
+            &[]
+        ),
         run_query(&client, &bootstrap_sql),
         crate::query::schema::fetch(&client),
     );
-    let server_version = version_res
-        .ok()
+    let version_row = version_res.ok();
+    let server_version = version_row
+        .as_ref()
         .and_then(|row| row.try_get::<usize, String>(0).ok())
         .unwrap_or_else(|| "unknown".to_string());
+    let in_recovery = version_row
+        .as_ref()
+        .and_then(|row| row.try_get::<usize, bool>(1).ok());
     // The list only feeds the start card: a server that won't give it
     // up still gives the operator a connection.
     let grid = grid_res.unwrap_or_else(|e| {
@@ -969,6 +981,7 @@ pub async fn connect_and_bootstrap(
     });
     Ok(Booted {
         server_version,
+        in_recovery,
         grid,
         client,
         schema_cache,

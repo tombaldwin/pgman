@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn tab_bar_hint_drops_whole_pieces_from_the_right_to_fit() {
-    let full = "] [ switch · ctrl-t new · ctrl-w close";
+    let full = "[ ] prev/next tab · ctrl-t new · ctrl-w close";
     assert_eq!(tab_bar_hint(80).as_deref(), Some(full));
     assert_eq!(
         tab_bar_hint(display_width(full) + 1).as_deref(),
@@ -11,11 +11,11 @@ fn tab_bar_hint_drops_whole_pieces_from_the_right_to_fit() {
     );
     assert_eq!(
         tab_bar_hint(display_width(full)).as_deref(),
-        Some("] [ switch · ctrl-t new"),
+        Some("[ ] prev/next tab · ctrl-t new"),
         "one column short: the close key goes, whole"
     );
-    assert_eq!(tab_bar_hint(11).as_deref(), Some("] [ switch"));
-    assert_eq!(tab_bar_hint(10), None, "not even the switch key fits");
+    assert_eq!(tab_bar_hint(18).as_deref(), Some("[ ] prev/next tab"));
+    assert_eq!(tab_bar_hint(17), None, "not even the switch keys fit");
 }
 
 #[test]
@@ -1285,6 +1285,91 @@ fn middle_ellipsis_keeps_the_character_cut_for_a_statement() {
 }
 
 #[test]
+fn fields_out_of_view_counts_fields_not_wrapped_lines() {
+    // Five fields; the third wraps over 10 lines.
+    let counts = [1, 1, 10, 1, 1];
+    // Lines 0..4 seen: fields 0..=2 start in view, two below.
+    assert_eq!(fields_out_of_view(&counts, 0..4), (0, 2));
+    // Scrolled into the long field: 0, 1 and 2 start above, 3 and 4 below.
+    assert_eq!(fields_out_of_view(&counts, 4..8), (3, 2));
+    // At the bottom: everything but the last two started above.
+    assert_eq!(fields_out_of_view(&counts, 10..14), (3, 0));
+    assert_eq!(fields_out_of_view(&[], 0..4), (0, 0));
+    // A field starting on the first line past what is seen is out of view.
+    assert_eq!(fields_out_of_view(&[2, 2, 2], 0..2), (0, 2));
+}
+
+#[test]
+fn more_fields_label_pluralises_and_handles_a_continuing_field() {
+    assert_eq!(more_fields_label("↓", 1, "below"), "↓ 1 more field below");
+    assert_eq!(more_fields_label("↑", 3, "above"), "↑ 3 more fields above");
+    assert_eq!(more_fields_label("↓", 0, "below"), "↓ more below");
+}
+
+#[test]
+fn is_key_hint_tells_keys_from_prose() {
+    for hint in [
+        "y run",
+        "? full keys",
+        "n / esc cancel",
+        "+ / − expand-all/collapse-all",
+        "/ filter",
+        "[ ] jump schema",
+        "J/K next/prev row",
+        "ctrl-t new",
+        "enter loads selected",
+        "F2 detail",
+        "esc / q close",
+    ] {
+        assert!(is_key_hint(hint), "{hint}");
+    }
+    for prose in [
+        "tip",
+        "find: pro",
+        "loaded query",
+        "3 matches",
+        "1/3 match",
+        "run (DELETE without WHERE)",
+        "connecting…",
+        "",
+    ] {
+        assert!(!is_key_hint(prose), "{prose}");
+    }
+}
+
+#[test]
+fn fit_status_drops_whole_key_hints_from_the_end_never_a_key_alone() {
+    let tip = "tip · / filter · [ ] jump schema · + / − expand-all/collapse-all · ? full keys";
+    let fitted = fit_status(tip, display_width(tip) - 1);
+    assert_eq!(fitted, "tip · / filter · [ ] jump schema · ? full keys");
+    // Tighter: the next one from the end goes, whole.
+    let fitted = fit_status(tip, 40);
+    assert_eq!(fitted, "tip · / filter · ? full keys");
+    for w in 10..display_width(tip) {
+        let fitted = fit_status(tip, w);
+        assert!(display_width(&fitted) <= w, "{w}: {fitted}");
+        assert!(!fitted.contains("… expand"), "{w}: {fitted}");
+        assert!(!fitted.contains("…ollapse"), "{w}: {fitted}");
+    }
+}
+
+#[test]
+fn fit_status_drops_a_middle_segment_it_would_shrink_to_a_stub() {
+    let tip =
+        "tip · from environments.toml · replicas under their primary · r refresh · ? full keys";
+    let fitted = fit_status(tip, 60);
+    assert_eq!(
+        fitted,
+        "tip · from environments.toml · r refresh · ? full keys"
+    );
+    for w in 10..display_width(tip) {
+        let fitted = fit_status(tip, w);
+        assert!(display_width(&fitted) <= w, "{w}: {fitted}");
+        assert!(!fitted.contains(" r… "), "{w}: {fitted}");
+    }
+}
+
+#[test]
 fn fit_status_never_cuts_a_prose_segment_mid_word() {
     let text = "confirm: run (DELETE without WHERE) · y run · n / esc cancel";
     let fitted = fit_status(text, 45);
@@ -1818,7 +1903,10 @@ fn the_error_pointer_names_the_key_that_works_here() {
     assert!(f.contains("· ! detail"), "{f}");
     app.mode = crate::app::Mode::Editor;
     let f = footer(&mut app);
-    assert!(f.contains("· F2 detail") && !f.contains("! detail"), "{f}");
+    assert!(
+        f.contains("· F2 / :error detail") && !f.contains("· ! detail"),
+        "{f}"
+    );
 }
 
 #[test]
@@ -1880,6 +1968,73 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
     assert!(footer.contains("y run · n / esc cancel"), "{footer}");
 }
 
+/// A typo'd statement's confirm card says it's unrecognised — not that a
+/// read-only session will refuse a write — and still asks before sending.
+#[test]
+fn the_confirm_card_calls_a_typo_unrecognised_not_a_refused_write() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.read_only = true;
+    let decision =
+        crate::safety::evaluate(&crate::safety::SafetyConfig::default(), "db", "selec 1;");
+    assert_eq!(decision.guard, crate::safety::Guard::Confirm);
+    app.pending_run = Some(crate::app::PendingRun {
+        sql: "selec 1;".into(),
+        kind: crate::app::RunKind::Run,
+        decision,
+        is_batch: false,
+        summary: None,
+    });
+    app.mode = crate::app::Mode::Confirm;
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let cell = |x: u16, y: u16| buf[(x, y)].symbol().to_string();
+        let row = |y: u16| (0..buf.area.width).map(|x| cell(x, y)).collect::<Vec<_>>();
+        // The confirm box: its top border carries the title.
+        let y0 = (0..buf.area.height)
+            .find(|&y| row(y).concat().contains("[ ◆ confirm"))
+            .expect("confirm box drawn");
+        let top = row(y0);
+        let title_at = (0..top.len())
+            .find(|&x| top[x..].concat().starts_with("[ ◆ confirm"))
+            .unwrap();
+        let x0 = (0..title_at).rev().find(|&x| top[x] == "╭").unwrap();
+        let x1 = (title_at..top.len()).find(|&x| top[x] == "╮").unwrap();
+        let mut inner = String::new();
+        for y in y0 + 1..buf.area.height {
+            if row(y)[x0] == "╰" {
+                break;
+            }
+            inner.push_str(&row(y)[x0 + 1..x1].concat());
+            inner.push(' ');
+        }
+        let squashed = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            squashed.contains("`selec` isn't an SQL statement pgman recognises"),
+            "{w}x{h}: {squashed}"
+        );
+        assert!(
+            squashed.contains("likely be a syntax error"),
+            "{w}x{h}: {squashed}"
+        );
+        assert!(
+            !squashed.contains("Postgres will refuse it"),
+            "{w}x{h}: {squashed}"
+        );
+        assert!(
+            squashed.contains("y = send it anyway"),
+            "{w}x{h}: {squashed}"
+        );
+    }
+}
+
 /// A write refused by a read-only connection at 80x24: the footer
 /// names `safety.toml` in at most two rows and never its path — a full
 /// path made it three and was cut anyway — and the F2 overlay carries
@@ -1930,7 +2085,7 @@ fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
         .sum();
     let budgeted = error_footer_rows(
         &footer_text(app.last_error.as_deref().unwrap()),
-        " · F2 detail",
+        " · F2 / :error detail",
         80 - badges - display_width(ERROR_ICON),
         ERROR_FOOTER_MAX_ROWS as usize,
     );
@@ -1946,7 +2101,7 @@ fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(footer.contains("safety.toml"), "{footer}");
-    assert!(footer.contains("F2 detail"), "{footer}");
+    assert!(footer.contains("F2 / :error detail"), "{footer}");
     assert!(!footer.contains("/home/op"), "path in the footer: {footer}");
     assert!(!footer.contains('…'), "the footer was cut: {footer}");
 

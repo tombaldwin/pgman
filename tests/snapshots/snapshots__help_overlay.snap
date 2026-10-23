@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 250
+assertion_line: 263
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X · YYYY-MM-DD ────────────────────────────────────╮╭──────────────────────────────────╮
@@ -8,7 +8,7 @@ expression: dump(&buf)
 │ Status: connected · pg 16.0  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: —                                                       ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 empty                                                     ] [ switch · ctrl-t new · ctrl-w close
+ 1 empty                                              [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
 │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                        │

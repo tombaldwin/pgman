@@ -112,6 +112,11 @@ const GENERIC: &[&str] = &[
     "docker",
     "default",
     "public",
+    // The product's own name. pgman draws it in its chrome — the title,
+    // `start pgman with --dsn …`, `pgman --demo` — so a database called
+    // `pgman_test` must not black it out there: only the parts of a name
+    // that aren't pgman's are anyone's infrastructure.
+    "pgman",
 ];
 
 /// Directory names that say what a directory holds, not whose project
@@ -144,7 +149,6 @@ const GENERIC_PATH: &[&str] = &[
     "migrations",
     "migration",
     "resources",
-    "pgman",
     "toml",
     "api",
     "service",

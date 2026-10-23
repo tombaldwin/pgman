@@ -8,11 +8,11 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-staging/ledger … ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                     [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                                         │
 │  FROM invoices                                                                                                       │
-│  WHERE sta╭[ ◆ row 1 / 5 · field 1/6 ◆ ]─────────────────────────────────────────────────────────────────╮           │
+│  WHERE sta╭[ ◆ row 1 of 5 · field 1 of 6 ◆ ]─────────────────────────────────────────────────────────────╮           │
 │  ORDER BY │                                                                                              │           │
 │           │ number      │ INV-004822                                                                     │           │
 ╰───────────│ customer_id │ 2102                                                                           │───────────╯
