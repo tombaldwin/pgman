@@ -2092,6 +2092,74 @@ fn dispatch_fixture_errors_without_source_table() {
         .contains("single-table"));
 }
 
+/// With a filter active `:fixture` captures what the filter shows, as
+/// `Y` exports it, and says how many of how many; it captured every
+/// row, the hidden ones too.
+#[test]
+fn dispatch_fixture_captures_only_the_filtered_rows() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(
+        &["id", "name"],
+        &[&["1", "alice"], &["2", "bob"], &["3", "bobby"]],
+    );
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    a.grid_view.filter = Some("bob".into());
+    a.rebuild_visible_rows();
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-filt-{}", std::process::id()));
+    let path = dir.join("users.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(status.contains("2 of 3 row(s) (filtered)"), "{status}");
+    let parsed = crate::dbunit::parse_flat_xml(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let ids: Vec<&str> = parsed
+        .rows
+        .iter()
+        .map(|r| r.columns[0].1.as_str())
+        .collect();
+    assert_eq!(ids, ["2", "3"]);
+    // A filter that hides everything captures nothing and says why.
+    a.grid_view.filter = Some("zzz".into());
+    a.rebuild_visible_rows();
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("no rows match the filter — nothing to capture")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `:fixture <path>` writes to the whole path, spaces included — it
+/// took the first word, so `:fixture my dir/f.xml` wrote `./my`.
+#[test]
+fn colon_fixture_writes_to_a_path_with_spaces() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-sp-{}", std::process::id()));
+    let path = dir.join("my dir").join("users.xml");
+    a.dispatch_command(&format!("fixture {}", path.display()));
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    let xml = std::fs::read_to_string(&path).expect("written at the full path");
+    assert!(xml.contains("<users id=\"1\"/>"), "{xml}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A table whose name would not read back as itself is refused with a
+/// reason, and nothing is written — not renamed into another table.
+#[test]
+fn dispatch_fixture_refuses_a_table_name_that_does_not_round_trip() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "order items".into()));
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-refuse-{}", std::process::id()));
+    let path = dir.join("f.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("fixture capture refused"), "{err}");
+    assert!(err.contains("not a valid XML name"), "{err}");
+    assert!(!path.exists(), "nothing written");
+}
+
 #[test]
 fn dispatch_fixture_errors_on_empty_grid() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -2279,6 +2347,51 @@ fn infer_single_source_table_keeps_explicit_schema() {
     );
 }
 
+/// `FROM "PgRevMixed"` and `FROM PgRevMixed` name two different tables;
+/// the inferred source is the server's name for whichever the query read.
+#[test]
+fn infer_single_source_table_folds_bare_names_and_keeps_quoted_ones() {
+    assert_eq!(
+        infer_single_source_table(r#"SELECT * FROM "PgRevMixed""#),
+        Some(("public".into(), "PgRevMixed".into()))
+    );
+    assert_eq!(
+        infer_single_source_table("SELECT * FROM PgRevMixed"),
+        Some(("public".into(), "pgrevmixed".into()))
+    );
+    assert_eq!(
+        infer_single_source_table(r#"SELECT * FROM "Audit Log"."Big ""Q"" Table""#),
+        Some(("Audit Log".into(), "Big \"Q\" Table".into()))
+    );
+}
+
+/// The yanked INSERT names the table the row came from: a mixed-case
+/// table is quoted, or it lands in its lowercase twin.
+#[test]
+fn row_insert_sql_quotes_schema_and_table() {
+    let cols = ["id".to_string()];
+    let row = [Some("1".into())];
+    assert_eq!(
+        row_insert_sql("Audit Log", "PgRevMixed", &cols, &row),
+        "INSERT INTO \"Audit Log\".\"PgRevMixed\" (id) VALUES ('1');"
+    );
+    assert_eq!(
+        row_insert_sql("public", "user", &cols, &row),
+        "INSERT INTO public.\"user\" (id) VALUES ('1');"
+    );
+}
+
+/// A backslash makes it an `E'…'` string with the backslash doubled,
+/// which reads the same whatever `standard_conforming_strings` is; a
+/// value without one stays a plain literal.
+#[test]
+fn format_sql_literal_escapes_a_backslash_in_an_e_string() {
+    assert_eq!(format_sql_literal(Some("a\\b")), "E'a\\\\b'");
+    assert_eq!(format_sql_literal(Some("\\x0102")), "E'\\\\x0102'");
+    assert_eq!(format_sql_literal(Some("it's \\n")), "E'it''s \\\\n'");
+    assert_eq!(format_sql_literal(Some("plain")), "'plain'");
+}
+
 #[test]
 fn format_sql_literal_writes_null_for_null_and_quotes_the_empty_string() {
     assert_eq!(format_sql_literal(None), "NULL");
@@ -2344,6 +2457,86 @@ fn format_sql_literal_keeps_boolean_looking_text_as_it_is() {
 fn format_sql_literal_quotes_strings_and_doubles_internal_quotes() {
     assert_eq!(format_sql_literal(Some("alice")), "'alice'");
     assert_eq!(format_sql_literal(Some("it's fine")), "'it''s fine'");
+}
+
+/// `I` writes through the test clipboard (never the real one) and
+/// counts characters, not bytes: `é` is one.
+#[test]
+fn yank_row_as_insert_copies_through_the_clipboard_seam_and_counts_chars() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id", "name"], &[&["1", "é"]]);
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    crate::app::yank::take_test_clipboard();
+    a.yank_row_as_insert();
+    let sql = crate::app::yank::take_test_clipboard().expect("copied");
+    assert_eq!(
+        sql,
+        "INSERT INTO public.users (id, name) VALUES ('1', 'é');"
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(
+            format!(
+                "copied INSERT for public.users · {} char(s)",
+                sql.chars().count()
+            )
+            .as_str()
+        )
+    );
+    assert_ne!(
+        sql.chars().count(),
+        sql.len(),
+        "the test tells chars from bytes"
+    );
+}
+
+/// `Y` writes the visible rows as CSV through the test clipboard.
+#[test]
+fn export_grid_copies_csv_through_the_clipboard_seam() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"], &["2"]]);
+    a.grid_view.visible_rows = vec![1];
+    crate::app::yank::take_test_clipboard();
+    a.export_grid_to_clipboard();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("id\n2\n")
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("copied 1 row(s) to clipboard as CSV")
+    );
+}
+
+/// The row-detail field yank and the notification yank go through the
+/// seam too, and both count characters.
+#[test]
+fn field_and_notification_yanks_copy_through_the_clipboard_seam() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["name"], &[&["añb"]]);
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.row_detail.field = 0;
+    crate::app::yank::take_test_clipboard();
+    a.yank_focused_field();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("añb")
+    );
+    assert_eq!(a.last_status.as_deref(), Some("yanked 'name' · 3 char(s)"));
+    a.notifications.items = vec![crate::conn::NotificationMsg {
+        channel: "x".into(),
+        pid: 1,
+        payload: "pä".into(),
+    }];
+    a.yank_focused_notification();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("pä")
+    );
+    assert_eq!(a.last_status.as_deref(), Some("yanked payload · 2 char(s)"));
 }
 
 #[test]

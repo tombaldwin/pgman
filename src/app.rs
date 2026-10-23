@@ -839,17 +839,26 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
 /// target column's type (`'42'` into an `integer`, `'t'` into a
 /// `boolean`). Bare, `007` in a text column came back as `7`, `1e3` as
 /// `1000`, `TRUE` as `true`, and `NaN` was read as a column name.
+///
+/// A value holding a backslash is written as an escape string,
+/// `E'…'`, with each backslash doubled: a plain `'…'` means the same
+/// value only while `standard_conforming_strings` is on, and with it
+/// off a bytea's `\x0102` text read as the escape `\x01`. `E'…'`
+/// reads the same under either setting.
 pub fn format_sql_literal(cell: Option<&str>) -> String {
     let Some(s) = cell else {
         return "NULL".to_string();
     };
-    let mut out = String::with_capacity(s.len() + 2);
+    let mut out = String::with_capacity(s.len() + 3);
+    if s.contains('\\') {
+        out.push('E');
+    }
     out.push('\'');
     for c in s.chars() {
-        if c == '\'' {
-            out.push_str("''");
-        } else {
-            out.push(c);
+        match c {
+            '\'' => out.push_str("''"),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
         }
     }
     out.push('\'');
@@ -1133,8 +1142,11 @@ pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
 /// grid row, each cell through [`format_sql_literal`]. Column names are
 /// the server's own, case and all, so they go through [`quote_ident`]
 /// (`createdAt` bare is `createdat`, a column the table lacks). The
-/// schema and table stay as the query spelled them — `FROM Users`
-/// infers `Users`, which only works bare. Pure / testable.
+/// schema and table are the server's names too: the FROM parse folds
+/// `FROM Users` to `users` and keeps `FROM "Users"` as `Users`, so
+/// quoting them names exactly the relation the query read. Bare, a
+/// mixed-case `"PgRevMixed"` landed in a lowercase twin `pgrevmixed`.
+/// Pure / testable.
 pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell]) -> String {
     let cols = columns
         .iter()
@@ -1146,7 +1158,11 @@ pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell
         .map(|c| format_sql_literal(c.as_deref()))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});")
+    format!(
+        "INSERT INTO {}.{} ({cols}) VALUES ({vals});",
+        quote_ident(schema),
+        quote_ident(table),
+    )
 }
 
 /// Build an `INSERT INTO <schema>.<table> (cols…) VALUES (NULL,
@@ -3951,17 +3967,7 @@ impl App {
                 if self.grid_view.raw_rows.is_none() {
                     self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
-                self.grid.rows.sort_by(|a, b| {
-                    // A short row's missing cell sorts as a NULL.
-                    let av = a.get(col).and_then(Option::as_deref);
-                    let bv = b.get(col).and_then(Option::as_deref);
-                    let ord = crate::grid::cmp_cells(av, bv);
-                    if asc {
-                        ord
-                    } else {
-                        ord.reverse()
-                    }
-                });
+                crate::grid::sort_rows(&mut self.grid.rows, col, asc);
                 self.grid_view.sort = Some((col, asc));
                 let dir = if asc { "ASC" } else { "DESC" };
                 self.last_status = Some(format!("sorted by {} {dir}", self.grid.columns[col]));
@@ -4166,7 +4172,7 @@ impl App {
     }
 
     /// `Y` in Normal mode — copy the (sorted, filtered) grid to the
-    /// clipboard as CSV. `arboard` is already a dep for cell yank.
+    /// clipboard as CSV. Written through `yank::write_clipboard`.
     fn export_grid_to_clipboard(&mut self) {
         if self.grid.columns.is_empty() {
             self.last_status = Some("nothing to export".into());
@@ -4186,17 +4192,15 @@ impl App {
             }
         }
         let csv = crate::batch::format_csv(&export);
-        match arboard::Clipboard::new() {
-            Ok(mut cb) => match cb.set_text(csv) {
-                Ok(()) => {
-                    self.last_status = Some(format!(
-                        "copied {} row(s) to clipboard as CSV",
-                        export.rows.len()
-                    ));
-                }
-                Err(e) => self.last_error = Some(format!("clipboard write: {e}")),
-            },
-            Err(e) => self.last_error = Some(format!("clipboard init: {e}")),
+        match yank::write_clipboard(&csv) {
+            Ok(()) => {
+                self.last_status = Some(format!(
+                    "copied {} row(s) to clipboard as CSV",
+                    export.rows.len()
+                ));
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
         }
     }
 

@@ -11,7 +11,10 @@
 //! and biased unqualified completion (prefer columns of tables that
 //! appear in the current `FROM`).
 
-/// One table reference pulled from a `FROM` / `JOIN`.
+/// One table reference pulled from a `FROM` / `JOIN`. `schema`, `name`
+/// and `alias` are the names the server resolves: an unquoted
+/// identifier folded to lower case, a quoted one verbatim (see
+/// [`ident_value`]), so `FROM "Users"` and `FROM Users` differ.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRefInQuery {
     pub schema: Option<String>,
@@ -156,8 +159,8 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                     };
                     let alias_text = tokens
                         .get(alias_idx)
-                        .map(|t| t.text)
-                        .filter(|t| is_identifier_like(t));
+                        .filter(|t| is_name_token(t))
+                        .map(ident_value);
                     if let Some(name) = alias_text {
                         // Pull the subquery body's SELECT list so the
                         // outer query can complete `sub.col` against it.
@@ -171,11 +174,11 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                         let virtual_columns = if cols.is_empty() { None } else { Some(cols) };
                         out.push(TableRefInQuery {
                             schema: None,
-                            name: name.to_string(),
+                            name: name.clone(),
                             // alias = name so the synthetic entry
                             // surfaces in both the alias and the
                             // qualified-lookup paths of completion.
-                            alias: Some(name.to_string()),
+                            alias: Some(name),
                             virtual_columns,
                         });
                         i = alias_idx + 1;
@@ -242,6 +245,33 @@ fn peek_subquery_close(tokens: &[Tok], i: usize) -> Option<usize> {
 #[derive(Debug, Clone)]
 pub(crate) struct Tok<'a> {
     pub(crate) text: &'a str,
+    /// True for a `"…"` quoted identifier. `text` is then the raw body
+    /// between the quotes, with any `""` escape still doubled — use
+    /// [`ident_value`] for the identifier the server sees.
+    pub(crate) quoted: bool,
+}
+
+/// The identifier a token names, as the server resolves it: an unquoted
+/// identifier folds to lower case, a quoted one is kept verbatim (with
+/// `""` unescaped to `"`). `FROM PgRevMixed` names `pgrevmixed`;
+/// `FROM "PgRevMixed"` names `PgRevMixed` — two different tables.
+pub(crate) fn ident_value(tok: &Tok) -> String {
+    if tok.quoted {
+        tok.text.replace("\"\"", "\"")
+    } else {
+        tok.text.to_ascii_lowercase()
+    }
+}
+
+/// Can this token stand where a table / alias name goes? A quoted
+/// identifier always can (it may hold spaces or punctuation); a bare one
+/// must look like an identifier.
+fn is_name_token(tok: &Tok) -> bool {
+    if tok.quoted {
+        !tok.text.is_empty()
+    } else {
+        is_identifier_like(tok.text)
+    }
 }
 
 /// Lex a SQL fragment into identifier / punctuation / keyword tokens.
@@ -293,18 +323,28 @@ pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
             i += 1;
             continue;
         }
-        // "…" quoted identifier — keep as one token (without the quotes)
+        // "…" quoted identifier — keep as one token (without the
+        // quotes). A doubled `""` inside is an escaped quote, not the
+        // end of the identifier.
         if c == b'"' {
             let start = i + 1;
             i += 1;
-            while i < bytes.len() && bytes[i] != b'"' {
-                i += 1;
+            loop {
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += 1;
+                }
+                if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                    i += 2;
+                    continue;
+                }
+                break;
             }
             if i >= bytes.len() {
                 break;
             }
             out.push(Tok {
                 text: &sql[start..i],
+                quoted: true,
             });
             i += 1;
             continue;
@@ -317,6 +357,7 @@ pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
             }
             out.push(Tok {
                 text: &sql[start..i],
+                quoted: false,
             });
             continue;
         }
@@ -328,6 +369,7 @@ pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
             }
             out.push(Tok {
                 text: &sql[start..i],
+                quoted: false,
             });
             continue;
         }
@@ -339,7 +381,10 @@ pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
         while end < bytes.len() && !sql.is_char_boundary(end) {
             end += 1;
         }
-        out.push(Tok { text: &sql[i..end] });
+        out.push(Tok {
+            text: &sql[i..end],
+            quoted: false,
+        });
         i = end;
     }
     out
@@ -355,16 +400,16 @@ struct TableName {
 /// identifier.
 fn take_table_ref(tokens: &[Tok], i: usize) -> Option<(TableName, usize)> {
     let head = tokens.get(i)?;
-    if !is_identifier_like(head.text) {
+    if !is_name_token(head) {
         return None;
     }
     // Schema.name?
     if let (Some(dot), Some(tail)) = (tokens.get(i + 1), tokens.get(i + 2)) {
-        if dot.text == "." && is_identifier_like(tail.text) {
+        if !dot.quoted && dot.text == "." && is_name_token(tail) {
             return Some((
                 TableName {
-                    schema: Some(head.text.to_string()),
-                    name: tail.text.to_string(),
+                    schema: Some(ident_value(head)),
+                    name: ident_value(tail),
                 },
                 i + 3,
             ));
@@ -373,7 +418,7 @@ fn take_table_ref(tokens: &[Tok], i: usize) -> Option<(TableName, usize)> {
     Some((
         TableName {
             schema: None,
-            name: head.text.to_string(),
+            name: ident_value(head),
         },
         i + 1,
     ))
@@ -405,21 +450,21 @@ fn take_alias(tokens: &[Tok], i: usize) -> (Option<String>, usize) {
         "AS",
         "RETURNING",
     ];
+    // A quoted word is never a keyword: `"where"` is an alias.
+    let is_stop = |t: &Tok| !t.quoted && stop_words.contains(&t.text.to_ascii_uppercase().as_str());
     if let Some(t) = tokens.get(i) {
-        let upper = t.text.to_ascii_uppercase();
-        if upper == "AS" {
+        if !t.quoted && t.text.eq_ignore_ascii_case("AS") {
             if let Some(alias) = tokens.get(i + 1) {
-                let alias_upper = alias.text.to_ascii_uppercase();
                 // Reject keywords after AS — `FROM users AS JOIN orders`
                 // should not consume `JOIN` as the alias of `users`.
-                if is_identifier_like(alias.text) && !stop_words.contains(&alias_upper.as_str()) {
-                    return (Some(alias.text.to_string()), i + 2);
+                if is_name_token(alias) && !is_stop(alias) {
+                    return (Some(ident_value(alias)), i + 2);
                 }
             }
             return (None, i + 1);
         }
-        if is_identifier_like(t.text) && !stop_words.contains(&upper.as_str()) {
-            return (Some(t.text.to_string()), i + 1);
+        if is_name_token(t) && !is_stop(t) {
+            return (Some(ident_value(t)), i + 1);
         }
     }
     (None, i)
@@ -514,6 +559,37 @@ mod tests {
         let got = refs(r#"SELECT * FROM "MyTable" AS t"#);
         assert_eq!(got[0].name, "MyTable");
         assert_eq!(got[0].alias.as_deref(), Some("t"));
+    }
+
+    /// The server folds a bare name to lower case and keeps a quoted one
+    /// verbatim; the parse must too, or `"PgRevMixed"` and `PgRevMixed`
+    /// (the table `pgrevmixed`) come out the same.
+    #[test]
+    fn bare_identifiers_fold_and_quoted_ones_do_not() {
+        let got = refs(r#"SELECT * FROM Public.PgRevMixed AS Pr"#);
+        assert_eq!(got[0].schema.as_deref(), Some("public"));
+        assert_eq!(got[0].name, "pgrevmixed");
+        assert_eq!(got[0].alias.as_deref(), Some("pr"));
+        let got = refs(r#"SELECT * FROM "Public"."PgRevMixed" "Pr""#);
+        assert_eq!(got[0].schema.as_deref(), Some("Public"));
+        assert_eq!(got[0].name, "PgRevMixed");
+        assert_eq!(got[0].alias.as_deref(), Some("Pr"));
+    }
+
+    /// A quoted name may hold spaces, punctuation and `""`-escaped
+    /// quotes; a quoted keyword is a name, not a clause.
+    #[test]
+    fn quoted_names_with_spaces_and_escaped_quotes() {
+        let got = refs(r#"SELECT * FROM "my table" "where" WHERE x = 1"#);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "my table");
+        assert_eq!(got[0].alias.as_deref(), Some("where"));
+        let got = refs(r#"SELECT * FROM "a ""b"" c" JOIN t2 ON true"#);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "a \"b\" c");
+        assert_eq!(got[1].name, "t2");
+        // An empty quoted name is not a table.
+        assert!(refs(r#"SELECT * FROM """#).is_empty());
     }
 
     #[test]

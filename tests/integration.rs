@@ -5737,3 +5737,229 @@ async fn the_insert_yank_puts_back_the_row_it_copied() {
     assert_eq!(after.rows[0][2], None);
     assert_eq!(after.rows[0][4].as_deref(), Some("007"));
 }
+
+/// A writable library connection to the compose database.
+async fn writable_client() -> (
+    std::sync::Arc<tokio_postgres::Client>,
+    Option<pgman::tunnel::SshTunnel>,
+) {
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect writable")
+}
+
+/// A mixed-case table and its lowercase twin. `SELECT * FROM "Mixed"`,
+/// then `I`: the yanked INSERT puts the row back in the quoted table,
+/// never the twin (bare, `INSERT INTO public.Mixed` folded to the twin).
+/// `:fixture` refuses the capture — DBUnit names are case-insensitive,
+/// so no fixture can name the quoted table — and a hand-written fixture
+/// naming `RevMixed` applies to the lowercase twin, as DBUnit reads it.
+#[tokio::test]
+async fn the_insert_yank_lands_in_the_quoted_table_and_fixtures_read_names_as_dbunit() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let mixed = format!("pgman_it_RevMixed_{pid}");
+    let twin = mixed.to_ascii_lowercase();
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE \"{mixed}\" (id int PRIMARY KEY, v text); \
+             CREATE TABLE {twin} (id int PRIMARY KEY, v text); \
+             INSERT INTO \"{mixed}\" VALUES (1, 'mixed')"
+        ))
+        .await
+        .expect("create the tables");
+    let select = format!("SELECT * FROM \"{mixed}\"");
+    let grid = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let (schema, table) =
+        pgman::app::infer_single_source_table(&select).expect("a single source table");
+    assert_eq!(table, mixed);
+    let count = |t: String| {
+        let client = client.clone();
+        async move {
+            pgman::conn::run_statement(&client, &format!("SELECT count(*) FROM {t}"))
+                .await
+                .expect("count")
+                .rows[0][0]
+                .clone()
+                .unwrap()
+        }
+    };
+
+    let insert = pgman::app::row_insert_sql(&schema, &table, &grid.columns, &grid.rows[0]);
+    let yank = client
+        .batch_execute(&format!("DELETE FROM \"{mixed}\"; {insert}"))
+        .await;
+    let (yank_mixed, yank_twin) = (
+        count(format!("\"{mixed}\"")).await,
+        count(twin.clone()).await,
+    );
+
+    let refused = pgman::dbunit::fixture_from_rows(&table, &grid.columns, &grid.rows);
+
+    let hand_written =
+        pgman::dbunit::parse_flat_xml(&format!(r#"<dataset><{mixed} Id="7" V="twin"/></dataset>"#))
+            .unwrap();
+    let script =
+        pgman::dbunit::generate_apply_script(&hand_written, pgman::dbunit::CleanMode::DeleteFrom);
+    let apply = client.batch_execute(&script).await;
+    let (fx_mixed, fx_twin) = (
+        count(format!("\"{mixed}\"")).await,
+        count(twin.clone()).await,
+    );
+
+    let _ = client
+        .batch_execute(&format!("DROP TABLE \"{mixed}\"; DROP TABLE {twin}"))
+        .await;
+    yank.unwrap_or_else(|e| panic!("{insert}: {e}"));
+    assert_eq!(
+        (yank_mixed.as_str(), yank_twin.as_str()),
+        ("1", "0"),
+        "{insert}"
+    );
+    let err = refused.expect_err("a mixed-case table can't be a fixture element");
+    assert!(err.contains("case-insensitively"), "{err}");
+    apply.unwrap_or_else(|e| panic!("{script}: {e}"));
+    assert_eq!(
+        (fx_mixed.as_str(), fx_twin.as_str()),
+        ("1", "1"),
+        "{script}"
+    );
+}
+
+/// A fixture captured from a table with a reserved column name
+/// applies back to it: the apply script quotes `"user"` (bare, a syntax
+/// error). A table with a mixed-case column refuses the capture: DBUnit
+/// would read `createdAt` back as `createdat`.
+#[tokio::test]
+async fn a_fixture_with_a_reserved_column_applies_back_and_a_mixed_case_one_is_refused() {
+    let (client, _tunnel) = writable_client().await;
+    let table = it_name("fxcols");
+    let mixed = it_name("fxmixed");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int PRIMARY KEY, \"user\" text, \"order\" text); \
+             INSERT INTO {table} VALUES (1, 'someone', 'first'); \
+             CREATE TABLE {mixed} (id int, \"createdAt\" text); \
+             INSERT INTO {mixed} VALUES (1, 'then')"
+        ))
+        .await
+        .expect("create the tables");
+    let mixed_grid = pgman::conn::run_statement(&client, &format!("SELECT * FROM {mixed}"))
+        .await
+        .expect("select mixed");
+    let refused = pgman::dbunit::fixture_from_rows(&mixed, &mixed_grid.columns, &mixed_grid.rows);
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let fixture = pgman::dbunit::fixture_from_rows(&table, &before.columns, &before.rows)
+        .expect("every name round-trips");
+    let reparsed =
+        pgman::dbunit::parse_flat_xml(&pgman::dbunit::generate_flat_xml(&fixture)).unwrap();
+    let script =
+        pgman::dbunit::generate_apply_script(&reparsed, pgman::dbunit::CleanMode::DeleteFrom);
+    let applied = client.batch_execute(&script).await;
+    let after = pgman::conn::run_statement(&client, &select).await;
+    let _ = client
+        .batch_execute(&format!("DROP TABLE {table}; DROP TABLE {mixed}"))
+        .await;
+    applied.unwrap_or_else(|e| panic!("{script}: {e}"));
+    assert_eq!(after.expect("select again").rows, before.rows, "{script}");
+    let err = refused.expect_err("createdAt can't round-trip");
+    assert!(err.contains("column \"createdAt\""), "{err}");
+}
+
+/// A value with a backslash — text, and a bytea, whose text form is
+/// `\x…` — comes back the same through the `I` yank and the fixture
+/// apply with `standard_conforming_strings` on or off. A plain `'…'`
+/// literal read `\x0102` as the escape `\x01` with it off.
+#[tokio::test]
+async fn backslashes_survive_the_yank_and_fixture_under_either_string_setting() {
+    let (client, _tunnel) = writable_client().await;
+    let table = it_name("bslash");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int PRIMARY KEY, t text, b bytea); \
+             INSERT INTO {table} VALUES (1, E'C:\\\\dir\\\\n''q', '\\x0102ff'::bytea)"
+        ))
+        .await
+        .expect("create the table");
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    assert_eq!(before.rows[0][2].as_deref(), Some("\\x0102ff"));
+    let mut failures = Vec::new();
+    for scs in ["on", "off"] {
+        let insert = pgman::app::row_insert_sql("public", &table, &before.columns, &before.rows[0]);
+        let fixture = pgman::dbunit::fixture_from_rows(&table, &before.columns, &before.rows)
+            .expect("names round-trip");
+        let apply =
+            pgman::dbunit::generate_apply_script(&fixture, pgman::dbunit::CleanMode::DeleteFrom);
+        for (what, sql) in [
+            ("yank", format!("DELETE FROM {table}; {insert}")),
+            ("fixture", apply),
+        ] {
+            // The SET in a message of its own: a simple-query message
+            // is lexed whole before any of it runs, so a SET sharing
+            // one with the INSERT would not change how its literals read.
+            client
+                .batch_execute(&format!("SET standard_conforming_strings = {scs}"))
+                .await
+                .expect("set standard_conforming_strings");
+            let ran = client.batch_execute(&sql).await;
+            client
+                .batch_execute("SET standard_conforming_strings = on")
+                .await
+                .expect("reset standard_conforming_strings");
+            let after = pgman::conn::run_statement(&client, &select).await;
+            match (ran, after) {
+                (Ok(()), Ok(after)) if after.rows == before.rows => {}
+                (ran, after) => {
+                    failures.push(format!("{what} scs={scs}: {ran:?} {after:?}\n{sql}"))
+                }
+            }
+        }
+    }
+    let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A multi-statement script's SELECT rows don't come back — the simple
+/// query protocol has none to give — and `--format json` printed only
+/// `[{"status":"batch executed"}]`. stderr now says why; a single
+/// statement still prints its rows with nothing on stderr.
+#[test]
+fn batch_json_script_with_a_select_explains_where_the_rows_went() {
+    let home = scratch_home_without_profile("json-script");
+    let out = batch_with_home(
+        &home,
+        &["--sql", "SELECT 1 AS a; SELECT 2 AS b", "--format", "json"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        r#"[{"status":"batch executed"}]"#
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("prints only its status, not rows"),
+        "{stderr}"
+    );
+    let out = batch_with_home(&home, &["--sql", "SELECT 1 AS a", "--format", "json"]);
+    assert!(out.status.success());
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

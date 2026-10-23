@@ -51,6 +51,47 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   so the section opened on its first key.
 - The help overlay's footer shows its own keys; a status left from before
   help opened used to take the footer instead.
+- `I` (row as INSERT) named a quoted mixed-case table bare: a row
+  yanked from `"OrderLine"` was inserted into a lowercase twin
+  `orderline` if there was one, and failed otherwise. The FROM parse
+  now folds unquoted names to lower case and keeps quoted ones (spaces
+  and `""` included), and the INSERT quotes the table. `:fixture`
+  refuses such a table instead of capturing it under the twin's name:
+  DBUnit names tables case-insensitively, so no fixture can name it.
+  `F` (FK follow) prefers the exact table over a case-insensitive match.
+- A fixture's apply script quotes a reserved table or column name
+  (`user`), which was a syntax error, and still reads every other
+  name as DBUnit does, case-insensitively (`<UserAccount Id="1">` is
+  `useraccount (id)`). `:fixture` refuses, naming it, a column that
+  can't round-trip — one with upper-case letters (`createdAt`) or one
+  XML can't carry (`a"b`, `with space`, `?column?`) — instead of
+  renaming it with `_` into a column the table doesn't have.
+- `\fixture`, `\report` and `\i` (and their `:` spellings) take the
+  rest of the line as the path, so a path with spaces works; a
+  double-quoted path has its quotes removed. They took the first word,
+  so `:fixture my dir/f.xml` wrote `./my`.
+- `I` (row as INSERT), `F` (FK follow) and the fixture apply script
+  write a value holding a backslash as an `E'…'` string with the
+  backslash doubled, so it inserts the same value whatever
+  `standard_conforming_strings` is. With it off, a bytea's `\x0102`
+  was read as the escape `\x01`.
+- `I`'s footer counted the INSERT's bytes and called them characters;
+  it counts characters now. Every yank reports a clipboard failure the
+  same way (`yank failed: …`), and the test suite no longer writes to
+  the system clipboard.
+- `--batch` with a script of several statements, one of them a
+  `SELECT`, says on stderr that a script prints only its status, not
+  rows: `--format json` printed `[{"status":"batch executed"}]` and the
+  rows seemed lost. Run the `SELECT` on its own to get them.
+- `:fixture` with a grid filter active captures the rows the filter
+  shows, as `Y` exports them, and the status says `N of M row(s)
+  (filtered)`. It captured every row, hidden ones included.
+- Sorting a column (`s`) decides once per column whether to compare
+  numbers or text: a column that is all numbers sorts by exact value
+  (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in
+  Postgres); any other column sorts as text, byte by byte. Deciding per
+  pair was not an order (`2 < 10 < 1a < 2`), so ascending and descending
+  disagreed, and text such as `inf` or `nan` sorted as a number.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

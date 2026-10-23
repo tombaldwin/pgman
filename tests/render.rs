@@ -11,7 +11,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pgman::app::{compute_visible_rows, App, ConnState, DataSourcePick, HistorySearchState, Mode};
 use pgman::conn::Dsn;
-use pgman::grid::cmp_cells;
+use pgman::grid::sort_rows;
 use pgman::grid::Grid;
 use pgman::query::schema::TableMeta;
 use pgman::safety::SafetyConfig;
@@ -203,9 +203,7 @@ fn grid_render_shows_sort_marker_on_focused_column() {
     a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_view.col_cursor = 0;
     a.grid_view.sort = Some((0, true));
-    a.grid
-        .rows
-        .sort_by(|x, y| cmp_cells(x[0].as_deref(), y[0].as_deref()));
+    sort_rows(&mut a.grid.rows, 0, true);
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(

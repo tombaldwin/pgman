@@ -79,6 +79,25 @@ pub fn truncated_warning() -> String {
     )
 }
 
+/// What stderr says after a multi-statement script that had a `SELECT`
+/// in it, or `None`. A script runs through the simple-query protocol,
+/// which hands back no result sets, so its output is the one-row
+/// `batch executed` status in every format: `--format json` printed
+/// `[{"status":"batch executed"}]`, and the rows looked lost. Pure.
+pub fn script_rows_hint(statements: &[String]) -> Option<String> {
+    let selects = statements
+        .iter()
+        .filter(|s| crate::safety::classify(s) == crate::safety::StatementKind::Select)
+        .count();
+    (statements.len() > 1 && selects > 0).then(|| {
+        format!(
+            "note: a script of {} statements prints only its status, not rows — \
+             run the SELECT as a statement of its own to get them",
+            statements.len()
+        )
+    })
+}
+
 pub struct Opts {
     pub dsn: Dsn,
     pub sql: String,
@@ -392,6 +411,9 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 // add one when the format doesn't).
                 if !text.ends_with('\n') {
                     println!();
+                }
+                if let Some(hint) = script_rows_hint(&checked) {
+                    eprintln!("{hint}");
                 }
                 // A partial export must not pass for a whole one.
                 if grid.truncated {
@@ -1297,6 +1319,26 @@ mod tests {
         assert_eq!(
             checked,
             vec!["SELECT 1".to_string(), "-- note\nSELECT 2".to_string()]
+        );
+    }
+
+    /// A script with a SELECT in it says on stderr that its rows don't
+    /// come back; a single statement, or a script of writes only, says
+    /// nothing.
+    #[test]
+    fn script_rows_hint_only_for_a_script_with_a_select() {
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let hint =
+            script_rows_hint(&v(&["INSERT INTO t VALUES (1)", "SELECT * FROM t"])).expect("a hint");
+        assert!(hint.contains("2 statements"), "{hint}");
+        assert!(hint.contains("not rows"), "{hint}");
+        assert_eq!(script_rows_hint(&v(&["SELECT 1"])), None);
+        assert_eq!(
+            script_rows_hint(&v(&[
+                "INSERT INTO t VALUES (1)",
+                "DELETE FROM t WHERE id = 1"
+            ])),
+            None
         );
     }
 

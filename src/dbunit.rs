@@ -20,6 +20,11 @@
 //! Each non-root element is one row in the table named by the element;
 //! attributes are columns. A missing attribute is treated as a missing column
 //! (the INSERT just doesn't mention it, so the DB default applies).
+//!
+//! Names in the XML are read the way DBUnit reads them — case-insensitively:
+//! `users`, `USERS` and `Users` all mean `users`. Only a name that can't be
+//! a bare identifier (`order items`) is taken exactly. See
+//! [`sql_ident_name`].
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -118,9 +123,12 @@ pub fn generate_clean(fixture: &Fixture, mode: CleanMode) -> Vec<String> {
     tables.reverse();
     tables
         .iter()
-        .map(|t| match mode {
-            CleanMode::Truncate => format!("TRUNCATE TABLE {t} RESTART IDENTITY CASCADE"),
-            CleanMode::DeleteFrom => format!("DELETE FROM {t}"),
+        .map(|t| {
+            let t = sql_table_name(t);
+            match mode {
+                CleanMode::Truncate => format!("TRUNCATE TABLE {t} RESTART IDENTITY CASCADE"),
+                CleanMode::DeleteFrom => format!("DELETE FROM {t}"),
+            }
         })
         .collect()
 }
@@ -179,14 +187,30 @@ pub fn generate_flat_xml(fixture: &Fixture) -> String {
 /// NULL cell — and a short row's missing one — is left out of the
 /// row, flat XML's NULL; an empty string stays, as `""`. Applying the
 /// fixture with pgman then leaves an omitted column to its default:
-/// NULL, unless the table gives it a `DEFAULT`. `table` is used
-/// verbatim as the element name (DBUnit flat-XML convention —
-/// schema-qualify by hand if your setup needs it).
+/// NULL, unless the table gives it a `DEFAULT`. `table` is the
+/// server's own name and is used verbatim as the element name (DBUnit
+/// flat-XML convention — schema-qualify by hand if your setup needs
+/// it).
+///
+/// Refused, rather than renamed, when the table name or a column
+/// name would not read back as itself on apply — see
+/// [`fixture_name_problem`]. A renamed element applies to some other
+/// table, or none; a renamed attribute to a column the table lacks.
 pub fn fixture_from_rows(
     table: &str,
     columns: &[String],
     rows: &[Vec<crate::grid::Cell>],
-) -> Fixture {
+) -> Result<Fixture, String> {
+    if let Some(why) = fixture_name_problem(table, true) {
+        return Err(format!("table {table:?} can't be a fixture element: {why}"));
+    }
+    for column in columns {
+        if let Some(why) = fixture_name_problem(column, false) {
+            return Err(format!(
+                "column {column:?} can't be a fixture attribute: {why}"
+            ));
+        }
+    }
     let rows = rows
         .iter()
         .map(|cells| Row {
@@ -201,37 +225,123 @@ pub fn fixture_from_rows(
                 .collect(),
         })
         .collect();
-    Fixture { rows }
+    Ok(Fixture { rows })
+}
+
+/// How a fixture name (an element or attribute name) reads as a SQL
+/// identifier on apply, with DBUnit's semantics: names are
+/// case-insensitive. Any name shaped like a bare identifier folds to
+/// lower case the way the server folds an unquoted one — `USERS`,
+/// `Users` and `users` all mean `users`, and `<UserAccount Id="1">`
+/// means table `useraccount`, column `id`, as Java projects write it.
+/// Only a name that can't be a bare identifier (`order items`,
+/// `Café`) is taken exactly, quoted. A reserved word is quoted after
+/// folding (`user` → `"user"`): that is syntax, not case.
+pub fn sql_ident_name(name: &str) -> String {
+    if is_bare_identifier_shape(name) {
+        crate::app::quote_ident(&name.to_ascii_lowercase())
+    } else {
+        crate::app::quote_ident(name)
+    }
+}
+
+/// `[A-Za-z_][A-Za-z0-9_]*` — a name that, unquoted, the server reads
+/// as an identifier (folded to lower case).
+fn is_bare_identifier_shape(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        _ => false,
+    }
+}
+
+/// [`sql_ident_name`] for an element name, which may be
+/// schema-qualified (`audit.events`, DBUnit's qualified-table-names
+/// spelling): each side is read on its own.
+pub fn sql_table_name(name: &str) -> String {
+    match name.split_once('.') {
+        Some((schema, table)) if !schema.is_empty() && !table.is_empty() => {
+            format!("{}.{}", sql_ident_name(schema), sql_ident_name(table))
+        }
+        _ => sql_ident_name(name),
+    }
+}
+
+/// Why `name` — a catalog name captured from a result, a table's
+/// (`table`) or a column's — can't be written as a fixture name and
+/// read back as itself, or `None` when it can. XML can't carry every
+/// identifier (`?column?`, `a b`, `a"b`), a name with an upper-case
+/// letter (`"PgRevMixed"`, `"createdAt"`) reads back folded — DBUnit
+/// names are case-insensitive — and a table name with a dot reads back
+/// as schema.table.
+pub fn fixture_name_problem(name: &str, table: bool) -> Option<&'static str> {
+    if !is_xml_name(name) {
+        return Some("not a valid XML name");
+    }
+    if table && name.contains('.') {
+        return Some("a dot reads back as schema.table");
+    }
+    if sql_ident_name(name) != crate::app::quote_ident(name) {
+        return Some(
+            "DBUnit fixtures name tables and columns case-insensitively, \
+             so a name with upper-case letters can't round-trip",
+        );
+    }
+    None
+}
+
+/// Is `s` an XML `Name` as `quick_xml` will parse it back? Letters
+/// (any script), `_` and `:` may start it; digits, `-` and `.` may
+/// follow. Approximates the XML 1.0 production with Rust's Unicode
+/// classes — enough to keep every ordinary SQL identifier and refuse
+/// the punctuation that breaks the markup.
+fn is_xml_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if is_xml_name_start(c) => chars.all(is_xml_name_char),
+        _ => false,
+    }
+}
+
+fn is_xml_name_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_' || c == ':'
+}
+
+fn is_xml_name_char(c: char) -> bool {
+    is_xml_name_start(c) || c.is_numeric() || c == '-' || c == '.'
 }
 
 // -- helpers --
 
-/// Escape a string for use inside a double-quoted XML attribute.
-/// Whitespace controls become numeric entities so they survive
-/// XML attribute-value normalisation on re-parse.
 /// Sanitise a string into a valid XML `Name` for use as an element or
-/// attribute name. DBUnit flat-XML uses table and column names as XML
-/// names, and a captured result grid can carry headers that aren't
-/// valid XML names — an unaliased expression column is `?column?`, a
-/// quoted alias can hold spaces or `&`. Emitting those raw produces
-/// malformed XML that won't round-trip through [`parse_flat_xml`].
-/// Every disallowed character becomes `_`; a name that can't *start* an
-/// XML name is prefixed with `_`. Lossless for ordinary SQL identifiers,
-/// which already are valid XML names.
+/// attribute name, so [`generate_flat_xml`] never writes malformed
+/// XML. Every disallowed character becomes `_`; a name that can't
+/// *start* an XML name is prefixed with `_`. The identity on every
+/// name [`is_xml_name`] accepts — which is every name a capture
+/// ([`fixture_from_rows`]) lets through, since it refuses the rest
+/// rather than have them renamed here — and on every name a parsed
+/// fixture holds.
 fn xml_escape_name(s: &str) -> String {
-    let is_start = |c: char| c.is_ascii_alphabetic() || c == '_' || c == ':';
-    let is_part = |c: char| is_start(c) || c.is_ascii_digit() || c == '-' || c == '.';
     let mut out: String = s
         .chars()
-        .map(|c| if is_part(c) { c } else { '_' })
+        .map(|c| if is_xml_name_char(c) { c } else { '_' })
         .collect();
-    let needs_prefix = out.chars().next().map(|c| !is_start(c)).unwrap_or(true);
+    let needs_prefix = out
+        .chars()
+        .next()
+        .map(|c| !is_xml_name_start(c))
+        .unwrap_or(true);
     if needs_prefix {
         out.insert(0, '_');
     }
     out
 }
 
+/// Escape a string for use inside a double-quoted XML attribute.
+/// Whitespace controls become numeric entities so they survive
+/// XML attribute-value normalisation on re-parse.
 fn xml_escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -253,17 +363,17 @@ fn insert_sql(row: &Row) -> String {
     // Every attribute omitted (`<t/>`, or a captured row of NULLs):
     // `INSERT INTO t () VALUES ()` is not SQL.
     if row.columns.is_empty() {
-        return format!("INSERT INTO {} DEFAULT VALUES", row.table);
+        return format!("INSERT INTO {} DEFAULT VALUES", sql_table_name(&row.table));
     }
-    let cols: Vec<&str> = row.columns.iter().map(|(k, _)| k.as_str()).collect();
+    let cols: Vec<String> = row.columns.iter().map(|(k, _)| sql_ident_name(k)).collect();
     let vals: Vec<String> = row
         .columns
         .iter()
-        .map(|(_, v)| format!("'{}'", v.replace('\'', "''")))
+        .map(|(_, v)| crate::app::format_sql_literal(Some(v)))
         .collect();
     format!(
         "INSERT INTO {} ({}) VALUES ({})",
-        row.table,
+        sql_table_name(&row.table),
         cols.join(", "),
         vals.join(", ")
     )
@@ -339,7 +449,7 @@ mod tests {
             vec![Some("3".to_string()), None],
             vec![Some("4".to_string()), Some(String::new())],
         ];
-        let f = fixture_from_rows("users", &cols, &rows);
+        let f = fixture_from_rows("users", &cols, &rows).unwrap();
         assert_eq!(f.rows.len(), 4);
         assert_eq!(f.rows[0].table, "users");
         assert_eq!(
@@ -363,7 +473,7 @@ mod tests {
     /// still be SQL.
     #[test]
     fn a_row_with_no_attributes_inserts_default_values() {
-        let f = fixture_from_rows("t", &["a".to_string()], &[vec![None]]);
+        let f = fixture_from_rows("t", &["a".to_string()], &[vec![None]]).unwrap();
         assert_eq!(
             generate_flat_xml(&f),
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<dataset>\n  <t/>\n</dataset>\n"
@@ -371,11 +481,117 @@ mod tests {
         assert_eq!(generate_inserts(&f), vec!["INSERT INTO t DEFAULT VALUES"]);
     }
 
+    /// DBUnit names are case-insensitive: any bare-identifier-shaped
+    /// element folds, whatever its case — `<UserAccount Id="1">` is table
+    /// `useraccount` — in the INSERT and in both clean modes. A reserved
+    /// word is still quoted; a name that can't be bare is taken exactly.
+    #[test]
+    fn apply_reads_names_case_insensitively_as_dbunit_does() {
+        let f = parse_flat_xml(r#"<dataset><UserAccount Id="1" FullName="x"/></dataset>"#).unwrap();
+        assert_eq!(
+            generate_inserts(&f),
+            vec!["INSERT INTO useraccount (id, fullname) VALUES ('1', 'x')"]
+        );
+        assert_eq!(
+            generate_clean(&f, CleanMode::DeleteFrom),
+            vec!["DELETE FROM useraccount"]
+        );
+        assert_eq!(
+            generate_clean(&f, CleanMode::Truncate),
+            vec!["TRUNCATE TABLE useraccount RESTART IDENTITY CASCADE"]
+        );
+        assert_eq!(sql_table_name("USERS"), "users");
+        assert_eq!(sql_table_name("users"), "users");
+        assert_eq!(sql_table_name("PgRevMixed"), "pgrevmixed");
+        assert_eq!(sql_table_name("user"), "\"user\"");
+        assert_eq!(sql_table_name("audit.events"), "audit.events");
+        assert_eq!(sql_table_name("AUDIT.PgEvents"), "audit.pgevents");
+        assert_eq!(sql_table_name("Café"), "\"Café\"");
+        let f = parse_flat_xml("<dataset><USER ID=\"1\"/></dataset>").unwrap();
+        assert_eq!(
+            generate_inserts(&f)[0],
+            "INSERT INTO \"user\" (id) VALUES ('1')"
+        );
+    }
+
+    /// A table name that would not read back as itself is refused, not
+    /// renamed into some other table.
+    #[test]
+    fn capture_refuses_a_table_name_that_does_not_round_trip() {
+        for bad in ["weird table", "USERS", "PgRevMixed", "a.b", "?column?", ""] {
+            assert!(
+                fixture_from_rows(bad, &["id".to_string()], &[]).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+        let err = fixture_from_rows("PgRevMixed", &["id".to_string()], &[]).unwrap_err();
+        assert!(err.contains("case-insensitively"), "{err}");
+        // A reserved lowercase word is not a case problem: it is quoted
+        // on apply and round-trips.
+        assert!(fixture_from_rows("user", &["id".to_string()], &[]).is_ok());
+        // Accepted means written as is: not renamed to `Caf__1` on the
+        // way out, which applied to a table that isn't there.
+        let f = fixture_from_rows("Café_1", &["prénom".to_string()], &[vec![Some("x".into())]])
+            .unwrap();
+        let xml = generate_flat_xml(&f);
+        assert!(xml.contains("<Café_1 prénom=\"x\"/>"), "{xml}");
+        assert_eq!(parse_flat_xml(&xml).unwrap(), f);
+    }
+
+    /// Reserved and dotted column names round-trip: capture, XML, parse,
+    /// apply names the same columns, quoted where they must be. Bare,
+    /// `user` was a syntax error.
+    #[test]
+    fn column_names_round_trip_through_capture_and_apply() {
+        let cols = ["id", "user", "a.b"].map(String::from);
+        let row = vec![
+            Some("1".to_string()),
+            Some("u".to_string()),
+            Some("d".to_string()),
+        ];
+        let f = fixture_from_rows("t", &cols, &[row]).unwrap();
+        let reparsed = parse_flat_xml(&generate_flat_xml(&f)).unwrap();
+        assert_eq!(reparsed, f);
+        assert_eq!(
+            generate_inserts(&reparsed),
+            vec!["INSERT INTO t (id, \"user\", \"a.b\") VALUES ('1', 'u', 'd')"]
+        );
+        // A hand-written uppercase fixture still means the lowercase columns.
+        let f = parse_flat_xml("<dataset><USERS ID=\"1\" FULL_NAME=\"x\"/></dataset>").unwrap();
+        assert_eq!(
+            generate_inserts(&f),
+            vec!["INSERT INTO users (id, full_name) VALUES ('1', 'x')"]
+        );
+    }
+
+    /// The apply script writes values as the yank does: a backslash in an
+    /// `E'…'` string, doubled, so `standard_conforming_strings` can't
+    /// change what it inserts.
+    #[test]
+    fn apply_writes_a_backslash_as_an_escape_string() {
+        let f = parse_flat_xml(r#"<dataset><t b="\x0102" s="it's"/></dataset>"#).unwrap();
+        assert_eq!(
+            generate_inserts(&f),
+            vec!["INSERT INTO t (b, s) VALUES (E'\\\\x0102', 'it''s')"]
+        );
+    }
+
+    /// A column XML can't carry, or one that would read back as another
+    /// column, refuses the capture and names the column — no `_` rename.
+    #[test]
+    fn capture_refuses_a_column_name_that_does_not_round_trip() {
+        for bad in ["a\"b", "with space", "?column?", "ID", "createdAt", "1st"] {
+            let err =
+                fixture_from_rows("t", &["id".to_string(), bad.to_string()], &[]).expect_err(bad);
+            assert!(err.contains(&format!("column {bad:?}")), "{err}");
+        }
+    }
+
     #[test]
     fn fixture_from_rows_then_generate_is_parseable() {
         let cols = vec!["id".to_string(), "name".to_string()];
         let rows = vec![vec![Some("1".to_string()), Some("O'Brien".to_string())]];
-        let f = fixture_from_rows("users", &cols, &rows);
+        let f = fixture_from_rows("users", &cols, &rows).unwrap();
         let xml = generate_flat_xml(&f);
         let parsed = parse_flat_xml(&xml).unwrap();
         assert_eq!(parsed, f);

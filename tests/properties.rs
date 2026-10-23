@@ -8,7 +8,7 @@ use proptest::prelude::*;
 
 use pgman::app::{compute_visible_rows, history_search_next, next_sort_state};
 use pgman::conn::{redact_url, Dsn};
-use pgman::grid::{cmp_cells, Grid};
+use pgman::grid::{cmp_cells, sort_rows, Grid, SortMode};
 use pgman::query::highlight::{tokenize, TokenClass};
 use pgman::safety::{classify, split_statements, StatementKind};
 
@@ -317,30 +317,117 @@ proptest! {
 
 // ----- Grid cmp_cells --------------------------------------------------------
 
+/// A cell drawn from a mix that exercises both modes and every corner:
+/// integers past 2^53, decimals, exponents, signed zeros, the
+/// infinities and NaN, number-ish text (`1a`, `inf`, `nan`), the empty
+/// string, arbitrary text and NULL.
+fn mixed_cell() -> impl Strategy<Value = Option<String>> {
+    proptest::option::of(prop_oneof![
+        any::<i64>().prop_map(|n| n.to_string()),
+        (-1000i64..1000).prop_map(|n| n.to_string()),
+        (any::<i32>(), 0u32..6).prop_map(|(n, d)| {
+            let s = format!("{:0>width$}", n.unsigned_abs(), width = d as usize + 1);
+            let (i, f) = s.split_at(s.len() - d as usize);
+            let sign = if n < 0 { "-" } else { "" };
+            if d == 0 {
+                format!("{sign}{i}")
+            } else {
+                format!("{sign}{i}.{f}")
+            }
+        }),
+        (-9i32..10, -40i32..40).prop_map(|(m, e)| format!("{m}.5e{e:+}")),
+        Just("0".to_string()),
+        Just("-0".to_string()),
+        Just("0.000".to_string()),
+        Just("NaN".to_string()),
+        Just("Infinity".to_string()),
+        Just("-Infinity".to_string()),
+        Just("1a".to_string()),
+        Just("inf".to_string()),
+        Just("nan".to_string()),
+        Just(String::new()),
+        ".{0,8}",
+    ])
+}
+
+fn modes() -> impl Strategy<Value = SortMode> {
+    prop_oneof![Just(SortMode::Numeric), Just(SortMode::Text)]
+}
+
 proptest! {
-    /// `cmp_cells` is antisymmetric.
+    /// `cmp_cells` is antisymmetric in either mode.
     #[test]
-    fn cmp_cells_is_antisymmetric(
-        a in proptest::option::of(".{0,16}"),
-        b in proptest::option::of(".{0,16}"),
-    ) {
-        let ab = cmp_cells(a.as_deref(), b.as_deref());
-        let ba = cmp_cells(b.as_deref(), a.as_deref());
+    fn cmp_cells_is_antisymmetric(m in modes(), a in mixed_cell(), b in mixed_cell()) {
+        let ab = cmp_cells(m, a.as_deref(), b.as_deref());
+        let ba = cmp_cells(m, b.as_deref(), a.as_deref());
         prop_assert_eq!(ab.reverse(), ba);
+    }
+
+    /// `cmp_cells` is transitive in either mode: a ≤ b and b ≤ c give
+    /// a ≤ c, and equality carries through. The per-pair numeric /
+    /// text switch broke this (`2 < 10 < 1a < 2`).
+    #[test]
+    fn cmp_cells_is_transitive(
+        m in modes(),
+        a in mixed_cell(),
+        b in mixed_cell(),
+        c in mixed_cell(),
+    ) {
+        use std::cmp::Ordering::*;
+        let (a, b, c) = (a.as_deref(), b.as_deref(), c.as_deref());
+        let ab = cmp_cells(m, a, b);
+        let bc = cmp_cells(m, b, c);
+        let ac = cmp_cells(m, a, c);
+        if ab != Greater && bc != Greater {
+            prop_assert!(ac != Greater, "{a:?} <= {b:?} <= {c:?} but {a:?} > {c:?}");
+        }
+        if ab == Equal && bc == Equal {
+            prop_assert_eq!(ac, Equal);
+        }
     }
 
     /// `cmp_cells` is reflexive (a == a is Equal).
     #[test]
-    fn cmp_cells_is_reflexive(a in proptest::option::of(".{0,16}")) {
-        prop_assert_eq!(cmp_cells(a.as_deref(), a.as_deref()), std::cmp::Ordering::Equal);
+    fn cmp_cells_is_reflexive(m in modes(), a in mixed_cell()) {
+        prop_assert_eq!(cmp_cells(m, a.as_deref(), a.as_deref()), std::cmp::Ordering::Equal);
     }
 
     /// NULL is always `Greater` than any value, the empty string
     /// included (NULLS LAST).
     #[test]
-    fn cmp_cells_null_last(b in ".{0,16}") {
-        prop_assert_eq!(cmp_cells(None, Some(&b)), std::cmp::Ordering::Greater);
-        prop_assert_eq!(cmp_cells(Some(&b), None), std::cmp::Ordering::Less);
+    fn cmp_cells_null_last(m in modes(), b in ".{0,16}") {
+        prop_assert_eq!(cmp_cells(m, None, Some(&b)), std::cmp::Ordering::Greater);
+        prop_assert_eq!(cmp_cells(m, Some(&b), None), std::cmp::Ordering::Less);
+    }
+
+    /// The column sort is sorted under its own comparator, and DESC is
+    /// ASC reversed: the same keys in the opposite order (rows that tie
+    /// keep their original order both ways, the sort being stable).
+    #[test]
+    fn sort_rows_desc_is_asc_reversed(cells in proptest::collection::vec(mixed_cell(), 0..24)) {
+        let rows: Vec<Vec<Option<String>>> = cells.iter().map(|c| vec![c.clone()]).collect();
+        let mut asc = rows.clone();
+        sort_rows(&mut asc, 0, true);
+        let mut desc = rows.clone();
+        sort_rows(&mut desc, 0, false);
+        let mode = pgman::grid::sort_mode(&rows, 0);
+        for w in asc.windows(2) {
+            prop_assert!(
+                cmp_cells(mode, w[0][0].as_deref(), w[1][0].as_deref()) != std::cmp::Ordering::Greater
+            );
+        }
+        let mut reversed = asc.clone();
+        reversed.reverse();
+        for (d, r) in desc.iter().zip(&reversed) {
+            prop_assert_eq!(
+                cmp_cells(mode, d[0].as_deref(), r[0].as_deref()),
+                std::cmp::Ordering::Equal
+            );
+        }
+        // NULLS LAST ascending, FIRST descending.
+        let nulls = rows.iter().filter(|r| r[0].is_none()).count();
+        prop_assert!(asc[asc.len() - nulls..].iter().all(|r| r[0].is_none()));
+        prop_assert!(desc[..nulls].iter().all(|r| r[0].is_none()));
     }
 }
 
@@ -486,9 +573,9 @@ proptest! {
                 .collect(),
                     truncated: false,
         };
-        g.rows.sort_by(|a, b| cmp_cells(a[1].as_deref(), b[1].as_deref()));
+        sort_rows(&mut g.rows, 1, true);
         let after_first = g.rows.clone();
-        g.rows.sort_by(|a, b| cmp_cells(a[1].as_deref(), b[1].as_deref()));
+        sort_rows(&mut g.rows, 1, true);
         prop_assert_eq!(after_first, g.rows);
     }
 }

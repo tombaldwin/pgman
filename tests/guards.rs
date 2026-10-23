@@ -1790,3 +1790,45 @@ mod detector_tests {
         assert!(print_macro_hits("src/report.rs", src).is_empty());
     }
 }
+
+// ---------------------------------------------------------------------
+// Guard — every clipboard write goes through `write_clipboard`
+// ---------------------------------------------------------------------
+
+/// `arboard` named in `text`'s code, as `path:line` strings.
+fn clipboard_hits(path: &str, text: &str) -> Vec<String> {
+    mask(text, Mask::Code)
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains("arboard"))
+        .map(|(n, _)| format!("{path}:{}", n + 1))
+        .collect()
+}
+
+/// The system clipboard is reached only from `app::yank::write_clipboard`,
+/// whose `cfg(test)` twin writes to a per-thread slot instead — so a unit
+/// test that yanks never overwrites the developer's clipboard. A yank
+/// that called `arboard::Clipboard` itself did, on every test run.
+#[test]
+fn the_system_clipboard_is_reached_only_through_write_clipboard() {
+    let mut offenders = Vec::new();
+    let mut in_yank = Vec::new();
+    for (path, text) in source_files() {
+        let hits = clipboard_hits(&path, &text);
+        if path == "src/app/yank.rs" {
+            in_yank = hits;
+        } else {
+            offenders.extend(hits);
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "arboard used outside src/app/yank.rs — call write_clipboard:\n{}",
+        offenders.join("\n")
+    );
+    assert_eq!(
+        in_yank.len(),
+        1,
+        "src/app/yank.rs should name arboard once, in write_clipboard: {in_yank:?}"
+    );
+}

@@ -743,6 +743,10 @@ impl App {
     /// single-table result (the source table is the element
     /// name). Writes atomically; default path lives under the
     /// cache dir with a wall-clock-stamped filename.
+    ///
+    /// With a grid filter (`/`) active it captures the rows the filter
+    /// shows, as `Y` exports them, and the status says so (`N of M
+    /// row(s) (filtered)`); it captured every row, hidden ones too.
     pub(super) fn dispatch_fixture(&mut self, target: Option<String>) {
         if self.grid.rows.is_empty() {
             // A notice, not an error — same as `D` with nothing to diff.
@@ -755,17 +759,46 @@ impl App {
             );
             return;
         };
-        let fixture = crate::dbunit::fixture_from_rows(&table, &self.grid.columns, &self.grid.rows);
+        let filtered = self
+            .grid_view
+            .filter
+            .as_deref()
+            .is_some_and(|f| !f.is_empty());
+        let rows: Vec<Vec<crate::grid::Cell>> = if filtered {
+            self.grid_view
+                .visible_rows
+                .iter()
+                .filter_map(|&i| self.grid.rows.get(i).cloned())
+                .collect()
+        } else {
+            self.grid.rows.clone()
+        };
+        if rows.is_empty() {
+            self.last_status = Some("no rows match the filter — nothing to capture".into());
+            return;
+        }
+        let fixture = match crate::dbunit::fixture_from_rows(&table, &self.grid.columns, &rows) {
+            Ok(f) => f,
+            Err(e) => {
+                self.last_error = Some(format!("fixture capture refused — {e}"));
+                return;
+            }
+        };
         let xml = crate::dbunit::generate_flat_xml(&fixture);
         let path = match target {
             Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
             _ => default_fixture_path(&table),
         };
-        let ok = wrote_status(
-            &format!("{} row(s)", fixture.rows.len()),
-            &path,
-            std::env::var_os("HOME").as_deref(),
-        );
+        let what = if filtered {
+            format!(
+                "{} of {} row(s) (filtered)",
+                fixture.rows.len(),
+                self.grid.rows.len()
+            )
+        } else {
+            format!("{} row(s)", fixture.rows.len())
+        };
+        let ok = wrote_status(&what, &path, std::env::var_os("HOME").as_deref());
         self.write_export(&path, &xml, "\\fixture", ok);
     }
 }
