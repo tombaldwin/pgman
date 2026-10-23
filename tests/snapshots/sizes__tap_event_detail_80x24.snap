@@ -1,0 +1,29 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
+│ Server: ledger-staging…  •  Database: ledger    ││     PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
+│ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
+ 1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  ╭[ ◆ JDBC tap ◆ ] 12 queries · 0 heartbeats · view: list · v cycle · … ─╮   │
+│  │╭[ ◆ event ◆ ] j/k scroll · esc back · rows 1–9 of 26 ────────────────╮│   │
+│  ││  kind        query · failed                                         ││   │
+╰──││  started     2026-09-21T14:14:02.118204Z                            ││───╯
+╭[ ││  duration    2.3ms                                                  ││───╮
+│nu││  rows        —                                                      ││   │
+│IN││  app         billing-service                                        ││   │
+│IN││  pool        primary                                                ││   │
+│IN││  conn        primary-3                                              ││   │
+│IN││  txn         primary-3#118                                          ││   │
+│IN││  sql         INSERT INTO invoice_lines (invoice_id, sku, quantity,  ││   │
+│  │╰─────────────────────────────────────────────────────────────────────╯│   │
+│  ╰───────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   j/k scroll · g/G top/bottom · esc / enter back · ? help

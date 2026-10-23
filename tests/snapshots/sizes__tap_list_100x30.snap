@@ -25,11 +25,11 @@ expression: dump(&buf)
 │INV│       525µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
 │   │       2.3ms          1  billing-api           UPDATE subscriptions SET status = ?, curre…│   │
 │   │                                                                                          │   │
-│   │──────────────────────────────────────────────────────────────────────────────────────────│   │
+│   │── enter: the whole event ────────────────────────────────────────────────────────────────│   │
 │   │  params  1: 2107                                                                         │   │
 │   │                                                                                          │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · ? help
+ RO   TAP   j/k navigate · v cycle 7 views · enter detail · Shift-B baseline · c clear · ? +2 more

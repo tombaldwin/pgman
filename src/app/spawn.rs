@@ -123,6 +123,9 @@ impl App {
             .tap_nav
             .events_cursor
             .min(self.tap_events.len().saturating_sub(1));
+        // The overlay is a layer of one visit: reopened, the monitor
+        // starts on its list.
+        self.tap_nav.event_detail = None;
         self.last_status = Some(self.tap_health.monitor_status(&self.tap_listeners));
         self.mode = Mode::TapMonitor;
     }

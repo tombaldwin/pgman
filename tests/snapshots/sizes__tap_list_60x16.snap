@@ -12,7 +12,7 @@ expression: dump(&buf)
 ╰─│       1.8ms          1  billing-api           SELEC…│──╯
 ╭[│       420µs          1  billing-api           SELEC…│──╮
 │n│       435µs          1  billing-api           SELEC…│  │
-│I│─────────────────────────────────────────────────────│  │
+│I│── enter: the whole event ───────────────────────────│  │
 │I│  params  1: 2107                                    │  │
 │I│                                                     │  │
 │I╰─────────────────────────────────────────────────────╯  │

@@ -109,7 +109,7 @@ expression: dump(&buf)
 │     esc / q       close                                                                          │
 │                                                                                                  │
 │   cell detail                                                                                    │
-│ ↓ 153 more below                                                                                 │
+│ ↓ 154 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter

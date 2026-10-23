@@ -770,6 +770,52 @@ fn scr_tap(view: TapView) -> App {
     a
 }
 
+/// The List view's focused-event overlay over a failed statement with
+/// everything the tap carries: a cause chain, a caller stack, pool /
+/// conn / txn and bound parameters (one of them redacted).
+fn scr_tap_event_detail() -> App {
+    let mut a = scr_tap(TapView::List);
+    a.on_tap_event(pgman::tap::TapEvent {
+        v: 1,
+        kind: pgman::tap::TapKind::Query,
+        ts_unix_micros: 1_790_000_042_118_204,
+        received_at_unix_micros: 1_790_000_042_131_000,
+        app: Some("billing-service".into()),
+        pool: Some("primary".into()),
+        conn: Some("primary-3".into()),
+        txn: Some("primary-3#118".into()),
+        sql: Some(
+            "INSERT INTO invoice_lines (invoice_id, sku, quantity, unit_price)\nVALUES (?, ?, ?, ?)"
+                .into(),
+        ),
+        params: Some(vec![
+            "4833".into(),
+            "SKU-2201".into(),
+            "3".into(),
+            "[redacted]".into(),
+        ]),
+        params_redacted: true,
+        duration_micros: Some(2_318),
+        rows: None,
+        error: Some(vec![
+            "org.springframework.dao.DataIntegrityViolationException: could not execute statement".into(),
+            "org.hibernate.exception.ConstraintViolationException: could not execute statement".into(),
+            "org.postgresql.util.PSQLException: ERROR: duplicate key value violates unique constraint \"invoice_lines_invoice_id_sku_key\"".into(),
+        ]),
+        caller: Some(vec![
+            "com.example.billing.InvoiceLineRepository.save:41".into(),
+            "com.example.billing.InvoiceService.addLine:112".into(),
+            "com.example.billing.InvoiceController.addLine:57".into(),
+        ]),
+        dropped_events_total: None,
+        txn_outcome: None,
+    });
+    a.tap_nav.events_cursor = a.tap_events.len() - 1;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(a.tap_nav.event_detail.is_some());
+    a
+}
+
 fn scr_tap_baseline() -> App {
     let mut a = scr_tap(TapView::Baseline);
     // Shift-B is a global chord (works from any mode) — capture a
@@ -1074,6 +1120,11 @@ fn result_diff() {
 #[test]
 fn tap_list() {
     run_sizes("tap_list", || scr_tap(TapView::List));
+}
+
+#[test]
+fn tap_event_detail() {
+    run_sizes("tap_event_detail", scr_tap_event_detail);
 }
 
 #[test]

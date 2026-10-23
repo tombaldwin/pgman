@@ -2,6 +2,12 @@ use super::*;
 
 impl App {
     pub(super) fn on_tap_monitor_key(&mut self, key: KeyEvent) {
+        // The focused-event overlay holds every key while it is open:
+        // `v` / `c` / `s` / Shift-B act on a list it hides.
+        if self.tap_nav.event_detail.is_some() {
+            self.on_tap_event_detail_key(key);
+            return;
+        }
         // `B` is universal across all TapMonitor views —
         // captures the current hotspots as a baseline so the
         // operator can then cycle to the Baseline view to see
@@ -119,6 +125,10 @@ impl App {
         if self.tap_monitor_common_key(&key) {
             return;
         }
+        if key.code == KeyCode::Enter {
+            self.open_tap_event_detail();
+            return;
+        }
         let len = self.tap_events.len();
         apply_list_nav_key(
             &mut CursorAt {
@@ -127,6 +137,43 @@ impl App {
             },
             key.code,
         );
+    }
+
+    /// `Enter` on a List row: open the overlay over a snapshot of the
+    /// focused event. A status, not an empty box, on an empty ring.
+    fn open_tap_event_detail(&mut self) {
+        let cursor = self
+            .tap_nav
+            .events_cursor
+            .min(self.tap_events.len().saturating_sub(1));
+        match self.tap_events.get(cursor) {
+            Some(event) => {
+                self.tap_nav.event_detail = Some(TapEventDetail::new(event.clone()));
+            }
+            None => self.last_status = Some("no tap event to show".into()),
+        }
+    }
+
+    /// The focused-event overlay: `Esc` / `q` / `Enter` back to the
+    /// list, `j/k` `↑↓` `PgUp/PgDn` `g/G` scroll.
+    fn on_tap_event_detail_key(&mut self, key: KeyEvent) {
+        let Some(detail) = self.tap_nav.event_detail.as_mut() else {
+            return;
+        };
+        const PAGE: usize = 10;
+        let max = detail.max_scroll;
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
+                self.tap_nav.event_detail = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => detail.scroll = (detail.scroll + 1).min(max),
+            KeyCode::Char('k') | KeyCode::Up => detail.scroll = detail.scroll.saturating_sub(1),
+            KeyCode::PageDown => detail.scroll = (detail.scroll + PAGE).min(max),
+            KeyCode::PageUp => detail.scroll = detail.scroll.saturating_sub(PAGE),
+            KeyCode::Char('g') | KeyCode::Home => detail.scroll = 0,
+            KeyCode::Char('G') | KeyCode::End => detail.scroll = max,
+            _ => {}
+        }
     }
 
     pub(super) fn on_tap_monitor_hotspots_key(&mut self, key: KeyEvent) {

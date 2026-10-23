@@ -1894,6 +1894,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::ErrorDetail => "esc / q / ! close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
                 Mode::Notifications => "j/k navigate · y yank payload · c clear · q / esc close",
+                Mode::TapMonitor if app.tap_nav.event_detail.is_some() => {
+                    "j/k scroll · g/G top/bottom · esc / enter back"
+                }
+                Mode::TapMonitor if app.tap_nav.view == crate::app::TapView::List => {
+                    "j/k navigate · v cycle 7 views · enter detail · Shift-B baseline · c clear · q close"
+                }
                 Mode::TapMonitor => "j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close",
                 Mode::SavedQueries => "j/k navigate · enter load · r rename · d delete · / search · q close",
                 Mode::SavedQueriesFilter => "type to narrow · enter accept · esc clear",
@@ -3071,6 +3077,10 @@ pub(crate) fn help_body(
     );
     push(
         row("    j / k  ↑ ↓    navigate · g / G  first / last · PageUp/Down  by 10"),
+        &mut lines,
+    );
+    push(
+        row("    enter         list view: open the whole event (causes, caller stack, conn)"),
         &mut lines,
     );
     push(

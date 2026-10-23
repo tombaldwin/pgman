@@ -4,7 +4,7 @@ use super::*;
 /// to the recency list (L1) or the hotspots grouped view
 /// (L2) depending on `app.tap_nav.view`. Shift-G toggles between
 /// them; `c` clears the ring; `q`/esc close.
-pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
+pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
@@ -55,6 +55,12 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
+    // The focused-event overlay (`Enter` on a List row) takes the
+    // panel's interior; the list keeps its place underneath.
+    if app.tap_nav.event_detail.is_some() {
+        draw_tap_event_detail(f, inner, app);
+        return;
+    }
     match app.tap_nav.view {
         crate::app::TapView::Hotspots => draw_tap_monitor_hotspots(f, inner, app),
         crate::app::TapView::Callers => draw_tap_monitor_callers(f, inner, app),
@@ -203,10 +209,7 @@ fn draw_tap_params_detail(
     summary: Option<&crate::tap::ParamsSummary>,
 ) {
     let width = area.width as usize;
-    let mut lines = vec![Line::from(Span::styled(
-        "─".repeat(width),
-        Style::default().fg(theme.border_idle),
-    ))];
+    let mut lines = vec![params_detail_rule(theme, width)];
     let Some(summary) = summary else {
         lines.push(Line::from(Span::styled(
             "  no parameters on a commit / rollback",
@@ -238,6 +241,24 @@ fn draw_tap_params_detail(
     f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
 
+/// The rule over the params strip, naming the key that opens the whole
+/// event: the footer that would say so is the monitor's status while
+/// it is open. A bare rule where the words don't fit.
+fn params_detail_rule(theme: &Theme, width: usize) -> Line<'static> {
+    const LEAD: &str = "── ";
+    const HINT: &str = "enter: the whole event";
+    let rule = Style::default().fg(theme.border_idle);
+    let used = display_width(LEAD) + HINT.len() + 1;
+    if width < used + 2 {
+        return Line::from(Span::styled("─".repeat(width), rule));
+    }
+    Line::from(vec![
+        Span::styled(LEAD, rule),
+        Span::styled(HINT, Style::default().fg(theme.muted)),
+        Span::styled(format!(" {}", "─".repeat(width - used)), rule),
+    ])
+}
+
 /// Lay `body` out after a `label_w`-column label on a `width`-column
 /// row: what fits on the first line, and the rest on an indented
 /// second line, cut with `…` if it still doesn't fit — so a long
@@ -254,6 +275,263 @@ fn params_detail_split(label_w: usize, body: &str, width: usize) -> (String, Opt
     let rest = body[first.len()..].trim_start();
     let second_w = width.saturating_sub(TAP_DETAIL_INDENT.len());
     (first, Some(crate::grid::truncate_cell(rest, second_w)))
+}
+
+/// Width of the focused-event overlay's label column, `root cause`
+/// and its gap included.
+const EVENT_DETAIL_LABEL_W: usize = 12;
+/// Left margin of every overlay row.
+const EVENT_DETAIL_MARGIN: &str = "  ";
+
+/// How a field of the focused-event overlay is coloured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DetailTone {
+    Plain,
+    /// Not sent by the producer (`—`).
+    Muted,
+    /// A failed statement's kind and its cause chain.
+    Error,
+    /// Values some of which are the producer's `[redacted]` marker.
+    Warning,
+}
+
+/// One labelled field of the focused-event overlay. `value` may hold
+/// line breaks; each line is wrapped under the label's hanging indent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetailField {
+    pub label: &'static str,
+    pub value: String,
+    pub tone: DetailTone,
+}
+
+/// `ts_unix_micros` as `2026-10-23T09:14:02.118204Z`. Pure.
+fn format_unix_micros_utc(micros: u64) -> String {
+    let secs = crate::app::format_unix_secs_utc(micros / 1_000_000);
+    let whole = secs.strip_suffix('Z').unwrap_or(&secs);
+    format!("{whole}.{:06}Z", micros % 1_000_000)
+}
+
+/// Everything the tap stored about one event, as the overlay lists
+/// it: the parts the List row and the params strip have no room for —
+/// the whole SQL, `pool` / `conn` / `txn`, the cause chain (root cause
+/// last) and the caller stack (innermost first). A field the producer
+/// can send but didn't reads `—`. Values from the application have
+/// their control characters made visible, line breaks kept. Pure.
+pub(crate) fn event_detail_fields(e: &crate::tap::TapEvent) -> Vec<DetailField> {
+    use crate::grid::show_controls;
+    use crate::tap::{TapKind, TxnOutcome};
+    fn field(label: &'static str, value: String, tone: DetailTone) -> DetailField {
+        DetailField { label, value, tone }
+    }
+    fn sent(label: &'static str, v: Option<String>) -> DetailField {
+        match v {
+            Some(v) => field(label, v, DetailTone::Plain),
+            None => field(label, "—".into(), DetailTone::Muted),
+        }
+    }
+    let one_line = |v: &Option<String>| v.as_deref().map(|v| show_controls(v, true).into_owned());
+    let is_query = matches!(e.kind, TapKind::Query);
+    let kind = match (e.kind, e.txn_outcome) {
+        (TapKind::Query, _) if e.is_error() => "query · failed",
+        (TapKind::Query, _) => "query",
+        (TapKind::TxnBoundary, Some(TxnOutcome::Commit)) => "commit",
+        (TapKind::TxnBoundary, Some(TxnOutcome::Rollback)) => "rollback",
+        (TapKind::TxnBoundary, None) => "txn boundary",
+        (TapKind::Heartbeat, _) => "heartbeat",
+    };
+    let kind_tone = if e.is_error() {
+        DetailTone::Error
+    } else {
+        DetailTone::Plain
+    };
+    let mut out = vec![
+        field("kind", kind.into(), kind_tone),
+        field(
+            if is_query { "started" } else { "at" },
+            format_unix_micros_utc(e.ts_unix_micros),
+            DetailTone::Plain,
+        ),
+    ];
+    if is_query {
+        out.push(sent("duration", e.duration_micros.map(format_duration)));
+        out.push(sent("rows", e.rows.map(|r| r.to_string())));
+    }
+    out.push(sent("app", one_line(&e.app)));
+    out.push(sent("pool", one_line(&e.pool)));
+    out.push(sent("conn", one_line(&e.conn)));
+    out.push(sent("txn", one_line(&e.txn)));
+    if !is_query {
+        return out;
+    }
+    out.push(sent(
+        "sql",
+        e.sql
+            .as_deref()
+            .map(|s| show_controls(s, false).into_owned()),
+    ));
+    if let Some(summary) = e.params_summary() {
+        let value = match e.params.as_deref() {
+            Some(values) if !values.is_empty() => values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| format!("{}: {}", i + 1, show_controls(v, true)))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => summary.body,
+        };
+        let tone = if summary.redacted {
+            DetailTone::Warning
+        } else {
+            DetailTone::Plain
+        };
+        out.push(field(summary.label, value, tone));
+    }
+    let causes = e.error.as_deref().unwrap_or_default();
+    for (i, cause) in causes.iter().enumerate() {
+        let label = if i == 0 {
+            "error"
+        } else if i + 1 == causes.len() {
+            "root cause"
+        } else {
+            "caused by"
+        };
+        out.push(field(
+            label,
+            show_controls(cause, false).into_owned(),
+            DetailTone::Error,
+        ));
+    }
+    out.push(match e.caller.as_deref() {
+        Some(frames) if !frames.is_empty() => field(
+            "caller",
+            frames
+                .iter()
+                .map(|f| show_controls(f, true).into_owned())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            DetailTone::Plain,
+        ),
+        _ => field("caller", "— (not captured)".into(), DetailTone::Muted),
+    });
+    out
+}
+
+/// One row of the focused-event overlay: the label column (margin,
+/// label, padding — or blank under a wrapped value) and the value text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetailRow {
+    pub label: String,
+    pub value: String,
+    pub tone: DetailTone,
+}
+
+/// The overlay's rows at `width` columns: each field's label, then its
+/// value wrapped by words under a hanging indent, one row per wrapped
+/// line, each with the field's tone. Pure.
+pub(crate) fn event_detail_rows(fields: &[DetailField], width: usize) -> Vec<DetailRow> {
+    let indent = EVENT_DETAIL_MARGIN.len() + EVENT_DETAIL_LABEL_W;
+    let value_w = width.saturating_sub(indent).max(1);
+    let mut rows = Vec::new();
+    for f in fields {
+        let mut first = true;
+        // A label too wide for its column (`params (some redacted)`)
+        // takes a row of its own, the value under it.
+        if f.label.len() >= EVENT_DETAIL_LABEL_W {
+            rows.push(DetailRow {
+                label: format!("{EVENT_DETAIL_MARGIN}{}", f.label),
+                value: String::new(),
+                tone: f.tone,
+            });
+            first = false;
+        }
+        for line in f.value.split('\n') {
+            // A blank line in a value (in the SQL) still takes a row,
+            // so the value reads as it was sent.
+            let wrapped = if line.trim().is_empty() {
+                vec![String::new()]
+            } else {
+                wrap_words(line, value_w)
+            };
+            for piece in wrapped {
+                let label = if first { f.label } else { "" };
+                first = false;
+                rows.push(DetailRow {
+                    label: format!("{EVENT_DETAIL_MARGIN}{label:<w$}", w = EVENT_DETAIL_LABEL_W),
+                    value: piece,
+                    tone: f.tone,
+                });
+            }
+        }
+    }
+    rows
+}
+
+/// The focused-event overlay, over the tap monitor's interior: a
+/// bordered box titled with its keys and, when it scrolls, which rows
+/// are showing. Writes `max_scroll` back for the key handler.
+fn draw_tap_event_detail(f: &mut Frame, area: Rect, app: &mut App) {
+    let theme = app.theme.clone();
+    let Some(detail) = app.tap_nav.event_detail.as_mut() else {
+        return;
+    };
+    f.render_widget(Clear, area);
+    let fields = event_detail_fields(&detail.event);
+    let rows = event_detail_rows(&fields, area.width.saturating_sub(2) as usize);
+    let visible = area.height.saturating_sub(2) as usize;
+    detail.max_scroll = rows.len().saturating_sub(visible);
+    detail.scroll = detail.scroll.min(detail.max_scroll);
+    let scroll = detail.scroll;
+    let position = if rows.len() > visible {
+        format!(
+            " · rows {}–{} of {}",
+            scroll + 1,
+            (scroll + visible).min(rows.len()),
+            rows.len()
+        )
+    } else {
+        String::new()
+    };
+    let title = format!("event — j/k scroll · esc back{position}");
+    let budget = (area.width.saturating_sub(2) as usize)
+        .saturating_sub(crate::ui::chrome::panel_title_overhead(&theme, "event"));
+    let block = crate::ui::chrome::panel_block(&theme)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(crate::ui::chrome::panel_title(
+            &theme,
+            &format!(" {} ", fit_title(&title, budget)),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let lines: Vec<Line> = rows
+        .into_iter()
+        .skip(scroll)
+        .take(visible)
+        .map(|row| {
+            let value_style = match row.tone {
+                DetailTone::Plain => Style::default().fg(theme.text),
+                DetailTone::Muted => Style::default().fg(theme.muted),
+                DetailTone::Error => Style::default().fg(theme.health_red),
+                DetailTone::Warning => Style::default().fg(theme.health_yellow),
+            };
+            // As in the params strip: a label that says some values are
+            // masked is a warning, so `[redacted]` is never taken for one.
+            let label_colour = if row.tone == DetailTone::Warning {
+                theme.health_yellow
+            } else {
+                theme.muted
+            };
+            Line::from(vec![
+                Span::styled(
+                    row.label,
+                    Style::default()
+                        .fg(label_colour)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(row.value, value_style),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 /// L2 hotspots view — groups the ring by SQL fingerprint and
@@ -897,6 +1175,177 @@ mod tests {
         let compact: String = body.split_whitespace().collect();
         let got: String = joined.split_whitespace().collect();
         assert!(compact.starts_with(&got), "{joined:?}");
+    }
+
+    fn failed_query() -> crate::tap::TapEvent {
+        crate::tap::TapEvent {
+            v: 1,
+            kind: crate::tap::TapKind::Query,
+            ts_unix_micros: 1_000_000_007,
+            received_at_unix_micros: 0,
+            app: Some("svc\tA".into()),
+            pool: None,
+            conn: Some("primary-3".into()),
+            txn: Some("primary-3#9".into()),
+            sql: Some("SELECT 1\nFROM t".into()),
+            params: Some(vec!["7".into(), "[redacted]".into()]),
+            params_redacted: true,
+            duration_micros: Some(1_500),
+            rows: None,
+            error: Some(vec![
+                "DataAccessException: outer".into(),
+                "HibernateException: middle".into(),
+                "PSQLException: root".into(),
+            ]),
+            caller: Some(vec![
+                "com.example.Repo.find:10".into(),
+                "com.example.Service.run:20".into(),
+                "com.example.Controller.get:30".into(),
+            ]),
+            dropped_events_total: None,
+            txn_outcome: None,
+        }
+    }
+
+    fn by_label<'a>(fields: &'a [DetailField], label: &str) -> Vec<&'a DetailField> {
+        fields.iter().filter(|f| f.label == label).collect()
+    }
+
+    /// The parts a List row has no room for: the whole cause chain,
+    /// labelled down to its root, and every caller frame in order.
+    #[test]
+    fn event_detail_fields_carry_the_cause_chain_and_the_whole_stack() {
+        let fields = event_detail_fields(&failed_query());
+        let labels: Vec<&str> = fields.iter().map(|f| f.label).collect();
+        assert_eq!(
+            labels,
+            [
+                "kind",
+                "started",
+                "duration",
+                "rows",
+                "app",
+                "pool",
+                "conn",
+                "txn",
+                "sql",
+                "params (some redacted)",
+                "error",
+                "caused by",
+                "root cause",
+                "caller",
+            ]
+        );
+        assert_eq!(fields[0].value, "query · failed");
+        assert_eq!(fields[0].tone, DetailTone::Error);
+        assert_eq!(fields[1].value, "1970-01-01T00:16:40.000007Z");
+        assert_eq!(
+            by_label(&fields, "root cause")[0].value,
+            "PSQLException: root"
+        );
+        assert!(fields
+            .iter()
+            .filter(|f| matches!(f.label, "error" | "caused by" | "root cause"))
+            .all(|f| f.tone == DetailTone::Error));
+        assert_eq!(
+            by_label(&fields, "caller")[0].value,
+            "com.example.Repo.find:10\ncom.example.Service.run:20\ncom.example.Controller.get:30"
+        );
+        assert_eq!(by_label(&fields, "txn")[0].value, "primary-3#9");
+        // Not sent: reads `—`, muted.
+        let pool = by_label(&fields, "pool")[0];
+        assert_eq!((pool.value.as_str(), pool.tone), ("—", DetailTone::Muted));
+        let rows = by_label(&fields, "rows")[0];
+        assert_eq!((rows.value.as_str(), rows.tone), ("—", DetailTone::Muted));
+        // One parameter per line, the redaction label in the warning tone.
+        let params = by_label(&fields, "params (some redacted)")[0];
+        assert_eq!(params.value, "1: 7\n2: [redacted]");
+        assert_eq!(params.tone, DetailTone::Warning);
+        // The SQL keeps its line break; the app's tab is made visible.
+        assert_eq!(by_label(&fields, "sql")[0].value, "SELECT 1\nFROM t");
+        assert_eq!(by_label(&fields, "app")[0].value, "svc⇥A");
+    }
+
+    #[test]
+    fn event_detail_fields_name_a_lone_cause_error_and_mark_a_missing_stack() {
+        let mut e = failed_query();
+        e.error = Some(vec!["PSQLException: only".into()]);
+        e.caller = None;
+        let fields = event_detail_fields(&e);
+        assert_eq!(by_label(&fields, "error").len(), 1);
+        assert!(by_label(&fields, "root cause").is_empty());
+        assert_eq!(by_label(&fields, "caller")[0].value, "— (not captured)");
+        // A success has no error rows at all, and reads `query`.
+        e.error = None;
+        let fields = event_detail_fields(&e);
+        assert_eq!(fields[0].value, "query");
+        assert!(by_label(&fields, "error").is_empty());
+    }
+
+    #[test]
+    fn event_detail_fields_of_a_commit_carry_no_query_fields() {
+        let mut e = failed_query();
+        e.kind = crate::tap::TapKind::TxnBoundary;
+        e.txn_outcome = Some(crate::tap::TxnOutcome::Rollback);
+        let fields = event_detail_fields(&e);
+        let labels: Vec<&str> = fields.iter().map(|f| f.label).collect();
+        assert_eq!(labels, ["kind", "at", "app", "pool", "conn", "txn"]);
+        assert_eq!(fields[0].value, "rollback");
+    }
+
+    /// Values wrap under a hanging indent, by display width; a label
+    /// wider than its column gets a row of its own.
+    #[test]
+    fn event_detail_rows_hang_values_under_the_label_column() {
+        let fields = vec![
+            DetailField {
+                label: "root cause",
+                value: "alpha beta gamma delta epsilon zeta".into(),
+                tone: DetailTone::Error,
+            },
+            DetailField {
+                label: "params (some redacted)",
+                value: "1: 東京都\n2: [redacted]".into(),
+                tone: DetailTone::Warning,
+            },
+        ];
+        let rows = event_detail_rows(&fields, 30);
+        let text: Vec<String> = rows
+            .iter()
+            .map(|r| format!("{}{}", r.label, r.value))
+            .collect();
+        assert_eq!(
+            text,
+            [
+                "  root cause  alpha beta gamma",
+                "              delta epsilon",
+                "              zeta",
+                "  params (some redacted)",
+                "              1: 東京都",
+                "              2: [redacted]",
+            ]
+        );
+        assert!(text.iter().all(|r| display_width(r) <= 30), "{text:?}");
+        assert_eq!(rows[0].tone, DetailTone::Error);
+        assert_eq!(rows[3].label, "  params (some redacted)");
+        assert_eq!(rows[3].value, "");
+        assert_eq!(rows[5].tone, DetailTone::Warning);
+    }
+
+    #[test]
+    fn params_detail_rule_names_enter_where_it_fits_and_is_bare_otherwise() {
+        let theme = Theme::default();
+        let text = |w| -> String {
+            params_detail_rule(&theme, w)
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect()
+        };
+        assert_eq!(text(30), "── enter: the whole event ────");
+        assert_eq!(display_width(&text(30)), 30);
+        assert_eq!(text(27), "─".repeat(27));
+        assert_eq!(text(0), "");
     }
 
     #[test]

@@ -2760,3 +2760,113 @@ fn a_long_footer_filter_keeps_its_prompt_and_cursor() {
         }
     }
 }
+
+/// A failed statement with a three-deep cause chain and a caller stack.
+fn failed_tap_event() -> pgman::tap::TapEvent {
+    pgman::tap::TapEvent {
+        v: 1,
+        kind: pgman::tap::TapKind::Query,
+        ts_unix_micros: 1_790_000_042_118_204,
+        received_at_unix_micros: 1,
+        app: Some("billing-service".into()),
+        pool: Some("primary".into()),
+        conn: Some("primary-3".into()),
+        txn: Some("primary-3#118".into()),
+        sql: Some("INSERT INTO invoice_lines (invoice_id, sku) VALUES (?, ?)".into()),
+        params: Some(vec!["4833".into(), "SKU-2201".into()]),
+        params_redacted: false,
+        duration_micros: Some(2_318),
+        rows: None,
+        error: Some(vec![
+            "DataIntegrityViolationException: could not execute statement".into(),
+            "ConstraintViolationException: could not execute statement".into(),
+            "PSQLException: duplicate key value violates unique constraint".into(),
+        ]),
+        caller: Some(vec![
+            "com.example.billing.InvoiceLineRepository.save:41".into(),
+            "com.example.billing.InvoiceService.addLine:112".into(),
+            "com.example.billing.InvoiceController.addLine:57".into(),
+        ]),
+        dropped_events_total: None,
+        txn_outcome: None,
+    }
+}
+
+/// `Enter` on a failed List row shows what the row could only colour
+/// red: the cause chain to its root, the whole caller stack, and the
+/// pool / conn / txn. At 120x40 it all fits; at 80x24 the title says
+/// how far down the overlay is, and `G` reaches the last frame.
+#[test]
+fn tap_event_detail_shows_the_cause_chain_and_caller_stack() {
+    let mut a = settle_app();
+    a.on_tap_event(failed_tap_event());
+    a.mode = Mode::TapMonitor;
+    let list = dump(&render(&mut a, 80, 24));
+    assert!(list.contains("enter detail"), "footer hint:\n{list}");
+    // The monitor's status takes the footer while it is open, so the
+    // strip's rule names the key too.
+    assert!(list.contains("── enter: the whole event ──"), "{list}");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+
+    let big = dump(&render(&mut a, 120, 40));
+    for want in [
+        "query · failed",
+        "pool        primary",
+        "conn        primary-3",
+        "txn         primary-3#118",
+        "error       DataIntegrityViolationException",
+        "caused by   ConstraintViolationException",
+        "root cause  PSQLException: duplicate key",
+        "caller      com.example.billing.InvoiceLineRepository.save:41",
+        "com.example.billing.InvoiceController.addLine:57",
+        "esc / enter back",
+    ] {
+        assert!(big.contains(want), "120x40 missing {want:?}:\n{big}");
+    }
+    assert!(!big.contains(" of "), "nothing to scroll at 120x40:\n{big}");
+
+    let small = dump(&render(&mut a, 80, 24));
+    assert!(small.contains("rows 1–"), "80x24 position:\n{small}");
+    assert!(!small.contains("InvoiceController"), "80x24:\n{small}");
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    let bottom = dump(&render(&mut a, 80, 24));
+    assert!(
+        bottom.contains("com.example.billing.InvoiceController.addLine:57"),
+        "80x24 after G:\n{bottom}"
+    );
+    // Back to the list, still in the monitor.
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    let back = dump(&render(&mut a, 80, 24));
+    assert!(back.contains("enter detail"), "{back}");
+    assert_eq!(a.mode, Mode::TapMonitor);
+}
+
+/// In the overlay, as in the params strip, a label saying some values
+/// are the producer's `[redacted]` marker is in the warning colour, and
+/// the root cause is in the error colour.
+#[test]
+fn tap_event_detail_colours_the_redaction_label_and_the_causes() {
+    let mut a = settle_app();
+    let mut e = failed_tap_event();
+    e.params = Some(vec!["4833".into(), "[redacted]".into()]);
+    e.params_redacted = true;
+    a.on_tap_event(e);
+    a.mode = Mode::TapMonitor;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    let buf = render(&mut a, 120, 40);
+    let theme = Theme::default();
+    // By column, not byte offset: the borders before it are multi-byte.
+    let at = |needle: &str| {
+        (0..buf.area.height)
+            .find_map(|y| {
+                let line = row_text(&buf, y);
+                line.find(needle)
+                    .map(|b| (line[..b].chars().count() as u16, y))
+            })
+            .unwrap_or_else(|| panic!("{needle} not drawn"))
+    };
+    let (x, y) = at("params (some redacted)");
+    assert_eq!(buf[(x, y)].fg, theme.health_yellow);
+    let (x, y) = at("PSQLException");
+    assert_eq!(buf[(x, y)].fg, theme.health_red);
+}

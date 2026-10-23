@@ -5133,6 +5133,121 @@ fn tap_monitor_q_closes_to_normal_and_clears_status() {
     assert!(a.last_status.is_none());
 }
 
+fn enter() -> KeyEvent {
+    KeyEvent::from(KeyCode::Enter)
+}
+
+/// `Enter` on a List row opens the focused event; `Esc` goes back to
+/// the list — not out of the monitor — with the cursor where it was.
+#[test]
+fn tap_list_enter_opens_the_focused_event_and_esc_returns_to_the_list() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.on_tap_event(tap_query("SELECT 2", 2));
+    a.start_tap_monitor();
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    a.on_key(enter());
+    let detail = a.tap_nav.event_detail.as_ref().expect("overlay open");
+    assert_eq!(detail.event.sql.as_deref(), Some("SELECT 2"));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert!(a.tap_nav.event_detail.is_none());
+    assert_eq!(a.mode, Mode::TapMonitor, "esc closes the overlay only");
+    assert_eq!(a.tap_nav.events_cursor, 1);
+    // `q` and `Enter` close it too.
+    for close in [KeyCode::Char('q'), KeyCode::Enter] {
+        a.on_key(enter());
+        assert!(a.tap_nav.event_detail.is_some());
+        a.on_key(KeyEvent::from(close));
+        assert!(a.tap_nav.event_detail.is_none(), "{close:?}");
+        assert_eq!(a.mode, Mode::TapMonitor);
+    }
+}
+
+/// On a full ring every arrival evicts the oldest event and the cursor
+/// follows it: an overlay reading the ring would swap events under the
+/// reader. It holds the event it opened on.
+#[test]
+fn tap_event_detail_is_a_snapshot_new_arrivals_do_not_change() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    for i in 0..TAP_CAP {
+        a.on_tap_event(tap_query(&format!("q{i}"), i as u64));
+    }
+    a.start_tap_monitor();
+    a.on_key(enter());
+    a.on_tap_event(tap_query("newcomer", u64::MAX));
+    assert_eq!(
+        a.tap_events.front().and_then(|e| e.sql.as_deref()),
+        Some("q1")
+    );
+    let detail = a.tap_nav.event_detail.as_ref().expect("overlay open");
+    assert_eq!(detail.event.sql.as_deref(), Some("q0"));
+}
+
+/// While the overlay is up the list's keys are held: `v` doesn't
+/// cycle the view under it, `c` doesn't clear the ring.
+#[test]
+fn tap_event_detail_holds_the_list_keys() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.start_tap_monitor();
+    a.on_key(enter());
+    a.on_key(KeyEvent::from(KeyCode::Char('v')));
+    a.on_key(KeyEvent::from(KeyCode::Char('c')));
+    assert_eq!(a.tap_nav.view, TapView::List);
+    assert_eq!(a.tap_events.len(), 1);
+    assert!(a.tap_nav.event_detail.is_some());
+}
+
+#[test]
+fn tap_event_detail_scrolls_within_what_the_renderer_allows() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.start_tap_monitor();
+    a.on_key(enter());
+    // Not drawn yet: nothing to scroll.
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    assert_eq!(a.tap_nav.event_detail.as_ref().unwrap().scroll, 0);
+    a.tap_nav.event_detail.as_mut().unwrap().max_scroll = 12;
+    let scroll = |a: &App| a.tap_nav.event_detail.as_ref().unwrap().scroll;
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    assert_eq!(scroll(&a), 1);
+    a.on_key(KeyEvent::from(KeyCode::PageDown));
+    assert_eq!(scroll(&a), 11);
+    a.on_key(KeyEvent::from(KeyCode::PageDown));
+    assert_eq!(scroll(&a), 12, "clamped to max_scroll");
+    a.on_key(KeyEvent::from(KeyCode::Char('k')));
+    assert_eq!(scroll(&a), 11);
+    a.on_key(KeyEvent::from(KeyCode::Char('g')));
+    assert_eq!(scroll(&a), 0);
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    assert_eq!(scroll(&a), 12);
+    a.on_key(KeyEvent::from(KeyCode::PageUp));
+    assert_eq!(scroll(&a), 2);
+}
+
+#[test]
+fn tap_list_enter_on_an_empty_ring_says_so() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.start_tap_monitor();
+    a.on_key(enter());
+    assert!(a.tap_nav.event_detail.is_none());
+    assert_eq!(a.last_status.as_deref(), Some("no tap event to show"));
+}
+
+/// The overlay belongs to one visit: closed with `Esc` it went, and a
+/// monitor reopened (F4 after leaving another way) starts on its list.
+#[test]
+fn reopening_the_tap_monitor_starts_on_the_list() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.start_tap_monitor();
+    a.on_key(enter());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::F(4)));
+    assert_eq!(a.mode, Mode::TapMonitor);
+    assert!(a.tap_nav.event_detail.is_none());
+}
+
 #[test]
 fn tap_monitor_c_clears_the_ring_and_resets_cursor() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());

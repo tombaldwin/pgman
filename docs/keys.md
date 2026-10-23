@@ -368,7 +368,7 @@ per tab: switching tabs restores each tab's own layout.
 Opened with `F4` from any mode. Seven views, cycled with `v`: **List**
 (recency-ordered event stream, default; the focused query's bound
 parameters show beneath it, labelled `params (some redacted)` when the
-producer masked any) → **Hotspots** (by SQL fingerprint)
+producer masked any; `Enter` opens the whole event, as the strip's rule says) → **Hotspots** (by SQL fingerprint)
 → **Callers** (by innermost caller frame) → **Transactions** (by synthetic
 txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 → **Baseline** (diff vs. a captured snapshot) → back to List.
@@ -380,9 +380,24 @@ txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 | `j` / `k` / `↓` / `↑` | Navigate the current view's rows |
 | `g` / `G` | First / last |
 | `PageUp` / `PageDown` | Page |
+| `Enter` | List view: open the focused event (below) |
 | `s` | Cycle sort — Hotspots and Callers views only (Total time / Call count / P95 latency) |
 | `c` | Clear the event ring |
 | `Esc` / `q` | Close |
+
+`Enter` on a List row opens the whole event over the list: its kind and
+start time (UTC), duration and rows, `app` / `pool` / `conn` / `txn`, the
+full SQL, every bound parameter one per line, the error's cause chain
+(`error`, then `caused by`, the last one `root cause`) and the caller
+stack, innermost frame first. A field the producer didn't send reads `—`.
+It shows the event as it was when opened; new arrivals don't change it.
+
+| Key | Action |
+|---|---|
+| `j` / `k` / `↓` / `↑` | Scroll a line |
+| `PageUp` / `PageDown` | Scroll 10 lines |
+| `g` / `G` | Top / bottom |
+| `Esc` / `q` / `Enter` | Back to the list |
 
 ## Command bar (`:`)
 

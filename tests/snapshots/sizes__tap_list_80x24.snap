@@ -20,10 +20,10 @@ expression: dump(&buf)
 │IN│       450µs          1  billing-api           SELECT id, description,…│   │
 │IN│       465µs          1  billing-api           SELECT id, description,…│   │
 │IN│       480µs          1  billing-api           SELECT id, description,…│   │
-│IN│───────────────────────────────────────────────────────────────────────│   │
+│IN│── enter: the whole event ─────────────────────────────────────────────│   │
 │IN│  params  1: 2107                                                      │   │
 │  │                                                                       │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · ? +4 more
+ RO   TAP   j/k navigate · v cycle 7 views · enter detail · ? +4 more

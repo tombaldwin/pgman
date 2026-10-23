@@ -775,7 +775,35 @@ pub struct TapNavUi {
     pub pools_cursor: usize,
     pub baseline_cursor: usize,
     pub nplus1_cursor: usize,
+    /// The List view's focused-event overlay (`Enter`), while open.
+    pub event_detail: Option<TapEventDetail>,
 }
+
+/// The tap List view's focused-event overlay: the whole of one event —
+/// its cause chain, caller stack, pool / conn / txn — which a row has
+/// no room for. A snapshot taken when it opened: on a full ring every
+/// arrival evicts one event and the cursor follows, so reading
+/// `tap_events[cursor]` would swap the event under the reader.
+#[derive(Debug, Clone)]
+pub struct TapEventDetail {
+    pub event: crate::tap::TapEvent,
+    /// First content row shown.
+    pub scroll: usize,
+    /// Furthest `scroll` can go, written by the renderer — it alone
+    /// knows the width the fields wrap to. 0 until the first draw.
+    pub max_scroll: usize,
+}
+
+impl TapEventDetail {
+    pub fn new(event: crate::tap::TapEvent) -> Self {
+        Self {
+            event,
+            scroll: 0,
+            max_scroll: 0,
+        }
+    }
+}
+
 impl TapNavUi {
     /// Reset every per-view cursor to the top (the ring backs all views).
     pub fn reset_cursors(&mut self) {

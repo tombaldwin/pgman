@@ -14,6 +14,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `sslcrldir` are refused rather than ignored.
 - `Tab` after `:help ` completes the help section names, as it completes
   command names.
+- `Enter` on a JDBC tap List row opens the whole event: the full SQL,
+  `pool` / `conn` / `txn`, every bound parameter, the error's cause chain
+  down to the root cause, and the caller stack. A failed row used to be
+  only coloured red, and only the innermost caller frame reached the
+  Callers view.
 - The JDBC tap's List view shows the focused statement's bound
   parameters beneath the list, labelled `params (some redacted)` when
   the producer masked a value and `params (withheld by source)` for

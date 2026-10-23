@@ -1037,7 +1037,7 @@ fn tap_list_params_detail_keeps_its_rows_on_a_commit() {
     let on_commit = tap_monitor_rows(&mut a, 120, 40);
     // The detail's rule starts at the panel's left border; the popup's
     // own top and bottom borders start at a corner.
-    let rule = format!("│{}", "─".repeat(40));
+    let rule = "│── enter: the whole event ──".to_string();
     let rule_at = |rows: &[String]| rows.iter().position(|r| r.contains(&rule));
     assert!(rule_at(&on_query).is_some(), "{}", on_query.join("\n"));
     assert_eq!(rule_at(&on_query), rule_at(&on_commit));
