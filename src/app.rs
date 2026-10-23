@@ -3403,7 +3403,13 @@ impl App {
     fn close_tx(&mut self, commit: bool) {
         let Some(client) = self.client.clone() else {
             self.tx_open = false;
-            self.mode = Mode::Editor;
+            self.mode = match self.edit_awaiting_tx.take() {
+                Some(edit) => {
+                    self.revert_cell_edit(&edit);
+                    edit.return_to
+                }
+                None => Mode::Editor,
+            };
             return;
         };
         let tx = self.msg_tx.clone();

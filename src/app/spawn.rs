@@ -42,7 +42,11 @@ impl App {
         // Left set, `tx_open` refused `\watch` for the rest of the
         // session and `pending_run` could fire against the wrong DB.
         self.tx_open = false;
+        if let Some(edit) = self.edit_awaiting_tx.take() {
+            self.revert_cell_edit(&edit);
+        }
         self.pending_run = None;
+        self.cell_edit = None;
         self.pending_terminate = None;
         self.conn_state = ConnState::Connecting;
         self.in_recovery = None;

@@ -600,6 +600,37 @@ mod tests {
         }
     }
 
+    /// A reconnect, or a prompt answered with no connection, ends the
+    /// `auto_tx` transaction without a commit: the grid takes the old
+    /// value back.
+    #[tokio::test]
+    async fn an_auto_tx_edit_lost_to_a_reconnect_is_reverted() {
+        let mut a = editing(Some("bo"));
+        let p = pending(&a, Some("BO"));
+        a.on_msg(AppMsg::CellUpdated {
+            generation: a.generation,
+            pending: p.clone(),
+            value: Some("BO".into()),
+            tx: conn::EditTx::LeftOpen,
+        });
+        a.on_key(key(KeyCode::Char('y')));
+        assert_eq!(a.grid.rows[1][1].as_deref(), Some("bo"));
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a.edit_awaiting_tx.is_none());
+
+        let mut a = editing(Some("bo"));
+        a.on_msg(AppMsg::CellUpdated {
+            generation: a.generation,
+            pending: p,
+            value: Some("BO".into()),
+            tx: conn::EditTx::LeftOpen,
+        });
+        a.dsn = crate::conn::Dsn::parse("postgres://u@127.0.0.1:1/db").ok();
+        a.start_connect();
+        assert_eq!(a.grid.rows[1][1].as_deref(), Some("bo"));
+        assert!(a.edit_awaiting_tx.is_none());
+    }
+
     /// No connection (or `--demo`) refuses `u` before the editor opens.
     #[test]
     fn u_refuses_without_a_connection() {
