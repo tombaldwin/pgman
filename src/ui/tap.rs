@@ -8,9 +8,13 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
+    // Compact, and last: the producer's own drop counter can be any
+    // u64, and a panel too narrow for the whole title loses trailing
+    // segments first — so the drop count goes before the key hints do.
+    // The monitor's status line carries it too.
     let dropped = app.tap_health.dropped_events_total;
     let dropped_suffix = if dropped > 0 {
-        format!(" · {dropped} dropped")
+        format!(" · {} dropped", compact_count(dropped))
     } else {
         String::new()
     };
@@ -32,14 +36,16 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
         String::new()
     };
     let title = format!(
-        "JDBC tap — {} · {}{dropped_suffix} · view: {view_label}{sort_suffix} · v cycle · Shift-B baseline · s sort · c clear · q close",
+        "JDBC tap — {} · {} · view: {view_label}{sort_suffix} · v cycle · Shift-B baseline · s sort · c clear · q close{dropped_suffix}",
         count_label(app.tap_health.query_count, "query", "queries"),
         count_label(app.tap_health.heartbeat_count, "heartbeat", "heartbeats"),
     );
-    // Room between the block's two corner glyphs, less the space on
-    // either side of the title text. Without this the border cut the
-    // title mid-word (`… Shift-B base┐`).
-    let title_budget = (popup.width.saturating_sub(4)) as usize;
+    // Room between the block's two corner glyphs, less what the title's
+    // decoration and padding add to its text. Without this the border
+    // cut the title mid-word (`… Shift-B base┐`) — and still did by the
+    // decoration's width while only the padding was taken off.
+    let title_budget = (popup.width.saturating_sub(2) as usize)
+        .saturating_sub(crate::ui::chrome::panel_title_overhead(theme, "JDBC tap"));
     let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
         .title(crate::ui::chrome::panel_title(
@@ -83,7 +89,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             // panel up?" The OTel path works today; the
             // pgman-tap JAR path is the higher-context option
             // once that JAR ships.
-            tap_setup_hint_lines(theme)
+            tap_setup_hint_lines(theme, &app.tap_listeners)
         };
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
         return;
@@ -112,7 +118,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
-            "  {:>10}  {:>9}  {:<20}  {}",
+            "  {:>10}  {:>9}  {:<TAP_APP_COL$}  {}",
             "duration", "rows", "app", "sql / kind"
         )
         .to_uppercase(),
@@ -121,7 +127,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     )));
     let inner_w = inner.width as usize;
-    let sql_col = inner_w.saturating_sub(2 + 10 + 2 + 9 + 2 + 20 + 2);
+    let sql_col = inner_w.saturating_sub(2 + 10 + 2 + 9 + 2 + TAP_APP_COL + 2);
     for (i, e) in app
         .tap_events
         .iter()
@@ -142,11 +148,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
         };
         let dur = e.duration_micros.map(format_duration).unwrap_or_default();
         let rows = e.rows.map(|r| r.to_string()).unwrap_or_default();
-        let app_name = e
-            .app
-            .as_deref()
-            .map(|s| s.chars().take(20).collect::<String>())
-            .unwrap_or_default();
+        let app_name = tap_app_cell(e.app.as_deref().unwrap_or(""));
         let body = match e.kind {
             crate::tap::TapKind::Query => e.sql_preview(sql_col),
             crate::tap::TapKind::TxnBoundary => match e.txn_outcome {
@@ -161,10 +163,24 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             // Heartbeats never land here (filtered upstream).
             crate::tap::TapKind::Heartbeat => "[heartbeat]".into(),
         };
-        let line = format!("  {dur:>10}  {rows:>9}  {app_name:<20}  {body}");
+        let line = format!("  {dur:>10}  {rows:>9}  {app_name}  {body}");
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Display columns of the List view's app column.
+const TAP_APP_COL: usize = 20;
+
+/// The List view's app cell: `app` cut and padded to exactly
+/// [`TAP_APP_COL`] display columns. Counting chars instead let a CJK
+/// app name paint twice as wide and shove its row's SQL right of every
+/// other row's. Pure / testable.
+pub(crate) fn tap_app_cell(app: &str) -> String {
+    let mut cell = crate::grid::truncate_cell(app, TAP_APP_COL);
+    let pad = TAP_APP_COL.saturating_sub(display_width(&cell));
+    cell.extend(std::iter::repeat_n(' ', pad));
+    cell
 }
 
 /// Rows the List view's params detail takes: a rule, then the values

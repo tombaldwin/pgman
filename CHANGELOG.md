@@ -105,6 +105,49 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than
   their start, which inflated the Pools view's peak concurrency.
+- A burst of tap events no longer piles up in memory behind the
+  screen. pgman redrew once per event, so 4 000 large events took over
+  30 s to land and held more than 800 MiB on the way; they now land in
+  a few frames (under a second, 100–200 MiB at peak). The hop into the
+  app is bounded, so events pgman cannot keep up with are dropped and
+  counted on the `DROP` badge instead of queueing without limit.
+- A tap listener that cannot bind (port in use) is now reported on the
+  status line and on stderr — `--tap-listen`, `--tap-udp`, `--tap-otlp`
+  and the listener a Java project turns on by itself. The status line
+  used to announce the port as listening while the failure went only
+  to the log.
+- `--tap-otlp` accepts gzip-compressed bodies, which the OpenTelemetry
+  Collector's `otlphttp` exporter sends by default; they failed with
+  `400 not utf-8`. The inflated body has the same 4 MiB cap as the raw
+  one. Any other `Content-Encoding` gets a 415 saying to send gzip or
+  none.
+- A pgman-tap event claiming an absurd duration is clamped to one hour,
+  as OpenTelemetry spans already were; `u64::MAX` showed as
+  `18446744073709.55s`, broke the column alignment and topped every
+  sort by time.
+- The tap List view's app column is cut by display width, so a CJK app
+  name no longer pushes its row's SQL out of line. A name too long for
+  the column ends in `…`.
+- The tap monitor's status line says `1 query · 1 heartbeat`, not
+  `1 queries · 1 heartbeats`, as its title already did.
+- `--tap-listen`, `--tap-udp` and `--tap-otlp` take a host name
+  (`localhost:7432`), which failed as `invalid socket address syntax`.
+  A name that does not resolve says to use an IP address instead.
+- The tap monitor's empty state and status line say where pgman is
+  listening (`listening on TCP 127.0.0.1:7432 · OTLP/HTTP …`). They
+  told the operator to start pgman with `--tap-otlp :4318` even with a
+  listener — that one included — already bound; the hint now points
+  the JVM at the bound OTLP port.
+- The tap monitor's title is no longer cut mid-word by its border: the
+  room it was fitted to left out the decoration round the panel name.
+- A producer's huge drop counter no longer pushes the tap monitor's key
+  hints off its title: counts from 10 000 up read `12.3k`, `4.5M`, …,
+  `1.0e18`, and the drop count now comes after the hints, so a narrow
+  panel gives it up first (the status line still shows it).
+- The tap monitor's OpenTelemetry hint gives
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces`.
+  Without the path, which the exporter does not add to that variable,
+  the agent's exports got a 404.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

@@ -4869,12 +4869,8 @@ fn tap_heartbeat(dropped: u64, received_at: u64) -> crate::tap::TapEvent {
 #[test]
 fn tap_query_event_lands_in_ring_and_bumps_count() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1_000_000),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 2", 2_000_000),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1_000_000));
+    a.on_tap_event(tap_query("SELECT 2", 2_000_000));
     assert_eq!(a.tap_events.len(), 2);
     assert_eq!(a.tap_health.query_count, 2);
     // Newest at the back.
@@ -4888,12 +4884,8 @@ fn tap_query_event_lands_in_ring_and_bumps_count() {
 #[test]
 fn tap_heartbeat_does_not_pollute_ring_but_updates_health() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1_000_000),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_heartbeat(17, 1_500_000),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1_000_000));
+    a.on_tap_event(tap_heartbeat(17, 1_500_000));
     // Ring only carries the query — heartbeat stays out.
     assert_eq!(a.tap_events.len(), 1);
     assert_eq!(a.tap_health.heartbeat_count, 1);
@@ -4906,9 +4898,7 @@ fn tap_heartbeat_does_not_pollute_ring_but_updates_health() {
 fn tap_ring_evicts_oldest_past_cap() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..(TAP_CAP + 50) {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i as u64),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i as u64));
     }
     assert_eq!(a.tap_events.len(), TAP_CAP);
     // First event surviving the eviction is q50 (the first 50 were dropped).
@@ -4936,17 +4926,13 @@ fn hotspots_reflect_a_push_and_eviction_that_share_a_timestamp() {
     // an evicted statement while omitting the newest one.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for _ in 0..TAP_CAP {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT evicted", 1_000_000),
-        });
+        a.on_tap_event(tap_query("SELECT evicted", 1_000_000));
     }
     let before = a.current_hotspots();
     assert_eq!(before.len(), 1, "one fingerprint so far: {before:?}");
 
     // Same length before and after, same front stamp, same back stamp.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT newest", 1_000_000),
-    });
+    a.on_tap_event(tap_query("SELECT newest", 1_000_000));
     assert_eq!(a.tap_events.len(), TAP_CAP);
 
     let after = a.current_hotspots();
@@ -4961,9 +4947,7 @@ fn tap_ring_eviction_keeps_cursor_aligned_with_content() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     // Fill exactly to cap.
     for i in 0..TAP_CAP {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i as u64),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i as u64));
     }
     // Cursor parked on the oldest row.
     a.tap_nav.events_cursor = 0;
@@ -4971,9 +4955,7 @@ fn tap_ring_eviction_keeps_cursor_aligned_with_content() {
     assert_eq!(oldest_sql.as_deref(), Some("q0"));
     // One more event evicts q0; cursor stays in-bounds and
     // points at "what used to be the second row".
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("new", 9_999),
-    });
+    a.on_tap_event(tap_query("new", 9_999));
     assert_eq!(a.tap_events.len(), TAP_CAP);
     assert_eq!(
         a.tap_events.front().and_then(|e| e.sql.as_deref()),
@@ -5003,21 +4985,17 @@ fn tap_monitor_status_follows_events_that_arrive_while_it_is_open() {
         .as_deref()
         .unwrap_or("")
         .contains("no events yet"));
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        !status.contains("no events yet") && status.contains("1 queries"),
+        !status.contains("no events yet") && status.contains("1 query ·"),
         "status must reflect the event that arrived; got {status}"
     );
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_heartbeat(3, 2),
-    });
+    a.on_tap_event(tap_heartbeat(3, 2));
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        status.contains("1 queries")
-            && status.contains("1 heartbeats")
+        status.contains("1 query ·")
+            && status.contains("1 heartbeat ·")
             && status.contains("3 dropped"),
         "got {status}"
     );
@@ -5031,17 +5009,37 @@ fn tap_events_do_not_overwrite_another_status() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.start_tap_monitor();
     a.last_status = Some("tap hotspots · sort: calls".into());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     assert_eq!(a.last_status.as_deref(), Some("tap hotspots · sort: calls"));
     a.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Normal);
     assert_eq!(a.last_status, None);
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 2", 2),
-    });
+    a.on_tap_event(tap_query("SELECT 2", 2));
     assert_eq!(a.last_status, None);
+}
+
+#[test]
+fn tap_monitor_status_shortens_a_huge_drop_count() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_heartbeat(1_000_000_000_000_000_000, 1));
+    assert_eq!(
+        a.tap_health.monitor_status(&[]),
+        "JDBC tap · 0 queries · 1 heartbeat · 1.0e18 dropped (JAR backpressure)"
+    );
+}
+
+#[test]
+fn tap_monitor_status_names_the_bound_listeners_before_any_event() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.tap_listeners.push(crate::tap::TapListener {
+        transport: crate::tap::TapTransport::Tcp,
+        addr: "127.0.0.1:7432".parse().unwrap(),
+    });
+    a.start_tap_monitor();
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("JDBC tap · no events yet · listening on TCP 127.0.0.1:7432")
+    );
 }
 
 #[test]
@@ -5055,18 +5053,14 @@ fn tap_monitor_status_distinguishes_no_traffic_from_no_jar() {
         "expected no-events hint; got {status}"
     );
     // After traffic.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     // Pretend the JAR also sent a heartbeat.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_heartbeat(0, 2),
-    });
+    a.on_tap_event(tap_heartbeat(0, 2));
     a.mode = Mode::Normal;
     a.start_tap_monitor();
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        status.contains("1 queries") && status.contains("1 heartbeats"),
+        status == "JDBC tap · 1 query · 1 heartbeat",
         "expected counters in status; got {status}"
     );
 }
@@ -5084,9 +5078,7 @@ fn tap_monitor_q_closes_to_normal_and_clears_status() {
 fn tap_monitor_c_clears_the_ring_and_resets_cursor() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..3 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i));
     }
     a.start_tap_monitor();
     a.tap_nav.events_cursor = 2;
@@ -5099,9 +5091,7 @@ fn tap_monitor_c_clears_the_ring_and_resets_cursor() {
 #[test]
 fn tap_monitor_v_cycles_through_seven_views() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     assert_eq!(a.tap_nav.view, TapView::List);
     a.on_key(KeyEvent::from(KeyCode::Char('v')));
@@ -5144,7 +5134,7 @@ fn tap_monitor_pools_view_navigates_and_clears() {
         e.conn = Some(conn.into());
         e.ts_unix_micros = i;
         e.received_at_unix_micros = i;
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Pools;
@@ -5171,13 +5161,13 @@ fn tap_monitor_txns_view_navigates_and_clears() {
         e.txn = Some("c-1#a".into());
         e.ts_unix_micros = i;
         e.received_at_unix_micros = i;
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     let mut e = tap_query("SELECT b", 100);
     e.txn = Some("c-1#b".into());
     e.ts_unix_micros = 100;
     e.received_at_unix_micros = 100;
-    a.on_msg(AppMsg::TapEvent { event: e });
+    a.on_tap_event(e);
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Transactions;
     let txns = a.current_txns();
@@ -5208,7 +5198,7 @@ fn tap_monitor_callers_view_navigates_sorts_and_clears() {
         let mut e = tap_query(&format!("SELECT {i}"), i as u64);
         e.caller = Some(vec![frame.into()]);
         e.duration_micros = Some(dur);
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Callers;
@@ -5233,12 +5223,8 @@ fn shift_b_captures_baseline_from_any_tap_view() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     // Seed two distinct fingerprints so the hotspots
     // bucket count is meaningful.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT a FROM t1", 1),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT b FROM t2", 2),
-    });
+    a.on_tap_event(tap_query("SELECT a FROM t1", 1));
+    a.on_tap_event(tap_query("SELECT b FROM t2", 2));
     a.start_tap_monitor();
     assert!(a.tap_baseline.is_none());
     // Shift-B from the default List view captures.
@@ -5256,15 +5242,11 @@ fn shift_b_captures_baseline_from_any_tap_view() {
 #[test]
 fn baseline_diff_flags_new_fingerprint_after_capture() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT a FROM t1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT a FROM t1", 1));
     a.start_tap_monitor();
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     // New fingerprint arrives post-baseline.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT b FROM t2", 2),
-    });
+    a.on_tap_event(tap_query("SELECT b FROM t2", 2));
     let diff = a.current_baseline_diff();
     // Old "select a from t?" is unchanged (filtered);
     // new "select b from t?" surfaces.
@@ -5275,9 +5257,7 @@ fn baseline_diff_flags_new_fingerprint_after_capture() {
 #[test]
 fn baseline_clear_keeps_snapshot_clears_ring() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     a.tap_nav.view = TapView::Baseline;
@@ -5292,9 +5272,7 @@ fn baseline_clear_keeps_snapshot_clears_ring() {
 #[test]
 fn baseline_records_listener_drop_watermark_at_capture() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     // Snapshot the global atomic before capture so the
     // assertion is robust to whatever other tests
     // contributed (cumulative-counter semantics).
@@ -5315,20 +5293,14 @@ fn baseline_records_listener_drop_watermark_at_capture() {
 #[test]
 fn baseline_recapture_overwrites_previous_snapshot() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     let first_count = a.tap_baseline.as_ref().unwrap().captured_event_count;
     assert_eq!(first_count, 1);
     // Two more events arrive; recapture.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 2", 2),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 3", 3),
-    });
+    a.on_tap_event(tap_query("SELECT 2", 2));
+    a.on_tap_event(tap_query("SELECT 3", 3));
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     let second_count = a.tap_baseline.as_ref().unwrap().captured_event_count;
     assert_eq!(second_count, 3, "recapture must reflect the larger ring");
@@ -5364,7 +5336,7 @@ fn tap_monitor_nplus1_view_navigates_and_clears() {
         e.txn = Some("c-1#1".into());
         e.ts_unix_micros = i * 20_000;
         e.received_at_unix_micros = i * 20_000;
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::NplusOne;
@@ -5385,9 +5357,7 @@ fn tap_monitor_nplus1_view_navigates_and_clears() {
 fn tap_monitor_g_capital_jumps_to_end_in_both_views() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..5 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("SELECT * FROM t{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("SELECT * FROM t{i}"), i));
     }
     a.start_tap_monitor();
     // List view: `G` jumps to last row.
@@ -5403,9 +5373,7 @@ fn tap_monitor_g_capital_jumps_to_end_in_both_views() {
 #[test]
 fn tap_monitor_s_cycles_sort_in_hotspots_view() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Hotspots;
     assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::TotalTime);
@@ -5431,9 +5399,7 @@ fn tap_monitor_s_in_list_view_is_a_noop() {
 fn tap_monitor_hotspots_clear_resets_both_cursors() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..3 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i));
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Hotspots;
@@ -5450,14 +5416,12 @@ fn current_hotspots_reflects_current_sort() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     // Bucket A: many cheap calls.
     for _ in 0..50 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT a FROM t_a", 1),
-        });
+        a.on_tap_event(tap_query("SELECT a FROM t_a", 1));
     }
     // Bucket B: one expensive call.
     let mut spike = tap_query("SELECT b FROM t_b", 1_000_000);
     spike.duration_micros = Some(1_000_000);
-    a.on_msg(AppMsg::TapEvent { event: spike });
+    a.on_tap_event(spike);
     a.tap_nav.sort = crate::tap::HotspotSort::TotalTime;
     let by_total = a.current_hotspots();
     assert_eq!(by_total[0].count, 1, "expensive spike wins on total time");
@@ -5470,9 +5434,7 @@ fn current_hotspots_reflects_current_sort() {
 fn tap_monitor_jk_navigation_clamps_at_ends() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..3 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i));
     }
     a.start_tap_monitor();
     // Down past the end clamps to last.
@@ -5485,23 +5447,6 @@ fn tap_monitor_jk_navigation_clamps_at_ends() {
         a.on_key(KeyEvent::from(KeyCode::Char('k')));
     }
     assert_eq!(a.tap_nav.events_cursor, 0);
-}
-
-#[test]
-fn tap_message_is_not_generation_gated() {
-    // Tap listener is independent of the DB connection; a
-    // reconnect (which bumps generation) shouldn't drop tap
-    // events that arrived after.
-    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.generation = 42;
-    let msg = AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1_000),
-    };
-    // Generation accessor returns 0 (not 42) — the dispatcher
-    // doesn't filter this.
-    assert_eq!(msg.generation(), 0);
-    a.on_msg(msg);
-    assert_eq!(a.tap_events.len(), 1);
 }
 
 #[test]
@@ -7466,6 +7411,156 @@ async fn update_check_disabled_never_spawns() {
         !*spawned.lock().unwrap(),
         "update_check_enabled = false must never spawn the check"
     );
+}
+
+/// Counts draws, and ends the loop once `done` holds — so it runs
+/// exactly as many frames as a queued backlog needs.
+struct DrawUntilTui {
+    draws: usize,
+    done: fn(&App) -> bool,
+    keys: mpsc::UnboundedSender<Event>,
+}
+
+impl crate::tui::TuiHost for DrawUntilTui {
+    fn draw(&mut self, app: &mut App) -> std::io::Result<()> {
+        self.draws += 1;
+        if (self.done)(app) {
+            // Quit, and wake the loop's `select!` so it notices.
+            app.should_quit = true;
+            let _ = self.keys.send(Event::FocusGained);
+        }
+        Ok(())
+    }
+    fn suspend(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn resume(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An app ready for `run_with` in a test: scratch persistence, Normal
+/// mode, and no splash (whose animation ticks add frames of their own).
+fn loop_test_app() -> App {
+    let mut app = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    scratch_persistence(&mut app);
+    app.mode = Mode::Normal;
+    app.splash_visible = false;
+    app
+}
+
+/// Run `app`'s loop until `done` holds; the frames it drew.
+async fn draws_until(app: &mut App, done: fn(&App) -> bool) -> usize {
+    let (keys, rx) = mpsc::unbounded_channel::<Event>();
+    let mut tui = DrawUntilTui {
+        draws: 0,
+        done,
+        keys,
+    };
+    tokio::time::timeout(Duration::from_secs(5), app.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate once the backlog has landed")
+        .unwrap();
+    tui.draws
+}
+
+#[tokio::test]
+async fn run_loop_folds_a_queued_tap_backlog_in_one_frame() {
+    let mut app = loop_test_app();
+    // A reconnect bumps the generation; the tap belongs to no
+    // connection, so its events still land.
+    app.generation = 42;
+    let tx = app.tap_tx_clone();
+    for i in 0..TAP_APP_CHANNEL_CAPACITY as u64 {
+        tx.try_send(tap_query("select 1", i + 1)).unwrap();
+    }
+    let draws = draws_until(&mut app, |a| {
+        a.tap_health.query_count == TAP_APP_CHANNEL_CAPACITY as u64
+    })
+    .await;
+    // One frame before anything lands, one after the whole backlog —
+    // not one per event, which is what held a burst in the channel.
+    assert_eq!(draws, 2);
+}
+
+#[tokio::test]
+async fn run_loop_applies_queued_messages_in_one_frame() {
+    let mut app = loop_test_app();
+    let tx = app.msg_tx.clone();
+    for pid in 0..150 {
+        tx.send(AppMsg::Notification {
+            generation: app.generation,
+            notification: crate::conn::NotificationMsg {
+                channel: "jobs".into(),
+                pid,
+                payload: String::new(),
+            },
+        })
+        .unwrap();
+    }
+    let draws = draws_until(&mut app, |a| a.notifications.items.len() == 150).await;
+    assert_eq!(draws, 2);
+}
+
+#[test]
+fn the_tap_channel_into_the_app_is_bounded() {
+    // The adapter awaits on this sender; were it unbounded, a slow App
+    // would queue a burst here without limit and without counting it.
+    let a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let tx = a.tap_tx_clone();
+    for i in 0..TAP_APP_CHANNEL_CAPACITY as u64 {
+        tx.try_send(tap_query("select 1", i)).unwrap();
+    }
+    assert!(matches!(
+        tx.try_send(tap_query("select 1", 0)),
+        Err(mpsc::error::TrySendError::Full(_))
+    ));
+}
+
+#[test]
+fn drain_pending_msgs_stops_at_the_per_frame_cap() {
+    // A backlog past the cap takes more than one frame, so key input
+    // gets a turn between batches.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let queued = 2 * MSG_DRAIN_PER_FRAME;
+    for _ in 0..queued {
+        tx.send(AppMsg::UpdateCheck(None)).unwrap();
+    }
+    a.drain_pending_msgs(&mut rx);
+    // The loop applied one before draining; the drain takes the rest
+    // of the frame's batch.
+    assert_eq!(rx.len(), queued - (MSG_DRAIN_PER_FRAME - 1));
+    a.drain_pending_msgs(&mut rx);
+    assert_eq!(rx.len(), queued - 2 * (MSG_DRAIN_PER_FRAME - 1));
+}
+
+#[test]
+fn drain_tap_batch_takes_one_frames_worth() {
+    let (tx, mut rx) = mpsc::channel(4 * MSG_DRAIN_PER_FRAME);
+    let queued = 2 * MSG_DRAIN_PER_FRAME;
+    for i in 0..queued as u64 {
+        tx.try_send(tap_query("select 1", i)).unwrap();
+    }
+    let batch = drain_tap_batch(tap_query("first", 0), &mut rx);
+    assert_eq!(batch.len(), MSG_DRAIN_PER_FRAME);
+    assert_eq!(batch[0].sql.as_deref(), Some("first"));
+    assert_eq!(rx.len(), queued - (MSG_DRAIN_PER_FRAME - 1));
+    // An empty channel ends the batch without waiting.
+    let (_tx, mut empty) = mpsc::channel(1);
+    assert_eq!(drain_tap_batch(tap_query("only", 0), &mut empty).len(), 1);
+}
+
+#[test]
+fn on_tap_events_bumps_the_generation_once_per_batch() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let before = a.tap_generation;
+    a.on_tap_events((1..=5).map(|i| tap_query("select 1", i)));
+    assert_eq!(a.tap_events.len(), 5);
+    assert_eq!(a.tap_generation, before.wrapping_add(1));
+    // Heartbeats never touch the ring, so they never invalidate it.
+    a.on_tap_events([tap_heartbeat(0, 10), tap_heartbeat(0, 11)]);
+    assert_eq!(a.tap_generation, before.wrapping_add(1));
 }
 
 // --- --demo mode: request_run answers synthetically (no client) ---

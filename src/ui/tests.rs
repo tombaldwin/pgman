@@ -467,9 +467,140 @@ fn fit_status_never_exceeds_width_or_ends_in_a_partial_word() {
 }
 
 #[test]
+fn compact_count_shortens_large_counts_without_overstating_them() {
+    let cases: [(u64, &str); 10] = [
+        (0, "0"),
+        (9_999, "9999"),
+        (10_000, "10.0k"),
+        (12_345, "12.3k"),
+        (999_999, "999.9k"),
+        (1_000_000, "1.0M"),
+        (4_567_890_123, "4.5G"),
+        (999_999_999_999_999, "999.9T"),
+        (1_000_000_000_000_000_000, "1.0e18"),
+        (u64::MAX, "1.8e19"),
+    ];
+    for (n, want) in cases {
+        assert_eq!(compact_count(n), want, "{n}");
+    }
+}
+
+/// A producer's drop counter of 10¹⁸, shown raw, took nineteen columns
+/// of the tap monitor's title and pushed its key hints off.
+#[test]
+fn a_huge_drop_count_leaves_the_tap_monitor_key_hints_visible() {
+    let mut a = settled_app(false, false);
+    a.tap_health.dropped_events_total = 1_000_000_000_000_000_000;
+    let title = |a: &mut App, w: u16| {
+        tap_monitor_rows(a, w, 30)
+            .into_iter()
+            .find(|r| r.contains("heartbeat"))
+            .expect("title row")
+    };
+    let wide = title(&mut a, 150);
+    assert!(wide.contains("q close"), "{wide}");
+    assert!(wide.contains("1.0e18 dropped"), "{wide}");
+    // Narrower, the drop count is what gives way — not the hints.
+    let narrow = title(&mut a, 135);
+    assert!(
+        narrow.contains("q close") && !narrow.contains("dropped"),
+        "{narrow}"
+    );
+}
+
+fn hint_dump(listeners: &[crate::tap::TapListener]) -> String {
+    tap_setup_hint_lines(&crate::theme::Theme::default(), listeners)
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn listener(transport: crate::tap::TapTransport, addr: &str) -> crate::tap::TapListener {
+    crate::tap::TapListener {
+        transport,
+        addr: addr.parse().unwrap(),
+    }
+}
+
+/// With the TCP listener bound, the hint said only "start pgman with
+/// --tap-otlp", as if nothing were listening.
+#[test]
+fn tap_setup_hint_says_which_listeners_are_bound() {
+    use crate::tap::TapTransport;
+    let dump = hint_dump(&[listener(TapTransport::Tcp, "127.0.0.1:7432")]);
+    assert!(
+        dump.contains("pgman is listening on TCP 127.0.0.1:7432"),
+        "got:\n{dump}"
+    );
+    // No OTLP listener yet, so restarting with one is still the advice.
+    assert!(dump.contains("--tap-otlp :4318"), "got:\n{dump}");
+    assert!(
+        dump.contains("http://localhost:4318/v1/traces"),
+        "got:\n{dump}"
+    );
+}
+
+/// The endpoint the hint gives the JVM is one the OTLP listener
+/// answers: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is used as-is, and a
+/// bare `http://localhost:4318` got the agent's every export a 404.
+#[test]
+fn tap_setup_hint_endpoint_is_a_path_the_otlp_listener_serves() {
+    let dump = hint_dump(&[]);
+    let url = dump
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="))
+        .unwrap_or_else(|| panic!("no endpoint in:\n{dump}"));
+    let path = url
+        .strip_prefix("http://")
+        .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
+        .unwrap_or("/");
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let resp = crate::tap::process_otlp_request(
+        crate::tap::HttpRequest {
+            method: "POST".into(),
+            path: path.into(),
+            headers: [("content-type".into(), "application/json".into())]
+                .into_iter()
+                .collect(),
+            body: br#"{"resourceSpans":[]}"#.to_vec(),
+        },
+        &tx,
+    );
+    assert_eq!(resp.status, 200, "{url} → {} {}", resp.status, resp.body);
+}
+
+#[test]
+fn tap_setup_hint_points_the_jvm_at_the_bound_otlp_listener() {
+    use crate::tap::TapTransport;
+    let dump = hint_dump(&[
+        listener(TapTransport::Tcp, "127.0.0.1:7432"),
+        listener(TapTransport::Otlp, "0.0.0.0:4319"),
+    ]);
+    assert!(
+        dump.contains("listening on TCP 127.0.0.1:7432 · OTLP/HTTP 0.0.0.0:4319"),
+        "got:\n{dump}"
+    );
+    assert!(
+        !dump.contains("--tap-otlp"),
+        "already listening; got:\n{dump}"
+    );
+    // A wildcard bind is reached as localhost, on the port it bound.
+    assert!(
+        dump.contains("http://localhost:4319/v1/traces"),
+        "got:\n{dump}"
+    );
+    let dump = hint_dump(&[listener(TapTransport::Otlp, "127.0.0.1:4320")]);
+    assert!(
+        dump.contains("http://127.0.0.1:4320/v1/traces"),
+        "got:\n{dump}"
+    );
+}
+
+#[test]
 fn tap_setup_hint_includes_otel_and_pgman_tap_routes() {
     let theme = crate::theme::Theme::default();
-    let lines = tap_setup_hint_lines(&theme);
+    let lines = tap_setup_hint_lines(&theme, &[]);
     let dump: String = lines
         .iter()
         .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
@@ -591,6 +722,78 @@ fn tap_monitor_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
                 .collect::<String>()
         })
         .collect()
+}
+
+/// The tap monitor's title is fitted into its border whole segments at
+/// a time; the border must never cut it mid-word. Its budget left out
+/// the `[ ◆ … ◆ ]` decoration, so it did, by that much.
+#[test]
+fn the_tap_monitor_title_is_never_cut_by_its_border() {
+    for w in (60..=180).step_by(7) {
+        let mut a = settled_app(false, false);
+        let rows = tap_monitor_rows(&mut a, w, 30);
+        let row = rows
+            .iter()
+            .find(|r| r.contains("heartbeat"))
+            .unwrap_or_else(|| panic!("no title at {w}:\n{}", rows.join("\n")));
+        let inside = row.split('╮').next().unwrap();
+        let text = inside.trim_end_matches('─').trim_end();
+        assert!(
+            text.ends_with("q close") || text.ends_with('…'),
+            "title cut by the border at width {w}: {row}"
+        );
+    }
+}
+
+#[test]
+fn tap_app_cell_is_exactly_the_column_wide_in_display_columns() {
+    use crate::ui::tap::tap_app_cell;
+    for app in [
+        "",
+        "svc",
+        "billing-service-primary-eu",
+        "注文",
+        "注文サービス注文サービス",
+    ] {
+        let cell = tap_app_cell(app);
+        assert_eq!(display_width(&cell), 20, "{app:?} → {cell:?}");
+    }
+    assert_eq!(tap_app_cell("svc").trim_end(), "svc");
+    assert!(tap_app_cell("注文サービス注文サービス").contains('…'));
+}
+
+/// A CJK app name paints two columns a char; cut by char count it
+/// pushed its row's SQL right of every other row's.
+#[test]
+fn tap_list_keeps_the_sql_column_aligned_past_a_wide_app_name() {
+    let mut a = settled_app(false, false);
+    let mut narrow = tap_query_with_params("select narrow", &[], false);
+    narrow.app = Some("svc".into());
+    let mut wide = tap_query_with_params("select wide", &[], false);
+    wide.app = Some("注文サービス注文サービス".into());
+    a.on_tap_event(narrow);
+    a.on_tap_event(wide);
+    a.splash_visible = false;
+    a.mode = crate::app::Mode::TapMonitor;
+    a.tap_nav.view = crate::app::TapView::List;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    term.draw(|f| draw(f, &mut a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    // The buffer column where `needle` starts, on whichever row has it.
+    let column_of = |needle: &str| {
+        let chars: Vec<String> = needle.chars().map(|c| c.to_string()).collect();
+        (0..buf.area.height)
+            .find_map(|y| {
+                (0..buf.area.width - chars.len() as u16).find(|&x| {
+                    chars
+                        .iter()
+                        .enumerate()
+                        .all(|(i, c)| buf[(x + i as u16, y)].symbol() == c)
+                })
+            })
+            .unwrap_or_else(|| panic!("{needle:?} not drawn"))
+    };
+    assert_eq!(column_of("select narrow"), column_of("select wide"));
 }
 
 /// The List view shows the focused query's bound parameters — before,

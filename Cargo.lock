@@ -2104,6 +2104,7 @@ dependencies = [
  "criterion",
  "crossterm",
  "ctor",
+ "flate2",
  "futures",
  "insta",
  "proptest",

@@ -154,12 +154,6 @@ pub enum AppMsg {
         generation: u64,
         schema_cache: SchemaCache,
     },
-    /// One JDBC-tap event from the pgman-tap JAR (query,
-    /// heartbeat, or txn boundary). The tap listener is bound
-    /// at app startup and is independent of the DB connection,
-    /// so tap events are NOT generation-tagged — they always
-    /// process. `generation()` returns 0 for this variant.
-    TapEvent { event: crate::tap::TapEvent },
     /// The schema browser's DDL copy (`d`) read its table's pieces
     /// (or didn't). `table` is `schema.table`, for the status line.
     DdlLoaded {
@@ -176,7 +170,7 @@ pub enum AppMsg {
     /// The crates.io update check finished — `Some` only when a
     /// strictly-newer release than the running binary exists.
     /// Fired at most once per session, independent of the DB
-    /// connection, so (like `TapEvent`) it is NOT
+    /// connection, so it is NOT
     /// generation-tagged. `generation()` returns 0 for this
     /// variant.
     UpdateCheck(Option<crate::update_check::LatestRelease>),
@@ -205,8 +199,7 @@ impl AppMsg {
             | AppMsg::LiveLintLoaded { generation, .. }
             | AppMsg::DdlLoaded { generation, .. }
             | AppMsg::ReadOnlyApplied { generation, .. } => *generation,
-            AppMsg::TapEvent { .. }
-            | AppMsg::UpdateCheck(_)
+            AppMsg::UpdateCheck(_)
             | AppMsg::Terminate
             | AppMsg::EnvironmentsLoaded(_)
             | AppMsg::EnvSecretResolved { .. }

@@ -63,6 +63,11 @@ quick-xml = "0.42"
 # already depends on this exact crate, so it adds no transitive deps —
 # `cargo tree -i unicode-width` shows both as the same node.
 unicode-width = "0.2"
+# Inflates gzip OTLP bodies (`tap::otlp`): the OTel Collector's otlphttp
+# exporter compresses by default. Already in the tree through arboard's
+# image support, with the same pure-Rust backend (miniz_oxide) — check
+# with `cargo tree -i flate2 --target all`.
+flate2 = "1"
 # Built-in SQL formatter behind the editor's Ctrl-F (the Rust port of
 # sql-formatter that sqlx uses). `pg_format`, when on PATH, is preferred
 # over it — see `query::format` and `App::reformat_buffer`.

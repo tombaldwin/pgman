@@ -12,7 +12,7 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                                         │
 │  FROM invoices                                                                                                       │
-│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · q c╮    │
+│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · … ─╮    │
 │  OR│   CALLS        SPAN  TXN / CONN          CALLER · FINGERPRINT                                              │    │
 │    │       8     175.0ms  conn-7#311          InvoiceService.loadLines:112 · select id, description, quantity, …│    │
 ╰────│                                                                                                            │────╯

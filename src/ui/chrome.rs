@@ -61,9 +61,40 @@ pub(crate) fn panel_title_in(
     Line::from(spans)
 }
 
+/// How many columns wider [`panel_title`] draws a `name — hints` title
+/// than the text itself: the decoration round the name (`[ ◆ … ◆ ]`
+/// with Unicode icons) and the padding, less the ` — ` it drops. A
+/// caller fitting the text into a border takes this off the room, or
+/// the border cuts the hints mid-word. Pure.
+pub(crate) fn panel_title_overhead(theme: &Theme, name: &str) -> usize {
+    let raw = format!("{name} — x");
+    panel_title(theme, &raw)
+        .width()
+        .saturating_sub(crate::ui::display_width(&raw))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_title_overhead_is_what_the_decoration_adds() {
+        use crate::theme::IconStyle;
+        let mut theme = Theme::default();
+        for icons in [IconStyle::Unicode, IconStyle::Ascii, IconStyle::Powerline] {
+            theme.icons = icons;
+            let raw = "JDBC tap — 3 queries · q close";
+            let drawn = panel_title(&theme, raw).width();
+            assert_eq!(
+                drawn,
+                crate::ui::display_width(raw) + panel_title_overhead(&theme, "JDBC tap"),
+                "{icons:?}"
+            );
+        }
+        theme.icons = IconStyle::Unicode;
+        // `[ ◆ ` and ` ◆ ]`, two pad spaces, less the ` — `.
+        assert_eq!(panel_title_overhead(&theme, "JDBC tap"), 7);
+    }
 
     #[test]
     fn titles_split_name_from_hints() {

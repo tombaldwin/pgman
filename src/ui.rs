@@ -1152,6 +1152,28 @@ pub(crate) fn count_label(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// A count short enough for a title: exact below 10 000, then `12.3k`,
+/// `4.5M`, `1.2G`, `3.4T` (cut down, never rounded up, so they never
+/// claim more than there is), and `1.0e18` past that. A producer's
+/// raw `dropped_events_total` of 10¹⁸ took nineteen columns and pushed
+/// the key hints off the tap monitor's title. Pure / testable.
+pub(crate) fn compact_count(n: u64) -> String {
+    if n < 10_000 {
+        return n.to_string();
+    }
+    for (unit, suffix) in [
+        (1_000u64, "k"),
+        (1_000_000, "M"),
+        (1_000_000_000, "G"),
+        (1_000_000_000_000, "T"),
+    ] {
+        if n < unit * 1_000 {
+            return format!("{}.{}{suffix}", n / unit, n % unit / (unit / 10));
+        }
+    }
+    format!("{:.1e}", n as f64)
+}
+
 /// Fit a ` · `-joined panel title into `width` columns by dropping
 /// whole trailing segments, marking the cut with a trailing `…`
 /// segment. A title left to the border gets cut mid-word instead
@@ -3048,31 +3070,61 @@ pub(crate) fn tab_label_text(buffer: &str) -> String {
 ///   the bespoke Spring Boot starter with caller / pool /
 ///   txn data.
 ///
+/// `listeners` are the ones that bound at startup: the hint says where
+/// pgman is listening, and only tells the operator to restart with
+/// `--tap-otlp` when no OTLP listener is up — it used to say so with
+/// one already bound, or with the TCP listener waiting.
+///
 /// Pure (returns `Vec<Line>`) so the empty-state layout is
 /// renderer-agnostic and snapshot-testable.
-fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
+fn tap_setup_hint_lines(
+    theme: &crate::theme::Theme,
+    listeners: &[crate::tap::TapListener],
+) -> Vec<Line<'static>> {
     let muted = Style::default().fg(theme.muted);
     let title = Style::default()
         .fg(theme.title)
         .add_modifier(Modifier::BOLD);
     let code = Style::default().fg(theme.text);
-    vec![
-        Line::from(Span::styled("no tap events yet", muted)),
-        Line::from(""),
-        // Route 1 — OTLP (works today)
-        Line::from(Span::styled(
-            "Route 1: OpenTelemetry (works today, any JVM)",
-            title,
-        )),
-        Line::from(Span::styled("  start pgman with:", muted)),
-        Line::from(Span::styled("    pgman --tap-otlp :4318", code)),
+    let otlp = listeners
+        .iter()
+        .find(|l| l.transport == crate::tap::TapTransport::Otlp);
+    // Where the JVM should send spans: the bound OTLP listener (a
+    // wildcard bind is reached as localhost), else the default port.
+    let otlp_endpoint = match otlp {
+        Some(l) if l.addr.ip().is_unspecified() => format!("localhost:{}", l.addr.port()),
+        Some(l) => l.addr.to_string(),
+        None => "localhost:4318".to_string(),
+    };
+    let mut lines = vec![Line::from(Span::styled("no tap events yet", muted))];
+    if let Some(listening) = crate::tap::listening_summary(listeners) {
+        lines.push(Line::from(Span::styled(
+            format!("pgman is {listening}"),
+            code,
+        )));
+    }
+    lines.push(Line::from(""));
+    // Route 1 — OTLP (works today)
+    lines.push(Line::from(Span::styled(
+        "Route 1: OpenTelemetry (works today, any JVM)",
+        title,
+    )));
+    if otlp.is_none() {
+        lines.push(Line::from(Span::styled("  start pgman with:", muted)));
+        lines.push(Line::from(Span::styled("    pgman --tap-otlp :4318", code)));
+    }
+    lines.extend([
         Line::from(Span::styled("  on the JVM side:", muted)),
         Line::from(Span::styled(
             "    -javaagent:opentelemetry-javaagent.jar",
             code,
         )),
         Line::from(Span::styled(
-            "    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318",
+            // The per-signal variable is used as-is — the exporter does
+            // not append `/v1/traces` the way it does to
+            // OTEL_EXPORTER_OTLP_ENDPOINT — and pgman answers only that
+            // path, so a bare host:port here got the JVM a 404.
+            format!("    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://{otlp_endpoint}/v1/traces"),
             code,
         )),
         Line::from(Span::styled(
@@ -3099,7 +3151,8 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
             "Once events arrive: j/k navigate · v cycle views · s sort · ? help",
             muted,
         )),
-    ]
+    ]);
+    lines
 }
 
 /// Render a duration in microseconds as a compact

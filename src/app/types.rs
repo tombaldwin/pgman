@@ -1742,20 +1742,30 @@ impl TapHealth {
     /// the setup hint before anything has arrived, the counters after.
     /// Pure, so opening the monitor and every event that lands while
     /// it is open render the same line.
-    pub fn monitor_status(&self) -> String {
+    /// `listeners` are the ones that bound: before anything arrives the
+    /// line says where pgman is listening, and names `--tap-otlp` only
+    /// when nothing is.
+    pub fn monitor_status(&self, listeners: &[crate::tap::TapListener]) -> String {
         let queries = self.query_count;
         let beats = self.heartbeat_count;
         if queries == 0 && beats == 0 {
-            return "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into();
+            return match crate::tap::listening_summary(listeners) {
+                Some(listening) => format!("JDBC tap · no events yet · {listening}"),
+                None => "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into(),
+            };
         }
         let dropped_suffix = if self.dropped_events_total > 0 {
             format!(
                 " · {} dropped (JAR backpressure)",
-                self.dropped_events_total
+                crate::ui::compact_count(self.dropped_events_total)
             )
         } else {
             String::new()
         };
-        format!("JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}")
+        format!(
+            "JDBC tap · {} · {}{dropped_suffix}",
+            crate::ui::count_label(queries, "query", "queries"),
+            crate::ui::count_label(beats, "heartbeat", "heartbeats"),
+        )
     }
 }
