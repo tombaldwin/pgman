@@ -3936,17 +3936,7 @@ impl App {
                 if self.grid_view.raw_rows.is_none() {
                     self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
-                self.grid.rows.sort_by(|a, b| {
-                    // A short row's missing cell sorts as a NULL.
-                    let av = a.get(col).and_then(Option::as_deref);
-                    let bv = b.get(col).and_then(Option::as_deref);
-                    let ord = crate::grid::cmp_cells(av, bv);
-                    if asc {
-                        ord
-                    } else {
-                        ord.reverse()
-                    }
-                });
+                crate::grid::sort_rows(&mut self.grid.rows, col, asc);
                 self.grid_view.sort = Some((col, asc));
                 let dir = if asc { "ASC" } else { "DESC" };
                 self.last_status = Some(format!("sorted by {} {dir}", self.grid.columns[col]));

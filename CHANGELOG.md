@@ -37,6 +37,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   now means exactly that table. A table whose name a fixture can't
   carry is refused rather than captured under another name. `F` (FK
   follow) prefers the exact table over a case-insensitive match.
+- Sorting a column (`s`) decides once per column whether to compare
+  numbers or text: a column that is all numbers sorts by exact value
+  (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in
+  Postgres); any other column sorts as text, byte by byte. Deciding per
+  pair was not an order (`2 < 10 < 1a < 2`), so ascending and descending
+  disagreed, and text such as `inf` or `nan` sorted as a number.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than

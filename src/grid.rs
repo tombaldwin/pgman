@@ -76,32 +76,164 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Compare two cells for sorting. Numeric-aware: when both parse as
-/// `f64`, compare as numbers (so `2` sorts before `10`). SQL NULL
-/// (`None`) sorts AFTER every value, Postgres's default: `NULLS LAST`
-/// for `ORDER BY … ASC`, and — the sort reversing this for DESC —
+/// How a sort compares one column's cells, decided once for the whole
+/// column by [`sort_mode`]: deciding per pair (numbers when both parse,
+/// bytes otherwise) is not an order at all — `2 < 10 < 1a < 2` — and
+/// `sort_by` may panic on one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    /// Every non-NULL cell is a number as Postgres prints one: compare
+    /// exact values ([`cmp_numeric`]).
+    Numeric,
+    /// Anything else: compare the text byte by byte.
+    Text,
+}
+
+/// The [`SortMode`] for column `col` of `rows`: [`SortMode::Numeric`]
+/// when every non-NULL cell [`looks_numeric`] (and there is at least
+/// one), [`SortMode::Text`] otherwise. A short row's missing cell is a
+/// NULL. Pure / testable.
+pub fn sort_mode(rows: &[Vec<Cell>], col: usize) -> SortMode {
+    let mut any = false;
+    for cell in rows.iter().filter_map(|r| r.get(col)).flatten() {
+        if !looks_numeric(cell) {
+            return SortMode::Text;
+        }
+        any = true;
+    }
+    if any {
+        SortMode::Numeric
+    } else {
+        SortMode::Text
+    }
+}
+
+/// Compare two cells for sorting under `mode` — a total order. SQL
+/// NULL (`None`) sorts AFTER every value, Postgres's default: `NULLS
+/// LAST` for `ORDER BY … ASC`, and — the sort reversing this for DESC —
 /// `NULLS FIRST` for `DESC`. An empty string is a value like any other:
 /// the smallest string, so first ascending.
 ///
 /// ```
 /// use std::cmp::Ordering;
-/// use pgman::grid::cmp_cells;
-/// assert_eq!(cmp_cells(Some("2"), Some("10")), Ordering::Less);      // numeric
-/// assert_eq!(cmp_cells(Some("alice"), Some("bob")), Ordering::Less); // lex
-/// assert_eq!(cmp_cells(None, Some("anything")), Ordering::Greater);  // NULL last
-/// assert_eq!(cmp_cells(Some(""), Some("a")), Ordering::Less);        // '' first
+/// use pgman::grid::{cmp_cells, SortMode};
+/// assert_eq!(cmp_cells(SortMode::Numeric, Some("2"), Some("10")), Ordering::Less);
+/// assert_eq!(cmp_cells(SortMode::Text, Some("2"), Some("10")), Ordering::Greater);
+/// assert_eq!(cmp_cells(SortMode::Text, None, Some("anything")), Ordering::Greater); // NULL last
+/// assert_eq!(cmp_cells(SortMode::Text, Some(""), Some("a")), Ordering::Less);       // '' first
 /// ```
-pub fn cmp_cells(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
+pub fn cmp_cells(mode: SortMode, a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     match (a, b) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => Ordering::Greater,
         (Some(_), None) => Ordering::Less,
-        (Some(a), Some(b)) => match (a.parse::<f64>(), b.parse::<f64>()) {
-            (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or_else(|| a.cmp(b)),
-            _ => a.cmp(b),
+        (Some(a), Some(b)) => match mode {
+            SortMode::Numeric => cmp_numeric(a, b),
+            SortMode::Text => a.cmp(b),
         },
     }
+}
+
+/// Sort `rows` on column `col`, ascending or not, in place. The mode
+/// is [`sort_mode`] of the column; the sort is stable, and descending
+/// is the ascending order reversed (rows that compare equal keep their
+/// order either way). Pure / testable.
+pub fn sort_rows(rows: &mut [Vec<Cell>], col: usize, asc: bool) {
+    let mode = sort_mode(rows, col);
+    rows.sort_by(|a, b| {
+        let av = a.get(col).and_then(Option::as_deref);
+        let bv = b.get(col).and_then(Option::as_deref);
+        let ord = cmp_cells(mode, av, bv);
+        if asc {
+            ord
+        } else {
+            ord.reverse()
+        }
+    });
+}
+
+/// A number's text, as a key that compares by exact value.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum NumKey {
+    NegInfinity,
+    /// A negative finite value: its magnitude, so larger is smaller.
+    Negative(std::cmp::Reverse<Magnitude>),
+    Zero,
+    Positive(Magnitude),
+    Infinity,
+    /// Postgres sorts NaN above every other value, infinity included.
+    NaN,
+}
+
+/// A non-zero magnitude `0.d₁d₂… × 10^exp`, `digits` without leading
+/// or trailing zeros — so a larger `exp` is a larger magnitude, and at
+/// equal `exp` the digit strings compare as the values do.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Magnitude {
+    exp: i64,
+    digits: Vec<u8>,
+}
+
+fn num_key(s: &str) -> NumKey {
+    let (neg, body) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    match body {
+        "NaN" => return NumKey::NaN,
+        "Infinity" if neg => return NumKey::NegInfinity,
+        "Infinity" => return NumKey::Infinity,
+        _ => {}
+    }
+    let (mantissa, exponent) = match body.find(['e', 'E']) {
+        Some(i) => (&body[..i], &body[i + 1..]),
+        None => (body, ""),
+    };
+    // An exponent too large for i64 saturates: no grid holds a value
+    // where that difference matters, and it keeps the order total.
+    let exponent: i64 = if exponent.is_empty() {
+        0
+    } else {
+        exponent.parse().unwrap_or_else(|_| {
+            if exponent.starts_with('-') {
+                i64::MIN / 2
+            } else {
+                i64::MAX / 2
+            }
+        })
+    };
+    let (int_part, frac_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let all: Vec<u8> = int_part.bytes().chain(frac_part.bytes()).collect();
+    let Some(first) = all.iter().position(|&b| b != b'0') else {
+        return NumKey::Zero;
+    };
+    let last = all.iter().rposition(|&b| b != b'0').unwrap_or(first);
+    // Value = 0.<all> × 10^(int_part.len() + exponent); dropping
+    // `first` leading zeros lowers the point by as many.
+    let exp = (int_part.len() as i64)
+        .saturating_sub(first as i64)
+        .saturating_add(exponent);
+    let mag = Magnitude {
+        exp,
+        digits: all[first..=last].to_vec(),
+    };
+    if neg {
+        NumKey::Negative(std::cmp::Reverse(mag))
+    } else {
+        NumKey::Positive(mag)
+    }
+}
+
+/// Compare two numbers as Postgres prints them ([`looks_numeric`]) by
+/// exact value: `9007199254740993` above `9007199254740992`, which an
+/// `f64` compare calls equal; `1.50` equal to `1.5`; `-Infinity` below
+/// every number, `Infinity` above, and `NaN` above even that, as
+/// Postgres orders them. Meant for text that [`looks_numeric`]; other
+/// text still gets a consistent place, so the order stays total.
+/// Pure / testable.
+pub fn cmp_numeric(a: &str, b: &str) -> std::cmp::Ordering {
+    num_key(a).cmp(&num_key(b))
 }
 
 /// Truncate `s` to `width` display columns, marking a cut with `…`.
@@ -185,17 +317,7 @@ pub fn show_controls(s: &str, single_line: bool) -> std::borrow::Cow<'_, str> {
 /// is not, and neither is one holding an empty string. Numeric columns are never cut by [`fit_column_widths`]: a
 /// truncated number is a wrong number. Pure / testable.
 pub fn is_numeric_column(grid: &Grid, col: usize) -> bool {
-    let mut any = false;
-    for cell in grid.rows.iter().filter_map(|r| r.get(col)) {
-        let Some(cell) = cell else {
-            continue;
-        };
-        if !looks_numeric(cell) {
-            return false;
-        }
-        any = true;
-    }
-    any
+    sort_mode(&grid.rows, col) == SortMode::Numeric
 }
 
 /// `s` as Postgres's text output prints an integer, numeric or float:
@@ -638,32 +760,124 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cmp_cells_numbers_sort_numerically() {
-        use std::cmp::Ordering;
-        assert_eq!(cmp_cells(Some("2"), Some("10")), Ordering::Less);
-        assert_eq!(cmp_cells(Some("100"), Some("20")), Ordering::Greater);
-        assert_eq!(cmp_cells(Some("1.5"), Some("1.05")), Ordering::Greater);
+    use std::cmp::Ordering;
+
+    fn col(cells: &[Option<&str>]) -> Vec<Vec<Cell>> {
+        cells.iter().map(|c| vec![c.map(String::from)]).collect()
+    }
+
+    fn keys(rows: &[Vec<Cell>]) -> Vec<Option<&str>> {
+        rows.iter().map(|r| r[0].as_deref()).collect()
     }
 
     #[test]
-    fn cmp_cells_falls_back_to_string_when_either_non_numeric() {
-        use std::cmp::Ordering;
-        assert_eq!(cmp_cells(Some("alice"), Some("bob")), Ordering::Less);
-        // One number, one text: lexicographic.
-        assert_eq!(cmp_cells(Some("10"), Some("alice")), Ordering::Less);
+    fn cmp_cells_numbers_sort_numerically() {
+        let n = SortMode::Numeric;
+        assert_eq!(cmp_cells(n, Some("2"), Some("10")), Ordering::Less);
+        assert_eq!(cmp_cells(n, Some("100"), Some("20")), Ordering::Greater);
+        assert_eq!(cmp_cells(n, Some("1.5"), Some("1.05")), Ordering::Greater);
+        assert_eq!(cmp_cells(n, Some("-2"), Some("-10")), Ordering::Greater);
+        assert_eq!(cmp_cells(n, Some("-0.5"), Some("0")), Ordering::Less);
+        assert_eq!(cmp_cells(n, Some("-0"), Some("0.000")), Ordering::Equal);
+        assert_eq!(cmp_cells(n, Some("1.50"), Some("1.5")), Ordering::Equal);
+        assert_eq!(cmp_cells(n, Some("1e+30"), Some("999")), Ordering::Greater);
+        assert_eq!(
+            cmp_cells(n, Some("1.5E-07"), Some("0.0000001")),
+            Ordering::Greater
+        );
+        assert_eq!(cmp_cells(n, Some(".5"), Some("0.49")), Ordering::Greater);
+    }
+
+    /// int8 past 2^53: an f64 compare called these equal.
+    #[test]
+    fn cmp_numeric_is_exact_past_f64_precision() {
+        assert_eq!(
+            cmp_numeric("9007199254740993", "9007199254740992"),
+            Ordering::Greater
+        );
+        assert_eq!(
+            cmp_numeric("-9223372036854775808", "-9223372036854775807"),
+            Ordering::Less
+        );
+        assert_eq!(
+            cmp_numeric("12345678901234567890.000000001", "12345678901234567890"),
+            Ordering::Greater
+        );
+    }
+
+    /// Postgres orders `-Infinity` < numbers < `Infinity` < `NaN`.
+    #[test]
+    fn cmp_numeric_orders_infinities_and_nan_as_postgres_does() {
+        let mut v = vec!["NaN", "1", "Infinity", "-Infinity", "-1e+300", "1e+300"];
+        v.sort_by(|a, b| cmp_numeric(a, b));
+        assert_eq!(
+            v,
+            ["-Infinity", "-1e+300", "1", "1e+300", "Infinity", "NaN"]
+        );
+        assert_eq!(cmp_numeric("NaN", "NaN"), Ordering::Equal);
+    }
+
+    #[test]
+    fn text_mode_compares_bytes() {
+        let t = SortMode::Text;
+        assert_eq!(cmp_cells(t, Some("alice"), Some("bob")), Ordering::Less);
+        assert_eq!(cmp_cells(t, Some("10"), Some("2")), Ordering::Less);
+        assert_eq!(cmp_cells(t, Some("10"), Some("alice")), Ordering::Less);
+    }
+
+    /// One mode for the whole column: the `2 < 10 < 1a < 2` cycle a
+    /// per-pair decision made is gone, and text such as `inf` or `nan`
+    /// is not taken for a number.
+    #[test]
+    fn sort_mode_is_decided_once_for_the_column() {
+        assert_eq!(
+            sort_mode(&col(&[Some("2"), Some("10"), None]), 0),
+            SortMode::Numeric
+        );
+        assert_eq!(
+            sort_mode(&col(&[Some("2"), Some("10"), Some("1a")]), 0),
+            SortMode::Text
+        );
+        assert_eq!(
+            sort_mode(&col(&[Some("1"), Some("inf")]), 0),
+            SortMode::Text
+        );
+        assert_eq!(
+            sort_mode(&col(&[Some("1"), Some("nan")]), 0),
+            SortMode::Text
+        );
+        assert_eq!(sort_mode(&col(&[Some("1"), Some("")]), 0), SortMode::Text);
+        assert_eq!(sort_mode(&col(&[None, None]), 0), SortMode::Text);
+        let mut rows = col(&[Some("2"), Some("1a"), Some("10")]);
+        sort_rows(&mut rows, 0, true);
+        assert_eq!(keys(&rows), [Some("10"), Some("1a"), Some("2")]);
+        let mut rows = col(&[Some("2"), None, Some("10"), Some("-3")]);
+        sort_rows(&mut rows, 0, true);
+        assert_eq!(keys(&rows), [Some("-3"), Some("2"), Some("10"), None]);
+        sort_rows(&mut rows, 0, false);
+        assert_eq!(keys(&rows), [None, Some("10"), Some("2"), Some("-3")]);
+    }
+
+    /// A short row's missing cell sorts as a NULL.
+    #[test]
+    fn sort_rows_treats_a_missing_cell_as_null() {
+        let mut rows = vec![vec![], vec![Some("1".to_string())]];
+        sort_rows(&mut rows, 0, true);
+        assert_eq!(rows[0], vec![Some("1".to_string())]);
     }
 
     #[test]
     fn cmp_cells_null_is_last_and_the_empty_string_is_a_value() {
-        use std::cmp::Ordering;
-        assert_eq!(cmp_cells(None, Some("anything")), Ordering::Greater);
-        assert_eq!(cmp_cells(Some("anything"), None), Ordering::Less);
-        assert_eq!(cmp_cells(None, None), Ordering::Equal);
-        // After the empty string too: it is a value, not a NULL.
-        assert_eq!(cmp_cells(None, Some("")), Ordering::Greater);
-        assert_eq!(cmp_cells(Some(""), Some("a")), Ordering::Less);
-        assert_eq!(cmp_cells(Some(""), Some("1")), Ordering::Less);
-        assert_eq!(cmp_cells(Some(""), Some("")), Ordering::Equal);
+        for m in [SortMode::Numeric, SortMode::Text] {
+            assert_eq!(cmp_cells(m, None, Some("anything")), Ordering::Greater);
+            assert_eq!(cmp_cells(m, Some("anything"), None), Ordering::Less);
+            assert_eq!(cmp_cells(m, None, None), Ordering::Equal);
+            // After the empty string too: it is a value, not a NULL.
+            assert_eq!(cmp_cells(m, None, Some("")), Ordering::Greater);
+        }
+        let t = SortMode::Text;
+        assert_eq!(cmp_cells(t, Some(""), Some("a")), Ordering::Less);
+        assert_eq!(cmp_cells(t, Some(""), Some("1")), Ordering::Less);
+        assert_eq!(cmp_cells(t, Some(""), Some("")), Ordering::Equal);
     }
 }
