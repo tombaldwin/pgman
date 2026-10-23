@@ -317,9 +317,13 @@ server's statistics, read-only, and each carries the numbers that triggered it
 and how long they have accumulated (since `stats_reset`, or "at least since the
 server started"), the query that produced them, a conservative setting to change
 and why, and what that setting is called in an RDS / Aurora parameter group —
-static (applies at reboot) or dynamic, and how Aurora differs. On RDS and Aurora
-the suggestion is the `aws rds modify-db-(cluster-)parameter-group` command;
-self-hosted, `ALTER SYSTEM`. pgman never runs it.
+static (applies at reboot) or dynamic, and how Aurora differs (on Aurora, a
+parameter in both the cluster and the instance parameter group can be
+overridden by the instance's; one AWS's Aurora tables don't list, such as
+`lock_timeout`, says to set it per role or session and check your group). On
+RDS and Aurora a server setting's suggestion is the
+`aws rds modify-db-(cluster-)parameter-group` command; self-hosted,
+`ALTER SYSTEM`. pgman never runs it.
 
 | Code | Finding | Read from |
 |---|---|---|

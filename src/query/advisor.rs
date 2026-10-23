@@ -503,7 +503,7 @@ pub fn cache_hit_finding(
     let (suggested, reasoning, suggestion) = match (ctx.kind, current) {
         (ServerKind::Aurora, _) => (
             shared_buffers.map(Setting::display).unwrap_or_else(|| "unchanged".into()),
-            "leave it: Aurora already gives it about 75% of instance memory, so the working set is bigger than the instance — a larger instance class, or fewer pages per query (the slow-queries panel's top statements)".to_string(),
+            "leave it: Aurora's default already gives it about two-thirds of instance memory, so the working set is bigger than the instance — a larger instance class, or fewer pages per query (the slow-queries panel's top statements)".to_string(),
             None,
         ),
         // AWS's guidance is to keep RDS's ~25% default: the rest of the

@@ -55,7 +55,12 @@ stay; ADV003's detail points at LINT104.
   failing does not stop the others, as `lint::fetch_live`).
 - `query::advisor::rds` — the parameter mapping as pure data: the
   parameter-group key, static (reboot) or dynamic, unit, and how Aurora
-  differs (`Same`, `Differs(why)`, `NotApplicable(why)`).
+  differs (`Same`, `Differs(why)`, `NotApplicable(why)`, or
+  `Unverified(why)` for one AWS's Aurora PostgreSQL parameter tables
+  don't list — `lock_timeout`: "set it per role or session; check your
+  parameter group"). A parameter both Aurora tables (cluster and
+  instance) list says an instance's DB parameter group can override the
+  cluster's value, and its cluster command carries that as a comment.
 - `lint::Finding` gains `advice: Option<Box<Advice>>` (evidence lines,
   the evidence SQL, the stats window, the setting with current and
   suggested value). Lint findings carry `None`.
