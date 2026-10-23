@@ -253,7 +253,7 @@ static DROPPED_OTHER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 /// used to fire once per bad packet — an attacker (or a
 /// misconfigured JAR) sending garbage at line rate turned a few
 /// hundred KB of input into tens of MB of log output. See
-/// [`listener::run_tcp_listener`] / [`listener::run_udp_listener`]
+/// [`listener::serve_tcp_listener`] / [`listener::serve_udp_listener`]
 /// and [`otlp::span_to_tap_event`] for the call sites.
 pub(crate) struct WarnThrottle {
     last_warn_micros: std::sync::atomic::AtomicU64,
@@ -4072,36 +4072,13 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_listener_rejects_connections_past_the_concurrency_cap() {
-        // Drive the real `run_tcp_listener` (not `handle_tcp_conn`
+        // Drive the real `serve_tcp_listener` (not `handle_tcp_conn`
         // directly) since the connection semaphore lives in the
         // accept loop, not the per-connection handler.
         let (tx, _rx) = tokio::sync::mpsc::channel::<TapEvent>(4096);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            // Reimplement the bind-then-serve split `run_tcp_listener`
-            // does internally isn't available with a pre-bound
-            // listener, so drive its accept loop inline against the
-            // SAME cap constant the production code uses — this is
-            // the smallest faithful stand-in that doesn't need a
-            // second `addr` to bind to (the test needs the actual
-            // bound port up front to dial in).
-            let permits =
-                std::sync::Arc::new(tokio::sync::Semaphore::new(TAP_MAX_CONCURRENT_CONNS));
-            loop {
-                let Ok((sock, _peer)) = listener.accept().await else {
-                    return;
-                };
-                let Ok(permit) = permits.clone().try_acquire_owned() else {
-                    continue; // drop the socket — same as the real listener
-                };
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    let _ = handle_tcp_conn(sock, &tx).await;
-                });
-            }
-        });
+        tokio::spawn(serve_tcp_listener(listener, tx));
 
         // Open TAP_MAX_CONCURRENT_CONNS idle connections and hold
         // them open — each one's `handle_tcp_conn` is blocked

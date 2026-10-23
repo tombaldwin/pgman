@@ -37,6 +37,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   a few frames (under a second, about 100 MiB). The hop into the app is
   bounded, so events pgman cannot keep up with are dropped and counted
   on the `DROP` badge instead of queueing without limit.
+- A tap listener that cannot bind (port in use) is now reported on the
+  status line and on stderr — `--tap-listen`, `--tap-udp`, `--tap-otlp`
+  and the listener a Java project turns on by itself. The status line
+  used to announce the port as listening while the failure went only
+  to the log.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

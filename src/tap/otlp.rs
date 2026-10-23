@@ -265,18 +265,17 @@ pub fn otlp_unix_nano(v: Option<&serde_json::Value>) -> Option<u64> {
 /// place the worst case is bounded connections × this cap.
 pub const OTLP_MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// Spawn an OTLP/HTTP listener on `addr`. Accepts only
+/// Serve OTLP/HTTP on a bound listener. Accepts only
 /// `POST /v1/traces` with `Content-Type: application/json`;
 /// other methods/paths get the standard HTTP error response
-/// so a curl-poking operator sees a useful message. Returns
-/// only on socket-bind failure; per-connection errors are
-/// logged + dropped so other clients keep flowing.
-pub async fn run_otlp_listener(
-    addr: std::net::SocketAddr,
+/// so a curl-poking operator sees a useful message. Never
+/// returns; per-connection errors are logged + dropped so
+/// other clients keep flowing. The caller binds, so a bind
+/// failure is the caller's to report.
+pub async fn serve_otlp_listener(
+    listener: tokio::net::TcpListener,
     tx: tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("tap: OTLP/HTTP listener bound on {addr}");
+) {
     let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(
         super::listener::TAP_MAX_CONCURRENT_CONNS,
     ));

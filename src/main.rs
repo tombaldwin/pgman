@@ -729,71 +729,69 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    // Each listener is bound HERE, before anything says it is
+    // listening: a bind spawned off with the accept loop failed
+    // (port in use) only into the log, while the status line had
+    // already announced the port. A failure doesn't stop pgman —
+    // it is still a database tool without the tap — but it is
+    // said on stderr (left on the screen after exit) and on the
+    // status line.
+    let mut tap_notes: Vec<String> = Vec::new();
     if let Some(addr_raw) = tap_listen_effective.as_deref() {
-        match parse_tap_addr(addr_raw) {
-            Ok(addr) => {
+        let addr = tap_addr_or_exit_cli("--tap-listen", addr_raw);
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
                 let tap_tx = tap_channels
                     .as_ref()
                     .expect("adapter spawned above")
                     .0
                     .clone();
-                tokio::spawn(async move {
-                    if let Err(e) = tap::run_tcp_listener(addr, tap_tx).await {
-                        tracing::error!("tap-tcp listener bind failed: {e}");
-                    }
-                });
+                tokio::spawn(tap::serve_tcp_listener(listener, tap_tx));
                 tracing::info!("tap: listening on {addr} (tcp)");
                 if tap_auto_enabled {
-                    application.last_status = Some(tap_auto_status_line(&addr));
+                    tap_notes.push(tap_auto_status_line(&addr));
                 }
             }
-            Err(e) => {
-                eprintln!("invalid --tap-listen {addr_raw:?}: {e}");
-                std::process::exit(2);
-            }
+            Err(e) => tap_notes.push(tap_bind_failed_cli(
+                "--tap-listen",
+                &addr,
+                &e,
+                tap_auto_enabled,
+            )),
         }
     }
     if let Some(addr_raw) = cli.tap_udp.as_deref() {
-        match parse_tap_addr(addr_raw) {
-            Ok(addr) => {
+        let addr = tap_addr_or_exit_cli("--tap-udp", addr_raw);
+        match tokio::net::UdpSocket::bind(addr).await {
+            Ok(socket) => {
                 let tap_tx = tap_channels
                     .as_ref()
                     .expect("adapter spawned above")
                     .0
                     .clone();
-                tokio::spawn(async move {
-                    if let Err(e) = tap::run_udp_listener(addr, tap_tx).await {
-                        tracing::error!("tap-udp listener bind failed: {e}");
-                    }
-                });
+                tokio::spawn(tap::serve_udp_listener(socket, tap_tx));
                 tracing::info!("tap: listening on {addr} (udp)");
             }
-            Err(e) => {
-                eprintln!("invalid --tap-udp {addr_raw:?}: {e}");
-                std::process::exit(2);
-            }
+            Err(e) => tap_notes.push(tap_bind_failed_cli("--tap-udp", &addr, &e, false)),
         }
     }
     if let Some(addr_raw) = cli.tap_otlp.as_deref() {
-        match parse_tap_addr(addr_raw) {
-            Ok(addr) => {
+        let addr = tap_addr_or_exit_cli("--tap-otlp", addr_raw);
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
                 let tap_tx = tap_channels
                     .as_ref()
                     .expect("adapter spawned above")
                     .0
                     .clone();
-                tokio::spawn(async move {
-                    if let Err(e) = tap::run_otlp_listener(addr, tap_tx).await {
-                        tracing::error!("tap-otlp listener bind failed: {e}");
-                    }
-                });
+                tokio::spawn(tap::serve_otlp_listener(listener, tap_tx));
                 tracing::info!("tap: OTLP/HTTP listening on {addr}");
             }
-            Err(e) => {
-                eprintln!("invalid --tap-otlp {addr_raw:?}: {e}");
-                std::process::exit(2);
-            }
+            Err(e) => tap_notes.push(tap_bind_failed_cli("--tap-otlp", &addr, &e, false)),
         }
+    }
+    if !tap_notes.is_empty() {
+        application.last_status = Some(tap_notes.join(" · "));
     }
     if let Some(path) = cli.tap_replay.clone() {
         // Replay uses its own channel so backpressure on the
@@ -828,6 +826,52 @@ async fn main() -> anyhow::Result<()> {
 /// and the flag that stops it.
 fn tap_auto_status_line(addr: &std::net::SocketAddr) -> String {
     format!("tap listener on {addr} (auto: Java project detected) · --no-tap to disable")
+}
+
+/// The line for a tap listener that could not bind. Pure so the
+/// wording is pinned: which flag, which address, why — and, for the
+/// auto-enabled listener the operator never asked for, how to stop
+/// pgman trying.
+fn tap_bind_failure_line(
+    flag: &str,
+    addr: &std::net::SocketAddr,
+    err: &std::io::Error,
+    auto: bool,
+) -> String {
+    let why = match err.kind() {
+        std::io::ErrorKind::AddrInUse => "address already in use".to_string(),
+        std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
+        std::io::ErrorKind::AddrNotAvailable => "not an address of this machine".to_string(),
+        _ => err.to_string(),
+    };
+    if auto {
+        format!("tap listener not started on {addr} (auto: Java project detected): {why} · --no-tap to disable, --tap-listen to pick a port")
+    } else {
+        format!("{flag} {addr} not listening: {why}")
+    }
+}
+
+/// Report a tap listener's bind failure on stderr and the log, and
+/// return the line for the status bar. `_cli`: runs before the TUI is
+/// up, so the stderr line stays on the screen after pgman exits.
+fn tap_bind_failed_cli(
+    flag: &str,
+    addr: &std::net::SocketAddr,
+    err: &std::io::Error,
+    auto: bool,
+) -> String {
+    let line = tap_bind_failure_line(flag, addr, err, auto);
+    tracing::warn!("tap: {line}");
+    eprintln!("warning: {line}");
+    line
+}
+
+/// [`parse_tap_addr`], or exit 2 naming the flag. `_cli`: before the TUI.
+fn tap_addr_or_exit_cli(flag: &str, raw: &str) -> std::net::SocketAddr {
+    parse_tap_addr(raw).unwrap_or_else(|e| {
+        eprintln!("invalid {flag} {raw:?}: {e}");
+        std::process::exit(2);
+    })
 }
 
 /// Parse the `--tap-listen` value. Accepts `host:port`, `:port`
@@ -1443,6 +1487,44 @@ mod main_tests {
             tap_auto_status_line(&addr),
             "tap listener on 127.0.0.1:7432 (auto: Java project detected) · --no-tap to disable"
         );
+    }
+
+    #[test]
+    fn a_tap_bind_failure_names_flag_address_and_cause() {
+        let addr: std::net::SocketAddr = "127.0.0.1:4318".parse().unwrap();
+        let in_use = std::io::Error::from(std::io::ErrorKind::AddrInUse);
+        assert_eq!(
+            tap_bind_failure_line("--tap-otlp", &addr, &in_use, false),
+            "--tap-otlp 127.0.0.1:4318 not listening: address already in use"
+        );
+        // Anything unclassified keeps the OS's own words.
+        let other = std::io::Error::other("no route");
+        assert_eq!(
+            tap_bind_failure_line("--tap-udp", &addr, &other, false),
+            "--tap-udp 127.0.0.1:4318 not listening: no route"
+        );
+    }
+
+    #[test]
+    fn an_auto_tap_bind_failure_says_how_to_stop_it() {
+        let addr: std::net::SocketAddr = "127.0.0.1:7432".parse().unwrap();
+        let in_use = std::io::Error::from(std::io::ErrorKind::AddrInUse);
+        assert_eq!(
+            tap_bind_failure_line("--tap-listen", &addr, &in_use, true),
+            "tap listener not started on 127.0.0.1:7432 (auto: Java project detected): address already in use · --no-tap to disable, --tap-listen to pick a port"
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_a_port_already_held_fails_up_front() {
+        // The premise the startup path relies on: the bind itself — not
+        // the accept loop spawned after it — is what reports the clash.
+        let held = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = held.local_addr().unwrap();
+        let err = tokio::net::TcpListener::bind(addr).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(tap_bind_failure_line("--tap-listen", &addr, &err, false)
+            .ends_with("not listening: address already in use"));
     }
 
     #[test]
