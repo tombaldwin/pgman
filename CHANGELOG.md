@@ -50,6 +50,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
+  comparisons in the SCRAM path's digest crates) and `clipboard-win`
+  5.4.3 (5.4.1 was yanked).
 - `lo_from_bytea`, `lo_put`, `lo_unlink`, `lo_creat`, `lowrite` and
   `lo_truncate` classified as plain reads, so a writable connection ran
   them with no confirmation. They now need one, like other writes.
