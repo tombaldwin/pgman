@@ -9,9 +9,11 @@ pub const COMMAND_NAMES: &[&str] = &[
     "quit", "readonly", "redact", "report", "tap", "timing", "update", "x",
 ];
 
-/// `:readonly off` on a replica opened from the environments overview.
-/// The session is pinned read-only whatever `safety.toml` says, so the
-/// only way to write is to connect somewhere else.
+/// `:readonly off` on a replica: one opened from the environments
+/// overview, or any server that said it is in recovery at connect
+/// (`App::note_server_role`). The session is pinned read-only whatever
+/// `safety.toml` says, so the only way to write is to connect somewhere
+/// else.
 pub(crate) const REPLICA_READONLY_REFUSAL: &str = "this is a read replica: it stays read-only \
      whatever safety.toml says (the server refuses writes too) · connect to its primary to write";
 

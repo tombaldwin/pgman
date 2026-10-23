@@ -187,7 +187,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Connected to a standby by `:connect` or `--dsn`, nothing said it was
   one; only an environment naming a replica did. Every connect now asks
   `pg_is_in_recovery()`, and the header wears a `replica` badge on a
-  standby whichever way it was reached.
+  standby whichever way it was reached. The session is pinned read-only
+  there too, as an environment's replica is, whatever `safety.toml`
+  says: the header and start card say read-only, and `u` and
+  `:readonly off` say it is a replica instead of sending a write the
+  server refuses.
 - A result stopped at 1000 rows said only `capped at 1000`, which read as
   though that was the whole table. It now says `more rows not fetched`,
   and the status line adds that `pgman query '…' --json` returns every

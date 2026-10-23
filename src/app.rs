@@ -1751,9 +1751,10 @@ pub struct App {
     /// and `:readonly off` against such a profile is refused outright
     /// before it gets set (`dispatch_read_only`).
     pub read_only_override: Option<bool>,
-    /// The connected server is a replica opened from the environments
-    /// overview: read-only for the whole session, `\c <db>` included,
-    /// and `:readonly off` is refused.
+    /// The connected server is a replica — opened from the environments
+    /// overview as one, or a standby by `pg_is_in_recovery()` at
+    /// connect (`App::note_server_role`): read-only for the whole
+    /// session, `\c <db>` included, and `:readonly off` is refused.
     pub replica_pin: bool,
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,

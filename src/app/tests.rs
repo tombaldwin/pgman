@@ -11251,6 +11251,36 @@ async fn connecting_from_the_overview_clears_its_footer() {
     assert_eq!(a.last_status, None);
 }
 
+/// A server in recovery pins the session read-only at connect, whatever
+/// the profile and however it was reached; a primary, or a server that
+/// didn't say, leaves the profile's answer alone.
+#[test]
+fn a_standby_is_pinned_read_only_however_it_was_reached() {
+    let writable = || {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let dsn = Dsn::parse("postgres://u@db.example:5432/ledger").ok();
+        let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
+        a.read_only = false;
+        a
+    };
+    let mut a = writable();
+    a.note_server_role(Some(true));
+    assert!(a.read_only && a.replica_pin);
+    assert_eq!(a.in_recovery, Some(true));
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(crate::app::cmd::REPLICA_READONLY_REFUSAL)
+    );
+    for role in [Some(false), None] {
+        let mut a = writable();
+        a.note_server_role(role);
+        assert!(!a.read_only && !a.replica_pin, "{role:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_replica_stays_read_only_across_a_database_swap_and_readonly_off() {
     let mut a = writable_app();

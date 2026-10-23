@@ -1,6 +1,22 @@
 use super::*;
 
 impl App {
+    /// What the connect learned about the server's role
+    /// (`pg_is_in_recovery()`). A standby is pinned read-only for the
+    /// session exactly as a replica opened from the environments
+    /// overview is (`replica_pin`), however it was reached — `--dsn`,
+    /// `:connect`, a static environment — and whatever the profile
+    /// says: the server refuses every write, so `u`, `:readonly off`
+    /// and the header must say so up front rather than let a write be
+    /// sent and blamed on `safety.toml`.
+    pub(super) fn note_server_role(&mut self, in_recovery: Option<bool>) {
+        self.in_recovery = in_recovery;
+        if in_recovery == Some(true) {
+            self.read_only = true;
+            self.replica_pin = true;
+        }
+    }
+
     /// Apply a finished message from a spawned task. Messages from a
     /// superseded connection generation are dropped, except the kinds
     /// that don't belong to a connection (update check, environments,
@@ -41,7 +57,7 @@ impl App {
                 ..
             } => {
                 self.conn_state = ConnState::Connected { server_version };
-                self.in_recovery = in_recovery;
+                self.note_server_role(in_recovery);
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
                 // without touching the Client. Replaced on every new
                 // Booted so the dispatcher always matches the live
