@@ -285,43 +285,50 @@ pub fn fixture_name_problem(name: &str, table: bool) -> Option<&'static str> {
 /// classes — enough to keep every ordinary SQL identifier and refuse
 /// the punctuation that breaks the markup.
 fn is_xml_name(s: &str) -> bool {
-    let is_start = |c: char| c.is_alphabetic() || c == '_' || c == ':';
-    let is_part = |c: char| is_start(c) || c.is_numeric() || c == '-' || c == '.';
     let mut chars = s.chars();
     match chars.next() {
-        Some(c) if is_start(c) => chars.all(is_part),
+        Some(c) if is_xml_name_start(c) => chars.all(is_xml_name_char),
         _ => false,
     }
 }
 
+fn is_xml_name_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_' || c == ':'
+}
+
+fn is_xml_name_char(c: char) -> bool {
+    is_xml_name_start(c) || c.is_numeric() || c == '-' || c == '.'
+}
+
 // -- helpers --
 
-/// Escape a string for use inside a double-quoted XML attribute.
-/// Whitespace controls become numeric entities so they survive
-/// XML attribute-value normalisation on re-parse.
 /// Sanitise a string into a valid XML `Name` for use as an element or
-/// attribute name. DBUnit flat-XML uses table and column names as XML
-/// names, and a captured result grid can carry headers that aren't
-/// valid XML names — an unaliased expression column is `?column?`, a
-/// quoted alias can hold spaces or `&`. Emitting those raw produces
-/// malformed XML that won't round-trip through [`parse_flat_xml`].
-/// Every disallowed character becomes `_`; a name that can't *start* an
-/// XML name is prefixed with `_`. Lossless for ordinary SQL identifiers,
-/// which already are valid XML names.
+/// attribute name, so [`generate_flat_xml`] never writes malformed
+/// XML. Every disallowed character becomes `_`; a name that can't
+/// *start* an XML name is prefixed with `_`. The identity on every
+/// name [`is_xml_name`] accepts — which is every name a capture
+/// ([`fixture_from_rows`]) lets through, since it refuses the rest
+/// rather than have them renamed here — and on every name a parsed
+/// fixture holds.
 fn xml_escape_name(s: &str) -> String {
-    let is_start = |c: char| c.is_ascii_alphabetic() || c == '_' || c == ':';
-    let is_part = |c: char| is_start(c) || c.is_ascii_digit() || c == '-' || c == '.';
     let mut out: String = s
         .chars()
-        .map(|c| if is_part(c) { c } else { '_' })
+        .map(|c| if is_xml_name_char(c) { c } else { '_' })
         .collect();
-    let needs_prefix = out.chars().next().map(|c| !is_start(c)).unwrap_or(true);
+    let needs_prefix = out
+        .chars()
+        .next()
+        .map(|c| !is_xml_name_start(c))
+        .unwrap_or(true);
     if needs_prefix {
         out.insert(0, '_');
     }
     out
 }
 
+/// Escape a string for use inside a double-quoted XML attribute.
+/// Whitespace controls become numeric entities so they survive
+/// XML attribute-value normalisation on re-parse.
 fn xml_escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -502,7 +509,13 @@ mod tests {
                 "{bad:?} must be refused"
             );
         }
-        assert!(fixture_from_rows("Café_1", &["id".to_string()], &[]).is_ok());
+        // Accepted means written as is: not renamed to `Caf__1` on the
+        // way out, which applied to a table that isn't there.
+        let f = fixture_from_rows("Café_1", &["prénom".to_string()], &[vec![Some("x".into())]])
+            .unwrap();
+        let xml = generate_flat_xml(&f);
+        assert!(xml.contains("<Café_1 prénom=\"x\"/>"), "{xml}");
+        assert_eq!(parse_flat_xml(&xml).unwrap(), f);
     }
 
     /// Mixed-case, reserved and dotted column names round-trip: capture,
