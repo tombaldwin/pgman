@@ -77,6 +77,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Logs → SQL: `BEGIN` / `COMMIT` / `ROLLBACK`, `SET` / `SHOW` / `RESET` /
   `DISCARD` and `select 1` pool pings are no longer reported as N+1
   clusters, where they outranked the real one. They stay in the list.
+- Logs → SQL: ANSI colour codes in a pasted log (Hibernate's
+  `highlight_sql=true`, a coloured console or pager) are ignored. A
+  highlighted formatted statement was dropped, and a one-line one kept
+  the codes in its SQL.
 
 ## [0.1.0] — 2026-10-22
 

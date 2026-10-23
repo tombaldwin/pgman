@@ -43,6 +43,8 @@ use std::collections::HashMap;
 
 /// Parse a Postgres server log into reconstructed queries.
 pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
+    // A log viewed through a colouring tool keeps its escapes when copied.
+    let log = &*crate::query::logdetect::strip_sgr(log);
     let mut out: Vec<ReconstructedQuery> = Vec::new();
     let mut seen = Seen::default();
     let mut current: Option<Pending> = None;

@@ -36,6 +36,8 @@ use std::collections::HashMap;
 
 /// Parse a Hibernate log into reconstructed queries.
 pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
+    // `hibernate.highlight_sql=true` colours every keyword.
+    let log = &*crate::query::logdetect::strip_sgr(log);
     // thread -> (sql, src_line) for the statement currently open on that thread.
     let mut current: HashMap<String, (String, usize)> = HashMap::new();
     // thread -> binds accumulated for the open statement.
@@ -529,6 +531,36 @@ binding parameter [1] as [BIGINT] - [7]
         assert_eq!(
             sql,
             ["select * from a where id=1", "select * from b where id=2"]
+        );
+    }
+
+    /// `hibernate.highlight_sql=true` colours each keyword with an SGR
+    /// escape, which put a `[` on every continuation line.
+    #[test]
+    fn highlight_sql_colour_escapes_are_stripped() {
+        let log = "\
+2026-10-21T09:12:48.001Z DEBUG 4242 --- [nio-8080-exec-1] org.hibernate.SQL :
+    \x1b[34mselect\x1b[0m
+        i1_0.id
+    \x1b[34mfrom\x1b[0m
+        invoices i1_0
+    \x1b[34mwhere\x1b[0m
+        i1_0.customer_id=?
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind : binding parameter (1:BIGINT) <- [2107]";
+        let q = parse(log);
+        assert_eq!(q.len(), 1, "{q:#?}");
+        let words: Vec<&str> = q[0].runnable_sql.split_whitespace().collect();
+        assert_eq!(
+            words,
+            [
+                "select",
+                "i1_0.id",
+                "from",
+                "invoices",
+                "i1_0",
+                "where",
+                "i1_0.customer_id=2107"
+            ]
         );
     }
 

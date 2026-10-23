@@ -62,6 +62,44 @@ pub fn head_for_detection(text: &str) -> &str {
     &text[..end]
 }
 
+/// `text` without ANSI SGR colour escapes (`ESC [ 0-9;* m`).
+///
+/// A log captured from a coloured console carries them —
+/// `hibernate.highlight_sql=true` wraps every SQL keyword in
+/// `\x1b[34m…\x1b[0m`, and Spring Boot colours the level and logger — and
+/// they hide the framing every parser keys off (a continuation line no
+/// longer starts with whitespace-then-keyword, `LOG:` is no longer at a
+/// token boundary). Every log parser strips them first. Borrowed when
+/// there are none.
+pub fn strip_sgr(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\x1b') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('\x1b') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let sgr_len = after.strip_prefix('[').and_then(|params| {
+            let digits = params
+                .bytes()
+                .take_while(|b| b.is_ascii_digit() || *b == b';')
+                .count();
+            (params.as_bytes().get(digits) == Some(&b'm')).then_some(1 + digits + 1)
+        });
+        match sgr_len {
+            Some(len) => rest = &after[len..],
+            None => {
+                // Not a colour escape: keep the ESC as it was.
+                out.push('\x1b');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Detect whether `text` looks like a Hibernate application log or a
 /// Postgres/RDS server log. `None` for plain SQL, prose, or empty input.
 ///
@@ -69,6 +107,7 @@ pub fn head_for_detection(text: &str) -> &str {
 /// safe to call once per paste or once per buffer change, not safe to call
 /// unconditionally every render frame against a multi-MB buffer.
 pub fn detect_log(text: &str) -> Option<LogKind> {
+    let text = &*strip_sgr(text);
     if text.trim().is_empty() {
         return None;
     }
@@ -167,6 +206,30 @@ mod tests {
         assert!(head.len() <= DETECT_HEAD_BYTES);
         assert!(long.starts_with(head));
         assert!(!head.contains("tail"));
+    }
+
+    #[test]
+    fn strip_sgr_removes_colour_escapes_only() {
+        assert_eq!(strip_sgr("\x1b[34mselect\x1b[0m 1"), "select 1");
+        assert_eq!(strip_sgr("\x1b[1;31mERROR\x1b[m:  x"), "ERROR:  x");
+        // Not SGR (a cursor move, a bare ESC, an unterminated one): kept.
+        assert_eq!(strip_sgr("a\x1b[2Kb"), "a\x1b[2Kb");
+        assert_eq!(strip_sgr("a\x1bb\x1b[3"), "a\x1bb\x1b[3");
+        assert!(matches!(
+            strip_sgr("plain"),
+            std::borrow::Cow::Borrowed("plain")
+        ));
+    }
+
+    /// A Postgres log copied out of a colouring pager: the hint and
+    /// the parser both see through the escapes.
+    #[test]
+    fn a_coloured_postgres_log_is_detected_and_parsed() {
+        let log = "2026-10-21 09:12:48 UTC [31840] \x1b[32mLOG\x1b[0m:  statement: select 2";
+        assert_eq!(detect_log(log), Some(LogKind::PgServer));
+        let q = super::super::pglog::parse(log);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].runnable_sql, "select 2");
     }
 
     #[test]
