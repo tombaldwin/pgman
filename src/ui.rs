@@ -457,9 +457,13 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                     // way to connect.
                     lines.push(Line::from("no connection — press c to choose a connection"));
                 }
+                // Wrapped, not clipped: at 80 columns the discovery and
+                // `:connect` lines cut off mid-word. The card fills the
+                // whole body, so the wrapped rows have the room.
                 f.render_widget(
                     Paragraph::new(Text::from(lines))
                         .style(Style::default().fg(app.theme.muted))
+                        .wrap(ratatui::widgets::Wrap { trim: false })
                         .block(bordered(&app.theme, "pgman")),
                     area,
                 );

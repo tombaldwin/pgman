@@ -27,6 +27,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The no-connection start card wraps at 80 columns instead of cutting
+  its lines off mid-word.
 - `--redact` blocked out pgman's own name — the title read `▓▓▓▓▓ 0.1.0`
   — when a database name had `pgman` in it (`pgman_test`). The product
   name is now never redacted; the rest of such a name still is.
