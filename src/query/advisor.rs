@@ -1077,7 +1077,7 @@ fn idle_timeout_note(timeout: Option<&Setting>) -> String {
 
 /// What a `lock_timeout` does to the statements it covers, said
 /// wherever ADV004 brings it up.
-const LOCK_TIMEOUT_CAVEAT: &str = "for a migration or other DDL, SET lock_timeout = '5s' in its session: the ALTER fails after 5s instead of queueing behind the head with everyone else queueing behind it, and the migration can be re-run. Not per role for the application: every statement of that role waiting over 5s would fail with an error — Flyway / Liquibase migrations run as it included — and Java applications generally don't retry. deadlock_timeout doesn't help a pile-up: it only decides when the deadlock check runs";
+const LOCK_TIMEOUT_CAVEAT: &str = "For a migration or other DDL, SET lock_timeout = '5s' in its session: the ALTER fails after 5s instead of queueing behind the head with everyone else queueing behind it, and the migration can be re-run. Not per role for the application: every statement of that role waiting over 5s would fail with an error — Flyway / Liquibase migrations run as it included — and Java applications generally don't retry. deadlock_timeout doesn't help a pile-up: it only decides when the deadlock check runs";
 
 /// ADV004: sessions waiting on locks for at least the threshold.
 pub fn lock_finding(
@@ -1191,7 +1191,7 @@ pub fn lock_finding(
                     .unwrap_or_else(|| "unknown".into()),
                 suggested: "on".into(),
                 reasoning: format!(
-                    "first see who waits on whom: it logs every lock wait longer than deadlock_timeout with the holder and the statement, and changes no session's behaviour. Then {LOCK_TIMEOUT_CAVEAT}"
+                    "first see who waits on whom: it logs every lock wait longer than deadlock_timeout with the holder and the statement, and changes no session's behaviour. {LOCK_TIMEOUT_CAVEAT}"
                 ),
                 restart: restart_of(current, p),
                 rds: rds::describe(p, ctx.kind == ServerKind::Aurora),

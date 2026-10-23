@@ -841,7 +841,8 @@ fn a_running_head_gets_log_lock_waits_then_lock_timeout_for_the_migration_only()
         ("log_lock_waits", "off", "on")
     );
     assert!(
-        ch.reasoning.contains("changes no session's behaviour"),
+        ch.reasoning
+            .contains("changes no session's behaviour. For a migration or other DDL"),
         "{}",
         ch.reasoning
     );
@@ -878,6 +879,13 @@ fn a_running_head_gets_log_lock_waits_then_lock_timeout_for_the_migration_only()
     let ch = advice(&f).change.clone().unwrap();
     assert_eq!(ch.name, "lock_timeout");
     assert_eq!(ch.suggested, "5s, in the migration session");
+    // Each sentence starts as one (found driving the wizard by hand).
+    assert!(
+        ch.reasoning
+            .contains("has the waits. For a migration or other DDL"),
+        "{}",
+        ch.reasoning
+    );
     assert!(
         ch.reasoning
             .contains("Java applications generally don't retry"),
