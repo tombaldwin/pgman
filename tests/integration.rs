@@ -6410,7 +6410,7 @@ async fn a_cell_edit_refuses_what_it_cannot_name_a_row_in() {
         err(computed),
         "can't edit: 'name' is computed, not a table column"
     );
-    let lacks = format!("can't edit: the result lacks public.{t}'s primary key · select id too");
+    let lacks = "can't edit: the result lacks the primary key · select id too";
     assert_eq!(err(no_key), lacks);
     assert_eq!(err(spoofed_key), lacks);
     assert_eq!(unchanged.as_deref(), Some("ann"));

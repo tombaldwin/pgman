@@ -107,10 +107,9 @@ impl std::fmt::Display for Refusal {
                 f,
                 "can't edit: the table isn't in the schema cache · S then r reloads it"
             ),
-            Refusal::OtherTable { from, actual } => write!(
-                f,
-                "can't edit: the columns come from {actual}, not {from}"
-            ),
+            Refusal::OtherTable { from, actual } => {
+                write!(f, "can't edit: the columns come from {actual}, not {from}")
+            }
             Refusal::View { table } => {
                 write!(f, "can't edit: {table} is a view · edit the table under it")
             }
@@ -118,9 +117,11 @@ impl std::fmt::Display for Refusal {
                 f,
                 "can't edit: {table} has no primary key to find the row by"
             ),
-            Refusal::PkNotSelected { table, missing } => write!(
+            // The table is the one the operator just queried; naming it
+            // pushed the line past 80 columns.
+            Refusal::PkNotSelected { missing, .. } => write!(
                 f,
-                "can't edit: the result lacks {table}'s primary key · select {} too",
+                "can't edit: the result lacks the primary key · select {} too",
                 missing.join(", ")
             ),
             Refusal::NullKey { column } => {
@@ -128,7 +129,7 @@ impl std::fmt::Display for Refusal {
             }
             Refusal::MultiLine { column } => write!(
                 f,
-                "can't edit: '{column}' holds a newline or control character · write the UPDATE in the editor"
+                "can't edit: '{column}' isn't one line · write the UPDATE in the editor"
             ),
         }
     }
@@ -443,7 +444,7 @@ mod tests {
         );
         assert_eq!(
             r.unwrap_err().to_string(),
-            "can't edit: the result lacks public.users's primary key · select id too"
+            "can't edit: the result lacks the primary key · select id too"
         );
     }
 
@@ -477,7 +478,7 @@ mod tests {
         );
         assert_eq!(
             r.unwrap_err().to_string(),
-            "can't edit: the result lacks public.lines's primary key · select order_id, line_no too"
+            "can't edit: the result lacks the primary key · select order_id, line_no too"
         );
         let edit = plan_cell_edit(
             &cache(),

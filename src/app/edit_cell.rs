@@ -23,7 +23,7 @@ pub(crate) fn read_only_edit_refusal(
     } else if profile_read_only {
         readonly_off_refusal(cfg, db, safety_toml_exists)
     } else {
-        "read-only for this session (:readonly on) · :readonly off to write".to_string()
+        "read-only (:readonly on) · :readonly off to write".to_string()
     };
     format!("can't edit: {why}")
 }
@@ -631,7 +631,7 @@ mod tests {
         );
         assert_eq!(
             read_only_edit_refusal(false, false, &cfg, "app", true),
-            "can't edit: read-only for this session (:readonly on) · :readonly off to write"
+            "can't edit: read-only (:readonly on) · :readonly off to write"
         );
     }
 
