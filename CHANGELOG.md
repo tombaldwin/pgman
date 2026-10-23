@@ -41,7 +41,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   key in the result, and otherwise says why not (a join, a view, no
   primary key, the key not selected, a computed column, read-only). The
   UPDATE changes exactly one row or is rolled back, and the cell then
-  shows the value as the server stored it.
+  shows the value as the server stored it. Before it commits, pgman
+  checks the server still calls the table, the column and the key what
+  pgman's schema cache does; a column renamed since pgman read the
+  schema (and another added under its old name) is rolled back with
+  `the table changed since pgman read it`, never written to the wrong
+  column.
 - `M` in the results fetches past the first 1000 rows. A plain `SELECT`
   from the editor now reads through a server-side cursor; while it has
   more, the title says `partial · M fetches more`, and each `M` appends
@@ -225,7 +230,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Connected to a standby by `:connect` or `--dsn`, nothing said it was
   one; only an environment naming a replica did. Every connect now asks
   `pg_is_in_recovery()`, and the header wears a `replica` badge on a
-  standby whichever way it was reached.
+  standby whichever way it was reached. The session is pinned read-only
+  there too, as an environment's replica is, whatever `safety.toml`
+  says: the header and start card say read-only, and `u` and
+  `:readonly off` say it is a replica instead of sending a write the
+  server refuses.
 - A result stopped at 1000 rows said only `capped at 1000`, which read as
   though that was the whole table. It now says `more rows not fetched`,
   and the status line adds that `pgman query '…' --json` returns every
@@ -318,7 +327,15 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2
-  overlay and `--batch` stderr give the path.
+  overlay and `--batch` stderr give the path. And it names
+  `safety.toml` only when the profile made the session read-only: a
+  standby, `:readonly on`, or a `SET` / `BEGIN READ ONLY` / role default
+  under a writable profile each says so instead of sending the operator
+  to a file that already says `read_only = false`. A database the
+  project's `.pgman/pgman.toml` keeps read-only is described as that
+  file's block, by the refusal and by `:readonly off`, instead of as a
+  `[databases.<db>]` section of `safety.toml` that the operator's file
+  doesn't have.
 - A completion popup the editor opened on its own (after `.` or `FROM `)
   that narrows to nothing as you type on now closes without leaving
   `completion: no matches for …` in the footer. A popup Tab opened still

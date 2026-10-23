@@ -1514,6 +1514,72 @@ fn result_diff_d_with_empty_grid_is_a_status_not_an_error() {
     assert!(a.last_error.is_none(), "{:?}", a.last_error);
 }
 
+/// A read-only refusal (25006) that reaches the footer says why this
+/// session is read-only: a standby, `:readonly on`, or — under a
+/// writable profile — none of pgman's settings. Only the profile's own
+/// refusal names `safety.toml`.
+#[test]
+fn a_read_only_refusal_in_the_footer_names_the_sessions_own_reason() {
+    let refusal = |a: &mut App| {
+        a.generation = 1;
+        a.on_msg(AppMsg::QueryFailed {
+            generation: 1,
+            error: "cannot execute UPDATE in a read-only transaction".into(),
+            position: None,
+            detail: Some(crate::conn::QueryErrDetail {
+                code: Some("25006".into()),
+                ..Default::default()
+            }),
+        });
+        a.last_error.clone().unwrap_or_default()
+    };
+    let writable = || {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let dsn = Dsn::parse("postgres://u@db.example:5432/ledger").ok();
+        let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
+        a.read_only = false;
+        a
+    };
+    let hinted =
+        |hint: &str| format!("cannot execute UPDATE in a read-only transaction\nhint: {hint}");
+
+    let mut a = writable();
+    a.note_server_role(Some(true));
+    assert_eq!(refusal(&mut a), hinted(crate::conn::READ_ONLY_STANDBY_HINT));
+
+    let mut a = writable();
+    a.note_server_role(Some(false));
+    assert_eq!(
+        refusal(&mut a),
+        hinted(crate::conn::READ_ONLY_ELSEWHERE_HINT)
+    );
+    let detail = a.last_error_detail.and_then(|d| d.hint).unwrap_or_default();
+    assert!(
+        detail.contains("SHOW default_transaction_read_only"),
+        "{detail}"
+    );
+
+    let mut a = writable();
+    a.note_server_role(Some(false));
+    a.read_only_override = Some(true);
+    a.read_only = true;
+    assert_eq!(
+        refusal(&mut a),
+        hinted("read-only by :readonly on · :readonly off to write")
+    );
+
+    // The default profile: safety.toml (or how to get one), as before.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.note_server_role(Some(false));
+    let err = refusal(&mut a);
+    assert!(
+        err == hinted(crate::conn::READ_ONLY_FILE_HINT)
+            || err == hinted(crate::conn::READ_ONLY_DEFAULT_HINT),
+        "{err}"
+    );
+}
+
 #[test]
 fn a_client_side_refusal_after_a_server_error_drops_the_stale_sqlstate() {
     // A server error leaves its SQLSTATE for F2. A refusal pgman itself
@@ -9504,6 +9570,43 @@ fn readonly_off_refusal_names_the_entry_to_change() {
     );
 }
 
+/// A database read-only by the project's `.pgman/pgman.toml` is
+/// described as that file's block — not a `[databases.<db>]` the
+/// personal `safety.toml` doesn't have — and one read-only in both says
+/// both need changing.
+#[test]
+fn readonly_off_refusal_names_the_project_file_when_it_set_read_only() {
+    let ro = |read_only| crate::safety::SafetyProfile {
+        read_only,
+        ..Default::default()
+    };
+    let project = |db: &str| crate::project::ProjectSafety {
+        default: None,
+        databases: [(db.to_string(), ro(true))].into_iter().collect(),
+    };
+    let mut writable = SafetyConfig::default();
+    writable.default.read_only = false;
+    let cfg = crate::project::merge_safety(writable, Some(&project("ledger")));
+    for file in [true, false] {
+        assert_eq!(
+            readonly_off_refusal(&cfg, "ledger", file),
+            "ledger is read-only in this project's .pgman/pgman.toml ([safety.databases.ledger]) · set read_only = false there and restart pgman to write"
+        );
+    }
+    let mut personal = SafetyConfig::default();
+    personal.databases.insert("ledger".into(), ro(true));
+    let cfg = crate::project::merge_safety(personal, Some(&project("ledger")));
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", true),
+        "ledger is read-only in safety.toml ([databases.ledger]) and in this project's .pgman/pgman.toml ([safety.databases.ledger]) · both need read_only = false, then restart pgman"
+    );
+    let cfg = crate::project::merge_safety(SafetyConfig::default(), Some(&project("ledger")));
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", false),
+        "ledger is read-only by default (no safety.toml) and in this project's .pgman/pgman.toml ([safety.databases.ledger]) · both need read_only = false, then restart pgman"
+    );
+}
+
 #[test]
 fn readonly_off_on_a_pinned_database_names_its_entry() {
     let mut cfg = SafetyConfig::default();
@@ -11249,6 +11352,36 @@ async fn connecting_from_the_overview_clears_its_footer() {
     });
     assert_eq!(a.mode, Mode::Normal);
     assert_eq!(a.last_status, None);
+}
+
+/// A server in recovery pins the session read-only at connect, whatever
+/// the profile and however it was reached; a primary, or a server that
+/// didn't say, leaves the profile's answer alone.
+#[test]
+fn a_standby_is_pinned_read_only_however_it_was_reached() {
+    let writable = || {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let dsn = Dsn::parse("postgres://u@db.example:5432/ledger").ok();
+        let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
+        a.read_only = false;
+        a
+    };
+    let mut a = writable();
+    a.note_server_role(Some(true));
+    assert!(a.read_only && a.replica_pin);
+    assert_eq!(a.in_recovery, Some(true));
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(crate::app::cmd::REPLICA_READONLY_REFUSAL)
+    );
+    for role in [Some(false), None] {
+        let mut a = writable();
+        a.note_server_role(role);
+        assert!(!a.read_only && !a.replica_pin, "{role:?}");
+    }
 }
 
 #[tokio::test]

@@ -297,7 +297,8 @@ impl App {
         self.last_status = Some("saving the edit…".into());
         tokio::spawn(async move {
             let client = db.ready().await;
-            let msg = match conn::run_single_row_update(&client, &sql, keep_open).await {
+            let result = conn::run_single_row_update(&client, &sql, &pending.edit, keep_open).await;
+            let msg = match result {
                 Ok(done) => AppMsg::CellUpdated {
                     generation,
                     pending,
@@ -422,6 +423,9 @@ mod tests {
             old: old.map(str::to_string),
             row: 1,
             col: 1,
+            table_oid: 100,
+            attnum: 2,
+            key_attnums: vec![1],
         };
         a.cell_edit = Some(CellEditUi {
             input: TextInput::with_text(old.unwrap_or_default()),
@@ -1063,5 +1067,50 @@ mod live {
         assert_eq!(stored.as_deref(), Some("true"));
         assert_eq!(a.grid.rows[0][1], None);
         assert_eq!(a.mode, Mode::Normal);
+    }
+
+    /// The compose standby reached by a plain DSN, with a profile that
+    /// would let it write: the connect learns it is in recovery and pins
+    /// the session read-only, so `u` and `:readonly off` say it is a
+    /// replica instead of sending a write the server refuses. The
+    /// primary, the same way, stays writable.
+    #[tokio::test]
+    async fn a_standby_reached_by_dsn_is_pinned_read_only_at_connect() {
+        const STANDBY: &str =
+            "postgres://pgman_test:pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable";
+        let connect = |dsn: &str| {
+            let mut cfg = SafetyConfig::default();
+            cfg.default.read_only = false;
+            let mut a = App::new(Theme::default(), Dsn::parse(dsn).ok(), Vec::new(), cfg);
+            a.read_only = false;
+            a.splash_visible = false;
+            a.splash_until = None;
+            a.start_connect();
+            a
+        };
+        let mut a = connect(STANDBY);
+        pump(&mut a).await;
+        assert!(a.client.is_some(), "{:?}", a.conn_state);
+        assert_eq!(a.in_recovery, Some(true));
+        assert!(a.read_only && a.replica_pin);
+        run(&mut a, "SELECT 1 AS x").await;
+        u_at(&mut a, 0, 0);
+        assert_eq!(a.mode, Mode::Normal);
+        assert_eq!(
+            a.last_error.as_deref(),
+            Some(format!("can't edit: {}", cmd::REPLICA_READONLY_REFUSAL).as_str())
+        );
+        a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+        for c in "readonly off".chars() {
+            a.on_key(key(KeyCode::Char(c)));
+        }
+        a.on_key(key(KeyCode::Enter));
+        assert!(a.read_only);
+        assert_eq!(a.last_error.as_deref(), Some(cmd::REPLICA_READONLY_REFUSAL));
+
+        let mut a = connect(DSN);
+        pump(&mut a).await;
+        assert_eq!(a.in_recovery, Some(false));
+        assert!(!a.read_only && !a.replica_pin);
     }
 }

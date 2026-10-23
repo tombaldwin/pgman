@@ -22,13 +22,23 @@ use crate::query::schema::SchemaCache;
 pub struct TableKey {
     pub schema: String,
     pub table: String,
-    /// Per primary-key column, in key order: its index in the grid and
-    /// its catalog name.
-    pub pk: Vec<(usize, String)>,
+    /// The table's OID, as the result's RowDescription named it.
+    pub table_oid: u32,
+    /// Per primary-key column, in key order: its index in the grid, its
+    /// catalog name and its attnum.
+    pub pk: Vec<(usize, String, i16)>,
 }
 
 /// One planned cell edit: the row (by primary key), the column (by its
 /// catalog name, whatever the result called it) and its value as shown.
+///
+/// The names come from the schema cache, which can be older than the
+/// result: a column renamed since pgman loaded it, and another added
+/// under its old name, would have the UPDATE write the wrong column. So
+/// the edit also carries what the server itself said the result was
+/// read from — the table's OID and each column's attnum — and the write
+/// checks those still carry these names ([`expected_identity`],
+/// [`check_identity`]) before it commits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CellEdit {
     pub schema: String,
@@ -36,6 +46,12 @@ pub struct CellEdit {
     pub column: String,
     /// `(column, value)` per primary-key column, in key order.
     pub key: Vec<(String, String)>,
+    /// The table's OID (the result's RowDescription).
+    pub table_oid: u32,
+    /// `column`'s attnum (the result's RowDescription).
+    pub attnum: i16,
+    /// Each key column's attnum, in `key` order.
+    pub key_attnums: Vec<i16>,
     /// The cell as the grid shows it now.
     pub old: Cell,
     /// Index of the row in `grid.rows`.
@@ -205,7 +221,7 @@ pub fn resolve_key(
             .ok_or(Refusal::StaleCache)?;
         let want = ColumnOrigin { table_oid, attnum };
         match origins.iter().position(|o| *o == Some(want)) {
-            Some(idx) => pk.push((idx, name.clone())),
+            Some(idx) => pk.push((idx, name.clone(), attnum)),
             None => missing.push(name.clone()),
         }
     }
@@ -218,6 +234,7 @@ pub fn resolve_key(
     Ok(TableKey {
         schema: schema.clone(),
         table: table.clone(),
+        table_oid,
         pk,
     })
 }
@@ -257,19 +274,24 @@ pub fn plan_cell_edit(
         return Err(Refusal::MultiLine { column: shown });
     }
     let mut values = Vec::with_capacity(key.pk.len());
-    for (idx, name) in &key.pk {
+    let mut key_attnums = Vec::with_capacity(key.pk.len());
+    for (idx, name, key_attnum) in &key.pk {
         let Some(v) = row_cells.get(*idx).cloned().flatten() else {
             return Err(Refusal::NullKey {
                 column: name.clone(),
             });
         };
         values.push((name.clone(), v));
+        key_attnums.push(*key_attnum);
     }
     Ok(CellEdit {
         schema: key.schema,
         table: key.table,
         column,
         key: values,
+        table_oid: key.table_oid,
+        attnum,
+        key_attnums,
         old,
         row,
         col,
@@ -301,6 +323,68 @@ pub fn build_update_sql(edit: &CellEdit, new: Option<&str>) -> String {
         quote_ident(&edit.schema),
         quote_ident(&edit.table),
         format_sql_literal(new),
+    )
+}
+
+/// What the server must still call the edit's table and columns when
+/// its UPDATE runs: per attnum (`0` for the table itself), the names
+/// `pg_identify_object_as_address` gives it — `[schema, table]` for the
+/// table, `[schema, table, column]` for a column. The edited column
+/// comes first, then the key in key order.
+pub fn expected_identity(edit: &CellEdit) -> Vec<(i16, Vec<String>)> {
+    let names = |column: Option<&str>| {
+        let mut v = vec![edit.schema.clone(), edit.table.clone()];
+        v.extend(column.map(str::to_string));
+        v
+    };
+    let mut out = vec![(0, names(None)), (edit.attnum, names(Some(&edit.column)))];
+    for ((name, _), attnum) in edit.key.iter().zip(&edit.key_attnums) {
+        out.push((*attnum, names(Some(name))));
+    }
+    out
+}
+
+/// What the server calls one attnum of the edit's table now: the
+/// attnum and its `pg_identify_object_as_address` names (`None`:
+/// nothing by that number).
+pub type ServerName = (i16, Option<Vec<String>>);
+
+/// The guard against a schema cache older than the table: `server` is
+/// what the server calls each of [`expected_identity`]'s attnums now
+/// (`None`: nothing by that number), read inside the UPDATE's own
+/// transaction after the UPDATE took its lock, so no ALTER TABLE can
+/// slip in between. Any difference — a renamed table or column, one
+/// dropped, or a key length that doesn't match — is the message the
+/// rollback carries. Pure.
+pub fn check_identity(edit: &CellEdit, server: &[ServerName]) -> Result<(), String> {
+    if edit.key_attnums.len() != edit.key.len() {
+        return Err(table_changed("its key changed"));
+    }
+    for (attnum, want) in expected_identity(edit) {
+        let now = server
+            .iter()
+            .find(|(n, _)| *n == attnum)
+            .and_then(|(_, names)| names.as_ref());
+        if now == Some(&want) {
+            continue;
+        }
+        let what = want.last().cloned().unwrap_or_default();
+        let since = match now.and_then(|n| n.last()) {
+            _ if attnum == 0 => format!("{} was renamed or dropped", want.join(".")),
+            Some(name) if name.starts_with("........pg.dropped") => format!("'{what}' was dropped"),
+            Some(name) => format!("'{what}' is now '{name}'"),
+            None => format!("'{what}' is gone"),
+        };
+        return Err(table_changed(&since));
+    }
+    Ok(())
+}
+
+/// [`check_identity`]'s refusal: what changed, how to catch up, and
+/// that nothing was written.
+fn table_changed(since: &str) -> String {
+    format!(
+        "the table changed since pgman read it ({since}) · S then r reloads the schema · rolled back, nothing changed"
     )
 }
 
@@ -413,6 +497,9 @@ mod tests {
                 old: Some("ann".into()),
                 row: 3,
                 col: 0,
+                table_oid: USERS,
+                attnum: 4,
+                key_attnums: vec![1],
             }
         );
         assert_eq!(
@@ -637,6 +724,9 @@ mod tests {
             old: None,
             row: 0,
             col: 0,
+            table_oid: 100,
+            attnum: 2,
+            key_attnums: vec![1],
         };
         assert_eq!(
             build_update_sql(&edit, Some("")),
@@ -650,6 +740,84 @@ mod tests {
             build_update_sql(&edit, Some(r"C:\tmp 'x'")),
             r#"UPDATE public."Mixed Case" SET note = E'C:\\tmp ''x''' WHERE "Id" = 'it''s' RETURNING note"#
         );
+    }
+
+    /// `public.users."Nick"` (attnum 4) where `id` (attnum 1) = 7, as
+    /// the server would name each attnum when nothing changed.
+    fn nick_edit() -> (CellEdit, Vec<ServerName>) {
+        let edit = plan_cell_edit(
+            &cache(),
+            src("users").as_ref(),
+            &cols(&["handle", "id"]),
+            &[o(USERS, 4), o(USERS, 1)],
+            &cells(&[Some("ann"), Some("7")]),
+            0,
+            0,
+        )
+        .unwrap();
+        let names = |v: &[&str]| Some(v.iter().map(|s| s.to_string()).collect());
+        let server = vec![
+            (0, names(&["public", "users"])),
+            (4, names(&["public", "users", "Nick"])),
+            (1, names(&["public", "users", "id"])),
+        ];
+        (edit, server)
+    }
+
+    #[test]
+    fn the_planned_names_are_what_the_server_is_asked_to_confirm() {
+        let (edit, server) = nick_edit();
+        assert_eq!(edit.table_oid, USERS);
+        assert_eq!((edit.attnum, edit.key_attnums.clone()), (4, vec![1]));
+        let want: Vec<_> = server
+            .iter()
+            .map(|(n, names)| (*n, names.clone().unwrap()))
+            .collect();
+        assert_eq!(expected_identity(&edit), want);
+        assert_eq!(check_identity(&edit, &server), Ok(()));
+    }
+
+    /// A rename of the edited column, of a key column, or of the table,
+    /// a dropped column or one the server has no name for at all: each
+    /// says what changed, how to catch up, and that nothing was written.
+    #[test]
+    fn a_column_or_table_the_server_now_names_differently_is_refused() {
+        let (edit, server) = nick_edit();
+        let with = |at: usize, names: Option<&[&str]>| {
+            let mut s = server.clone();
+            s[at].1 = names.map(|v| v.iter().map(|x| x.to_string()).collect());
+            check_identity(&edit, &s).unwrap_err()
+        };
+        let column = with(1, Some(&["public", "users", "nick"]));
+        assert_eq!(
+            column,
+            "the table changed since pgman read it ('Nick' is now 'nick') · S then r reloads the schema · rolled back, nothing changed"
+        );
+        assert!(with(2, Some(&["public", "users", "old_id"])).contains("('id' is now 'old_id')"));
+        assert!(with(
+            1,
+            Some(&["public", "users", "........pg.dropped.4........"])
+        )
+        .contains("('Nick' was dropped)"));
+        assert!(with(1, None).contains("('Nick' is gone)"));
+        assert!(
+            with(0, Some(&["public", "people"])).contains("(public.users was renamed or dropped)")
+        );
+        assert!(with(0, None).contains("(public.users was renamed or dropped)"));
+        // A table moved to another schema: the UPDATE's `public.users`
+        // is no longer it.
+        assert!(with(0, Some(&["app", "users"])).contains("(public.users was renamed or dropped)"));
+        // An attnum the server didn't answer for at all.
+        let mut short = server.clone();
+        short.pop();
+        assert!(check_identity(&edit, &short)
+            .unwrap_err()
+            .contains("('id' is gone)"));
+        let mut broken = edit.clone();
+        broken.key_attnums.clear();
+        assert!(check_identity(&broken, &server)
+            .unwrap_err()
+            .contains("(its key changed)"));
     }
 
     #[test]

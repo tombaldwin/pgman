@@ -75,15 +75,18 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
 }
 
 /// `:readonly off` refused by the profile: where the setting lives and
-/// what to change. `safety.toml` is read at start, so the next step
-/// ends in a restart. Pure.
+/// what to change — the personal `safety.toml` (or the built-in default
+/// without one), this project's `.pgman/pgman.toml`, or both, as the
+/// merge recorded (`SafetyConfig::read_only_origin`). Both files are
+/// read at start, so the next step ends in a restart. Pure.
 pub fn readonly_off_refusal(
     cfg: &safety::SafetyConfig,
     db: &str,
     safety_toml_exists: bool,
 ) -> String {
-    let own_entry = cfg.databases.contains_key(db);
-    match (safety_toml_exists, own_entry) {
+    let origin = cfg.read_only_origin(db);
+    let personal = || {
+        match (safety_toml_exists, origin.personal_own_entry) {
         (false, _) => crate::conn::READ_ONLY_DEFAULT_HINT.to_string(),
         (true, true) => format!(
             "{db} is read-only in safety.toml ([databases.{db}]) · set read_only = false there and restart pgman to write"
@@ -92,6 +95,23 @@ pub fn readonly_off_refusal(
             "read-only is safety.toml's [default] · add [databases.{db}] with read_only = false and restart pgman to write"
         ),
     }
+    };
+    let Some(block) = origin.project.as_deref() else {
+        return personal();
+    };
+    if !origin.personal {
+        return format!(
+            "{db} is read-only in this project's .pgman/pgman.toml ({block}) · set read_only = false there and restart pgman to write"
+        );
+    }
+    let mine = match (safety_toml_exists, origin.personal_own_entry) {
+        (false, _) => "by default (no safety.toml)".to_string(),
+        (true, true) => format!("in safety.toml ([databases.{db}])"),
+        (true, false) => "in safety.toml's [default]".to_string(),
+    };
+    format!(
+        "{db} is read-only {mine} and in this project's .pgman/pgman.toml ({block}) · both need read_only = false, then restart pgman"
+    )
 }
 
 /// The status line when the query Enter loaded from the log picker
@@ -197,7 +217,13 @@ fn is_panel(mode: Mode) -> bool {
 /// [`read_only_escape_refusal`] to show; checked at message time
 /// because the profile itself does not record where it came from.
 fn safety_toml_exists() -> bool {
-    crate::util::config_file("safety.toml").exists()
+    existing_safety_toml().is_some()
+}
+
+/// The personal `safety.toml`, when there is one.
+pub(crate) fn existing_safety_toml() -> Option<std::path::PathBuf> {
+    let path = crate::util::config_file("safety.toml");
+    path.exists().then_some(path)
 }
 
 /// Parse `BOOTSTRAP_SQL`'s result grid (`database`, `size` columns) into
@@ -842,7 +868,7 @@ pub fn choose_diff_key(
         };
         if let (Ok(ka), Ok(kb)) = (key(a), key(b)) {
             if ka == kb {
-                let cols = ka.pk.iter().map(|(idx, _)| *idx).collect();
+                let cols = ka.pk.iter().map(|(idx, ..)| *idx).collect();
                 return (RowKey::Columns(cols), true);
             }
         }
@@ -1751,9 +1777,10 @@ pub struct App {
     /// and `:readonly off` against such a profile is refused outright
     /// before it gets set (`dispatch_read_only`).
     pub read_only_override: Option<bool>,
-    /// The connected server is a replica opened from the environments
-    /// overview: read-only for the whole session, `\c <db>` included,
-    /// and `:readonly off` is refused.
+    /// The connected server is a replica — opened from the environments
+    /// overview as one, or a standby by `pg_is_in_recovery()` at
+    /// connect (`App::note_server_role`): read-only for the whole
+    /// session, `\c <db>` included, and `:readonly off` is refused.
     pub replica_pin: bool,
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,

@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use crate::conn::Dsn;
 use crate::query::format::{FormatOptions, KeywordCase};
-use crate::safety::{Guard, Guards, SafetyConfig, SafetyProfile};
+use crate::safety::{Guard, Guards, ReadOnlyOrigin, SafetyConfig, SafetyProfile};
 
 /// Top-level shape of `.pgman/pgman.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -224,8 +224,16 @@ pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
 pub fn merge_safety(global: SafetyConfig, project: Option<&ProjectSafety>) -> SafetyConfig {
     let mut out = global;
     let Some(p) = project else { return out };
+    // Where each read_only came from, recorded as the merge goes, so a
+    // refusal can name the project's file rather than the personal
+    // `safety.toml` (`SafetyConfig::read_only_origin`).
     if let Some(d) = &p.default {
+        let personal = out.read_only_origin_of_default();
         out.default = tighten_profile(&out.default, d, "safety.default");
+        out.default_read_only_origin = Some(ReadOnlyOrigin {
+            project: d.read_only.then(|| "[safety.default]".to_string()),
+            ..personal
+        });
     }
     for (db, profile) in &p.databases {
         // The base for a database the personal config doesn't mention
@@ -236,8 +244,16 @@ pub fn merge_safety(global: SafetyConfig, project: Option<&ProjectSafety>) -> Sa
             .get(db)
             .cloned()
             .unwrap_or_else(|| out.default.clone());
+        let before = out.read_only_origin(db);
         let merged = tighten_profile(&base, profile, &format!("safety.databases.{db}"));
         out.databases.insert(db.clone(), merged);
+        let project = if profile.read_only {
+            Some(format!("[safety.databases.{db}]"))
+        } else {
+            before.project.clone()
+        };
+        out.read_only_origins
+            .insert(db.clone(), ReadOnlyOrigin { project, ..before });
     }
     out
 }
@@ -795,6 +811,79 @@ statement_timeout_ms = 5000
         assert!(
             merged.default.read_only,
             "a committed pgman.toml must not be able to clear read_only"
+        );
+    }
+
+    /// The merge records which file made each database read-only, so a
+    /// refusal can name `.pgman/pgman.toml` rather than a `safety.toml`
+    /// section the operator's file doesn't have.
+    #[test]
+    fn merge_safety_records_which_file_made_a_database_read_only() {
+        use crate::safety::ReadOnlyOrigin;
+        let ro = |read_only| SafetyProfile {
+            read_only,
+            ..Default::default()
+        };
+        let mut writable = SafetyConfig::default();
+        writable.default.read_only = false;
+
+        // Only the project's block: the project's file, not the personal one.
+        let merged = merge_safety(writable.clone(), Some(&project_db("ledger", ro(true))));
+        assert!(merged.profile_for("ledger").read_only);
+        assert_eq!(
+            merged.read_only_origin("ledger"),
+            ReadOnlyOrigin {
+                personal: false,
+                personal_own_entry: false,
+                project: Some("[safety.databases.ledger]".into()),
+            }
+        );
+        // An unnamed database is still the personal [default]'s.
+        assert_eq!(merged.read_only_origin("other"), ReadOnlyOrigin::default());
+
+        // Personal entry and project block both on.
+        let mut both = SafetyConfig::default();
+        both.databases.insert("ledger".into(), ro(true));
+        let merged = merge_safety(both, Some(&project_db("ledger", ro(true))));
+        assert_eq!(
+            merged.read_only_origin("ledger"),
+            ReadOnlyOrigin {
+                personal: true,
+                personal_own_entry: true,
+                project: Some("[safety.databases.ledger]".into()),
+            }
+        );
+
+        // The project's [safety.default] reaches every database the
+        // personal file doesn't name, and a project block that leaves
+        // read_only off keeps that origin.
+        let merged = merge_safety(writable.clone(), Some(&project_default(ro(true))));
+        let from_default = ReadOnlyOrigin {
+            personal: false,
+            personal_own_entry: false,
+            project: Some("[safety.default]".into()),
+        };
+        assert_eq!(merged.read_only_origin("anything"), from_default);
+        let project = ProjectSafety {
+            default: Some(ro(true)),
+            databases: [("ledger".to_string(), ro(false))].into_iter().collect(),
+        };
+        let merged = merge_safety(writable.clone(), Some(&project));
+        assert!(merged.profile_for("ledger").read_only);
+        assert_eq!(merged.read_only_origin("ledger"), from_default);
+
+        // A personal [databases.<db>] the project's default doesn't touch.
+        let mut own = writable;
+        own.databases.insert("ledger".into(), ro(false));
+        let merged = merge_safety(own, Some(&project_default(ro(true))));
+        assert!(!merged.profile_for("ledger").read_only);
+        assert_eq!(
+            merged.read_only_origin("ledger"),
+            ReadOnlyOrigin {
+                personal: false,
+                personal_own_entry: true,
+                project: None,
+            }
         );
     }
 

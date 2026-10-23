@@ -2226,7 +2226,9 @@ fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
             severity: Some("ERROR".into()),
             ..Default::default()
         }),
-        Some(path),
+        &crate::conn::ReadOnlyCause::Profile {
+            safety_toml: Some(path.to_path_buf()),
+        },
     );
     let mut app = App::new(
         Theme::default(),

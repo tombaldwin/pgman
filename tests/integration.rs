@@ -1057,6 +1057,85 @@ fn batch_read_only_transaction_refusal_carries_the_configuration_hint() {
     );
 }
 
+/// A writable profile's write refused by the server — the compose
+/// standby, or a transaction the script itself made read-only — is not
+/// blamed on `safety.toml`: the hint says it isn't pgman's setting, and
+/// names a standby among the suspects, since `--batch` doesn't ask.
+#[test]
+fn batch_read_only_refusal_under_a_writable_profile_does_not_blame_safety_toml() {
+    let home = scratch_home("readonly-not-ours", WRITABLE_PROFILE);
+    let standby = batch_with_home_dsn(
+        &home,
+        STANDBY_DSN,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE pgman_it_ro_not_ours (id int)",
+        ],
+    );
+    let in_script = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "SET TRANSACTION READ ONLY; CREATE TABLE pgman_it_ro_not_ours (id int)",
+        ],
+    );
+    for (what, out) in [("standby", standby), ("SET TRANSACTION", in_script)] {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{what}: the write must be refused");
+        assert!(
+            stderr.contains("read-only transaction"),
+            "{what}: the server's message: {stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "hint: {}",
+                pgman::conn::READ_ONLY_ELSEWHERE_OR_STANDBY_HINT
+            )),
+            "{what}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("read-only by safety.toml"),
+            "{what}: {stderr}"
+        );
+    }
+}
+
+/// A database the project's `.pgman/pgman.toml` keeps read-only, under a
+/// writable personal profile: the refusal names the project's file and
+/// block, not a `safety.toml` section the operator's file doesn't have.
+#[test]
+fn batch_read_only_refusal_from_the_project_file_names_it() {
+    let home = scratch_home("readonly-project", WRITABLE_PROFILE);
+    std::fs::create_dir_all(home.join(".pgman")).unwrap();
+    std::fs::write(
+        home.join(".pgman/pgman.toml"),
+        "[safety.databases.pgman_test]\nread_only = true\n",
+    )
+    .unwrap();
+    let out = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["--batch", "--dsn", DSN, "--yes", "--sql"])
+        .arg("CREATE TABLE pgman_it_ro_project (id int)")
+        .output()
+        .expect("spawn pgman");
+    let _ = std::fs::remove_dir_all(home.join(".pgman"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the write must be refused: {stderr}");
+    assert!(
+        stderr.contains(
+            "hint: read-only by .pgman/pgman.toml ([safety.databases.pgman_test]) — see docs/configuration.md"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("safety.toml can't loosen it"), "{stderr}");
+}
+
 #[test]
 fn batch_read_only_transaction_refusal_without_a_profile_says_how_to_get_one() {
     // Same server-side 25006 refusal, but under the built-in default
@@ -6969,7 +7048,7 @@ async fn edit_cell(
         pgman::safety::StatementKind::Update { has_where: true },
         "{sql}"
     );
-    pgman::conn::run_single_row_update(client, &sql, keep_open)
+    pgman::conn::run_single_row_update(client, &sql, &edit, keep_open)
         .await
         .map_err(|e| e.msg)
 }
@@ -7221,6 +7300,7 @@ async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
     let none = pgman::conn::run_single_row_update(
         &client,
         &pgman::query::cell_edit::build_update_sql(&edit, Some("x")),
+        &edit,
         false,
     )
     .await
@@ -7257,6 +7337,155 @@ async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
     assert_eq!(mine.as_deref(), Some("mine"));
 }
 
+/// Plan the edit of cell (`row`, `col`) of `select` against `cache` —
+/// a schema cache read before the table changed, as pgman's is when a
+/// rename happens after connect — and run it under the one-row guard.
+async fn edit_cell_with_cache(
+    client: &tokio_postgres::Client,
+    cache: &pgman::query::schema::SchemaCache,
+    select: &str,
+    (row, col): (usize, usize),
+    new: &str,
+) -> Result<(String, pgman::conn::SingleRowUpdate), String> {
+    let (grid, origins) = pgman::conn::run_statement_with_origins(client, select)
+        .await
+        .map_err(|e| e.msg)?;
+    let edit = pgman::query::cell_edit::plan_cell_edit(
+        cache,
+        pgman::app::infer_single_source_table(select).as_ref(),
+        &grid.columns,
+        &origins,
+        &grid.rows[row],
+        row,
+        col,
+    )
+    .map_err(|r| r.to_string())?;
+    let sql = pgman::query::cell_edit::build_update_sql(&edit, Some(new));
+    pgman::conn::run_single_row_update(client, &sql, &edit, false)
+        .await
+        .map(|done| (sql, done))
+        .map_err(|e| e.msg)
+}
+
+/// A column renamed after pgman read the schema, and a new one added
+/// under its old name: the cache still calls the edited column (attnum
+/// 3) `b`, so the UPDATE says `SET b` — which the server now reads as
+/// the new column. The write checks the attnum's name inside its own
+/// transaction and rolls back instead; neither column changes. Inside
+/// the operator's REPEATABLE READ transaction too, whose snapshot
+/// predates the rename.
+#[tokio::test]
+async fn a_cell_edit_after_its_column_was_renamed_and_re_added_writes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let (ddl, _t2) = writable_client().await;
+    let t = it_name("ce_ren_col");
+    let setup = format!(
+        "DROP TABLE IF EXISTS {t}; CREATE TABLE {t} (id int PRIMARY KEY, a text, b text); \
+         INSERT INTO {t} VALUES (1, 'a1', 'b1')"
+    );
+    let rename = format!(
+        "ALTER TABLE {t} RENAME COLUMN b TO c; ALTER TABLE {t} ADD COLUMN b text DEFAULT 'new-b'"
+    );
+    let select = format!("SELECT id, c FROM {t}");
+    let both = format!("SELECT c || '/' || b FROM {t}");
+
+    client.batch_execute(&setup).await.expect("create");
+    let stale = pgman::query::schema::fetch(&client).await;
+    ddl.batch_execute(&rename).await.expect("rename");
+    let plain = edit_cell_with_cache(&client, &stale, &select, (0, 1), "X").await;
+    let plain_after = scalar(&client, &both).await;
+    let open_tx = scalar(&client, "SELECT now() = statement_timestamp()").await;
+
+    client.batch_execute(&setup).await.expect("recreate");
+    let stale = pgman::query::schema::fetch(&client).await;
+    client
+        .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
+        .await
+        .expect("begin");
+    // Take the snapshot without touching the table (a lock on it would
+    // hold the ALTER back until the transaction ends).
+    let _ = scalar(&client, "SELECT 'snapshot'").await;
+    ddl.batch_execute(&rename).await.expect("rename");
+    let in_rr = edit_cell_with_cache(&client, &stale, &select, (0, 1), "X").await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+    let rr_after = scalar(&client, &both).await;
+
+    // A fresh cache names the column right, and the edit goes through.
+    let fresh = pgman::query::schema::fetch(&client).await;
+    let ok = edit_cell_with_cache(&client, &fresh, &select, (0, 1), "X").await;
+    let ok_after = scalar(&client, &both).await;
+
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    let refused = |r: Result<(String, pgman::conn::SingleRowUpdate), String>| {
+        let msg = r.expect_err("stale column");
+        assert!(
+            msg.starts_with("the table changed since pgman read it ('b' is now 'c')"),
+            "{msg}"
+        );
+        assert!(msg.contains("rolled back, nothing changed"), "{msg}");
+    };
+    refused(plain);
+    assert_eq!(plain_after.as_deref(), Some("b1/new-b"));
+    assert_eq!(
+        open_tx.as_deref(),
+        Some("t"),
+        "the edit's transaction ended"
+    );
+    refused(in_rr);
+    assert_eq!(rr_after.as_deref(), Some("b1/new-b"));
+    let (sql, done) = ok.expect("fresh cache");
+    assert!(sql.contains("SET c = 'X'"), "{sql}");
+    assert_eq!(done.value.as_deref(), Some("X"));
+    assert_eq!(ok_after.as_deref(), Some("X/new-b"));
+}
+
+/// The key column renamed and a new one added under its name, holding
+/// the other row's key: the stale cache's `WHERE id = '2'` would match
+/// exactly one row — the wrong one — and pass the one-row guard. The
+/// key's attnum is checked like the edited column's, and nothing
+/// changes.
+#[tokio::test]
+async fn a_cell_edit_after_its_key_was_renamed_and_re_added_writes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_ren_key");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); \
+             INSERT INTO {t} VALUES (1, 'ann'), (2, 'bo')"
+        ))
+        .await
+        .expect("create");
+    let stale = pgman::query::schema::fetch(&client).await;
+    client
+        .batch_execute(&format!(
+            "ALTER TABLE {t} RENAME COLUMN id TO old_id; ALTER TABLE {t} ADD COLUMN id int; \
+             UPDATE {t} SET id = 3 - old_id"
+        ))
+        .await
+        .expect("rename");
+    // Row 1 is old_id 2 (`bo`), whose new `id` is 1; `ann` has id 2.
+    let refused = edit_cell_with_cache(
+        &client,
+        &stale,
+        &format!("SELECT old_id, name FROM {t} ORDER BY old_id"),
+        (1, 1),
+        "X",
+    )
+    .await;
+    let after = scalar(
+        &client,
+        &format!("SELECT string_agg(name, ',' ORDER BY old_id) FROM {t}"),
+    )
+    .await;
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    let msg = refused.expect_err("stale key");
+    assert!(
+        msg.starts_with("the table changed since pgman read it ('id' is now 'old_id')"),
+        "{msg}"
+    );
+    assert_eq!(after.as_deref(), Some("ann,bo"));
+}
+
 /// Inside the operator's open transaction a good edit stays theirs to
 /// commit or roll back; under `auto_tx` pgman's own transaction is left
 /// open for the prompt. Rolled back, neither changed anything.
@@ -7287,10 +7516,10 @@ async fn a_cell_edit_inside_an_open_transaction_is_not_committed() {
     assert_eq!(after_open.as_deref(), Some("ann"));
 }
 
-/// A read-only session's edit is refused by the server, with the hint
-/// every read-only refusal carries, and leaves no transaction behind.
+/// A read-only session's edit is refused by the server, and leaves no
+/// transaction behind.
 #[tokio::test]
-async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
+async fn a_cell_edit_on_a_read_only_session_is_refused_by_the_server() {
     let (writer, _w) = writable_client().await;
     let t = it_name("ce_ro");
     writer
@@ -7313,7 +7542,9 @@ async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
     let _ = writer.batch_execute(&format!("DROP TABLE {t}")).await;
     let msg = refused.expect_err("read-only");
     assert!(msg.contains("read-only transaction"), "{msg}");
-    assert!(msg.contains("hint: read-only"), "{msg}");
+    // The library doesn't guess why the session is read-only; the TUI
+    // adds the hint for its own session (`conn::ReadOnlyCause`).
+    assert!(!msg.contains("hint:"), "{msg}");
     assert_eq!(open_tx.as_deref(), Some("t"));
     assert_eq!(after.as_deref(), Some("ann"));
 }

@@ -288,7 +288,12 @@ pasted in); write that UPDATE in the editor.
 
 The UPDATE changes **one row or nothing**: any other count (the row
 was deleted since the query ran; an inheritance child shares the key)
-is rolled back and the footer says so. Inside a transaction you opened
+is rolled back and the footer says so. So is an edit whose table,
+column or key the server no longer calls what pgman's schema cache
+does — a column renamed since pgman read the schema, with another
+added under its old name, would otherwise take the write: the footer
+says `the table changed since pgman read it`, and `S` then `r`
+reloads the schema. Inside a transaction you opened
 with `BEGIN`, only the edit is undone, under a savepoint. On success
 the cell shows the value as the server stored it (`1.5` into a
 `numeric(10,2)` reads `1.50`); with `auto_tx` on, the commit / rollback
