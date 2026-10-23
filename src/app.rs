@@ -197,7 +197,13 @@ fn is_panel(mode: Mode) -> bool {
 /// [`read_only_escape_refusal`] to show; checked at message time
 /// because the profile itself does not record where it came from.
 fn safety_toml_exists() -> bool {
-    crate::util::config_file("safety.toml").exists()
+    existing_safety_toml().is_some()
+}
+
+/// The personal `safety.toml`, when there is one.
+pub(crate) fn existing_safety_toml() -> Option<std::path::PathBuf> {
+    let path = crate::util::config_file("safety.toml");
+    path.exists().then_some(path)
 }
 
 /// Parse `BOOTSTRAP_SQL`'s result grid (`database`, `size` columns) into

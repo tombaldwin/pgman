@@ -284,7 +284,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2
-  overlay and `--batch` stderr give the path.
+  overlay and `--batch` stderr give the path. And it names
+  `safety.toml` only when the profile made the session read-only: a
+  standby, `:readonly on`, or a `SET` / `BEGIN READ ONLY` / role default
+  under a writable profile each says so instead of sending the operator
+  to a file that already says `read_only = false`.
 - A completion popup the editor opened on its own (after `.` or `FROM `)
   that narrows to nothing as you type on now closes without leaving
   `completion: no matches for …` in the footer. A popup Tab opened still

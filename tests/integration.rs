@@ -1057,6 +1057,51 @@ fn batch_read_only_transaction_refusal_carries_the_configuration_hint() {
     );
 }
 
+/// A writable profile's write refused by the server — the compose
+/// standby, or a transaction the script itself made read-only — is not
+/// blamed on `safety.toml`: the hint says it isn't pgman's setting, and
+/// names a standby among the suspects, since `--batch` doesn't ask.
+#[test]
+fn batch_read_only_refusal_under_a_writable_profile_does_not_blame_safety_toml() {
+    let home = scratch_home("readonly-not-ours", WRITABLE_PROFILE);
+    let standby = batch_with_home_dsn(
+        &home,
+        STANDBY_DSN,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE pgman_it_ro_not_ours (id int)",
+        ],
+    );
+    let in_script = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "SET TRANSACTION READ ONLY; CREATE TABLE pgman_it_ro_not_ours (id int)",
+        ],
+    );
+    for (what, out) in [("standby", standby), ("SET TRANSACTION", in_script)] {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{what}: the write must be refused");
+        assert!(
+            stderr.contains("read-only transaction"),
+            "{what}: the server's message: {stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "hint: {}",
+                pgman::conn::READ_ONLY_ELSEWHERE_OR_STANDBY_HINT
+            )),
+            "{what}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("read-only by safety.toml"),
+            "{what}: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn batch_read_only_transaction_refusal_without_a_profile_says_how_to_get_one() {
     // Same server-side 25006 refusal, but under the built-in default
@@ -7357,10 +7402,10 @@ async fn a_cell_edit_inside_an_open_transaction_is_not_committed() {
     assert_eq!(after_open.as_deref(), Some("ann"));
 }
 
-/// A read-only session's edit is refused by the server, with the hint
-/// every read-only refusal carries, and leaves no transaction behind.
+/// A read-only session's edit is refused by the server, and leaves no
+/// transaction behind.
 #[tokio::test]
-async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
+async fn a_cell_edit_on_a_read_only_session_is_refused_by_the_server() {
     let (writer, _w) = writable_client().await;
     let t = it_name("ce_ro");
     writer
@@ -7383,7 +7428,9 @@ async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
     let _ = writer.batch_execute(&format!("DROP TABLE {t}")).await;
     let msg = refused.expect_err("read-only");
     assert!(msg.contains("read-only transaction"), "{msg}");
-    assert!(msg.contains("hint: read-only"), "{msg}");
+    // The library doesn't guess why the session is read-only; the TUI
+    // adds the hint for its own session (`conn::ReadOnlyCause`).
+    assert!(!msg.contains("hint:"), "{msg}");
     assert_eq!(open_tx.as_deref(), Some("t"));
     assert_eq!(after.as_deref(), Some("ann"));
 }
