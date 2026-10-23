@@ -56,6 +56,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   it counts characters now. Every yank reports a clipboard failure the
   same way (`yank failed: …`), and the test suite no longer writes to
   the system clipboard.
+- `--batch` with a script of several statements, one of them a
+  `SELECT`, says on stderr that a script prints only its status, not
+  rows: `--format json` printed `[{"status":"batch executed"}]` and the
+  rows seemed lost. Run the `SELECT` on its own to get them.
 - `:fixture` with a grid filter active captures the rows the filter
   shows, as `Y` exports them, and the status says `N of M row(s)
   (filtered)`. It captured every row, hidden ones included.

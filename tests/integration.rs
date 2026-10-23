@@ -5912,3 +5912,37 @@ async fn backslashes_survive_the_yank_and_fixture_under_either_string_setting() 
     let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// A multi-statement script's SELECT rows don't come back — the simple
+/// query protocol has none to give — and `--format json` printed only
+/// `[{"status":"batch executed"}]`. stderr now says why; a single
+/// statement still prints its rows with nothing on stderr.
+#[test]
+fn batch_json_script_with_a_select_explains_where_the_rows_went() {
+    let home = scratch_home_without_profile("json-script");
+    let out = batch_with_home(
+        &home,
+        &["--sql", "SELECT 1 AS a; SELECT 2 AS b", "--format", "json"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        r#"[{"status":"batch executed"}]"#
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("prints only its status, not rows"),
+        "{stderr}"
+    );
+    let out = batch_with_home(&home, &["--sql", "SELECT 1 AS a", "--format", "json"]);
+    assert!(out.status.success());
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
