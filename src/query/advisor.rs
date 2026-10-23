@@ -1064,6 +1064,10 @@ fn idle_timeout_note(timeout: Option<&Setting>) -> String {
     )
 }
 
+/// What a `lock_timeout` does to the statements it covers, said
+/// wherever ADV004 brings it up.
+const LOCK_TIMEOUT_CAVEAT: &str = "for a migration or other DDL, SET lock_timeout = '5s' in its session: the ALTER fails after 5s instead of queueing behind the head with everyone else queueing behind it, and the migration can be re-run. Not per role for the application: every statement of that role waiting over 5s would fail with an error — Flyway / Liquibase migrations run as it included — and Java applications generally don't retry. deadlock_timeout doesn't help a pile-up: it only decides when the deadlock check runs";
+
 /// ADV004: sessions waiting on locks for at least the threshold.
 pub fn lock_finding(
     ctx: &Context,
@@ -1159,23 +1163,43 @@ pub fn lock_finding(
                 ),
             },
         )
+    } else if settings
+        .get("log_lock_waits")
+        .is_none_or(|s| s.setting != "on")
+    {
+        // Logging the waits first: it changes no session's behaviour,
+        // where a lock_timeout makes statements fail.
+        let p = mapping("log_lock_waits");
+        let current = settings.get("log_lock_waits");
+        (
+            server_suggestion(ctx.kind, p, "on", "1", restart_of(current, p)),
+            SettingChange {
+                name: p.name,
+                current: current
+                    .map(Setting::display)
+                    .unwrap_or_else(|| "unknown".into()),
+                suggested: "on".into(),
+                reasoning: format!(
+                    "first see who waits on whom: it logs every lock wait longer than deadlock_timeout with the holder and the statement, and changes no session's behaviour. Then {LOCK_TIMEOUT_CAVEAT}"
+                ),
+                restart: restart_of(current, p),
+                rds: rds::describe(p, ctx.kind == ServerKind::Aurora),
+            },
+        )
     } else {
         let p = mapping("lock_timeout");
-        let role = waiters
-            .iter()
-            .map(|w| w.user.as_str())
-            .find(|u| !u.is_empty())
-            .unwrap_or("<app_role>");
         (
-            format!("ALTER ROLE {role} SET lock_timeout = '5s';"),
+            "SET lock_timeout = '5s';  -- in the migration / DDL session only: its statement then fails after 5s instead of queueing everyone behind it. Not ALTER ROLE for the application's role: every statement of that role waiting over 5s would fail, its Flyway / Liquibase migrations included".to_string(),
             SettingChange {
                 name: p.name,
                 current: this_session(settings.get("lock_timeout")),
-                suggested: "5s".into(),
-                reasoning: "a waiter gives up with an error after 5s instead of queueing behind the head and everything after it; the application retries. deadlock_timeout doesn't help here: it only decides when the deadlock check runs".into(),
+                suggested: "5s, in the migration session".into(),
+                reasoning: format!(
+                    "log_lock_waits is already on, so the server log has the waits. {LOCK_TIMEOUT_CAVEAT}"
+                ),
                 restart: false,
                 rds: format!(
-                    "per role: the same on RDS and Aurora · server-wide: {}",
+                    "per session: SET works the same on RDS and Aurora · server-wide: {}",
                     rds::describe(p, ctx.kind == ServerKind::Aurora)
                 ),
             },

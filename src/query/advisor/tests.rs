@@ -734,16 +734,95 @@ fn an_idle_in_transaction_head_gets_the_idle_timeout_for_its_role() {
         a.evidence
     );
     assert_eq!(a.window, "a snapshot, now");
-    // With the timeout already set, the waiters get lock_timeout instead.
+    // With the timeout already set, the idle timeout isn't the advice.
     let on = Setting {
         setting: "60000".into(),
         ..off
     };
     let g = lock_finding(&c, &s, &idle_timeout(&on), &th).unwrap();
-    assert_eq!(
-        g.suggestion.as_deref(),
-        Some("ALTER ROLE shop_app SET lock_timeout = '5s';")
+    assert_ne!(
+        advice(&g).change.as_ref().unwrap().name,
+        "idle_in_transaction_session_timeout"
     );
+}
+
+fn plain(v: &str) -> Setting {
+    Setting {
+        setting: v.into(),
+        unit: None,
+        context: "superuser".into(),
+    }
+}
+
+/// A pile-up behind a running head: log_lock_waits first, as it changes
+/// no session's behaviour. A lock_timeout makes every statement it
+/// covers that waits longer fail, so it is offered only for the
+/// migration session, never yankable as ALTER ROLE for the application,
+/// and the caveat is in the suggestion itself.
+#[test]
+fn a_running_head_gets_log_lock_waits_then_lock_timeout_for_the_migration_only() {
+    let th = Thresholds::default();
+    let s = vec![
+        sess(10, "active", None, &[]),
+        sess(11, "active", Some(30.0), &[10]),
+    ];
+    let c = ctx(ServerKind::SelfHosted);
+    let off = Settings::from([("log_lock_waits".to_string(), plain("off"))]);
+    let f = lock_finding(&c, &s, &off, &th).unwrap();
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER SYSTEM SET log_lock_waits = 'on'; SELECT pg_reload_conf();")
+    );
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(
+        (ch.name, ch.current.as_str(), ch.suggested.as_str()),
+        ("log_lock_waits", "off", "on")
+    );
+    assert!(
+        ch.reasoning.contains("changes no session's behaviour"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(
+        ch.reasoning
+            .contains("Java applications generally don't retry"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(!ch.restart);
+    // Unread: the same.
+    let f = lock_finding(&c, &s, &Settings::new(), &th).unwrap();
+    assert!(f.suggestion.unwrap().contains("log_lock_waits"));
+    // On RDS: the parameter group line.
+    let f = lock_finding(&ctx(ServerKind::Rds), &s, &off, &th).unwrap();
+    assert!(f
+        .suggestion
+        .unwrap()
+        .contains("ParameterName=log_lock_waits,ParameterValue=1,ApplyMethod=immediate"));
+
+    let on = Settings::from([("log_lock_waits".to_string(), plain("on"))]);
+    let f = lock_finding(&c, &s, &on, &th).unwrap();
+    let sql = f.suggestion.clone().unwrap();
+    assert!(
+        sql.starts_with("SET lock_timeout = '5s';  -- in the migration / DDL session only"),
+        "{sql}"
+    );
+    assert!(
+        sql.contains("Not ALTER ROLE for the application's role"),
+        "{sql}"
+    );
+    assert!(sql.contains("Flyway / Liquibase"), "{sql}");
+    assert!(!sql.starts_with("ALTER ROLE"), "{sql}");
+    let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(ch.name, "lock_timeout");
+    assert_eq!(ch.suggested, "5s, in the migration session");
+    assert!(
+        ch.reasoning
+            .contains("Java applications generally don't retry"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(ch.rds.starts_with("per session:"), "{}", ch.rds);
 }
 
 fn ms(v: &str) -> Setting {
@@ -1112,6 +1191,7 @@ fn every_suggested_setting_has_an_rds_row() {
         "autovacuum_vacuum_scale_factor",
         "idle_in_transaction_session_timeout",
         "lock_timeout",
+        "log_lock_waits",
         "max_wal_size",
     ] {
         assert!(rds::lookup(name).is_some(), "{name}");

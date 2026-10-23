@@ -327,7 +327,7 @@ self-hosted, `ALTER SYSTEM`. pgman never runs it.
 | ADV001 | Buffer cache hit ratio under 0.99 (MED under 0.95), with ≥ 100 000 block requests → `shared_buffers` | `pg_stat_database` |
 | ADV002 | ≥ 64 MiB spilled to temp files (MED from 256 MiB an hour) → `work_mem` for the spilling role, with the statements when `pg_stat_statements` is installed | `pg_stat_database`, `pg_stat_statements` |
 | ADV003 | Dead tuples ≥ 10 % of live on a table of ≥ 10 000 rows, blamed on autovacuum being off, behind, or its scale factor → `autovacuum_vacuum_scale_factor` on the table | `pg_stat_user_tables` |
-| ADV004 | Sessions waiting ≥ 5 s on a lock (HIGH from 60 s or 5 waiters), with the blocking chain → `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
+| ADV004 | Sessions waiting ≥ 5 s on a lock (HIGH from 60 s or 5 waiters), with the blocking chain → `idle_in_transaction_session_timeout` when the head is idle in a transaction (a timeout over an hour, as AWS's 24 h default, counts as off); otherwise `log_lock_waits`, then `lock_timeout` for the migration / DDL session only — never per role for the application, whose every statement waiting longer would fail | `pg_stat_activity`, `pg_blocking_pids` |
 | ADV005 | Over 20 % of checkpoints requested rather than timed (not on Aurora). From PG14 the WAL written says whether they were forced by WAL volume (MED → `max_wal_size`) or asked for by something else — CREATE / DROP DATABASE, a base backup, a manual `CHECKPOINT`, a shutdown (LOW, no setting); before PG14 it hedges | `pg_stat_bgwriter`, `pg_stat_checkpointer` from PG17, `pg_stat_wal` |
 
 Thresholds and their reasoning: `docs/backlog/config-advisor.md`. Without

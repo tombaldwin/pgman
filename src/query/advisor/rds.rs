@@ -101,6 +101,13 @@ pub const PARAMS: &[ParamMapping] = &[
         aurora: Aurora::Same,
     },
     ParamMapping {
+        name: "log_lock_waits",
+        group_key: "log_lock_waits",
+        is_static: false,
+        unit: GroupUnit::Plain,
+        aurora: Aurora::Same,
+    },
+    ParamMapping {
         name: "log_temp_files",
         group_key: "log_temp_files",
         is_static: false,

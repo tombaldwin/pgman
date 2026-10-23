@@ -14,7 +14,7 @@ suggested setting, and the RDS / Aurora parameter-group mapping:
 | ADV001 | buffer cache hit ratio low → `shared_buffers` | `pg_stat_database` |
 | ADV002 | temp spills → `work_mem` (with the spilling statements when `pg_stat_statements` is there) | `pg_stat_database`, `pg_stat_statements` |
 | ADV003 | dead tuples past a table's autovacuum point → per-table `autovacuum_vacuum_scale_factor` | `pg_stat_user_tables`, `pg_class.reloptions` |
-| ADV004 | lock waits piling up → the blocking chain, `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
+| ADV004 | lock waits piling up → the blocking chain, `idle_in_transaction_session_timeout` / `log_lock_waits`, `lock_timeout` for the migration session only | `pg_stat_activity`, `pg_blocking_pids` |
 | ADV005 | checkpoints requested rather than timed → `max_wal_size` only when the WAL written could have forced them | `pg_stat_bgwriter` (≤ PG16) / `pg_stat_checkpointer` (PG17+), `pg_stat_wal` (PG14+) |
 
 Out of this round (stay in BACKLOG): fsync / `synchronous_commit`
@@ -124,7 +124,13 @@ neither depends on the window, and they say "now" instead.
   it to 86400000 ms, 24 h, so on RDS / Aurora it is never `0`), or
   longer than the head's transaction has run; the reasoning shows the
   value (`1d = 24h`);
-  otherwise `ALTER ROLE <waiting user> SET lock_timeout = '5s'`.
+  otherwise `log_lock_waits = on` if it is not (it logs each wait past
+  `deadlock_timeout` with the holder, and changes no session's
+  behaviour), and once it is, `SET lock_timeout = '5s'` **in the
+  migration / DDL session only**, with the caveat in the suggestion
+  itself: as `ALTER ROLE … SET` for the application, every statement of
+  that role waiting over 5 s would fail — its Flyway / Liquibase
+  migrations included — and Java applications generally don't retry.
   (`deadlock_timeout` does not help a pile-up: it only decides when a
   deadlock check runs.) Without `pg_read_all_stats` the other sessions'
   queries read `<insufficient privilege>`; the finding says so.
