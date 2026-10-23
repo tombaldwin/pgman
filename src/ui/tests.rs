@@ -2536,3 +2536,61 @@ fn list_panels_keep_the_cursor_row_on_screen_under_their_header() {
     let s = screen_text(&mut a, 100, 30);
     assert!(s.contains("chan_39"), "notifications:\n{s}");
 }
+
+/// Twenty query events, each with its own table and caller frame: one
+/// List row, hotspot and caller group apiece, the SQL ending `kNN`.
+fn tap_app_with_twenty_tokens() -> App {
+    let mut a = settled_app(false, false);
+    for i in 0..20 {
+        let mut e = tap_query_with_params(&format!("SELECT a FROM k{i:02}"), &[], false);
+        e.caller = Some(vec![format!("com.example.Repo.k{i:02}(Repo.java:1)")]);
+        a.on_tap_event(e);
+    }
+    a
+}
+
+/// The text of each screen row drawn on the selected-row background.
+fn selected_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
+    a.splash_visible = false;
+    let bg = a.theme.row_selected_bg;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| draw(f, a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..buf.area.height)
+        .filter(|&y| (0..buf.area.width).any(|x| buf[(x, y)].bg == bg))
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// The tap List, Hotspots and Callers views draw a header row above
+/// their rows. Scrolling as if the header were a row left the focused
+/// row one past the panel's bottom edge: at 80x24, `j` ×7 showed row
+/// 7's parameters with row 7 not drawn, and `G` hid the last row.
+#[test]
+fn tap_views_keep_the_focused_row_on_screen_under_their_header() {
+    use crate::app::TapView;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    for view in [TapView::List, TapView::Hotspots, TapView::Callers] {
+        let mut a = tap_app_with_twenty_tokens();
+        a.mode = crate::app::Mode::TapMonitor;
+        a.tap_nav.view = view;
+        let keys = std::iter::repeat_n('j', 7).chain(std::iter::once('G'));
+        for (n, key) in keys.enumerate() {
+            a.on_key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
+            let rows = selected_rows(&mut a, 80, 24);
+            assert_eq!(rows.len(), 1, "{view:?} after key {n} ({key}): {rows:?}");
+            // At 80 columns the aggregate views cut their rows before
+            // the token; the List row shows it, so check it is the
+            // focused event's row and not some other.
+            if view == TapView::List {
+                let sql = a.tap_events[a.tap_nav.events_cursor].sql.clone().unwrap();
+                let token = &sql[sql.len() - 3..];
+                assert!(rows[0].contains(token), "List: {token} not in {rows:?}");
+            }
+        }
+    }
+}

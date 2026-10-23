@@ -119,9 +119,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The JDBC tap monitor read "no events yet", and the footer showed no
   `TAP` badge, while only commits / rollbacks had arrived; the status
   now counts them (`2 commits/rollbacks`).
-- The schema wizard, slow queries, sessions and notifications panels
-  scrolled as if their header row were a list row, so moving the cursor
-  past the bottom left the focused row one below the panel's edge.
+- The schema wizard, slow queries, sessions and notifications lists,
+  and the JDBC tap's List, Hotspots and Callers views, scrolled as if
+  their header row were a list row, so moving the cursor past the
+  bottom left the focused row hidden one line below the edge.
 - After `SELECT … FROM ONLY t`, `I` yanked an `INSERT INTO public.only`:
   `ONLY` was read as the table's name. It is now skipped; a quoted
   `"only"` or a schema `only.t` is still a name.
