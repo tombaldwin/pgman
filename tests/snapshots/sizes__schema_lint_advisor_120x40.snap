@@ -23,7 +23,7 @@ expression: dump(&buf)
 │INV-│  HIGH   LINT101  public.webhooks.webhooks_customer_id_fkey         FK column not the leading column of any…│    │
 │INV-│  MED    ADV002   ledger                                            queries spill to temp files (187 GB so …│    │
 │INV-│  ADV002 · queries spill to temp files (187 GB so far)                                                      │    │
-│    │  setting:  work_mem 4MB → 8MB (no restart)                                                                 │    │
+│    │  setting:  work_mem 4MB (this session) → 8MB (no restart)                                                  │    │
 │    │  suggest:  ALTER ROLE billing SET work_mem = '8MB';                                                        │    │
 │    │  evidence: counters since 2026-10-16 00:00:05+00 (7d 9h)                                                   │    │
 │    │    temp_files 2318 · temp_bytes 200789721088 (187 GB written, 1.1 GB an hour)                              │    │

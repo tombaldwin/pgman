@@ -13,8 +13,8 @@ expression: dump(&buf)
 ╭[│  HIGH   LINT101  public.webhooks.webhooks_customer_i│──╮
 │n│  MED    ADV002   ledger                             │  │
 │I│  ADV002 · queries spill to temp files (187 GB so far│  │
-│I│  setting:  work_mem 4MB → 8MB (no restart)          │  │
-│I│  suggest:  ALTER ROLE billing SET work_mem =        │  │
+│I│  setting:  work_mem 4MB (this session) → 8MB (no    │  │
+│I│            restart)                                 │  │
 │I╰─────────────────────────────────────────────────────╯  │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯

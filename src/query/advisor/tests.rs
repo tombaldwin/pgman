@@ -635,12 +635,12 @@ fn lock_finding_fires_from_five_seconds_and_is_high_from_sixty_or_five_waiters()
         sess(10, "active", None, &[]),
         sess(11, "active", Some(4.9), &[10]),
     ];
-    assert!(lock_finding(&c, &quiet, None, &th).is_none());
+    assert!(lock_finding(&c, &quiet, &Settings::new(), &th).is_none());
     let med = vec![
         sess(10, "active", None, &[]),
         sess(11, "active", Some(5.0), &[10]),
     ];
-    let f = lock_finding(&c, &med, None, &th).unwrap();
+    let f = lock_finding(&c, &med, &Settings::new(), &th).unwrap();
     assert_eq!(f.severity, Severity::Medium);
     assert_eq!(f.code, "ADV004");
     assert_eq!(f.object, "pid 10");
@@ -649,22 +649,28 @@ fn lock_finding_fires_from_five_seconds_and_is_high_from_sixty_or_five_waiters()
         sess(11, "active", Some(60.0), &[10]),
     ];
     assert_eq!(
-        lock_finding(&c, &long, None, &th).unwrap().severity,
+        lock_finding(&c, &long, &Settings::new(), &th)
+            .unwrap()
+            .severity,
         Severity::High
     );
     let mut many = vec![sess(10, "active", None, &[])];
     many.extend((11..16).map(|p| sess(p, "active", Some(6.0), &[10])));
     assert_eq!(
-        lock_finding(&c, &many, None, &th).unwrap().severity,
+        lock_finding(&c, &many, &Settings::new(), &th)
+            .unwrap()
+            .severity,
         Severity::High
     );
     let mut four = vec![sess(10, "active", None, &[])];
     four.extend((11..15).map(|p| sess(p, "active", Some(6.0), &[10])));
     assert_eq!(
-        lock_finding(&c, &four, None, &th).unwrap().severity,
+        lock_finding(&c, &four, &Settings::new(), &th)
+            .unwrap()
+            .severity,
         Severity::Medium
     );
-    assert!(lock_finding(&c, &[], None, &th).is_none());
+    assert!(lock_finding(&c, &[], &Settings::new(), &th).is_none());
 }
 
 #[test]
@@ -681,7 +687,7 @@ fn an_idle_in_transaction_head_gets_the_idle_timeout_for_its_role() {
         unit: Some("ms".into()),
         context: "user".into(),
     };
-    let f = lock_finding(&c, &s, Some(&off), &th).unwrap();
+    let f = lock_finding(&c, &s, &idle_timeout(&off), &th).unwrap();
     assert_eq!(
         f.suggestion.as_deref(),
         Some("ALTER ROLE shop_app SET idle_in_transaction_session_timeout = '5min';")
@@ -702,11 +708,50 @@ fn an_idle_in_transaction_head_gets_the_idle_timeout_for_its_role() {
         setting: "60000".into(),
         ..off
     };
-    let g = lock_finding(&c, &s, Some(&on), &th).unwrap();
+    let g = lock_finding(&c, &s, &idle_timeout(&on), &th).unwrap();
     assert_eq!(
         g.suggestion.as_deref(),
         Some("ALTER ROLE shop_app SET lock_timeout = '5s';")
     );
+}
+
+fn idle_timeout(s: &Setting) -> Settings {
+    Settings::from([("idle_in_transaction_session_timeout".to_string(), s.clone())])
+}
+
+/// A per-session setting's current value is pgman's own session's: the
+/// application's role can differ, so it says whose it is.
+#[test]
+fn session_level_values_say_they_are_this_session_s() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let s = vec![
+        sess(10, "idle in transaction", None, &[]),
+        sess(11, "active", Some(30.0), &[10]),
+    ];
+    let off = Setting {
+        setting: "0".into(),
+        unit: Some("ms".into()),
+        context: "user".into(),
+    };
+    let f = lock_finding(&c, &s, &idle_timeout(&off), &th).unwrap();
+    assert_eq!(
+        advice(&f).change.as_ref().unwrap().current,
+        "0ms (this session)"
+    );
+    let wm = mem("4096", "kB", "user");
+    let none = Spillers::Known(vec![]);
+    let f = temp_spill_finding(&c, &db(1, 0, GIB, DAY), Some(&wm), &none, &th).unwrap();
+    assert_eq!(
+        advice(&f).change.as_ref().unwrap().current,
+        "4MB (this session)"
+    );
+    let f = temp_spill_finding(&c, &db(1, 0, GIB, DAY), None, &none, &th).unwrap();
+    assert_eq!(
+        advice(&f).change.as_ref().unwrap().current,
+        "4MB (the default; not read)"
+    );
+    assert_eq!(this_session(None), "unknown");
 }
 
 #[test]
@@ -718,7 +763,7 @@ fn without_pg_read_all_stats_the_lock_finding_says_what_is_hidden() {
     head.user = String::new();
     head.query = String::new();
     let s = vec![head, sess(11, "active", Some(30.0), &[10])];
-    let f = lock_finding(&c, &s, None, &th).unwrap();
+    let f = lock_finding(&c, &s, &Settings::new(), &th).unwrap();
     let a = advice(&f);
     assert!(
         a.evidence[0].starts_with("pid 10 (?, state hidden"),

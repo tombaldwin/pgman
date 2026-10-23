@@ -2244,12 +2244,13 @@ fn the_advisor_detail_strip_leads_with_what_to_do() {
     let rows = text(super::schema::lint_detail_lines(&adv, 70, &theme));
     assert!(rows[0].starts_with("  ADV004 · "), "{rows:?}");
     assert!(
-        rows[1]
-            .starts_with("  setting:  idle_in_transaction_session_timeout 0ms → 5min (no restart)"),
+        rows[1].starts_with("  setting:  idle_in_transaction_session_timeout 0ms (this session)"),
         "{rows:?}"
     );
+    // The setting wraps with a hanging indent; the suggestion follows it.
+    assert_eq!(rows[2], "            5min (no restart)", "{rows:?}");
     assert!(
-        rows[2].starts_with("  suggest:  ALTER ROLE finance_ro"),
+        rows[3].starts_with("  suggest:  ALTER ROLE finance_ro"),
         "{rows:?}"
     );
     assert!(

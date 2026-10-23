@@ -113,7 +113,18 @@ pub fn advisor() -> Report {
             &th,
         ),
         advisor::dead_tuple_finding(&ctx, &webhooks, defaults, &th),
-        advisor::lock_finding(&ctx, &locks, Some(&setting("0", "ms", "user")), &th),
+        advisor::lock_finding(
+            &ctx,
+            &locks,
+            &advisor::Settings::from([
+                (
+                    "idle_in_transaction_session_timeout".to_string(),
+                    setting("0", "ms", "user"),
+                ),
+                ("lock_timeout".to_string(), setting("0", "ms", "user")),
+            ]),
+            &th,
+        ),
         advisor::checkpoint_finding(
             &ctx,
             &checkpoints,

@@ -649,7 +649,10 @@ pub fn temp_spill_finding(
             },
             change: Some(SettingChange {
                 name: p.name,
-                current: pg_size(current),
+                current: match work_mem {
+                    Some(_) => this_session(work_mem),
+                    None => format!("{} (the default; not read)", pg_size(current)),
+                },
                 suggested: pg_size(next),
                 reasoning,
                 restart: restart_of(work_mem, p),
@@ -961,11 +964,22 @@ pub fn blocking_chains(sessions: &[LockSession]) -> Vec<Chain> {
     out
 }
 
+/// A per-session setting's value as pgman's own session sees it. A
+/// role or database can set it differently for the application, and
+/// `pg_settings` can't show another session's, so the value says
+/// whose it is.
+pub fn this_session(setting: Option<&Setting>) -> String {
+    match setting {
+        Some(s) => format!("{} (this session)", s.display()),
+        None => "unknown".to_string(),
+    }
+}
+
 /// ADV004: sessions waiting on locks for at least the threshold.
 pub fn lock_finding(
     ctx: &Context,
     sessions: &[LockSession],
-    idle_tx_timeout: Option<&Setting>,
+    settings: &Settings,
     th: &Thresholds,
 ) -> Option<Finding> {
     let waiters: Vec<&LockSession> = sessions.iter().filter(|s| !s.blockers.is_empty()).collect();
@@ -1030,6 +1044,7 @@ pub fn lock_finding(
     }
     let head = chains.first().and_then(|c| by_pid.get(&c.root)).copied();
     let idle_in_tx = head.is_some_and(|h| h.state.starts_with("idle in transaction"));
+    let idle_tx_timeout = settings.get("idle_in_transaction_session_timeout");
     let timeout_off = idle_tx_timeout.is_none_or(|s| s.setting == "0");
     let (suggestion, change) = if idle_in_tx && timeout_off {
         let p = mapping("idle_in_transaction_session_timeout");
@@ -1042,7 +1057,7 @@ pub fn lock_finding(
             suggestion,
             SettingChange {
                 name: p.name,
-                current: idle_tx_timeout.map(Setting::display).unwrap_or_else(|| "0".into()),
+                current: this_session(idle_tx_timeout),
                 suggested: "5min".into(),
                 reasoning: "the head of the chain sits idle in a transaction, holding its locks: the timeout ends such a session (its transaction rolls back) — for the role the application connects as".into(),
                 restart: false,
@@ -1063,7 +1078,7 @@ pub fn lock_finding(
             format!("ALTER ROLE {role} SET lock_timeout = '5s';"),
             SettingChange {
                 name: p.name,
-                current: "see pg_settings".into(),
+                current: this_session(settings.get("lock_timeout")),
                 suggested: "5s".into(),
                 reasoning: "a waiter gives up with an error after 5s instead of queueing behind the head and everything after it; the application retries. deadlock_timeout doesn't help here: it only decides when the deadlock check runs".into(),
                 restart: false,
@@ -1407,12 +1422,9 @@ pub async fn fetch(client: &tokio_postgres::Client, th: &Thresholds) -> Result<R
 
     ran += 1;
     match read_locks(client, &ctx).await {
-        Ok(sessions) => report.findings.extend(lock_finding(
-            &ctx,
-            &sessions,
-            settings.get("idle_in_transaction_session_timeout"),
-            th,
-        )),
+        Ok(sessions) => report
+            .findings
+            .extend(lock_finding(&ctx, &sessions, &settings, th)),
         Err(e) => report.errors.push(format!("ADV004: {e}")),
     }
 
