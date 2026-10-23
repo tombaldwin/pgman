@@ -359,23 +359,28 @@ fn read_only_refusal_hint(
             personal,
             block,
         } => {
-            let project = format!(
-                "read_only = true in this project's .pgman/pgman.toml {block} · set read_only = false there and restart pgman to write (safety.toml can't loosen it)"
-            );
-            let (footer, detail) = match (personal, safety_toml) {
-                (false, _) => (format!("read-only by .pgman/pgman.toml ({block}) — see docs/configuration.md"), project),
+            // Who else holds it read-only: nobody, safety.toml, or the
+            // built-in default (no safety.toml yet).
+            let (also, personal_detail) = match (personal, safety_toml) {
+                (false, _) => (String::new(), String::new()),
                 (true, Some(path)) => (
-                    format!("read-only by safety.toml and .pgman/pgman.toml ({block}) — see docs/configuration.md"),
-                    format!("{project}\nread_only = true in {} too", path.display()),
+                    "safety.toml and ".to_string(),
+                    format!("\nread_only = true in {} too", path.display()),
                 ),
                 (true, None) => (
-                    format!("read-only by default and by .pgman/pgman.toml ({block}) — see docs/configuration.md"),
-                    format!("{project}\npgman --init-config writes safety.toml, where read_only = false is needed too"),
+                    "default and by ".to_string(),
+                    "\npgman --init-config writes safety.toml, where read_only = false is needed too"
+                        .to_string(),
                 ),
             };
             ReadOnlyHint {
-                footer,
-                detail: Some(detail),
+                footer: format!(
+                    "read-only by {also}.pgman/pgman.toml ({block}) — see docs/configuration.md"
+                ),
+                detail: Some(format!(
+                    "read_only = true in this project's .pgman/pgman.toml {block} · set read_only = false \
+                     there and restart pgman to write (safety.toml can't loosen it){personal_detail}"
+                )),
             }
         }
         ReadOnlyCause::Toggle => hint("read-only by :readonly on · :readonly off to write", None),
