@@ -244,15 +244,48 @@ fn parse_bind(msg: &str) -> Option<BoundParam> {
         let (inside, r) = r.split_once(')')?;
         let (idx, sql_type) = inside.split_once(':')?;
         let index = idx.trim().parse::<usize>().ok()?;
-        let value = bracketed_value(r)?;
+        let sql_type = sql_type.trim();
+        let mut value = bracketed_value(r)?;
+        if sql_type.eq_ignore_ascii_case("ARRAY") {
+            if let ParamValue::Literal(v) = &value {
+                if let Some(literal) = java_array_to_pg(v) {
+                    value = ParamValue::Literal(literal);
+                }
+            }
+        }
         Some(BoundParam {
             index,
-            sql_type: sql_type.trim().to_string(),
+            sql_type: sql_type.to_string(),
             value,
         })
     } else {
         None
     }
+}
+
+/// An `ARRAY` bind as Hibernate 6 logs it — Java's `Arrays.toString`,
+/// `[a, b c, null]` — as a Postgres array literal, `{"a","b c",NULL}`.
+/// Logged as is, `'[a, b c]'` is a malformed array literal. Every element
+/// is double-quoted (with `"` and `\` escaped), so a space, comma or brace
+/// in one is data; a `null` element is the SQL NULL. `None` when `v` isn't
+/// bracketed. An element that itself contains `, ` can't be told apart
+/// from two — `Arrays.toString` doesn't escape it.
+fn java_array_to_pg(v: &str) -> Option<String> {
+    let inner = v.strip_prefix('[')?.strip_suffix(']')?;
+    if inner.is_empty() {
+        return Some("{}".to_string());
+    }
+    let elements: Vec<String> = inner
+        .split(", ")
+        .map(|e| {
+            if e == "null" {
+                "NULL".to_string()
+            } else {
+                format!("\"{}\"", e.replace('\\', "\\\\").replace('"', "\\\""))
+            }
+        })
+        .collect();
+    Some(format!("{{{}}}", elements.join(",")))
 }
 
 /// Extract the value from the last `[…]` group in `s` (Hibernate logs the bound
@@ -560,6 +593,28 @@ binding parameter [1] as [BIGINT] - [7]
                 "i1_0",
                 "where",
                 "i1_0.customer_id=2107"
+            ]
+        );
+    }
+
+    /// Hibernate 6 logs an ARRAY bind with `Arrays.toString`; substituted
+    /// as is, `'[a, b c]'` is a malformed array literal.
+    #[test]
+    fn an_array_bind_becomes_a_postgres_array_literal() {
+        let log = "\
+2026-10-21T09:12:48.001Z DEBUG 4242 --- [nio-8080-exec-1] org.hibernate.SQL                        : insert into probe_h (id,name,tags) values (?,?,?)
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [42]
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (2:VARCHAR) <- [O'Brien, Jane [junior]]
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (3:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]
+2026-10-21T09:12:48.010Z DEBUG 4242 --- [nio-8080-exec-1] org.hibernate.SQL                        : update probe_h set tags=? where id=?
+2026-10-21T09:12:48.011Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:ARRAY) <- [[]]
+2026-10-21T09:12:48.011Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (2:BIGINT) <- [42]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                r#"insert into probe_h (id,name,tags) values (42,'O''Brien, Jane [junior]',E'{"a","b c",NULL,"it''s \\"q\\" \\\\x","{x}"}')"#,
+                "update probe_h set tags='{}' where id=42",
             ]
         );
     }

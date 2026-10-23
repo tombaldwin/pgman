@@ -88,6 +88,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Logs → SQL: a Postgres `duration: … execute` record whose SQL
   contains `statement:` (`like 'statement:%'`) was cut there, leaving
   the tail of the statement as the query.
+- Logs → SQL: a Hibernate 6 `ARRAY` bind (`[a, b c]`) is substituted as
+  a Postgres array literal (`'{"a","b c"}'`) instead of a string the
+  server rejects as a malformed array.
 
 ## [0.1.0] — 2026-10-22
 

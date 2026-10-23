@@ -1430,6 +1430,27 @@ async fn a_postgres_log_parameter_with_a_newline_reconstructs_to_the_same_value(
     );
 }
 
+/// A Hibernate 6 ARRAY bind (`Arrays.toString` form) reconstructs to an
+/// array literal the server parses into the elements the app bound.
+#[tokio::test]
+async fn a_hibernate_array_bind_reconstructs_to_the_same_array() {
+    let log = "\
+[main] org.hibernate.SQL : select (?::text[])[4] as fourth, cardinality(?::text[]) as n, (?::text[])[3] is null as third_null
+[main] org.hibernate.orm.jdbc.bind : binding parameter (1:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]
+[main] org.hibernate.orm.jdbc.bind : binding parameter (2:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]
+[main] org.hibernate.orm.jdbc.bind : binding parameter (3:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]";
+    let q = pgman::query::hibernate::parse(log);
+    assert_eq!(q.len(), 1, "{q:#?}");
+    assert_eq!(
+        run_reconstructed(&q).await,
+        [vec![
+            Some("it's \"q\" \\x".to_string()),
+            Some("5".to_string()),
+            Some("t".to_string())
+        ]]
+    );
+}
+
 /// Drive `pgman mcp serve` over stdio: send `requests` (one frame each),
 /// close stdin, and return every frame it wrote. Every stdout line must
 /// parse as JSON — stdout is protocol only.
