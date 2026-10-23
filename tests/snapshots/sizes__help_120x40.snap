@@ -35,11 +35,11 @@ expression: dump(&buf)
 │   help                    │                   pk=value                                                               │
 │                           │     Y             copy the (filtered) grid to clipboard as CSV                           │
 │                           │     I             yank focused row as INSERT (single-table SELECTs)                      │
+│                           │     M             fetch the next 1000 rows of a partial result                           │
 │                           │     D             pin result as A · run another query, D again to diff as B              │
 │                           │     m<a-z>        set bookmark at focused (row, col)                                     │
 │                           │     '<a-z>        jump to bookmark                                                       │
 │                           │     j / k  ↑ ↓    move selection                                                         │
-│                           │     g / G         first / last row                                                       │
-│                           │ ↓ 4 more below                                                                           │
+│                           │ ↓ 5 more below                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter

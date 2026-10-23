@@ -124,9 +124,9 @@ as primary bindings).
 ## Choice 6: limits and closing
 
 - **Ceiling: 100 000 rows held** (`paging::MAX_HELD_ROWS`). At the
-  ceiling pgman closes the cursor and the title says `stopped at 100000
-  rows (pgman's limit)`; `M` points at `pgman query … --json`, which is
-  not capped.
+  ceiling pgman closes the cursor and the title says `partial · stopped
+  at pgman's 100000-row limit`; `M` points at `pgman query … --json`,
+  which is not capped.
 - **Idle timeout: 60 s** after the last fetch, and **10 min** from the
   open, whichever is first. Both shrink to half the server's
   `idle_in_transaction_session_timeout` / `transaction_timeout` when
@@ -138,17 +138,25 @@ as primary bindings).
   timeout, closing the tab that owns it, reconnect / disconnect (the
   pager is dropped with the old client; the server ends the transaction
   with the connection), the ceiling, and the end of the result.
-- **After a close**, the title says `cursor closed · M re-runs for more`,
-  and `M` re-runs the statement (if the guard still says `Allow`) and
-  fetches as many rows as were held plus a page: a fresh snapshot, in one
-  piece, never stitched onto the old rows.
+- **After a close**, the title says `partial · cursor closed · M
+  re-runs`, and `M` re-runs the statement and fetches as many rows as
+  were held plus a page: a fresh snapshot, in one piece, never stitched
+  onto the old rows. No second guard check: the statement passed
+  `is_pageable_select` when it first ran, a plain `SELECT` every guard
+  allows, and that classification is a pure function of the text.
+- **Reconnect** closes the cursor on the session being left (the old
+  pager queues the `COMMIT`) rather than leave it until the old
+  connection drops. A grid that replaces the result without a run (`\l`,
+  the bootstrap) drops its paging record and closes its cursor.
+- **`Ctrl-C` from the results** cancels a running query or fetch, as it
+  does from the editor; it used to arm quit there.
 
 ## Choice 7: what works on a partial result
 
 Sort, filter, find, the row detail, `Y`, `I`, `:fixture` and the diff work
-on the rows pgman holds; the title always shows the count with `fetched`
-while more exist. `Y` and `:fixture` say `(fetched rows only)` in their
-status when the result is partial. A fetch appends to the held rows and
+on the rows pgman holds; the title says `partial` while more exist. `Y`
+and `:fixture` say `(fetched rows only)` in their status when the result
+is partial. A fetch appends to the held rows and
 re-applies the active sort and filter; bookmarks survive unless a sort
 reorders the rows under them.
 
