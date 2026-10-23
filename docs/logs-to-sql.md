@@ -6,7 +6,7 @@ to end.
 
 ## What it reads
 
-Three input shapes are recognised:
+Four input shapes are recognised:
 
 - **Hibernate application logs** — an `org.hibernate.SQL` logger line opens a
   statement, followed by the separately-logged bind parameters (`binding
@@ -58,6 +58,14 @@ Three input shapes are recognised:
   or `PANIC:` followed by its `STATEMENT:` — a backend terminated
   mid-statement, such as a read replica's `terminating connection due to
   conflict with recovery` — is reconstructed the same way.
+- **JDBC proxy logs** — p6spy's default single-line format
+  (`now|elapsed|statement|connection N|url …|prepared|sql`), whose last
+  field is the statement with values already in it, and
+  datasource-proxy's query log (`… Query:["select … ?"],
+  Params:[(2107,open)]`). A datasource-proxy batch becomes one query
+  per statement or parameter set. Its values are logged without types,
+  so each is substituted as a quoted literal (`null` as `NULL`), which
+  Postgres casts on re-run.
 - **Pasted JDBC** — no log at all, just a `?`-placeholder statement plus a
   typed parameter list you already have (a debugger watch, a
   `PreparedStatement` toString, whatever). See "Three ways in" below for the
@@ -111,7 +119,7 @@ line lookup that should have been a join.
   (`VARCHAR:NULL`); lines without a `TYPE:` prefix are skipped, so stray
   blank lines or comments in the tail don't break the parse.
 
-All three paths run through the same picker.
+Every path runs through the same picker.
 
 ## The pick list
 
@@ -192,4 +200,4 @@ loop you are looking for. They still appear in the all-queries list.
 
 Reconstruction: `src/query/hibernate.rs`, `src/query/pglog.rs` (csvlog / jsonlog:
 `src/query/pglog_structured.rs`),
-`src/query/jdbc.rs`. Clustering: `src/query/nplus1.rs`.
+`src/query/proxylog.rs`, `src/query/jdbc.rs`. Clustering: `src/query/nplus1.rs`.

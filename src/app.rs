@@ -3271,6 +3271,7 @@ impl App {
         let mut picks: Vec<ReconstructedQuery> = Vec::new();
         picks.extend(query::hibernate::parse(log));
         picks.extend(query::pglog::parse(log));
+        picks.extend(query::proxylog::parse(log));
         // Third way in: neither log parser found anything, but the
         // buffer has the "?-statement, blank line, typed param list"
         // shape a pasted JDBC statement makes — same shape

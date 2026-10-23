@@ -19,6 +19,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   twice. The log picker marks a failed pick `✗` and shows its error.
 - Logs → SQL reads Postgres's `csvlog` and `jsonlog` (PG 15+) formats as
   well as stderr: same pairing of parameters and errors, by pid.
+- Logs → SQL reads p6spy (default single-line format) and
+  datasource-proxy query logs, tagged `[p6spy]` / `[ds-proxy]` in the
+  picker.
 
 ### Changed
 

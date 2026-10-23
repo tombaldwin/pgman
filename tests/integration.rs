@@ -1451,6 +1451,23 @@ async fn a_hibernate_array_bind_reconstructs_to_the_same_array() {
     );
 }
 
+/// datasource-proxy logs its values untyped; quoted, the server still
+/// casts each to what the statement compares it with.
+#[tokio::test]
+async fn a_datasource_proxy_line_reconstructs_to_sql_the_server_runs() {
+    let log = "Name:dataSource, Connection:1, Time:3, Success:True, Type:Prepared, Batch:False, QuerySize:1, BatchSize:0, Query:[\"select ? = 2107 as a, ? is null as b, ? as c\"], Params:[(2107,null,it's)]";
+    let q = pgman::query::proxylog::parse(log);
+    assert_eq!(q.len(), 1, "{q:#?}");
+    assert_eq!(
+        run_reconstructed(&q).await,
+        [vec![
+            Some("t".to_string()),
+            Some("t".to_string()),
+            Some("it's".to_string())
+        ]]
+    );
+}
+
 /// Drive `pgman mcp serve` over stdio: send `requests` (one frame each),
 /// close stdin, and return every frame it wrote. Every stdout line must
 /// parse as JSON — stdout is protocol only.

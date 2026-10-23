@@ -19,6 +19,10 @@ pub enum LogKind {
     /// see [`split_jdbc_paste`] for the exact shape and
     /// `query::jdbc::parse` for the reconstruction.
     Jdbc,
+    /// A p6spy log (`query::proxylog`).
+    P6Spy,
+    /// A datasource-proxy log (`query::proxylog`).
+    DatasourceProxy,
 }
 
 impl LogKind {
@@ -29,6 +33,8 @@ impl LogKind {
             LogKind::Hibernate => Source::HibernateLog,
             LogKind::PgServer => Source::PostgresLog,
             LogKind::Jdbc => Source::JdbcPaste,
+            LogKind::P6Spy => Source::P6Spy,
+            LogKind::DatasourceProxy => Source::DatasourceProxy,
         }
     }
 
@@ -142,6 +148,14 @@ pub fn detect_log(text: &str) -> Option<LogKind> {
     // — only when a `STATEMENT:` is there at all.
     if text.contains("STATEMENT:") && !super::pglog::parse(text).is_empty() {
         return Some(LogKind::PgServer);
+    }
+
+    // JDBC proxy logs: a line `proxylog::parse` reads.
+    if text.lines().any(super::proxylog::is_p6spy_line) {
+        return Some(LogKind::P6Spy);
+    }
+    if text.lines().any(super::proxylog::is_dsproxy_line) {
+        return Some(LogKind::DatasourceProxy);
     }
 
     if split_jdbc_paste(text).is_some() {
@@ -299,6 +313,16 @@ mod tests {
                 "parse of {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn detects_jdbc_proxy_logs() {
+        let p6spy = "1729501968001|3|statement|connection 0|url jdbc:postgresql://db.example/ledger|select 1 where 1=?|select 1 where 1=1";
+        assert_eq!(detect_log(p6spy), Some(LogKind::P6Spy));
+        assert_eq!(LogKind::P6Spy.label(), "p6spy");
+        let dsproxy = "Name:dataSource, Connection:1, Time:3, Success:True, Type:Prepared, Batch:False, QuerySize:1, BatchSize:0, Query:[\"select 1 where 1=?\"], Params:[(1)]";
+        assert_eq!(detect_log(dsproxy), Some(LogKind::DatasourceProxy));
+        assert_eq!(LogKind::DatasourceProxy.label(), "ds-proxy");
     }
 
     #[test]

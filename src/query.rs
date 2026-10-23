@@ -1,13 +1,14 @@
 //! Query reconstruction — turning logs and pasted code into runnable SQL.
 //!
-//! Three input sources, one output type (`reconstruct::ReconstructedQuery`):
+//! Four input sources, one output type (`reconstruct::ReconstructedQuery`):
 //!
 //! - [`hibernate`] — application-side Hibernate logs (`?` placeholders + binds).
 //! - [`pglog`] — Postgres / RDS server logs (`$N` placeholders + `parameters:`),
 //!   stderr format or `csvlog` / `jsonlog` ([`pglog_structured`]).
+//! - [`proxylog`] — p6spy and datasource-proxy JDBC proxy logs.
 //! - [`jdbc`] — pasted JDBC: SQL plus a typed parameter list.
 //!
-//! [`subst`] does the type-aware placeholder substitution shared by all three.
+//! [`subst`] does the type-aware placeholder substitution they share.
 //! [`nplus1`] clusters reconstructed queries to surface N+1 selects.
 
 pub mod apply;
@@ -32,6 +33,7 @@ pub mod pglog;
 pub mod pglog_structured;
 pub mod preflight;
 pub mod probe;
+pub mod proxylog;
 pub mod reconstruct;
 pub mod row_diff;
 pub mod schema;
