@@ -54,6 +54,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The tap List view's app column is cut by display width, so a CJK app
   name no longer pushes its row's SQL out of line. A name too long for
   the column ends in `…`.
+- The tap monitor's status line says `1 query · 1 heartbeat`, not
+  `1 queries · 1 heartbeats`, as its title already did.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

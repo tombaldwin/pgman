@@ -4777,14 +4777,14 @@ fn tap_monitor_status_follows_events_that_arrive_while_it_is_open() {
     a.on_tap_event(tap_query("SELECT 1", 1));
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        !status.contains("no events yet") && status.contains("1 queries"),
+        !status.contains("no events yet") && status.contains("1 query ·"),
         "status must reflect the event that arrived; got {status}"
     );
     a.on_tap_event(tap_heartbeat(3, 2));
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        status.contains("1 queries")
-            && status.contains("1 heartbeats")
+        status.contains("1 query ·")
+            && status.contains("1 heartbeat ·")
             && status.contains("3 dropped"),
         "got {status}"
     );
@@ -4825,7 +4825,7 @@ fn tap_monitor_status_distinguishes_no_traffic_from_no_jar() {
     a.start_tap_monitor();
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        status.contains("1 queries") && status.contains("1 heartbeats"),
+        status == "JDBC tap · 1 query · 1 heartbeat",
         "expected counters in status; got {status}"
     );
 }

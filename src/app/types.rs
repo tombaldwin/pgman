@@ -1724,6 +1724,10 @@ impl TapHealth {
         } else {
             String::new()
         };
-        format!("JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}")
+        format!(
+            "JDBC tap · {} · {}{dropped_suffix}",
+            crate::ui::count_label(queries, "query", "queries"),
+            crate::ui::count_label(beats, "heartbeat", "heartbeats"),
+        )
     }
 }
