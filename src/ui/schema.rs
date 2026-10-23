@@ -526,7 +526,8 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     let top = split[0];
     let detail = split[1];
 
-    let visible_h = top.height as usize;
+    // Rows under the header row.
+    let visible_h = (top.height as usize).saturating_sub(1);
     let scroll = scroll_offset(app.schema_lint.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
@@ -544,7 +545,7 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .skip(scroll)
-        .take(visible_h.saturating_sub(1))
+        .take(visible_h)
     {
         let is_focus = i == app.schema_lint.cursor;
         let sev_color = match finding.severity {

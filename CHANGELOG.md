@@ -64,6 +64,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The schema wizard, slow queries, sessions and notifications panels
+  scrolled as if their header row were a list row, so moving the cursor
+  past the bottom left the focused row one below the panel's edge.
 - Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
   comparisons in the SCRAM path's digest crates) and `clipboard-win`
   5.4.3 (5.4.1 was yanked).
