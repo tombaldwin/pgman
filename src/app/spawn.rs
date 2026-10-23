@@ -1,5 +1,32 @@
 use super::*;
 
+/// Whether `spawn_run` sends `sql` to the pager, to run behind the
+/// result cursor so `M` can fetch past the first page
+/// (docs/backlog/paging.md): a plain `Run` of one statement
+/// `safety::is_pageable_select` accepts, outside any auto-tx. Not a
+/// `\watch` re-run: one every 2 s would hold a transaction open between
+/// runs for no reader. Pure.
+pub(crate) fn runs_behind_cursor(
+    kind: RunKind,
+    is_batch: bool,
+    wrap_in_tx: bool,
+    watching: bool,
+    sql: &str,
+) -> bool {
+    matches!(kind, RunKind::Run)
+        && !is_batch
+        && !wrap_in_tx
+        && !watching
+        && crate::safety::is_pageable_select(sql)
+}
+
+/// Where `spawn_run` sends a statement: through the queue like any
+/// database work, or to the pager to run behind a cursor.
+enum RunRoute {
+    Db(crate::query::paging::Db),
+    Pager(tokio::sync::oneshot::Receiver<Result<crate::query::paging::Opened, conn::QueryErr>>),
+}
+
 impl App {
     /// Spawn the connect + bootstrap-query task. The result returns as an
     /// `AppMsg` tagged with the current generation.
@@ -35,6 +62,10 @@ impl App {
         // connection. This is the single choke point for all reconnects.
         self.query_running = false;
         self.query_started = None;
+        // The cursor lives on the session being left: close it there
+        // (the old pager queues the COMMIT) rather than leave it idle in
+        // transaction until the old connection drops.
+        self.close_cursor();
         // Same for anything a decision modal was holding: an open
         // transaction belongs to the connection being dropped (the
         // server rolls it back), a guarded run was classified against
@@ -373,9 +404,27 @@ impl App {
         decision: Decision,
         is_batch: bool,
     ) {
-        let Some(db) = self.db() else {
+        if self.client.is_none() {
             self.last_error = Some(self.not_connected_message());
             return;
+        }
+        let paged = runs_behind_cursor(
+            kind,
+            is_batch,
+            decision.wrap_in_tx,
+            self.watch.is_some(),
+            &sql,
+        );
+        let route = match self.pager.clone().filter(|_| paged) {
+            Some(pager) => {
+                // The pager closes the old cursor before it opens this one.
+                self.cursor = None;
+                RunRoute::Pager(pager.open(sql.clone(), crate::query::paging::PAGE_ROWS))
+            }
+            None => match self.db() {
+                Some(db) => RunRoute::Db(db),
+                None => return,
+            },
         };
         // Push to history (skip consecutive duplicates, cap at
         // HISTORY_CAP entries — shared with the persistence side
@@ -412,8 +461,30 @@ impl App {
         self.last_error = None;
         self.last_status = Some(running_status(kind));
         tokio::spawn(async move {
-            let client = db.ready().await;
-            let result = execute(&client, &sql, kind, &decision, is_batch).await;
+            let (result, paging) = match route {
+                RunRoute::Db(db) => {
+                    let client = db.ready().await;
+                    (
+                        execute(&client, &sql, kind, &decision, is_batch).await,
+                        None,
+                    )
+                }
+                RunRoute::Pager(rx) => match rx.await {
+                    Ok(Ok(opened)) => (
+                        Ok(opened.grid),
+                        Some(RunPaging {
+                            sql,
+                            cursor: opened.cursor,
+                            in_transaction: opened.in_transaction,
+                        }),
+                    ),
+                    Ok(Err(e)) => (Err(e), None),
+                    Err(_) => (
+                        Err(conn::QueryErr::msg("the connection's pager stopped")),
+                        None,
+                    ),
+                },
+            };
             // Run + wrap_in_tx leaves the transaction open on success — the
             // caller will need to commit or rollback.
             let tx_open_after = is_run && wrap_in_tx && result.is_ok();
@@ -423,6 +494,7 @@ impl App {
                     grid,
                     kind_label: kind.label().to_string(),
                     tx_open_after,
+                    paging,
                 },
                 Err(err) => AppMsg::QueryFailed {
                     generation,
@@ -494,6 +566,7 @@ impl App {
             // Demo never actually opens a transaction — there's no
             // connection for a COMMIT/ROLLBACK to run against.
             tx_open_after: false,
+            paging: None,
         };
         let _ = self.msg_tx.send(msg);
     }

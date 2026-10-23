@@ -145,7 +145,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     let visible = app.grid_view.visible_rows.len();
     let total = grid.row_count();
     let cap = if grid.truncated {
-        format!(" · {}", crate::grid::cap_title_note())
+        format!(" · {}", crate::grid::partial_title_note(app.result_more()))
     } else {
         String::new()
     };

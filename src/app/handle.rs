@@ -78,6 +78,7 @@ impl App {
                 grid,
                 kind_label,
                 tx_open_after,
+                paging,
                 ..
             } => {
                 self.grid = grid;
@@ -93,6 +94,27 @@ impl App {
                     self.schema_dirty_after_run = false;
                     self.spawn_schema_refresh();
                 }
+                // A new result: a paging record if it ran through the
+                // pager, and the cursor if that stayed open. Any older
+                // cursor is already closed — this run went through the
+                // pager or `App::db`, and both close it first.
+                let id = self.next_result_id();
+                let now = Instant::now();
+                self.cursor = paging
+                    .as_ref()
+                    .and_then(|p| p.cursor)
+                    .map(|limits| CursorMirror {
+                        result_id: id,
+                        opened: now,
+                        last_fetch: now,
+                        limits,
+                    });
+                self.result_paging = paging.map(|p| ResultPaging {
+                    id,
+                    sql: p.sql,
+                    ceiling: false,
+                    in_transaction: p.in_transaction,
+                });
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-
                 // UPDATE / FK nav). Single-table SELECT only; anything
@@ -125,7 +147,10 @@ impl App {
                 // The cap note goes last: its CLI pointer is the way out,
                 // and the footer's fitting keeps the last segment.
                 let cap_suffix = if self.grid.truncated {
-                    format!(" · {}", crate::grid::cap_status_note())
+                    format!(
+                        " · {}",
+                        crate::grid::partial_status_note(self.result_more())
+                    )
                 } else {
                     String::new()
                 };
@@ -166,6 +191,9 @@ impl App {
                     self.mode = Mode::TxDecision;
                 }
             }
+            AppMsg::PageLoaded {
+                result_id, outcome, ..
+            } => self.on_page_loaded(result_id, outcome),
             AppMsg::QueryFailed {
                 error,
                 position,

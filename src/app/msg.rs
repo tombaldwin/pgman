@@ -7,6 +7,27 @@ use crate::grid::Grid;
 use crate::query::schema::SchemaCache;
 use std::sync::Arc;
 
+/// What a run through the pager (`AppMsg::QueryOk`'s `paging`) says
+/// about the result's cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPaging {
+    /// The statement, for `M` to re-run once the cursor closes.
+    pub sql: String,
+    /// `Some` while the cursor stays open for `M`.
+    pub cursor: Option<crate::query::paging::Limits>,
+    /// The session was inside a transaction, so it ran unpaged.
+    pub in_transaction: bool,
+}
+
+/// `M`'s answer (`AppMsg::PageLoaded`).
+#[derive(Debug)]
+pub enum PageOutcome {
+    /// The next page of the open cursor.
+    More(crate::query::paging::Page),
+    /// A re-run behind a fresh cursor, replacing the held rows.
+    Rerun(crate::query::paging::Opened),
+}
+
 #[derive(Debug)]
 pub enum AppMsg {
     /// Connection succeeded and the bootstrap query returned. The client is
@@ -36,6 +57,16 @@ pub enum AppMsg {
         /// True if the run wrapped the statement in a transaction that's still
         /// open — the app should prompt for commit/rollback.
         tx_open_after: bool,
+        /// `Some` when the run went to the pager (a plain `SELECT`,
+        /// docs/backlog/paging.md): whether its cursor stayed open.
+        paging: Option<RunPaging>,
+    },
+    /// `M`'s answer for the result `result_id`: the next page, or the
+    /// re-run that replaces the rows once the cursor had closed.
+    PageLoaded {
+        generation: u64,
+        result_id: u64,
+        outcome: Result<PageOutcome, crate::conn::QueryErr>,
     },
     /// A user-initiated query failed.
     QueryFailed {
@@ -191,6 +222,7 @@ impl AppMsg {
             AppMsg::Booted { generation, .. }
             | AppMsg::BootFailed { generation, .. }
             | AppMsg::QueryOk { generation, .. }
+            | AppMsg::PageLoaded { generation, .. }
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. }
             | AppMsg::Notice { generation, .. }

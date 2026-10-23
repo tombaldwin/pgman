@@ -14,14 +14,63 @@ pub fn cap_title_note() -> String {
     format!("capped at {MAX_ROWS} · more rows not fetched")
 }
 
-/// The status line's note for a capped grid: [`cap_title_note`] plus
-/// where to get every row (`pgman query` with JSON output is not
-/// capped; see `batch::truncated_warning`). Pure.
-pub fn cap_status_note() -> String {
-    format!(
-        "{} · pgman query '…' --json returns every row",
-        cap_title_note()
-    )
+/// Where to get every row: `pgman query` with JSON output is not
+/// capped (see `batch::truncated_warning`).
+const EVERY_ROW_HINT: &str = "pgman query '…' --json returns every row";
+
+/// How a partial result — one with more rows than the grid holds —
+/// can continue (docs/backlog/paging.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum More {
+    /// It did not run through the result cursor: an `EXPLAIN`, a
+    /// locking `SELECT`, a `\watch` run, a panel's grid.
+    Unpaged,
+    /// A plain `SELECT`, but the session was inside a transaction.
+    InTransaction,
+    /// `M` fetches the next page from the open cursor.
+    CursorOpen,
+    /// The cursor has closed; `M` re-runs the statement.
+    CursorClosed,
+    /// pgman holds no more than `paging::MAX_HELD_ROWS`.
+    Ceiling,
+}
+
+/// The result panel's title note for a partial grid. `partial` says
+/// that what the grid shows — and sorts, filters, finds and yanks — is
+/// the rows fetched so far. Pure.
+pub fn partial_title_note(more: More) -> String {
+    match more {
+        More::Unpaged => cap_title_note(),
+        More::InTransaction => format!("{} · in a transaction, so no paging", cap_title_note()),
+        More::CursorOpen => "partial · M fetches more".to_string(),
+        More::CursorClosed => "partial · cursor closed · M re-runs".to_string(),
+        More::Ceiling => format!(
+            "partial · stopped at pgman's {}-row limit",
+            crate::query::paging::MAX_HELD_ROWS
+        ),
+    }
+}
+
+/// The status line's note for a partial grid: the title's note, plus
+/// where to get every row when `M` can't. Pure.
+pub fn partial_status_note(more: More) -> String {
+    let note = partial_title_note(more);
+    match more {
+        More::CursorOpen | More::CursorClosed => note,
+        More::Unpaged | More::InTransaction | More::Ceiling => {
+            format!("{note} · {EVERY_ROW_HINT}")
+        }
+    }
+}
+
+/// What `Y` and `:fixture` add to their status for a partial result:
+/// they write the rows pgman holds, not the whole result. Pure.
+pub fn fetched_only_note(partial: bool) -> &'static str {
+    if partial {
+        " (fetched rows only · more not fetched)"
+    } else {
+        ""
+    }
 }
 
 /// One result cell: the server's text rendering of the value, `None`
@@ -486,6 +535,43 @@ pub fn layout_columns(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_result_says_how_to_continue() {
+        assert_eq!(
+            partial_title_note(More::CursorOpen),
+            "partial · M fetches more"
+        );
+        assert_eq!(
+            partial_title_note(More::CursorClosed),
+            "partial · cursor closed · M re-runs"
+        );
+        assert_eq!(
+            partial_title_note(More::Ceiling),
+            "partial · stopped at pgman's 100000-row limit"
+        );
+        assert_eq!(
+            partial_title_note(More::Unpaged),
+            "capped at 1000 · more rows not fetched"
+        );
+        assert_eq!(
+            partial_title_note(More::InTransaction),
+            "capped at 1000 · more rows not fetched · in a transaction, so no paging"
+        );
+        // Where `M` can go on, the status says so and no more; where it
+        // can't, it names the way to every row.
+        for more in [More::CursorOpen, More::CursorClosed] {
+            assert_eq!(partial_status_note(more), partial_title_note(more));
+        }
+        for more in [More::Unpaged, More::InTransaction, More::Ceiling] {
+            assert!(
+                partial_status_note(more).ends_with("pgman query '…' --json returns every row"),
+                "{more:?}"
+            );
+        }
+        assert_eq!(fetched_only_note(false), "");
+        assert!(fetched_only_note(true).contains("fetched rows only"));
+    }
 
     #[test]
     fn layout_columns_gives_a_hidden_columns_room_back() {
