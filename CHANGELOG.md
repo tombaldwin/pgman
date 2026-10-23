@@ -8,6 +8,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `docs/tap.md`: the JDBC tap for pgman users — the OpenTelemetry, TCP
+  and UDP ways in, the v1 event fields, the limits and drop counts,
+  `--tap-record` / `--tap-replay`, redaction and security.
 - `sslrootcert=<file>` in a connection string pins the trusted CAs, as
   in libpq (and `require` with a CA file checks the chain). It used to
   be ignored, with the default trust store used instead. `sslcrl` and
