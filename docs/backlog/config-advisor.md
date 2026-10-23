@@ -93,10 +93,13 @@ neither depends on the window, and they say "now" instead.
   current database. Only with ≥ 100 000 block requests (≈ 800 MB of
   logical I/O — a quiet dev database is noise). < 0.99 → LOW, < 0.95 →
   MED. A "read" may still come from the OS page cache, so a low ratio
-  is a hint, not proof. Suggestion: twice the current `shared_buffers`,
-  bounded by "≤ 25 % of RAM" (pgman does not know the RAM). On RDS the
-  default is already 25 % and on Aurora about 75 %, so there the text
-  says the working set likely exceeds the instance and the fix is a
+  is a hint, not proof. Self-hosted, the suggestion is twice the
+  current `shared_buffers`, bounded by "≤ 25 % of RAM" (pgman does not
+  know the RAM). On RDS and Aurora there is no command: RDS's default
+  is already about 25 % of instance memory and AWS's guidance is to
+  keep it there, and Aurora's is larger still, so the text says keep
+  it (on RDS, put the default back if the parameter group lowered it)
+  — the working set likely exceeds the instance and the fix is a
   larger class or less I/O per query, not the parameter.
 - **ADV002** — `temp_bytes` in the current database. Nothing below 64
   MiB in total. ≥ 256 MiB per hour of the window → MED, else LOW.

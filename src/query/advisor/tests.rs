@@ -296,24 +296,38 @@ fn cache_hit_suggests_double_with_a_restart_self_hosted() {
     );
 }
 
+/// AWS's guidance is to keep RDS's ~25% default, so on RDS there is no
+/// command to double it: the advice is a larger instance class or less
+/// I/O, the default put back if the group lowered it.
 #[test]
-fn cache_hit_on_rds_gives_the_parameter_group_command_in_pages() {
+fn cache_hit_on_rds_says_keep_the_default_with_no_command() {
     let th = Thresholds::default();
     let c = ctx(ServerKind::Rds);
     let sb = mem("16384", "8kB", "postmaster");
     let f = cache_hit_finding(&c, &db(900_000, 100_000, 0, DAY), Some(&sb), &th).unwrap();
-    let s = f.suggestion.clone().unwrap();
-    assert!(s.starts_with("aws rds modify-db-parameter-group"), "{s}");
-    assert!(
-        s.contains("ParameterValue=32768,ApplyMethod=pending-reboot"),
-        "{s}"
-    );
+    assert!(f.suggestion.is_none(), "{:?}", f.suggestion);
     let ch = advice(&f).change.clone().unwrap();
+    assert_eq!(
+        (ch.current.as_str(), ch.suggested.as_str()),
+        ("128MB", "128MB")
+    );
     assert!(
-        ch.reasoning.contains("RDS's default is already 25%"),
+        ch.reasoning
+            .starts_with("keep it near RDS's default, {DBInstanceClassMemory/32768}"),
         "{}",
         ch.reasoning
     );
+    assert!(
+        ch.reasoning.contains("a larger instance class"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(
+        ch.reasoning.contains("If the parameter group lowered it"),
+        "{}",
+        ch.reasoning
+    );
+    assert!(!ch.reasoning.contains("double"), "{}", ch.reasoning);
 }
 
 #[test]

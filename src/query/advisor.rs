@@ -506,6 +506,13 @@ pub fn cache_hit_finding(
             "leave it: Aurora already gives it about 75% of instance memory, so the working set is bigger than the instance — a larger instance class, or fewer pages per query (the slow-queries panel's top statements)".to_string(),
             None,
         ),
+        // AWS's guidance is to keep RDS's ~25% default: the rest of the
+        // instance's memory is the OS page cache Postgres reads through.
+        (ServerKind::Rds, _) => (
+            shared_buffers.map(Setting::display).unwrap_or_else(|| "unchanged".into()),
+            "keep it near RDS's default, {DBInstanceClassMemory/32768} (about 25% of instance memory): AWS advises against raising it much, as Postgres also reads through the OS page cache, which needs the rest. If the parameter group lowered it, putting the default back is the change to make; otherwise the working set is bigger than the instance — a larger instance class, or fewer pages per query (the slow-queries panel's top statements)".to_string(),
+            None,
+        ),
         (kind, Some(cur)) => {
             let next = cur.saturating_mul(2);
             let group = p
@@ -513,14 +520,9 @@ pub fn cache_hit_finding(
                 .from_bytes(next)
                 .map(|v| v.to_string())
                 .unwrap_or_default();
-            let why = if kind == ServerKind::Rds {
-                "double it if the instance has the memory: RDS's default is already 25% of instance memory, so if the parameter group hasn't lowered it the working set is bigger than the instance — a larger instance class, or fewer pages per query"
-            } else {
-                "double it, staying at or under about 25% of the machine's memory (pgman can't see the RAM); the rest is the OS page cache, which Postgres also reads through"
-            };
             (
                 pg_size(next),
-                why.to_string(),
+                "double it, staying at or under about 25% of the machine's memory (pgman can't see the RAM); the rest is the OS page cache, which Postgres also reads through".to_string(),
                 Some(server_suggestion(kind, p, &pg_size(next), &group, restart)),
             )
         }
