@@ -113,11 +113,6 @@ small-UX, correctness and environments findings landed on branch
 - **Tests under `tests/` build the library without `cfg(test)`**, so a
   yank reached from a journey or render test would hit the real
   clipboard. None does today; a runtime seam would make it impossible.
-- **A long filter pattern loses its `filter: /` prompt in the footer**
-  (schema browser, help, other filter modes): `fit_status` shrinks and
-  then drops the leading segment, so the prompt and the cursor go
-  missing. A typing prompt should keep its head and show the pattern's
-  tail.
 - **Log formats not yet read**: Log4j's bracketed logger (`DEBUG
   [org.hibernate.SQL] select …`); p6spy's multi-line Spring Boot
   starter format; Hibernate 5 ARRAY binds (only Hibernate 6's form is
@@ -267,25 +262,21 @@ work that still belongs to L1:
     event at the same moment so pgman can retroactively
     close out the synthetic txn.
 
-- **Tap List detail: the rest of the focused event.** The detail
-  under the List view shows only the bound parameters. The error
-  cause chain (a failed row is only coloured red), the full `caller`
-  stack (only `caller[0]` reaches the Callers view) and the
-  `pool` / `conn` / `txn` the event ran on are stored and never shown
-  for one event. Same place, same two-line budget, or a focused-event
-  overlay.
-- **Tap monitor's empty hint ignores the listener that is running.**
-  `TapHealth::monitor_status` always says "start pgman with
-  `--tap-otlp :4318` and attach the OpenTelemetry Java agent", even
-  when pgman is already listening on `--tap-listen` (auto-enabled in a
-  Java project) and the operator is waiting on pgman-tap. It should
-  name what is bound and what to point at it. Related: a stream of only
-  `txn_boundary` events (no query, no heartbeat) still reads "no events
-  yet", since the counters it reads ignore boundaries.
-- **The tap wire format has no page in `docs/`.** It is described in
-  `src/tap/mod.rs` (module doc) and in pgman-tap's README, nowhere a
-  user of pgman looks. When pgman-tap ships, `docs/tap.md` should carry
-  the v1 fields, including that `ts_unix_micros` is a query's start.
+- **Tap: nothing turns the `TAP` badge amber when events stop.**
+  `TapHealth`'s doc promises it; no code implements it.
+- **`--tap-record`'s drop marker mixes two drop counts on replay.** It
+  is a heartbeat carrying pgman's own listener drops, so a replay adds
+  them to the sender's `dropped_events_total`.
+- **The start card's TAP line turns on queries only**, while the
+  footer badge now also lights for heartbeats and commits/rollbacks.
+- **After `c` (clear) with queries but no heartbeats, the List view
+  shows the setup hint** instead of an empty list.
+- **OTLP ingest ignores `db.query.text` / `db.system.name`** (the
+  newer semantic-convention names); such spans are skipped
+  (documented in `docs/tap.md`).
+- **The tap event overlay has no `y`** to copy the SQL or the stack,
+  and a long word (an exception class name) is hard-split at the
+  column edge rather than wrapped at a `.`.
 
 #### L2 — insights
 Once events are flowing, the panel becomes an analysis surface.

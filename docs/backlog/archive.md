@@ -1777,3 +1777,14 @@ itself is done.
 - Postgres-log FATAL / PANIC + STATEMENT pairs are reconstructed like
   ERROR ones; csvlog, jsonlog, p6spy and datasource-proxy logs are read.
 
+### 0.1.2 backlog run (2026-10-23)
+
+- Tap List: Enter opens the whole focused event (kind, timing, pool /
+  conn / txn, full SQL, every parameter, cause chain, caller stack) as
+  a scrollable overlay (`docs/backlog/tap-event-detail.md`).
+- Tap status counts commits/rollbacks, so a boundary-only stream no
+  longer reads "no events yet"; the `TAP` badge lights on any event.
+- `docs/tap.md`: the JDBC tap for pgman users — ways in, the v1 field
+  table, limits, the two drop counts, record/replay, redaction.
+- A long typed footer pattern keeps its prompt head and the cursor,
+  showing the pattern's tail.
