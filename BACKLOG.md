@@ -128,6 +128,43 @@ small-UX, correctness and environments findings landed on branch
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
 
+### From the v0.2.0 release panel (2026-10-23) — LOWs left for later
+- **`D` after closing a diff diffs a new result against the stale pinned A**,
+  even from another table; only the title's A label shows it. Pin instead
+  when the new grid's columns/source differ, or say A is still pinned.
+- **The PK-keyed diff needs identical column order**: `SELECT id,t,n` vs
+  `SELECT n,t,id` falls back to a full-row key (every row removed+added).
+  Match key columns by origin and compare the rest by name.
+- **An inferred diff key accepts a NULL key value**, and a change line
+  renders SQL NULL and the string `'NULL'` the same.
+- **A pinned diff side drops `truncated`**, so the title never says a side
+  is a partial paged result.
+- **`:fixture`'s status is elided mid-note** at 160 columns, eating
+  "(fetched rows only · more not fetched)".
+- **Cell edit compares the FROM table by name only**: a same-named view in
+  an earlier search_path schema over the base table is bypassed (same
+  row, but INSTEAD OF triggers / CHECK OPTION skipped).
+- **A row visible but not updatable (RLS / privilege)** reports "the UPDATE
+  matched no row (deleted, or its key changed)"; say it may be policy.
+- **Schema wizard detail pane wraps mid-word** at 80x24 / 60x16, and its
+  header's last column reads `tit`.
+- **F-key-only hints**: start card `F4 JDBC tap` / `· F4 to look`, help
+  heading `F3 notify`; show `:tap` / `:notify` beside them.
+- **Result diff title at 80 cols** cuts off `key: id (primary key)`; put
+  the key before the query text.
+- **README's feature list** doesn't mention cell editing or paging; the
+  README `demo.gif` shows 0.1.0's chrome; crates.io's README has relative
+  `docs/` links that don't resolve there.
+- **Tap polish**: the N+1 row's caller is cut at the border without `…`;
+  the start card at 60x16 drops hint rows with no "more" marker;
+  docs/tap.md's "JAR backpressure" label puzzles an OTLP-only user.
+- **`--demo` writes `pgman.log`** although "no disk writes" is claimed.
+- **A static environment's primary row is never probed** in the overview
+  (STATUS/SCHEMA/… stay `—`) while its replica row is; same in v0.1.0.
+- **Advisor**: ADV003's `ALTER TABLE … SET (autovacuum…)` queues behind a
+  long query or an open pgman cursor; in the "autovacuum is behind" case a
+  lower scale factor doesn't help the overdue vacuum.
+
 ### Credentials & config
 - `${...}` placeholder resolution. (Blocked — needs real-world
   verification of Spring / SSM / 1Password mechanics; the
