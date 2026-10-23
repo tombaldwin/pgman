@@ -16,7 +16,7 @@ URL-embedded password.
 | `<repo>/.pgman/pgman.toml` | Project-committed connections + safety overrides. Discovered by walking up from cwd. |
 | `~/.config/pgman/connections.toml` | Personal named connections, ssh tunnels included: the connections `pgman mcp serve` accepts, and the ones a `static` environment lists. See [MCP server](mcp.md) and [Environments](environments.md). |
 | `~/.config/pgman/environments.toml` | Environments for the `E` overview and the MCP `environments` tool. See [Environments](environments.md). |
-| `~/.local/share/pgman/draft.sql` | Auto-saved editor buffer, restored on next launch. |
+| `~/.local/share/pgman/draft.sql` | Auto-saved editor buffer, restored on next launch. A window that never changed it doesn't write it; a window with edits that finds another window saved it meanwhile writes `draft-YYYYMMDD-HHMMSS.sql` beside it instead, and says so. |
 | `~/.local/share/pgman/history.log` | Query history, newest kept up to the last 50 statements run. |
 | `~/.local/share/pgman/saved.toml` | Named saved queries. |
 | `~/.cache/pgman/pgman.log.YYYY-MM-DD` | `tracing` output, rotated daily at midnight UTC. Level via `RUST_LOG` (default `info`). |

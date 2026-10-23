@@ -57,19 +57,21 @@ static UDP_MALFORMED_WARN: WarnThrottle = WarnThrottle::new();
 /// avoid the alloc.
 pub const TAP_UDP_MAX_DATAGRAM: usize = 64 * 1024;
 
-/// Spawn a UDP listener that decodes each datagram as one
-/// `TapEvent` JSON and forwards through `tx`. Pairs with
+/// Serve a bound UDP socket: decode each datagram as one
+/// `TapEvent` JSON and forward it through `tx`. Pairs with
 /// the TCP listener — operators pick UDP when they care more
 /// about "never blocks the app" than "no events lost."
 ///
+/// The caller binds, so a bind failure (port in use) is the
+/// caller's to report before anything says "listening".
+/// Returns when the receiving side has gone away.
+///
 /// Parse failures are logged via `tracing::warn` and dropped.
 /// A bad datagram never takes out the listener.
-pub async fn run_udp_listener(
-    addr: std::net::SocketAddr,
+pub async fn serve_udp_listener(
+    socket: tokio::net::UdpSocket,
     tx: tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    let socket = tokio::net::UdpSocket::bind(addr).await?;
-    tracing::info!("tap: UDP listener bound on {addr}");
+) {
     let mut buf = vec![0u8; TAP_UDP_MAX_DATAGRAM];
     loop {
         let (len, peer) = match socket.recv_from(&mut buf).await {
@@ -83,7 +85,7 @@ pub async fn run_udp_listener(
             Ok(mut event) => {
                 event.received_at_unix_micros = now_unix_micros();
                 if forward_or_drop(&tx, event, "udp").is_err() {
-                    return Ok(());
+                    return;
                 }
             }
             Err(e) => {
@@ -115,24 +117,24 @@ pub async fn run_udp_listener(
 /// allowed.
 pub const TAP_MAX_FRAME_BYTES: usize = 256 * 1024;
 
-/// Spawn a TCP listener that accepts pgman-tap connections,
-/// reads length-prefixed frames, decodes each via [`parse`],
-/// stamps `received_at_unix_micros` at receive time, and
-/// forwards events through `tx`. The returned task handle
-/// resolves only on socket-bind failure; per-connection
+/// Serve a bound TCP listener: accept pgman-tap connections,
+/// read length-prefixed frames, decode each via [`parse`],
+/// stamp `received_at_unix_micros` at receive time, and
+/// forward events through `tx`. Never returns; per-connection
 /// errors are logged via `tracing` and the connection is
 /// dropped so other clients keep flowing.
+///
+/// The caller binds, so a bind failure (port in use) is the
+/// caller's to report before anything says "listening".
 ///
 /// Framing: a 4-byte big-endian length prefix followed by
 /// that many JSON bytes (one event per frame). The JAR
 /// trivially produces this from any Java `OutputStream`
 /// (`writeInt(json.length); write(json)`).
-pub async fn run_tcp_listener(
-    addr: std::net::SocketAddr,
+pub async fn serve_tcp_listener(
+    listener: tokio::net::TcpListener,
     tx: tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("tap: TCP listener bound on {addr}");
+) {
     let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(TAP_MAX_CONCURRENT_CONNS));
     loop {
         let (sock, peer) = match listener.accept().await {

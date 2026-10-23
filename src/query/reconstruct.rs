@@ -1,5 +1,5 @@
 //! The shared output type for every reconstruction source. Don't fork this —
-//! `hibernate`, `pglog`, and `jdbc` all produce `ReconstructedQuery`.
+//! `hibernate`, `pglog`, `proxylog` and `jdbc` all produce `ReconstructedQuery`.
 
 /// A bound parameter value. Hibernate and Postgres both log `null` distinctly
 /// from the string `"null"`, so it gets its own variant.
@@ -26,6 +26,10 @@ pub enum Source {
     HibernateLog,
     PostgresLog,
     JdbcPaste,
+    /// A p6spy `SingleLineFormat` log (`query::proxylog`).
+    P6Spy,
+    /// A datasource-proxy query log (`query::proxylog`).
+    DatasourceProxy,
 }
 
 impl Source {
@@ -37,6 +41,8 @@ impl Source {
             Source::HibernateLog => "hibernate",
             Source::PostgresLog => "postgres",
             Source::JdbcPaste => "jdbc",
+            Source::P6Spy => "p6spy",
+            Source::DatasourceProxy => "ds-proxy",
         }
     }
 }

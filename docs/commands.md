@@ -90,7 +90,7 @@ the buffer. Opening the bar over a guarded-run confirmation cancels that run
 |---|---|---|
 | `:about` | — | The About card: version, install channel, server version, licence. |
 | `:update` | — | The About card, plus a footer line saying where the release check got to. "Up to date" is only claimed once a check has landed. |
-| `:help [topic]` | `\?` / `\h` | The help overlay, scrolled to `<topic>`: `grid`, `editor`, `commands`, `schema`, `saved`, `slow`, `sessions`, `environments`, `tap`, `explain`, `diff`, `wizard`. The topic picks the section to show, not where you end up: closing help returns to the mode the `:` bar was opened from. |
+| `:help [topic]` | `\?` / `\h` | The help overlay at section `<topic>`: a section's name or the start of one (`editor`, `sch`, `tap`, `commands`, …; `Tab` completes them); `:help all` is every section on one page. An unknown topic lists them all. The topic picks the section to show, not where you end up: closing help returns to the mode the `:` bar was opened from. |
 | `:quit`, `:q` | `\q` | Quit pgman. |
 | `:error` | — | The last error in full — what `F2` (or `!` outside the editor) opens. |
 | `:notify` | — | The `LISTEN`/`NOTIFY` arrivals panel, as `F3`. |
@@ -154,6 +154,10 @@ applies (`--dsn`, `--format`, `--discovered`, `--yes`):
 ```
 pgman query 'SELECT id, email FROM users LIMIT 5' --json --dsn postgres://app@localhost/appdb
 ```
+
+Global options may come before the sub-command too: `pgman --dsn
+postgres://app@localhost/appdb query 'SELECT 1'` is the same command. The
+same holds for `env` and `mcp`.
 
 `pgman mcp serve [--read-only] [--project-connections]` runs the stdio
 MCP server instead of the TUI — read-only queries, plus `apply_patches`

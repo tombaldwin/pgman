@@ -1,0 +1,35 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: ledger-staging…  •  Database: ledger                 ││                PostgreSQL   help │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
+ 1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
+╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────────────────────────╮
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                        │
+│   8 rows in 6 sections match 'yank'                                                              │
+│                                                                                                  │
+│   grid                                                                                           │
+│     I             yank focused row as INSERT (single-table SELECTs)                              │
+│                                                                                                  │
+│   row detail                                                                                     │
+│     y             yank focused field value to clipboard                                          │
+│                                                                                                  │
+│   cell detail                                                                                    │
+│     y             yank value to clipboard                                                        │
+│     y             yank the jq-style path (.foo[0].bar)                                           │
+│                                                                                                  │
+│   schema browser                                                                                 │
+│     s             yank SELECT * FROM <schema>.<table> LIMIT 100 template                         │
+│     i             yank INSERT INTO … (cols) VALUES (NULL, …) template                            │
+│                                                                                                  │
+│   notifications                                                                                  │
+│     y             yank focused payload to clipboard                                              │
+│                                                                                                  │
+│ ↓ 1 more below                                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   filter: /yank  · enter keep · esc clear

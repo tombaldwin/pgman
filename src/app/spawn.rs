@@ -45,6 +45,7 @@ impl App {
         self.pending_run = None;
         self.pending_terminate = None;
         self.conn_state = ConnState::Connecting;
+        self.in_recovery = None;
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         let read_only = self.read_only;
@@ -100,6 +101,7 @@ impl App {
                 Ok(b) => AppMsg::Booted {
                     generation,
                     server_version: b.server_version,
+                    in_recovery: b.in_recovery,
                     grid: b.grid,
                     client: b.client,
                     schema_cache: b.schema_cache,
@@ -121,7 +123,7 @@ impl App {
             .tap_nav
             .events_cursor
             .min(self.tap_events.len().saturating_sub(1));
-        self.last_status = Some(self.tap_health.monitor_status());
+        self.last_status = Some(self.tap_health.monitor_status(&self.tap_listeners));
         self.mode = Mode::TapMonitor;
     }
 

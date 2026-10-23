@@ -103,8 +103,10 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
             Some("off") => Some(false),
             _ => None,
         }),
-        "report" => BackslashCmd::Report(arg1.map(str::to_string)),
-        "fixture" => BackslashCmd::Fixture(arg1.map(str::to_string)),
+        // Paths take the rest of the line, not the first word: a path
+        // may hold spaces, and `\fixture my dir/f.xml` wrote `./my`.
+        "report" => BackslashCmd::Report(path_arg(body, cmd)),
+        "fixture" => BackslashCmd::Fixture(path_arg(body, cmd)),
         "l" => BackslashCmd::ListDatabases,
         "x" => BackslashCmd::Expanded(match arg1.map(str::to_ascii_lowercase).as_deref() {
             Some("on") => Some(true),
@@ -119,7 +121,7 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
             Ok(arg) => BackslashCmd::Connect(arg),
             Err(e) => BackslashCmd::Invalid(e),
         },
-        "i" => BackslashCmd::Include(arg1.map(str::to_string)),
+        "i" => BackslashCmd::Include(path_arg(body, cmd)),
         _ => BackslashCmd::Unknown(raw),
     })
 }
@@ -271,6 +273,20 @@ fn quoted_arg(body: &str, cmd: &str) -> Result<Option<String>, String> {
         return Err(CONNECT_ONE_NAME.to_string());
     }
     Ok(Some(first.to_string()))
+}
+
+/// The path following `cmd` in `body`: the rest of the command's line,
+/// trimmed, so a path with spaces survives (`\fixture my dir/f.xml`).
+/// A path wrapped in double quotes has them taken off. Lines after the
+/// first are not part of it. Empty is `None`.
+fn path_arg(body: &str, cmd: &str) -> Option<String> {
+    let rest = body.get(cmd.len()..)?;
+    let line = rest.lines().next().unwrap_or("").trim();
+    let line = match line.strip_prefix('"').and_then(|l| l.strip_suffix('"')) {
+        Some(inside) => inside.trim(),
+        None => line,
+    };
+    (!line.is_empty()).then(|| line.to_string())
 }
 
 /// How a connect-by-name argument resolved against the discovered
@@ -426,6 +442,32 @@ mod tests {
         );
     }
 
+    /// The whole rest of the line is the path — the first word was:
+    /// `\fixture my dir/f.xml` wrote `./my`.
+    #[test]
+    fn path_commands_take_the_rest_of_the_line() {
+        assert_eq!(
+            parse_backslash_command("\\fixture  my dir/users.xml  "),
+            Some(BackslashCmd::Fixture(Some("my dir/users.xml".into())))
+        );
+        assert_eq!(
+            parse_backslash_command("\\report /tmp/a b.md"),
+            Some(BackslashCmd::Report(Some("/tmp/a b.md".into())))
+        );
+        assert_eq!(
+            parse_backslash_command("\\i \"x y.sql\""),
+            Some(BackslashCmd::Include(Some("x y.sql".into())))
+        );
+        assert_eq!(
+            parse_backslash_command("\\i a.sql\nSELECT 1"),
+            Some(BackslashCmd::Include(Some("a.sql".into())))
+        );
+        assert_eq!(
+            parse_backslash_command("\\fixture \"\""),
+            Some(BackslashCmd::Fixture(None))
+        );
+    }
+
     #[test]
     fn parse_list_databases() {
         assert_eq!(
@@ -551,11 +593,11 @@ mod tests {
             parse_backslash_command("\\i /tmp/q.sql"),
             Some(BackslashCmd::Include(Some("/tmp/q.sql".into())))
         );
-        // Extra tokens past the path ignored, same as every other
-        // arg1-only command here.
+        // The rest of the line is the path, spaces and all: dropping
+        // the words after the first read some other file.
         assert_eq!(
             parse_backslash_command("\\i /tmp/q.sql extra"),
-            Some(BackslashCmd::Include(Some("/tmp/q.sql".into())))
+            Some(BackslashCmd::Include(Some("/tmp/q.sql extra".into())))
         );
     }
 

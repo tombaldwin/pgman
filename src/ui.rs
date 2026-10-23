@@ -16,6 +16,7 @@ use unicode_width::UnicodeWidthChar;
 mod chrome;
 mod editor;
 mod header;
+mod help;
 mod landing;
 mod panels;
 mod results;
@@ -23,12 +24,13 @@ mod schema;
 mod tap;
 
 use editor::{draw_completion_popup, draw_editor};
+use help::draw_help;
+pub(crate) use help::help_heading_jump;
 use landing::draw_landing;
 use panels::{
     draw_about, draw_confirm, draw_conn_pick, draw_environments, draw_error_detail,
-    draw_explain_tree, draw_help, draw_log_pick, draw_notifications, draw_param_prompt,
-    draw_rename_prompt, draw_save_query_prompt, draw_saved_queries, draw_sessions,
-    draw_slow_queries,
+    draw_explain_tree, draw_log_pick, draw_notifications, draw_param_prompt, draw_rename_prompt,
+    draw_save_query_prompt, draw_saved_queries, draw_sessions, draw_slow_queries,
 };
 use results::{draw_cell_detail, draw_grid, draw_result_diff, draw_row_detail};
 use schema::{draw_schema_browser, draw_schema_lint};
@@ -163,7 +165,7 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
         };
         app.completion_popup_drawn = draw_completion_popup(f, above, below, app);
     }
-    if app.mode == Mode::Help {
+    if matches!(app.mode, Mode::Help | Mode::HelpFilter) {
         draw_help(f, area, app);
     }
     if app.mode == Mode::Confirm {
@@ -354,6 +356,16 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
         Span::styled(state, state_style),
     ];
+    if shows_replica_badge(app) {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            " replica ",
+            Style::default()
+                .bg(theme.health_yellow)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if let Some(update) = &app.update_available {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
@@ -385,6 +397,13 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     ];
     head.append(&mut spans);
     f.render_widget(Paragraph::new(Line::from(head)), area);
+}
+
+/// Connected to a standby: the header says `replica`, whichever way the
+/// connection was made — `:connect` and `--dsn` too, not only an
+/// environment whose inventory names one. Pure.
+pub(crate) fn shows_replica_badge(app: &App) -> bool {
+    matches!(app.conn_state, ConnState::Connected { .. }) && app.in_recovery == Some(true)
 }
 
 /// What follows "pgman" in the header: ` 0.1.0 · 2026-10-19`, or without
@@ -457,9 +476,13 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                     // way to connect.
                     lines.push(Line::from("no connection — press c to choose a connection"));
                 }
+                // Wrapped, not clipped: at 80 columns the discovery and
+                // `:connect` lines cut off mid-word. The card fills the
+                // whole body, so the wrapped rows have the room.
                 f.render_widget(
                     Paragraph::new(Text::from(lines))
                         .style(Style::default().fg(app.theme.muted))
+                        .wrap(ratatui::widgets::Wrap { trim: false })
                         .block(bordered(&app.theme, "pgman")),
                     area,
                 );
@@ -843,12 +866,13 @@ const ERROR_ICON: &str = " ⚠ ";
 pub(crate) const ERROR_FOOTER_MAX_ROWS: u16 = 3;
 
 /// The pointer to the error overlay that ends the footer's error: `!`
-/// where no character is being typed; F2 (fn-F2 on a Mac) in the
-/// editor and the prompts, where `!` is a character. Empty when there
-/// is no detail to open.
+/// where no character is being typed; in the editor and the prompts,
+/// where `!` is a character, F2 — and `:error`, since F2 takes fn on a
+/// Mac and an F-key must never be the only way. Empty when there is no
+/// detail to open.
 fn error_pointer(app: &App) -> &'static str {
     match app.last_error_detail {
-        Some(_) if app.mode.is_text_input() => " · F2 detail",
+        Some(_) if app.mode.is_text_input() => " · F2 / :error detail",
         Some(_) => " · ! detail",
         None => "",
     }
@@ -1131,7 +1155,7 @@ pub(crate) fn fit_hints(hints: &str, width: usize, help: &str) -> String {
         let remaining = items.len() - kept;
         let marker = format!("{help} +{remaining} more");
         let mut pieces: Vec<&str> = items[..kept].to_vec();
-        pieces.push(&marker);
+        pieces.push(marker.trim_start());
         let candidate = pieces.join(SEP);
         if display_width(&candidate) <= width {
             return candidate;
@@ -1148,6 +1172,28 @@ pub(crate) fn fit_hints(hints: &str, width: usize, help: &str) -> String {
 /// Pure / testable.
 pub(crate) fn count_label(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// A count short enough for a title: exact below 10 000, then `12.3k`,
+/// `4.5M`, `1.2G`, `3.4T` (cut down, never rounded up, so they never
+/// claim more than there is), and `1.0e18` past that. A producer's
+/// raw `dropped_events_total` of 10¹⁸ took nineteen columns and pushed
+/// the key hints off the tap monitor's title. Pure / testable.
+pub(crate) fn compact_count(n: u64) -> String {
+    if n < 10_000 {
+        return n.to_string();
+    }
+    for (unit, suffix) in [
+        (1_000u64, "k"),
+        (1_000_000, "M"),
+        (1_000_000_000, "G"),
+        (1_000_000_000_000, "T"),
+    ] {
+        if n < unit * 1_000 {
+            return format!("{}.{}{suffix}", n / unit, n % unit / (unit / 10));
+        }
+    }
+    format!("{:.1e}", n as f64)
 }
 
 /// Fit a ` · `-joined panel title into `width` columns by dropping
@@ -1346,6 +1392,54 @@ fn end_ellipsis(s: &str, width: usize) -> String {
     format!("{keep}…")
 }
 
+/// Is this ` · ` segment a `key action` hint (`y run`, `+ / − expand-all`,
+/// `ctrl-t new`, `J/K next row`) rather than prose (`find: pro`,
+/// `loaded query`)? Its first word, and each `/ alt` alternative, must
+/// look like a key: at most two characters (`?`, `[`, `F2`), a slash pair
+/// of those (`J/K`), a named key, or a modifier chord — and not a bare
+/// count (`3 matches`, `1/3 match`). A key hint is
+/// fitted whole or not at all — cut, it shows its label without its key.
+/// Pure.
+pub(crate) fn is_key_hint(segment: &str) -> bool {
+    const NAMED: &[&str] = &[
+        "enter",
+        "esc",
+        "tab",
+        "space",
+        "home",
+        "end",
+        "pgup",
+        "pgdn",
+        "del",
+        "backspace",
+        "shift-tab",
+    ];
+    let looks_like_key = |w: &str| {
+        let lower = w.to_ascii_lowercase();
+        // A count (`3 matches`, `1/3 match`) is prose, not a key.
+        if w.chars().any(|c| c.is_ascii_digit())
+            && w.chars().all(|c| c.is_ascii_digit() || c == '/')
+        {
+            return false;
+        }
+        w.chars().count() <= 2
+            || (w.contains('/')
+                && w.split('/')
+                    .all(|p| !p.is_empty() && p.chars().count() <= 2))
+            || NAMED.contains(&lower.as_str())
+            || ["ctrl-", "alt-", "shift-"]
+                .iter()
+                .any(|m| lower.starts_with(m))
+            || (lower.len() >= 2
+                && lower.starts_with('f')
+                && lower[1..].chars().all(|c| c.is_ascii_digit()))
+    };
+    match hint_key(segment) {
+        Some((key, _)) => key.split(" / ").all(looks_like_key),
+        None => false,
+    }
+}
+
 /// Fit a ` · `-joined status/error line into `width` columns without ever
 /// cutting a word mid-letter. Unlike [`fit_hints`] (whole hint items,
 /// dropped from the tail), the *last* segment here is load-bearing — it
@@ -1359,6 +1453,10 @@ fn end_ellipsis(s: &str, width: usize) -> String {
 ///    other than the last (`"abc…xyz"`, keeping both ends) until either
 ///    the join fits or every other segment has been collapsed to a bare
 ///    `"…"`.
+///    Key hints ([`is_key_hint`]) are never shrunk: a cut one keeps its
+///    label and loses its key (`… expand-all/collapse-all`).
+///    Then, still too wide, drop whole middle segments: prose first,
+///    then key hints from the end.
 /// 3. Still too wide → drop whole leading segments (the ones already
 ///    reduced to `"…"` first, by construction) until only the last
 ///    segment remains.
@@ -1372,7 +1470,7 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
         return text.to_string();
     }
     let mut segments: Vec<String> = text.split(SEP).map(str::to_string).collect();
-    let last_idx = segments.len() - 1;
+    let mut last_idx = segments.len() - 1;
 
     // Step 2: shrink the longest non-last segment, repeatedly, until the
     // join fits or nothing non-last is left to shrink. Only segments
@@ -1400,23 +1498,38 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
         let longest = segments
             .iter()
             .enumerate()
-            .filter(|(i, s)| *i != last_idx && display_width(s) >= MIN_SHRINK)
+            .filter(|(i, s)| *i != last_idx && display_width(s) >= MIN_SHRINK && !is_key_hint(s))
             .max_by_key(|(_, s)| display_width(s));
         let Some((i, s)) = longest else { break };
         let target_len = display_width(s).saturating_sub(over).max(1);
-        segments[i] = middle_ellipsis(s, target_len);
+        // Shrunk to a stub (`r…` of `replicas under their primary`), a
+        // middle segment says nothing: drop it whole instead. The first
+        // is the context, so it keeps whatever of itself fits.
+        const MIN_KEEP: usize = 8;
+        if i > 0 && target_len < MIN_KEEP {
+            segments.remove(i);
+            last_idx -= 1;
+        } else {
+            segments[i] = middle_ellipsis(s, target_len);
+        }
     }
 
     // Step 2b: nothing left to shrink. Drop whole segments from the
     // second onwards — the first is the context (`find: pro`), the
     // last is the action keys; what sits between is the most
-    // dispensable.
+    // dispensable. Prose goes before key hints (`1/3 match` before
+    // `enter accept`), and key hints go from the end: they are listed
+    // most useful first.
     while segments.len() > 2 {
         let candidate = segments.join(SEP);
         if display_width(&candidate) <= width {
             return candidate;
         }
-        segments.remove(1);
+        let last = segments.len() - 1;
+        let drop = (1..last)
+            .find(|&i| !is_key_hint(&segments[i]))
+            .unwrap_or(last - 1);
+        segments.remove(drop);
     }
 
     // Step 3: every other segment is now "…" (or there were none) —
@@ -1552,7 +1665,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // The confirm modal says what it's asking itself; its footer is
         // the keys that answer it. A status left from the editor (a
         // completion's, the cost preview's) hid `y run · n / esc cancel`.
-        .filter(|_| app.mode != Mode::Confirm)
+        //
+        // Help is the same: its footer is the overlay's own keys. A
+        // status from before it opened (`connected to …`, a yank's
+        // `copied …`) sat there instead, and at 200 columns it read as
+        // something the overlay had said.
+        .filter(|_| !matches!(app.mode, Mode::Confirm | Mode::Help))
     {
         let sp = SPINNER[app.anim_tick % SPINNER.len()];
         let prefix = if app.query_running {
@@ -1602,7 +1720,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             "connecting… · q quit"
         } else {
             match app.mode {
-                Mode::Help => "esc / ?  close help",
+                Mode::Help => help_footer_hints(&app.help, area.width),
+                Mode::HelpFilter => "type to filter · enter keep · esc clear",
                 Mode::Editor if app.completion.is_some() => {
                     // Popup is up — surface the keys that act on it.
                     // Typing narrows live; Tab cycles; Esc restores the
@@ -1682,11 +1801,20 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         };
         // `?` opens help everywhere except where it's a character being
         // typed; there only F1 does (fn-F1 on a Mac keyboard).
-        let help_key = if app.mode.is_text_input() { "F1" } else { "?" };
+        // In help itself `?` closes it: the overflow marker names no key
+        // there, only how many hints did not fit.
+        let help_key = if app.mode == Mode::Help {
+            ""
+        } else if app.mode.is_text_input() {
+            "F1"
+        } else {
+            "?"
+        };
         let appended;
         let hints: &str = if matches!(
             app.mode,
             Mode::Help
+                | Mode::HelpFilter
                 | Mode::Confirm
                 | Mode::TxDecision
                 | Mode::GridFilter
@@ -1779,6 +1907,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         Mode::SchemaBrowserFilter => app.schema_browser.filter.as_ref().map(|f| {
             // Status reads "filter: /<pat>  · …" — same shape as
             // GridFilter.
+            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
+            PREFIX_CHARS + display_width(f) as u16
+        }),
+        Mode::HelpFilter => app.help.filter.as_ref().map(|f| {
+            // Status reads "filter: /<pat>  · …" — same shape as the
+            // schema browser's.
             const PREFIX_CHARS: u16 = "filter: /".len() as u16;
             PREFIX_CHARS + display_width(f) as u16
         }),
@@ -2011,6 +2145,43 @@ pub(crate) fn diff_cell(cell: &grid::Cell) -> &str {
 /// Given the per-field line counts, where each field starts in the line
 /// stream and the desired scroll offset that keeps `focus_field` fully in
 /// view inside a `body_height`-row viewport. Pure / testable.
+/// How many fields of a row-detail body start out of view: before the
+/// first line the operator can see, and at or after the end of what
+/// they can see — `visible`, which leaves out a line the `↑` / `↓`
+/// indicator is drawn over. Fields, not lines — the title counts fields
+/// (`field 3 of 24`), and a long wrapped value is one field however many
+/// lines it takes. Pure.
+pub(crate) fn fields_out_of_view(
+    field_line_counts: &[u16],
+    visible: std::ops::Range<u16>,
+) -> (usize, usize) {
+    let (scroll, end) = (visible.start, visible.end);
+    let mut top: u16 = 0;
+    let (mut above, mut below) = (0, 0);
+    for &n in field_line_counts {
+        if top < scroll {
+            above += 1;
+        } else if top >= end {
+            below += 1;
+        }
+        top = top.saturating_add(n);
+    }
+    (above, below)
+}
+
+/// The `↑ N more fields above` / `↓ N more fields below` indicator. With
+/// none wholly out of view (a long value continues), just `↓ more below`.
+/// Pure.
+pub(crate) fn more_fields_label(arrow: &str, n: usize, side: &str) -> String {
+    match n {
+        0 => format!("{arrow} more {side}"),
+        n => format!(
+            "{arrow} {} {side}",
+            count_label(n as u64, "more field", "more fields")
+        ),
+    }
+}
+
 pub(crate) fn auto_scroll_to_field(
     field_line_counts: &[u16],
     focus_field: usize,
@@ -2039,6 +2210,83 @@ pub(crate) fn auto_scroll_to_field(
         scroll = scroll.max(needed);
     }
     scroll.min(max_scroll)
+}
+
+/// The help overlay's sections in `help_body` order: each heading and
+/// the one-line teaser the narrow section list shows beside it. The
+/// app resolves `:help <topic>` and a mode's section against this list
+/// without building the body; a test pins that `help_body`'s headings
+/// are exactly these, in this order.
+pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
+    ("grid", "the results: move, sort, filter, find, yank"),
+    (
+        "editor",
+        "write and run SQL · EXPLAIN · history · completion",
+    ),
+    ("confirm", "the y / n prompt before a guarded statement"),
+    ("tx open", "commit or roll back an open transaction"),
+    ("log pick", "pick a query reconstructed from a log"),
+    ("conn pick", "the connection picker"),
+    ("row detail", "one row, field by field (enter on the grid)"),
+    ("cell detail", "one value, as text or as a JSON tree"),
+    (
+        "schema browser",
+        "schemas, tables, columns, constraints (S)",
+    ),
+    ("EXPLAIN tree", "the plan as a tree, hottest node in red"),
+    ("slow queries", "pg_stat_statements, slowest first (T)"),
+    (
+        "environments",
+        "every database you know · discovery · patches",
+    ),
+    (
+        "active sessions",
+        "pg_stat_activity and locks · terminate (L)",
+    ),
+    (
+        "psql backslash commands",
+        "\\d \\dt \\df \\l \\x \\c \\i and friends",
+    ),
+    (
+        ": commands",
+        "the : bar: about, help, readonly, redact, connect",
+    ),
+    ("tabs", "an editor and a result per tab · ] / [ switch"),
+    ("saved queries", "named queries kept across sessions (Q)"),
+    ("notifications", "LISTEN / NOTIFY arrivals (F3)"),
+    (
+        "jdbc tap",
+        "your app's statements, live from the JDBC tap (F4)",
+    ),
+    ("result diff", "compare two results, A against B (D)"),
+    (
+        "schema wizard",
+        "schema lint: missing keys, unused indexes (W)",
+    ),
+    ("help", "this overlay's own keys"),
+];
+
+/// The help overlay's footer: its own keys, for the page it is on —
+/// `width` is the terminal's, which decides the split as it does for
+/// the overlay. Pure.
+pub(crate) fn help_footer_hints(help: &crate::app::HelpUi, width: u16) -> &'static str {
+    use crate::app::HelpView;
+    // Closing first: a narrow footer drops hints from the end, and the
+    // way out is the one that must survive.
+    if help.filter.is_some() {
+        "? close help · esc clear filter · j/k scroll · ] / [ next / prev section · / edit filter"
+    } else if help.view == HelpView::All || help::help_is_split(width) {
+        "esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter"
+    } else if help.view == HelpView::List {
+        "esc / ? close help · j/k select · enter open · / filter"
+    } else {
+        "esc list · ? close help · j/k scroll · ] / [ section · / filter"
+    }
+}
+
+/// Index of the help section headed `title` in [`HELP_SECTIONS`]. Pure.
+pub(crate) fn help_section_index(title: &str) -> Option<usize> {
+    HELP_SECTIONS.iter().position(|(t, _)| *t == title)
 }
 
 /// Build the help body: a flat `Vec<Line>` plus an anchor → row
@@ -2582,7 +2830,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                  enter runs · esc cancels · tab completes the command name"),
+        row("                  enter runs · esc cancels · tab completes the command name and :help's topic"),
         &mut lines,
     );
     push(row("    :about          the About card"), &mut lines);
@@ -2591,11 +2839,11 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    :help [topic]   this help · topics: grid, editor, commands, schema, saved,"),
+        row("    :help [topic]   this help, at a section: its name or the start of it"),
         &mut lines,
     );
     push(
-        row("                    slow, sessions, environments, tap, explain, diff, wizard"),
+        row("                    (tab completes it) · :help all  every section on one page"),
         &mut lines,
     );
     push(row("    :quit  /  :q    quit pgman"), &mut lines);
@@ -2805,11 +3053,27 @@ pub(crate) fn help_body(
 
     heading("help", &mut lines, &mut anchors);
     push(
-        row("    j / k  ↑ ↓    scroll · g / G  top / bottom · PageUp/Down  by 10"),
+        row("    j / k  ↑ ↓    scroll the section · g / G  top / bottom · PageUp/Down  by 10"),
         &mut lines,
     );
     push(
-        row("    esc / ? / q / F1   close (returns to the mode you opened help from)"),
+        row("    tab / ]       next section · shift-tab / [  previous section"),
+        &mut lines,
+    );
+    push(
+        row("    enter         open the selected section (a narrow terminal lists them first)"),
+        &mut lines,
+    );
+    push(
+        row("    /             filter every section live · enter keep · esc clear"),
+        &mut lines,
+    );
+    push(
+        row("    esc           back to the section list (narrow terminals), else close"),
+        &mut lines,
+    );
+    push(
+        row("    ? / q / F1    close (returns to the mode you opened help from)"),
         &mut lines,
     );
 
@@ -2851,8 +3115,10 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
 
 /// Right-aligned on the tab bar, most important first: how to switch,
 /// open and close tabs. Whole pieces drop from the right when the tabs
-/// need the room, so a crowded bar still says `] [ switch`.
-const TAB_BAR_HINT_PIECES: &[&str] = &["] [ switch", "ctrl-t new", "ctrl-w close"];
+/// need the room, so a crowded bar still says `[ ] prev/next tab`. The
+/// keys go in their own order, prev before next: `] [ switch` read as
+/// a stray pair of brackets.
+const TAB_BAR_HINT_PIECES: &[&str] = &["[ ] prev/next tab", "ctrl-t new", "ctrl-w close"];
 
 /// The tab-bar hint that fits in `free` columns, one of which is the
 /// gap before it: the longest prefix of `TAB_BAR_HINT_PIECES` joined
@@ -2932,31 +3198,61 @@ pub(crate) fn tab_label_text(buffer: &str) -> String {
 ///   the bespoke Spring Boot starter with caller / pool /
 ///   txn data.
 ///
+/// `listeners` are the ones that bound at startup: the hint says where
+/// pgman is listening, and only tells the operator to restart with
+/// `--tap-otlp` when no OTLP listener is up — it used to say so with
+/// one already bound, or with the TCP listener waiting.
+///
 /// Pure (returns `Vec<Line>`) so the empty-state layout is
 /// renderer-agnostic and snapshot-testable.
-fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
+fn tap_setup_hint_lines(
+    theme: &crate::theme::Theme,
+    listeners: &[crate::tap::TapListener],
+) -> Vec<Line<'static>> {
     let muted = Style::default().fg(theme.muted);
     let title = Style::default()
         .fg(theme.title)
         .add_modifier(Modifier::BOLD);
     let code = Style::default().fg(theme.text);
-    vec![
-        Line::from(Span::styled("no tap events yet", muted)),
-        Line::from(""),
-        // Route 1 — OTLP (works today)
-        Line::from(Span::styled(
-            "Route 1: OpenTelemetry (works today, any JVM)",
-            title,
-        )),
-        Line::from(Span::styled("  start pgman with:", muted)),
-        Line::from(Span::styled("    pgman --tap-otlp :4318", code)),
+    let otlp = listeners
+        .iter()
+        .find(|l| l.transport == crate::tap::TapTransport::Otlp);
+    // Where the JVM should send spans: the bound OTLP listener (a
+    // wildcard bind is reached as localhost), else the default port.
+    let otlp_endpoint = match otlp {
+        Some(l) if l.addr.ip().is_unspecified() => format!("localhost:{}", l.addr.port()),
+        Some(l) => l.addr.to_string(),
+        None => "localhost:4318".to_string(),
+    };
+    let mut lines = vec![Line::from(Span::styled("no tap events yet", muted))];
+    if let Some(listening) = crate::tap::listening_summary(listeners) {
+        lines.push(Line::from(Span::styled(
+            format!("pgman is {listening}"),
+            code,
+        )));
+    }
+    lines.push(Line::from(""));
+    // Route 1 — OTLP (works today)
+    lines.push(Line::from(Span::styled(
+        "Route 1: OpenTelemetry (works today, any JVM)",
+        title,
+    )));
+    if otlp.is_none() {
+        lines.push(Line::from(Span::styled("  start pgman with:", muted)));
+        lines.push(Line::from(Span::styled("    pgman --tap-otlp :4318", code)));
+    }
+    lines.extend([
         Line::from(Span::styled("  on the JVM side:", muted)),
         Line::from(Span::styled(
             "    -javaagent:opentelemetry-javaagent.jar",
             code,
         )),
         Line::from(Span::styled(
-            "    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318",
+            // The per-signal variable is used as-is — the exporter does
+            // not append `/v1/traces` the way it does to
+            // OTEL_EXPORTER_OTLP_ENDPOINT — and pgman answers only that
+            // path, so a bare host:port here got the JVM a 404.
+            format!("    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://{otlp_endpoint}/v1/traces"),
             code,
         )),
         Line::from(Span::styled(
@@ -2983,7 +3279,8 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
             "Once events arrive: j/k navigate · v cycle views · s sort · ? help",
             muted,
         )),
-    ]
+    ]);
+    lines
 }
 
 /// Render a duration in microseconds as a compact

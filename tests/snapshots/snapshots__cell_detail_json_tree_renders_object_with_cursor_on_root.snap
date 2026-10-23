@@ -1,12 +1,12 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 548
+assertion_line: 569
 expression: dump(&buf)
 ---
  pgman X.X.X · YYYY-MM-DD │ test  connected · pg 16.0
- 1 empty                                 ] [ switch · ctrl-t new · ctrl-w close
+ 1 empty                          [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> (╭[ ◆ data · row 1 of 1 · field 1/1 · JSON ◆ ]──────────────────────────╮   │
+│> (╭[ ◆ data · row 1 of 1 · field 1 of 1 · JSON ◆ ]───────────────────────╮   │
 ╰───│                                                                      │───╯
 ╭[ ◆│ ▼ { 3 }                                                              │───╮
 │dat│   "id": 1                                                            │   │

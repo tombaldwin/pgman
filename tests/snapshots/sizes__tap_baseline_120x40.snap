@@ -8,11 +8,11 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-staging/ledger … ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                     [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                                         │
 │  FROM invoices                                                                                                       │
-│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · c clear ╮    │
+│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · … ──────╮    │
 │  OR│baseline captured 0s ago · 4 fingerprint(s) · 11 event(s) at capture                                        │    │
 │    │current ring: 11 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                   │    │
 ╰────│                                                                                                            │────╯

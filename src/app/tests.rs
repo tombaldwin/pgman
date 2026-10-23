@@ -58,7 +58,11 @@ fn f1_from_editor_opens_help() {
     a.editor.buffer = "select 1".into();
     a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Help);
-    assert_eq!(a.help.origin, Some(Mode::Editor));
+    assert_eq!(
+        Some(a.help.section),
+        crate::ui::help_section_index("editor")
+    );
+    assert_eq!(a.help.view, HelpView::Section);
 }
 
 #[test]
@@ -70,7 +74,7 @@ fn f1_from_help_closes_back_to_origin_mode() {
     a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     // Restored to the source mode, not Normal.
     assert_eq!(a.mode, Mode::Editor);
-    assert!(a.help.origin.is_none());
+    assert!(a.help.return_to.is_none());
 }
 
 #[test]
@@ -1816,6 +1820,20 @@ fn saved(name: &str, body: &str) -> crate::saved::SavedQuery {
     }
 }
 
+/// Esc out of the help overlay. On a narrow terminal — and a unit test
+/// never drew one, so `help.split` is false — Esc from a section goes
+/// back to the section list first and closes from there, so it takes
+/// one press or two. Never more: a third would be a key for the mode
+/// help closed into.
+fn esc_out_of_help(a: &mut App) {
+    for _ in 0..2 {
+        if a.mode != Mode::Help {
+            return;
+        }
+        a.on_key(KeyEvent::from(KeyCode::Esc));
+    }
+}
+
 fn type_str(a: &mut App, s: &str) {
     for c in s.chars() {
         a.on_key(KeyEvent::from(KeyCode::Char(c)));
@@ -1859,6 +1877,27 @@ fn param_prompt_collects_values_and_substitutes() {
     assert_eq!(a.mode, Mode::Editor);
     assert_eq!(a.editor.buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
     assert!(a.saved_ui.param_prompt.is_none());
+    // No `;`, so a plain Enter would be a newline: name the key that runs.
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("loaded 'two' with 2 param(s) · alt-⏎ runs it")
+    );
+}
+
+#[test]
+fn a_loaded_saved_query_names_the_key_that_runs_it() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.load_saved_query(saved("byid", "SELECT * FROM t WHERE id = :id;"));
+    type_str(&mut a, "42");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Editor);
+    // Terminated: a plain Enter runs it.
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("loaded 'byid' with 1 param(s) · ⏎ runs it")
+    );
+    // And it does.
+    assert!(crate::app::editor::enter_runs(&a.editor.buffer));
 }
 
 #[test]
@@ -2074,6 +2113,74 @@ fn dispatch_fixture_errors_without_source_table() {
         .contains("single-table"));
 }
 
+/// With a filter active `:fixture` captures what the filter shows, as
+/// `Y` exports it, and says how many of how many; it captured every
+/// row, the hidden ones too.
+#[test]
+fn dispatch_fixture_captures_only_the_filtered_rows() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(
+        &["id", "name"],
+        &[&["1", "alice"], &["2", "bob"], &["3", "bobby"]],
+    );
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    a.grid_view.filter = Some("bob".into());
+    a.rebuild_visible_rows();
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-filt-{}", std::process::id()));
+    let path = dir.join("users.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(status.contains("2 of 3 row(s) (filtered)"), "{status}");
+    let parsed = crate::dbunit::parse_flat_xml(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let ids: Vec<&str> = parsed
+        .rows
+        .iter()
+        .map(|r| r.columns[0].1.as_str())
+        .collect();
+    assert_eq!(ids, ["2", "3"]);
+    // A filter that hides everything captures nothing and says why.
+    a.grid_view.filter = Some("zzz".into());
+    a.rebuild_visible_rows();
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("no rows match the filter — nothing to capture")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `:fixture <path>` writes to the whole path, spaces included — it
+/// took the first word, so `:fixture my dir/f.xml` wrote `./my`.
+#[test]
+fn colon_fixture_writes_to_a_path_with_spaces() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-sp-{}", std::process::id()));
+    let path = dir.join("my dir").join("users.xml");
+    a.dispatch_command(&format!("fixture {}", path.display()));
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    let xml = std::fs::read_to_string(&path).expect("written at the full path");
+    assert!(xml.contains("<users id=\"1\"/>"), "{xml}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A table whose name would not read back as itself is refused with a
+/// reason, and nothing is written — not renamed into another table.
+#[test]
+fn dispatch_fixture_refuses_a_table_name_that_does_not_round_trip() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "order items".into()));
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-refuse-{}", std::process::id()));
+    let path = dir.join("f.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("fixture capture refused"), "{err}");
+    assert!(err.contains("not a valid XML name"), "{err}");
+    assert!(!path.exists(), "nothing written");
+}
+
 #[test]
 fn dispatch_fixture_errors_on_empty_grid() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -2261,6 +2368,51 @@ fn infer_single_source_table_keeps_explicit_schema() {
     );
 }
 
+/// `FROM "PgRevMixed"` and `FROM PgRevMixed` name two different tables;
+/// the inferred source is the server's name for whichever the query read.
+#[test]
+fn infer_single_source_table_folds_bare_names_and_keeps_quoted_ones() {
+    assert_eq!(
+        infer_single_source_table(r#"SELECT * FROM "PgRevMixed""#),
+        Some(("public".into(), "PgRevMixed".into()))
+    );
+    assert_eq!(
+        infer_single_source_table("SELECT * FROM PgRevMixed"),
+        Some(("public".into(), "pgrevmixed".into()))
+    );
+    assert_eq!(
+        infer_single_source_table(r#"SELECT * FROM "Audit Log"."Big ""Q"" Table""#),
+        Some(("Audit Log".into(), "Big \"Q\" Table".into()))
+    );
+}
+
+/// The yanked INSERT names the table the row came from: a mixed-case
+/// table is quoted, or it lands in its lowercase twin.
+#[test]
+fn row_insert_sql_quotes_schema_and_table() {
+    let cols = ["id".to_string()];
+    let row = [Some("1".into())];
+    assert_eq!(
+        row_insert_sql("Audit Log", "PgRevMixed", &cols, &row),
+        "INSERT INTO \"Audit Log\".\"PgRevMixed\" (id) VALUES ('1');"
+    );
+    assert_eq!(
+        row_insert_sql("public", "user", &cols, &row),
+        "INSERT INTO public.\"user\" (id) VALUES ('1');"
+    );
+}
+
+/// A backslash makes it an `E'…'` string with the backslash doubled,
+/// which reads the same whatever `standard_conforming_strings` is; a
+/// value without one stays a plain literal.
+#[test]
+fn format_sql_literal_escapes_a_backslash_in_an_e_string() {
+    assert_eq!(format_sql_literal(Some("a\\b")), "E'a\\\\b'");
+    assert_eq!(format_sql_literal(Some("\\x0102")), "E'\\\\x0102'");
+    assert_eq!(format_sql_literal(Some("it's \\n")), "E'it''s \\\\n'");
+    assert_eq!(format_sql_literal(Some("plain")), "'plain'");
+}
+
 #[test]
 fn format_sql_literal_writes_null_for_null_and_quotes_the_empty_string() {
     assert_eq!(format_sql_literal(None), "NULL");
@@ -2326,6 +2478,86 @@ fn format_sql_literal_keeps_boolean_looking_text_as_it_is() {
 fn format_sql_literal_quotes_strings_and_doubles_internal_quotes() {
     assert_eq!(format_sql_literal(Some("alice")), "'alice'");
     assert_eq!(format_sql_literal(Some("it's fine")), "'it''s fine'");
+}
+
+/// `I` writes through the test clipboard (never the real one) and
+/// counts characters, not bytes: `é` is one.
+#[test]
+fn yank_row_as_insert_copies_through_the_clipboard_seam_and_counts_chars() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id", "name"], &[&["1", "é"]]);
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    crate::app::yank::take_test_clipboard();
+    a.yank_row_as_insert();
+    let sql = crate::app::yank::take_test_clipboard().expect("copied");
+    assert_eq!(
+        sql,
+        "INSERT INTO public.users (id, name) VALUES ('1', 'é');"
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(
+            format!(
+                "copied INSERT for public.users · {} char(s)",
+                sql.chars().count()
+            )
+            .as_str()
+        )
+    );
+    assert_ne!(
+        sql.chars().count(),
+        sql.len(),
+        "the test tells chars from bytes"
+    );
+}
+
+/// `Y` writes the visible rows as CSV through the test clipboard.
+#[test]
+fn export_grid_copies_csv_through_the_clipboard_seam() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"], &["2"]]);
+    a.grid_view.visible_rows = vec![1];
+    crate::app::yank::take_test_clipboard();
+    a.export_grid_to_clipboard();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("id\n2\n")
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("copied 1 row(s) to clipboard as CSV")
+    );
+}
+
+/// The row-detail field yank and the notification yank go through the
+/// seam too, and both count characters.
+#[test]
+fn field_and_notification_yanks_copy_through_the_clipboard_seam() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["name"], &[&["añb"]]);
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.row_detail.field = 0;
+    crate::app::yank::take_test_clipboard();
+    a.yank_focused_field();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("añb")
+    );
+    assert_eq!(a.last_status.as_deref(), Some("yanked 'name' · 3 char(s)"));
+    a.notifications.items = vec![crate::conn::NotificationMsg {
+        channel: "x".into(),
+        pid: 1,
+        payload: "pä".into(),
+    }];
+    a.yank_focused_notification();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("pä")
+    );
+    assert_eq!(a.last_status.as_deref(), Some("yanked payload · 2 char(s)"));
 }
 
 #[test]
@@ -4658,12 +4890,8 @@ fn tap_heartbeat(dropped: u64, received_at: u64) -> crate::tap::TapEvent {
 #[test]
 fn tap_query_event_lands_in_ring_and_bumps_count() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1_000_000),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 2", 2_000_000),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1_000_000));
+    a.on_tap_event(tap_query("SELECT 2", 2_000_000));
     assert_eq!(a.tap_events.len(), 2);
     assert_eq!(a.tap_health.query_count, 2);
     // Newest at the back.
@@ -4677,12 +4905,8 @@ fn tap_query_event_lands_in_ring_and_bumps_count() {
 #[test]
 fn tap_heartbeat_does_not_pollute_ring_but_updates_health() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1_000_000),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_heartbeat(17, 1_500_000),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1_000_000));
+    a.on_tap_event(tap_heartbeat(17, 1_500_000));
     // Ring only carries the query — heartbeat stays out.
     assert_eq!(a.tap_events.len(), 1);
     assert_eq!(a.tap_health.heartbeat_count, 1);
@@ -4695,9 +4919,7 @@ fn tap_heartbeat_does_not_pollute_ring_but_updates_health() {
 fn tap_ring_evicts_oldest_past_cap() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..(TAP_CAP + 50) {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i as u64),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i as u64));
     }
     assert_eq!(a.tap_events.len(), TAP_CAP);
     // First event surviving the eviction is q50 (the first 50 were dropped).
@@ -4725,17 +4947,13 @@ fn hotspots_reflect_a_push_and_eviction_that_share_a_timestamp() {
     // an evicted statement while omitting the newest one.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for _ in 0..TAP_CAP {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT evicted", 1_000_000),
-        });
+        a.on_tap_event(tap_query("SELECT evicted", 1_000_000));
     }
     let before = a.current_hotspots();
     assert_eq!(before.len(), 1, "one fingerprint so far: {before:?}");
 
     // Same length before and after, same front stamp, same back stamp.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT newest", 1_000_000),
-    });
+    a.on_tap_event(tap_query("SELECT newest", 1_000_000));
     assert_eq!(a.tap_events.len(), TAP_CAP);
 
     let after = a.current_hotspots();
@@ -4750,9 +4968,7 @@ fn tap_ring_eviction_keeps_cursor_aligned_with_content() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     // Fill exactly to cap.
     for i in 0..TAP_CAP {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i as u64),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i as u64));
     }
     // Cursor parked on the oldest row.
     a.tap_nav.events_cursor = 0;
@@ -4760,9 +4976,7 @@ fn tap_ring_eviction_keeps_cursor_aligned_with_content() {
     assert_eq!(oldest_sql.as_deref(), Some("q0"));
     // One more event evicts q0; cursor stays in-bounds and
     // points at "what used to be the second row".
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("new", 9_999),
-    });
+    a.on_tap_event(tap_query("new", 9_999));
     assert_eq!(a.tap_events.len(), TAP_CAP);
     assert_eq!(
         a.tap_events.front().and_then(|e| e.sql.as_deref()),
@@ -4792,21 +5006,17 @@ fn tap_monitor_status_follows_events_that_arrive_while_it_is_open() {
         .as_deref()
         .unwrap_or("")
         .contains("no events yet"));
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        !status.contains("no events yet") && status.contains("1 queries"),
+        !status.contains("no events yet") && status.contains("1 query ·"),
         "status must reflect the event that arrived; got {status}"
     );
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_heartbeat(3, 2),
-    });
+    a.on_tap_event(tap_heartbeat(3, 2));
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        status.contains("1 queries")
-            && status.contains("1 heartbeats")
+        status.contains("1 query ·")
+            && status.contains("1 heartbeat ·")
             && status.contains("3 dropped"),
         "got {status}"
     );
@@ -4820,17 +5030,37 @@ fn tap_events_do_not_overwrite_another_status() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.start_tap_monitor();
     a.last_status = Some("tap hotspots · sort: calls".into());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     assert_eq!(a.last_status.as_deref(), Some("tap hotspots · sort: calls"));
     a.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Normal);
     assert_eq!(a.last_status, None);
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 2", 2),
-    });
+    a.on_tap_event(tap_query("SELECT 2", 2));
     assert_eq!(a.last_status, None);
+}
+
+#[test]
+fn tap_monitor_status_shortens_a_huge_drop_count() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_heartbeat(1_000_000_000_000_000_000, 1));
+    assert_eq!(
+        a.tap_health.monitor_status(&[]),
+        "JDBC tap · 0 queries · 1 heartbeat · 1.0e18 dropped (JAR backpressure)"
+    );
+}
+
+#[test]
+fn tap_monitor_status_names_the_bound_listeners_before_any_event() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.tap_listeners.push(crate::tap::TapListener {
+        transport: crate::tap::TapTransport::Tcp,
+        addr: "127.0.0.1:7432".parse().unwrap(),
+    });
+    a.start_tap_monitor();
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("JDBC tap · no events yet · listening on TCP 127.0.0.1:7432")
+    );
 }
 
 #[test]
@@ -4844,18 +5074,14 @@ fn tap_monitor_status_distinguishes_no_traffic_from_no_jar() {
         "expected no-events hint; got {status}"
     );
     // After traffic.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     // Pretend the JAR also sent a heartbeat.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_heartbeat(0, 2),
-    });
+    a.on_tap_event(tap_heartbeat(0, 2));
     a.mode = Mode::Normal;
     a.start_tap_monitor();
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        status.contains("1 queries") && status.contains("1 heartbeats"),
+        status == "JDBC tap · 1 query · 1 heartbeat",
         "expected counters in status; got {status}"
     );
 }
@@ -4873,9 +5099,7 @@ fn tap_monitor_q_closes_to_normal_and_clears_status() {
 fn tap_monitor_c_clears_the_ring_and_resets_cursor() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..3 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i));
     }
     a.start_tap_monitor();
     a.tap_nav.events_cursor = 2;
@@ -4888,9 +5112,7 @@ fn tap_monitor_c_clears_the_ring_and_resets_cursor() {
 #[test]
 fn tap_monitor_v_cycles_through_seven_views() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     assert_eq!(a.tap_nav.view, TapView::List);
     a.on_key(KeyEvent::from(KeyCode::Char('v')));
@@ -4933,7 +5155,7 @@ fn tap_monitor_pools_view_navigates_and_clears() {
         e.conn = Some(conn.into());
         e.ts_unix_micros = i;
         e.received_at_unix_micros = i;
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Pools;
@@ -4960,13 +5182,13 @@ fn tap_monitor_txns_view_navigates_and_clears() {
         e.txn = Some("c-1#a".into());
         e.ts_unix_micros = i;
         e.received_at_unix_micros = i;
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     let mut e = tap_query("SELECT b", 100);
     e.txn = Some("c-1#b".into());
     e.ts_unix_micros = 100;
     e.received_at_unix_micros = 100;
-    a.on_msg(AppMsg::TapEvent { event: e });
+    a.on_tap_event(e);
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Transactions;
     let txns = a.current_txns();
@@ -4997,7 +5219,7 @@ fn tap_monitor_callers_view_navigates_sorts_and_clears() {
         let mut e = tap_query(&format!("SELECT {i}"), i as u64);
         e.caller = Some(vec![frame.into()]);
         e.duration_micros = Some(dur);
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Callers;
@@ -5022,12 +5244,8 @@ fn shift_b_captures_baseline_from_any_tap_view() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     // Seed two distinct fingerprints so the hotspots
     // bucket count is meaningful.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT a FROM t1", 1),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT b FROM t2", 2),
-    });
+    a.on_tap_event(tap_query("SELECT a FROM t1", 1));
+    a.on_tap_event(tap_query("SELECT b FROM t2", 2));
     a.start_tap_monitor();
     assert!(a.tap_baseline.is_none());
     // Shift-B from the default List view captures.
@@ -5045,15 +5263,11 @@ fn shift_b_captures_baseline_from_any_tap_view() {
 #[test]
 fn baseline_diff_flags_new_fingerprint_after_capture() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT a FROM t1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT a FROM t1", 1));
     a.start_tap_monitor();
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     // New fingerprint arrives post-baseline.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT b FROM t2", 2),
-    });
+    a.on_tap_event(tap_query("SELECT b FROM t2", 2));
     let diff = a.current_baseline_diff();
     // Old "select a from t?" is unchanged (filtered);
     // new "select b from t?" surfaces.
@@ -5064,9 +5278,7 @@ fn baseline_diff_flags_new_fingerprint_after_capture() {
 #[test]
 fn baseline_clear_keeps_snapshot_clears_ring() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     a.tap_nav.view = TapView::Baseline;
@@ -5081,9 +5293,7 @@ fn baseline_clear_keeps_snapshot_clears_ring() {
 #[test]
 fn baseline_records_listener_drop_watermark_at_capture() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     // Snapshot the global atomic before capture so the
     // assertion is robust to whatever other tests
     // contributed (cumulative-counter semantics).
@@ -5104,20 +5314,14 @@ fn baseline_records_listener_drop_watermark_at_capture() {
 #[test]
 fn baseline_recapture_overwrites_previous_snapshot() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     let first_count = a.tap_baseline.as_ref().unwrap().captured_event_count;
     assert_eq!(first_count, 1);
     // Two more events arrive; recapture.
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 2", 2),
-    });
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 3", 3),
-    });
+    a.on_tap_event(tap_query("SELECT 2", 2));
+    a.on_tap_event(tap_query("SELECT 3", 3));
     a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     let second_count = a.tap_baseline.as_ref().unwrap().captured_event_count;
     assert_eq!(second_count, 3, "recapture must reflect the larger ring");
@@ -5153,7 +5357,7 @@ fn tap_monitor_nplus1_view_navigates_and_clears() {
         e.txn = Some("c-1#1".into());
         e.ts_unix_micros = i * 20_000;
         e.received_at_unix_micros = i * 20_000;
-        a.on_msg(AppMsg::TapEvent { event: e });
+        a.on_tap_event(e);
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::NplusOne;
@@ -5174,9 +5378,7 @@ fn tap_monitor_nplus1_view_navigates_and_clears() {
 fn tap_monitor_g_capital_jumps_to_end_in_both_views() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..5 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("SELECT * FROM t{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("SELECT * FROM t{i}"), i));
     }
     a.start_tap_monitor();
     // List view: `G` jumps to last row.
@@ -5192,9 +5394,7 @@ fn tap_monitor_g_capital_jumps_to_end_in_both_views() {
 #[test]
 fn tap_monitor_s_cycles_sort_in_hotspots_view() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.on_msg(AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1),
-    });
+    a.on_tap_event(tap_query("SELECT 1", 1));
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Hotspots;
     assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::TotalTime);
@@ -5220,9 +5420,7 @@ fn tap_monitor_s_in_list_view_is_a_noop() {
 fn tap_monitor_hotspots_clear_resets_both_cursors() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..3 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i));
     }
     a.start_tap_monitor();
     a.tap_nav.view = TapView::Hotspots;
@@ -5239,14 +5437,12 @@ fn current_hotspots_reflects_current_sort() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     // Bucket A: many cheap calls.
     for _ in 0..50 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT a FROM t_a", 1),
-        });
+        a.on_tap_event(tap_query("SELECT a FROM t_a", 1));
     }
     // Bucket B: one expensive call.
     let mut spike = tap_query("SELECT b FROM t_b", 1_000_000);
     spike.duration_micros = Some(1_000_000);
-    a.on_msg(AppMsg::TapEvent { event: spike });
+    a.on_tap_event(spike);
     a.tap_nav.sort = crate::tap::HotspotSort::TotalTime;
     let by_total = a.current_hotspots();
     assert_eq!(by_total[0].count, 1, "expensive spike wins on total time");
@@ -5259,9 +5455,7 @@ fn current_hotspots_reflects_current_sort() {
 fn tap_monitor_jk_navigation_clamps_at_ends() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     for i in 0..3 {
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query(&format!("q{i}"), i),
-        });
+        a.on_tap_event(tap_query(&format!("q{i}"), i));
     }
     a.start_tap_monitor();
     // Down past the end clamps to last.
@@ -5274,23 +5468,6 @@ fn tap_monitor_jk_navigation_clamps_at_ends() {
         a.on_key(KeyEvent::from(KeyCode::Char('k')));
     }
     assert_eq!(a.tap_nav.events_cursor, 0);
-}
-
-#[test]
-fn tap_message_is_not_generation_gated() {
-    // Tap listener is independent of the DB connection; a
-    // reconnect (which bumps generation) shouldn't drop tap
-    // events that arrived after.
-    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.generation = 42;
-    let msg = AppMsg::TapEvent {
-        event: tap_query("SELECT 1", 1_000),
-    };
-    // Generation accessor returns 0 (not 42) — the dispatcher
-    // doesn't filter this.
-    assert_eq!(msg.generation(), 0);
-    a.on_msg(msg);
-    assert_eq!(a.tap_events.len(), 1);
 }
 
 #[test]
@@ -5627,6 +5804,11 @@ fn query_ok_status_flags_truncated_grids() {
         status.contains(&format!("capped at {}", crate::grid::MAX_ROWS)),
         "expected truncation hint in status, got: {status}"
     );
+    assert!(status.contains("more rows not fetched"), "{status}");
+    assert!(
+        status.ends_with("pgman query '…' --json returns every row"),
+        "{status}"
+    );
     assert!(a.grid.truncated);
 }
 
@@ -5679,9 +5861,12 @@ fn backslash_help_routes_to_help_overlay() {
     a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert_eq!(a.mode, Mode::Help);
-    // The Editor section is the active anchor since we came
-    // from Editor.
-    assert_eq!(a.help.origin, Some(Mode::Editor));
+    // The Editor section is the one shown since we came from
+    // Editor.
+    assert_eq!(
+        Some(a.help.section),
+        crate::ui::help_section_index("editor")
+    );
 }
 
 #[test]
@@ -6904,7 +7089,8 @@ fn bootstrap_grid(rows: &[(&str, &str)]) -> Grid {
 
 #[test]
 fn parse_bootstrap_databases_extracts_name_and_size_in_row_order() {
-    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    // BOOTSTRAP_SQL sends byte counts; the card shows them formatted.
+    let grid = bootstrap_grid(&[("main", "1288490189"), ("analytics", "314572800")]);
     let got = parse_bootstrap_databases(&grid);
     assert_eq!(
         got,
@@ -6960,7 +7146,8 @@ fn parse_bootstrap_databases_empty_grid_yields_empty_vec() {
 #[test]
 fn bootstrap_result_populates_databases_and_leaves_grid_empty() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    // BOOTSTRAP_SQL sends byte counts; the card shows them formatted.
+    let grid = bootstrap_grid(&[("main", "1288490189"), ("analytics", "314572800")]);
     a.apply_bootstrap_grid(grid);
     assert_eq!(
         a.databases,
@@ -7035,6 +7222,19 @@ fn preload_log_with_jdbc_paste_shape_enters_log_pick_with_substituted_sql() {
     assert_eq!(
         a.log_pick.picks[0].runnable_sql,
         "select * from orders where id = 42 and status = 'shipped'"
+    );
+}
+
+#[test]
+fn preload_log_with_a_p6spy_log_enters_log_pick() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let log = "1729501968001|3|statement|connection 0|url jdbc:postgresql://db.example/ledger|select * from orders where id=?|select * from orders where id=42";
+    a.preload_log(log.to_string());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(a.log_pick.picks.len(), 1);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from orders where id=42"
     );
 }
 
@@ -7239,6 +7439,156 @@ async fn update_check_disabled_never_spawns() {
         !*spawned.lock().unwrap(),
         "update_check_enabled = false must never spawn the check"
     );
+}
+
+/// Counts draws, and ends the loop once `done` holds — so it runs
+/// exactly as many frames as a queued backlog needs.
+struct DrawUntilTui {
+    draws: usize,
+    done: fn(&App) -> bool,
+    keys: mpsc::UnboundedSender<Event>,
+}
+
+impl crate::tui::TuiHost for DrawUntilTui {
+    fn draw(&mut self, app: &mut App) -> std::io::Result<()> {
+        self.draws += 1;
+        if (self.done)(app) {
+            // Quit, and wake the loop's `select!` so it notices.
+            app.should_quit = true;
+            let _ = self.keys.send(Event::FocusGained);
+        }
+        Ok(())
+    }
+    fn suspend(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn resume(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An app ready for `run_with` in a test: scratch persistence, Normal
+/// mode, and no splash (whose animation ticks add frames of their own).
+fn loop_test_app() -> App {
+    let mut app = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    scratch_persistence(&mut app);
+    app.mode = Mode::Normal;
+    app.splash_visible = false;
+    app
+}
+
+/// Run `app`'s loop until `done` holds; the frames it drew.
+async fn draws_until(app: &mut App, done: fn(&App) -> bool) -> usize {
+    let (keys, rx) = mpsc::unbounded_channel::<Event>();
+    let mut tui = DrawUntilTui {
+        draws: 0,
+        done,
+        keys,
+    };
+    tokio::time::timeout(Duration::from_secs(5), app.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate once the backlog has landed")
+        .unwrap();
+    tui.draws
+}
+
+#[tokio::test]
+async fn run_loop_folds_a_queued_tap_backlog_in_one_frame() {
+    let mut app = loop_test_app();
+    // A reconnect bumps the generation; the tap belongs to no
+    // connection, so its events still land.
+    app.generation = 42;
+    let tx = app.tap_tx_clone();
+    for i in 0..TAP_APP_CHANNEL_CAPACITY as u64 {
+        tx.try_send(tap_query("select 1", i + 1)).unwrap();
+    }
+    let draws = draws_until(&mut app, |a| {
+        a.tap_health.query_count == TAP_APP_CHANNEL_CAPACITY as u64
+    })
+    .await;
+    // One frame before anything lands, one after the whole backlog —
+    // not one per event, which is what held a burst in the channel.
+    assert_eq!(draws, 2);
+}
+
+#[tokio::test]
+async fn run_loop_applies_queued_messages_in_one_frame() {
+    let mut app = loop_test_app();
+    let tx = app.msg_tx.clone();
+    for pid in 0..150 {
+        tx.send(AppMsg::Notification {
+            generation: app.generation,
+            notification: crate::conn::NotificationMsg {
+                channel: "jobs".into(),
+                pid,
+                payload: String::new(),
+            },
+        })
+        .unwrap();
+    }
+    let draws = draws_until(&mut app, |a| a.notifications.items.len() == 150).await;
+    assert_eq!(draws, 2);
+}
+
+#[test]
+fn the_tap_channel_into_the_app_is_bounded() {
+    // The adapter awaits on this sender; were it unbounded, a slow App
+    // would queue a burst here without limit and without counting it.
+    let a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let tx = a.tap_tx_clone();
+    for i in 0..TAP_APP_CHANNEL_CAPACITY as u64 {
+        tx.try_send(tap_query("select 1", i)).unwrap();
+    }
+    assert!(matches!(
+        tx.try_send(tap_query("select 1", 0)),
+        Err(mpsc::error::TrySendError::Full(_))
+    ));
+}
+
+#[test]
+fn drain_pending_msgs_stops_at_the_per_frame_cap() {
+    // A backlog past the cap takes more than one frame, so key input
+    // gets a turn between batches.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let queued = 2 * MSG_DRAIN_PER_FRAME;
+    for _ in 0..queued {
+        tx.send(AppMsg::UpdateCheck(None)).unwrap();
+    }
+    a.drain_pending_msgs(&mut rx);
+    // The loop applied one before draining; the drain takes the rest
+    // of the frame's batch.
+    assert_eq!(rx.len(), queued - (MSG_DRAIN_PER_FRAME - 1));
+    a.drain_pending_msgs(&mut rx);
+    assert_eq!(rx.len(), queued - 2 * (MSG_DRAIN_PER_FRAME - 1));
+}
+
+#[test]
+fn drain_tap_batch_takes_one_frames_worth() {
+    let (tx, mut rx) = mpsc::channel(4 * MSG_DRAIN_PER_FRAME);
+    let queued = 2 * MSG_DRAIN_PER_FRAME;
+    for i in 0..queued as u64 {
+        tx.try_send(tap_query("select 1", i)).unwrap();
+    }
+    let batch = drain_tap_batch(tap_query("first", 0), &mut rx);
+    assert_eq!(batch.len(), MSG_DRAIN_PER_FRAME);
+    assert_eq!(batch[0].sql.as_deref(), Some("first"));
+    assert_eq!(rx.len(), queued - (MSG_DRAIN_PER_FRAME - 1));
+    // An empty channel ends the batch without waiting.
+    let (_tx, mut empty) = mpsc::channel(1);
+    assert_eq!(drain_tap_batch(tap_query("only", 0), &mut empty).len(), 1);
+}
+
+#[test]
+fn on_tap_events_bumps_the_generation_once_per_batch() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let before = a.tap_generation;
+    a.on_tap_events((1..=5).map(|i| tap_query("select 1", i)));
+    assert_eq!(a.tap_events.len(), 5);
+    assert_eq!(a.tap_generation, before.wrapping_add(1));
+    // Heartbeats never touch the ring, so they never invalidate it.
+    a.on_tap_events([tap_heartbeat(0, 10), tap_heartbeat(0, 11)]);
+    assert_eq!(a.tap_generation, before.wrapping_add(1));
 }
 
 // --- --demo mode: request_run answers synthetically (no client) ---
@@ -7676,7 +8026,10 @@ fn command_help_opens_the_overlay_at_the_topic_and_names_the_topics_it_knows() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     run_command(&mut a, "help editor");
     assert_eq!(a.mode, Mode::Help);
-    assert_eq!(a.help.origin, Some(Mode::Editor));
+    assert_eq!(
+        Some(a.help.section),
+        crate::ui::help_section_index("editor")
+    );
     a.mode = Mode::Normal;
     run_command(&mut a, "help nonsense");
     assert_eq!(a.mode, Mode::Normal, "an unknown topic opens nothing");
@@ -7692,16 +8045,20 @@ fn every_help_topic_closes_back_to_where_the_bar_was_opened_from() {
     // into the tap monitor and `:help commands` into
     // `Mode::CommandBar` — a mode with no command bar behind it, so
     // every key went to a prompt that wasn't on screen.
-    for (topic, anchor) in crate::app::cmd::help_topics() {
+    for (i, topic) in crate::app::cmd::help_topic_names().iter().enumerate() {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         run_command(&mut a, &format!("help {topic}"));
         assert_eq!(a.mode, Mode::Help, "`:help {topic}` must open help");
-        assert_eq!(
-            a.help.origin,
-            Some(*anchor),
-            "`:help {topic}` must anchor on its own section"
-        );
-        a.on_key(KeyEvent::from(KeyCode::Esc));
+        if topic == "all" {
+            assert_eq!(a.help.view, HelpView::All);
+        } else {
+            assert_eq!(
+                (a.help.section, a.help.view),
+                (i, HelpView::Section),
+                "`:help {topic}` must open its own section"
+            );
+        }
+        esc_out_of_help(&mut a);
         assert_eq!(
             a.mode,
             Mode::Normal,
@@ -7725,7 +8082,7 @@ fn help_from_the_bar_opened_over_help_returns_to_where_help_was_opened_from() {
         type_str(&mut a, line);
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.mode, Mode::Help, "`:{line}` must open help");
-        a.on_key(KeyEvent::from(KeyCode::Esc));
+        esc_out_of_help(&mut a);
         assert_eq!(
             a.mode,
             Mode::Editor,
@@ -8038,8 +8395,8 @@ fn question_mark_opens_help_from_every_panel_mode() {
         a.on_key(KeyEvent::from(KeyCode::Char('?')));
         assert_eq!(a.mode, Mode::Help, "? must open help from {mode:?}");
         assert_eq!(
-            a.help.origin,
-            Some(mode),
+            Some(a.help.section),
+            crate::ui::help_section_index(anchor),
             "and the overlay must open at that mode's section"
         );
         assert_eq!(App::help_anchor_for(mode), Some(anchor));
@@ -8475,7 +8832,7 @@ fn f1_from_a_decision_modal_still_opens_help_and_returns_to_it() {
     let mut a = tx_decision_app();
     a.on_key(KeyEvent::from(KeyCode::F(1)));
     assert_eq!(a.mode, Mode::Help);
-    a.on_key(KeyEvent::from(KeyCode::Esc));
+    esc_out_of_help(&mut a);
     assert_eq!(a.mode, Mode::TxDecision, "help must hand the modal back");
     assert!(a.tx_open);
 }
@@ -9973,6 +10330,15 @@ fn digit_keys_jump_to_a_tab_and_say_so_past_the_last_one() {
 }
 
 #[test]
+fn digits_do_not_switch_tabs_behind_the_help_overlay() {
+    let mut a = three_tabs(Mode::Help);
+    press(&mut a, KeyCode::Char('1'));
+    assert_eq!((a.active_tab, a.mode), (2, Mode::Help));
+    a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
+    assert_eq!((a.active_tab, a.mode), (2, Mode::Help));
+}
+
+#[test]
 fn brackets_and_digits_switch_tabs_from_the_sessions_and_slow_query_panels() {
     for mode in [Mode::Sessions, Mode::SlowQueries] {
         let mut a = three_tabs(mode);
@@ -10083,7 +10449,7 @@ fn environments_open_without_a_connection_and_load_the_installed_rows() {
     assert!(!a.environments.loading);
     assert_eq!(
         a.last_status.as_deref(),
-        Some("environments · 4 · 8 databases")
+        Some("4 environments · 8 databases")
     );
     // The cursor walks databases, not headings, and stops at the ends.
     for _ in 0..8 {
@@ -10139,14 +10505,12 @@ fn environments_status_counts_failures() {
         environments_status(0, 0, 0),
         "environments · none configured"
     );
-    assert_eq!(
-        environments_status(2, 6, 0),
-        "environments · 2 · 6 databases"
-    );
+    assert_eq!(environments_status(2, 6, 0), "2 environments · 6 databases");
     assert_eq!(
         environments_status(2, 4, 1),
-        "environments · 2 · 4 databases · 1 failed"
+        "2 environments · 4 databases · 1 failed"
     );
+    assert_eq!(environments_status(1, 1, 0), "1 environment · 1 database");
 }
 
 #[test]
@@ -12364,4 +12728,660 @@ fn enter_after_typing_a_whole_table_name_is_a_newline_not_a_no_op_accept() {
     draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.editor.buffer, "select * from panel_usr_items");
+}
+
+// ---------------------------------------------------------------
+// The sectioned help overlay (docs/backlog/help-overlay.md)
+// ---------------------------------------------------------------
+
+fn help_app() -> App {
+    App::new(Theme::default(), None, Vec::new(), SafetyConfig::default())
+}
+
+fn section_of(title: &str) -> usize {
+    crate::ui::help_section_index(title).expect("a help section")
+}
+
+#[test]
+fn every_mode_anchor_names_a_help_section() {
+    // A renamed heading would leave its modes opening the list.
+    for mode in [
+        Mode::Editor,
+        Mode::Confirm,
+        Mode::TxDecision,
+        Mode::LogPick,
+        Mode::ConnPick,
+        Mode::RowDetail,
+        Mode::CellDetail,
+        Mode::SchemaBrowser,
+        Mode::SchemaLint,
+        Mode::ConfirmTerminate,
+        Mode::Notifications,
+        Mode::TapMonitor,
+        Mode::SavedQueries,
+        Mode::ResultDiff,
+        Mode::ExplainTree,
+        Mode::SlowQueries,
+        Mode::Sessions,
+        Mode::Environments,
+        Mode::GridFilter,
+        Mode::About,
+        Mode::CommandBar,
+    ] {
+        let anchor = App::help_anchor_for(mode).expect("an anchor");
+        assert!(
+            crate::ui::help_section_index(anchor).is_some(),
+            "{mode:?} anchors on {anchor:?}, which is no help section"
+        );
+    }
+}
+
+#[test]
+fn help_from_the_grid_opens_the_list_and_from_a_mode_its_section() {
+    let mut a = help_app();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    assert_eq!((a.help.view, a.help.section), (HelpView::List, 0));
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal, "Esc from the list closes");
+
+    a.mode = Mode::SchemaBrowser;
+    press(&mut a, KeyCode::Char('?'));
+    assert_eq!(
+        (a.help.view, a.help.section),
+        (HelpView::Section, section_of("schema browser"))
+    );
+}
+
+#[test]
+fn narrow_help_is_two_levels_enter_in_and_esc_out() {
+    let mut a = help_app();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    // j / k move the list's selection, clamped at both ends.
+    press(&mut a, KeyCode::Char('k'));
+    assert_eq!(a.help.section, 0);
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Down);
+    assert_eq!(a.help.section, 2);
+    press(&mut a, KeyCode::Char('G'));
+    assert_eq!(a.help.section, crate::ui::HELP_SECTIONS.len() - 1);
+    press(&mut a, KeyCode::Char('g'));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.help.view, HelpView::Section);
+    assert_eq!(a.help.section, 1);
+    // In the section j scrolls it, not the selection.
+    a.help.max_scroll = 5;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!((a.help.section, a.help.scroll), (1, 1));
+    press(&mut a, KeyCode::Esc);
+    assert_eq!((a.mode, a.help.view), (Mode::Help, HelpView::List));
+    assert_eq!(a.help.section, 1, "the list keeps the section selected");
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal);
+}
+
+#[test]
+fn wide_help_esc_closes_from_the_section_and_j_scrolls_it() {
+    let mut a = help_app();
+    a.mode = Mode::Editor;
+    press(&mut a, KeyCode::F(1));
+    a.help.split = true; // what a frame at >= 110 columns writes back
+    a.help.max_scroll = 3;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!(a.help.scroll, 1);
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Editor, "no list level to go back to");
+    // From the grid (the List view) j scrolls the section beside it
+    // too — the list is not a level of its own here.
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    a.help.split = true;
+    a.help.max_scroll = 3;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!((a.help.section, a.help.scroll), (0, 1));
+}
+
+#[test]
+fn tab_and_brackets_switch_help_sections_and_wrap_not_editor_tabs() {
+    let mut a = help_app();
+    a.new_tab();
+    let tab = a.active_tab;
+    a.mode = Mode::Editor;
+    press(&mut a, KeyCode::F(1));
+    let editor = section_of("editor");
+    a.help.scroll = 2;
+    press(&mut a, KeyCode::Tab);
+    assert_eq!((a.help.section, a.help.scroll), (editor + 1, 0));
+    press(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.help.section, editor + 2);
+    press(&mut a, KeyCode::Char('['));
+    press(&mut a, KeyCode::BackTab);
+    assert_eq!(a.help.section, editor);
+    assert_eq!(
+        a.active_tab, tab,
+        "] / [ in help must not switch editor tabs"
+    );
+    assert_eq!(a.mode, Mode::Help);
+    // Wraps at both ends.
+    a.help.section = 0;
+    press(&mut a, KeyCode::Char('['));
+    assert_eq!(a.help.section, crate::ui::HELP_SECTIONS.len() - 1);
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(a.help.section, 0);
+}
+
+#[test]
+fn the_help_filter_types_every_character_and_keeps_or_clears() {
+    let mut a = help_app();
+    a.mode = Mode::Editor;
+    press(&mut a, KeyCode::F(1));
+    press(&mut a, KeyCode::Char('/'));
+    assert_eq!(a.mode, Mode::HelpFilter);
+    // `?`, `q`, `!`, `:`, `]` and digits are text here, not keys.
+    type_str(&mut a, "?q!:]1");
+    assert_eq!(a.mode, Mode::HelpFilter);
+    assert_eq!(a.help.filter.as_deref(), Some("?q!:]1"));
+    assert!(a.command_bar.is_none());
+    for _ in 0..6 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_str(&mut a, "yank");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("filter: /yank  · enter keep · esc clear")
+    );
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        (a.mode, a.help.filter.as_deref()),
+        (Mode::Help, Some("yank"))
+    );
+    // A kept filter: Esc clears it first, and only then leaves.
+    press(&mut a, KeyCode::Esc);
+    assert_eq!((a.mode, a.help.filter.as_deref()), (Mode::Help, None));
+    // An empty filter kept is no filter.
+    press(&mut a, KeyCode::Char('/'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.help.filter, None);
+    // Esc while typing clears and stays in help.
+    press(&mut a, KeyCode::Char('/'));
+    type_str(&mut a, "tab");
+    press(&mut a, KeyCode::Esc);
+    assert_eq!((a.mode, a.help.filter.as_deref()), (Mode::Help, None));
+    // F1 closes help even while typing, back where it came from.
+    press(&mut a, KeyCode::Char('/'));
+    press(&mut a, KeyCode::F(1));
+    assert_eq!((a.mode, a.help.filter.as_deref()), (Mode::Editor, None));
+}
+
+#[test]
+fn help_filter_jumps_go_heading_to_heading() {
+    let mut a = help_app();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('?'));
+    a.help.filter = Some("esc".into());
+    // What a frame of the filter's page writes back.
+    a.help.heading_rows = vec![2, 12, 20];
+    a.help.max_scroll = 30;
+    let section = a.help.section;
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(a.help.scroll, 1);
+    press(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.help.scroll, 11);
+    press(&mut a, KeyCode::Char('['));
+    assert_eq!(a.help.scroll, 1);
+    assert_eq!(a.help.section, section, "a jump is not a section switch");
+}
+
+#[test]
+fn help_all_is_one_page_and_closes_on_esc() {
+    let mut a = help_app();
+    run_command(&mut a, "help all"); // from Normal
+    assert_eq!((a.mode, a.help.view), (Mode::Help, HelpView::All));
+    a.help.max_scroll = 100;
+    press(&mut a, KeyCode::PageDown);
+    assert_eq!(a.help.scroll, 10);
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal, "one Esc: the page is not a level");
+}
+
+#[test]
+fn help_topics_resolve_by_name_then_prefix_then_word() {
+    use crate::app::cmd::resolve_help_topic;
+    // Exact names, any case, `: commands` without its colon.
+    assert_eq!(resolve_help_topic("editor"), Some(section_of("editor")));
+    assert_eq!(
+        resolve_help_topic("EXPLAIN tree"),
+        Some(section_of("EXPLAIN tree"))
+    );
+    assert_eq!(
+        resolve_help_topic("commands"),
+        Some(section_of(": commands"))
+    );
+    assert_eq!(
+        resolve_help_topic(": commands"),
+        Some(section_of(": commands"))
+    );
+    assert_eq!(resolve_help_topic("tx open"), Some(section_of("tx open")));
+    // A prefix: the first section, in document order, it starts.
+    assert_eq!(
+        resolve_help_topic("sch"),
+        Some(section_of("schema browser"))
+    );
+    assert_eq!(resolve_help_topic("no"), Some(section_of("notifications")));
+    assert_eq!(
+        resolve_help_topic("psql"),
+        Some(section_of("psql backslash commands"))
+    );
+    // A prefix that runs past the first word.
+    assert_eq!(
+        resolve_help_topic("schema w"),
+        Some(section_of("schema wizard"))
+    );
+    // A word of the name.
+    assert_eq!(
+        resolve_help_topic("backslash"),
+        Some(section_of("psql backslash commands"))
+    );
+    assert_eq!(
+        resolve_help_topic("locks"),
+        None,
+        "a word of the rows is not a name"
+    );
+    assert_eq!(resolve_help_topic(""), None);
+    assert_eq!(resolve_help_topic("nonsense"), None);
+    // Every one-word topic `:help` took before it had sections still
+    // opens the section it did.
+    for (topic, title) in [
+        ("grid", "grid"),
+        ("editor", "editor"),
+        ("commands", ": commands"),
+        ("schema", "schema browser"),
+        ("saved", "saved queries"),
+        ("slow", "slow queries"),
+        ("sessions", "active sessions"),
+        ("environments", "environments"),
+        ("tap", "jdbc tap"),
+        ("explain", "EXPLAIN tree"),
+        ("diff", "result diff"),
+        ("wizard", "schema wizard"),
+    ] {
+        assert_eq!(
+            resolve_help_topic(topic),
+            Some(section_of(title)),
+            "{topic}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_help_topic_lists_every_section() {
+    let mut a = help_app();
+    run_command(&mut a, "help nonsense");
+    let err = a.last_error.clone().unwrap_or_default();
+    for (title, _) in crate::ui::HELP_SECTIONS {
+        let name = title.trim_start_matches(':').trim().to_ascii_lowercase();
+        assert!(err.contains(&name), "{name:?} missing from {err:?}");
+    }
+    assert!(err.ends_with(", all"), "{err:?}");
+}
+
+#[test]
+fn help_topic_candidates_are_every_section_name_a_prefix_picks() {
+    use crate::app::cmd::help_topic_candidates;
+    assert_eq!(
+        help_topic_candidates("sch"),
+        vec!["schema browser", "schema wizard"]
+    );
+    assert_eq!(help_topic_candidates("SCHEMA W"), vec!["schema wizard"]);
+    assert_eq!(help_topic_candidates("comm"), vec!["commands"]);
+    assert_eq!(help_topic_candidates("al"), vec!["all"]);
+    assert!(help_topic_candidates("zz").is_empty());
+    assert_eq!(
+        help_topic_candidates("").len(),
+        crate::ui::HELP_SECTIONS.len() + 1,
+        "every section, and all"
+    );
+}
+
+#[test]
+fn tab_after_colon_help_completes_the_section_name() {
+    let bar_text = |a: &App| a.command_bar.as_ref().map(|b| b.input.text().to_string());
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "help sch");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(
+        bar_text(&a).as_deref(),
+        Some("help schema "),
+        "the common prefix"
+    );
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("schema browser · schema wizard")
+    );
+    type_str(&mut a, "w");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("help schema wizard"));
+    assert_eq!(a.command_bar_completions, None);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        (a.mode, a.help.section),
+        (Mode::Help, section_of("schema wizard"))
+    );
+
+    // Nothing typed yet: every topic is listed, the input left alone.
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "help ");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("help "));
+    let listed = a.command_bar_completions.clone().unwrap_or_default();
+    assert!(
+        listed.starts_with("grid · editor · confirm") && listed.ends_with("help · all"),
+        "{listed}"
+    );
+    // No match says so.
+    type_str(&mut a, "zz");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("no help section starts with zz")
+    );
+    // Another command's argument is not completed.
+    let mut a = help_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "connect ed");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(bar_text(&a).as_deref(), Some("connect ed"));
+    assert_eq!(a.command_bar_completions, None);
+}
+
+/// A fresh scratch dir for the draft tests — never the real data dir.
+fn draft_scratch(tag: &str) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "pgman-draft-{tag}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A window whose persistence all points into `dir`, with the draft
+/// restored from `dir/draft.sql` the way `main` does at startup.
+fn draft_window(dir: &std::path::Path) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.draft_file = dir.join("draft.sql");
+    a.history_file = dir.join("history.log");
+    a.saved_queries_file = dir.join("saved.toml");
+    a.restore_draft();
+    a
+}
+
+#[test]
+fn plan_draft_write_covers_each_case() {
+    // Untouched: skip, whatever the disk holds.
+    assert_eq!(plan_draft_write("a", "a", "a"), DraftWrite::Skip);
+    assert_eq!(plan_draft_write("a", "a", "other"), DraftWrite::Skip);
+    assert_eq!(plan_draft_write("", "", ""), DraftWrite::Skip);
+    // Edited, disk unchanged since we synced: write.
+    assert_eq!(plan_draft_write("ab", "a", "a"), DraftWrite::Write);
+    // A deliberate clear is an edit too, and is written.
+    assert_eq!(plan_draft_write("", "a", "a"), DraftWrite::Write);
+    // Disk already holds exactly our text: writing is harmless.
+    assert_eq!(plan_draft_write("ab", "a", "ab"), DraftWrite::Write);
+    // Edited, and the disk moved under us (or vanished): divert.
+    assert_eq!(plan_draft_write("ab", "a", "ac"), DraftWrite::Divert);
+    assert_eq!(plan_draft_write("ab", "a", ""), DraftWrite::Divert);
+}
+
+#[test]
+fn draft_sibling_path_is_a_utc_stamp_beside_the_draft() {
+    let base = std::path::Path::new("/x/pgman/draft.sql");
+    let secs = 1_792_750_507;
+    assert_eq!(format_unix_secs_utc(secs), "2026-10-23T10:15:07Z");
+    assert_eq!(
+        draft_sibling_path(base, secs, 1),
+        std::path::Path::new("/x/pgman/draft-20261023-101507.sql")
+    );
+    assert_eq!(
+        draft_sibling_path(base, secs, 2),
+        std::path::Path::new("/x/pgman/draft-20261023-101507-2.sql")
+    );
+}
+
+#[test]
+fn an_untouched_window_never_overwrites_another_windows_draft() {
+    let dir = draft_scratch("untouched");
+    std::fs::write(dir.join("draft.sql"), "select 1").unwrap();
+    let mut a = draft_window(&dir);
+    let mut b = draft_window(&dir);
+    assert_eq!(b.editor.buffer, "select 1", "B restored the old draft");
+
+    a.editor.buffer = "select 1, 2 -- A's work".into();
+    a.save_draft().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "select 1, 2 -- A's work"
+    );
+
+    // B never touched its buffer: saving (auto-save or exit) is a no-op.
+    b.save_draft().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "select 1, 2 -- A's work",
+        "B must not clobber A's draft"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_edited_window_diverts_to_a_sibling_when_another_window_saved_first() {
+    let dir = draft_scratch("divert");
+    std::fs::write(dir.join("draft.sql"), "select 1").unwrap();
+    let mut a = draft_window(&dir);
+    let mut b = draft_window(&dir);
+
+    a.editor.buffer = "A's work".into();
+    a.save_draft().unwrap();
+    b.editor.buffer = "B's work".into();
+    b.save_draft().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "A's work",
+        "A's draft survives"
+    );
+    let sibling = b.draft_file.clone();
+    assert_ne!(sibling, dir.join("draft.sql"));
+    assert_eq!(sibling.parent(), Some(dir.as_path()));
+    assert!(sibling
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("draft-"));
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "B's work");
+    assert!(b
+        .last_status
+        .as_deref()
+        .unwrap_or("")
+        .contains("another pgman window"));
+
+    // B's later saves keep going to the same sibling, not a new one each tick.
+    b.editor.buffer = "B's work, more".into();
+    b.save_draft().unwrap();
+    assert_eq!(b.draft_file, sibling);
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "B's work, more");
+    let files = std::fs::read_dir(&dir).unwrap().count();
+    assert_eq!(files, 2, "draft.sql + one sibling");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_window_saving_twice_in_a_row_keeps_writing_the_draft() {
+    // Its own previous write is not "another window's change".
+    let dir = draft_scratch("twice");
+    let mut a = draft_window(&dir);
+    a.editor.buffer = "one".into();
+    a.save_draft().unwrap();
+    a.editor.buffer = "two".into();
+    a.save_draft().unwrap();
+    assert_eq!(a.draft_file, dir.join("draft.sql"));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "two"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn quitting_an_untouched_window_leaves_another_windows_draft_alone() {
+    // The reported data loss, through the real exit path.
+    let dir = draft_scratch("exit");
+    std::fs::write(dir.join("draft.sql"), "old draft").unwrap();
+    let mut b = draft_window(&dir);
+    b.mode = Mode::Normal;
+    // Window A saves its work after B opened.
+    std::fs::write(dir.join("draft.sql"), "A's newer work").unwrap();
+
+    let mut tui = crate::tui::HeadlessTui::default();
+    let (tx, rx) = mpsc::unbounded_channel::<Event>();
+    tx.send(Event::Key(KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(2), b.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate quickly")
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("draft.sql")).unwrap(),
+        "A's newer work"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two JDBC-shaped pastes the importer reconstructs — enough to tell a
+/// reopened picker from a fresh one.
+const LOG_A: &str = "select * from orders where id = ?\n\nINTEGER:42";
+const LOG_B: &str = "select * from invoices where id = ?\n\nINTEGER:7";
+
+fn ctrl_l() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)
+}
+
+/// Paste `log` into the editor and Ctrl-L it, the way an operator does
+/// (so the picker's first-visit tip is spent before the reopen).
+fn open_log_by_hand(a: &mut App, log: &str) {
+    a.mode = Mode::Editor;
+    a.editor.buffer = log.into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+}
+
+#[test]
+fn ctrl_l_after_loading_a_pick_reopens_the_last_log() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "select * from orders where id = 42;");
+
+    // The buffer now holds the loaded query, not the log.
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick, "{:?}", a.last_error);
+    assert!(a.last_error.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+    assert_eq!(a.log_pick.picks.len(), 1);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from orders where id = 42"
+    );
+}
+
+#[test]
+fn esc_from_the_log_picker_also_keeps_it_for_reopening() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+}
+
+#[test]
+fn ctrl_l_from_normal_mode_reopens_the_last_log_too() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.mode = Mode::Normal;
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+}
+
+#[test]
+fn a_new_log_in_the_buffer_replaces_the_last_one() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    open_log_by_hand(&mut a, LOG_A);
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.editor.buffer = LOG_B.into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from invoices where id = 7"
+    );
+    // And it is B, not A, that a later Ctrl-L reopens.
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.on_key(ctrl_l());
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from invoices where id = 7"
+    );
+}
+
+#[test]
+fn a_log_preloaded_at_startup_reopens_with_the_reopened_status() {
+    // `--log` enters the picker without a key, so its first-visit tip
+    // must not wait for (and hide) the reopen status.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.preload_log(LOG_A.to_string());
+    assert!(a.last_status.as_deref().unwrap_or("").starts_with("tip"));
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    a.on_key(ctrl_l());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("reopened the last log · 1 query")
+    );
+}
+
+#[test]
+fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "select 1".into();
+    a.on_key(ctrl_l());
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(a
+        .last_error
+        .as_deref()
+        .unwrap_or("")
+        .starts_with("no queries found"));
 }

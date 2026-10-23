@@ -8,48 +8,48 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-staging/ledger (direct)                                             ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                     [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
 │  FROM invoices                                                                                                                                                                                       │
 │  WHERE status = 'open'                                                                                                                                                                               │
-│  ORDER BY due_at;                                                                                                                                                                                    │
-│                                                                                                                                                                                                      │
-╰─────────────────────────────╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮─────────────────────────────╯
-╭[ ◆ result · 5 row(s) ◆ ]────│                                                                                                                                          │─────────────────────────────╮
-│number      customer_id  stat│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
-│INV-004822  2102         open│                                                                                                                                          │                             │
-│INV-004824  2104         open│   grid                                                                                                                                   │                             │
-│INV-004827  2107         open│     q             quit                                                                                                                   │                             │
-│INV-004829  2109         open│     esc           back to the environments overview, when environments are configured                                                    │                             │
-│INV-004831  2111         open│     ? / F1        toggle this help (both work from every non-typing mode)                                                                │                             │
-│                             │     :             command bar — see the ': commands' section                                                                             │                             │
-│                             │     A             about pgman (version, credits)                                                                                         │                             │
-│                             │     e / i / tab   focus editor                                                                                                           │                             │
-│                             │     c             change connection (opens the picker mid-session)                                                                       │                             │
-│                             │     S             schema browser (psql `\d` equivalent)                                                                                  │                             │
-│                             │     W             schema wizard / lint (missing PK, mixed-case, reserved words …)                                                        │                             │
-│                             │     Q             saved queries (named, persisted)                                                                                       │                             │
-│                             │     ] / [  1..9   next / prev tab · tab N — see the tabs section                                                                         │                             │
-│                             │     T             slow queries (pg_stat_statements top-N)                                                                                │                             │
-│                             │     L             active sessions + locks (pg_stat_activity)                                                                             │                             │
-│                             │     E             environments overview (no connection needed)                                                                           │                             │
-│                             │     F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)                                                            │                             │
-│                             │     h / l  ← →    move column cursor                                                                                                     │                             │
-│                             │     s             cycle sort on focused column (off → ASC → DESC)                                                                        │                             │
-│                             │     /             live row filter (HIDES non-matching rows)                                                                              │                             │
-│                             │     f             find within grid (↑↓ step while typing; n/N after enter)                                                               │                             │
-│                             │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value                                           │                             │
-│                             │     Y             copy the (filtered) grid to clipboard as CSV                                                                           │                             │
-│                             │     I             yank focused row as INSERT (single-table SELECTs)                                                                      │                             │
-│                             │ ↓ 221 more below                                                                                                                         │                             │
-│                             │                                                                                                                                          │                             │
+│  ORDER BY due_at;           ╭[ ◆ help · grid ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                             │
+│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
+╰─────────────────────────────│ ▸ grid                    │   grid                                                                                                       │─────────────────────────────╯
+╭[ ◆ result · 5 row(s) ◆ ]────│   editor                  │     q             quit                                                                                       │─────────────────────────────╮
+│number      customer_id  stat│   confirm                 │     esc           back to the environments overview, when environments are configured                        │                             │
+│INV-004822  2102         open│   tx open                 │     ? / F1        toggle this help (both work from every non-typing mode)                                    │                             │
+│INV-004824  2104         open│   log pick                │     :             command bar — see the ': commands' section                                                 │                             │
+│INV-004827  2107         open│   conn pick               │     A             about pgman (version, credits)                                                             │                             │
+│INV-004829  2109         open│   row detail              │     e / i / tab   focus editor                                                                               │                             │
+│INV-004831  2111         open│   cell detail             │     c             change connection (opens the picker mid-session)                                           │                             │
+│                             │   schema browser          │     S             schema browser (psql `\d` equivalent)                                                      │                             │
+│                             │   EXPLAIN tree            │     W             schema wizard / lint (missing PK, mixed-case, reserved words …)                            │                             │
+│                             │   slow queries            │     Q             saved queries (named, persisted)                                                           │                             │
+│                             │   environments            │     ] / [  1..9   next / prev tab · tab N — see the tabs section                                             │                             │
+│                             │   active sessions         │     T             slow queries (pg_stat_statements top-N)                                                    │                             │
+│                             │   psql backslash commands │     L             active sessions + locks (pg_stat_activity)                                                 │                             │
+│                             │   : commands              │     E             environments overview (no connection needed)                                               │                             │
+│                             │   tabs                    │     F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)                                │                             │
+│                             │   saved queries           │     h / l  ← →    move column cursor                                                                         │                             │
+│                             │   notifications           │     s             cycle sort on focused column (off → ASC → DESC)                                            │                             │
+│                             │   jdbc tap                │     /             live row filter (HIDES non-matching rows)                                                  │                             │
+│                             │   result diff             │     f             find within grid (↑↓ step while typing; n/N after enter)                                   │                             │
+│                             │   schema wizard           │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value               │                             │
+│                             │   help                    │     Y             copy the (filtered) grid to clipboard as CSV                                               │                             │
+│                             │                           │     I             yank focused row as INSERT (single-table SELECTs)                                          │                             │
+│                             │                           │     D             pin result as A · run another query, D again to diff as B                                  │                             │
+│                             │                           │     m<a-z>        set bookmark at focused (row, col)                                                         │                             │
+│                             │                           │     '<a-z>        jump to bookmark                                                                           │                             │
+│                             │                           │     j / k  ↑ ↓    move selection                                                                             │                             │
+│                             │                           │     g / G         first / last row                                                                           │                             │
+│                             │                           │     enter         expand selected row (psql \x style)                                                        │                             │
+│                             │                           │     z             zoom the results · z again restores the split                                              │                             │
+│                             │                           │ ↓ 2 more below                                                                                               │                             │
 │                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
-│                                                                                                                                                                                                      │
-│                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   esc / ?  close help
+ RO   TAP   N+1 ×1   esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter

@@ -81,16 +81,51 @@ small-UX, correctness and environments findings landed on branch
   day text — flip both together.
 
 ### From the release panel (2026-09-03) — post-release
-- **From the Fable panel, tolerated for 0.1.0**: the help overlay is
-  300+ lines at 80 columns (needs sections that collapse or a topic
-  picker — `:help <topic>` jumps, but the overlay is still one page);
-  `--tap-listen` auto-enable is loopback-only but a ~500 MB retained
-  ceiling under a deliberate flood is the honest number.
+- **The tap listeners' channel is bounded by count, not bytes**
+  (`TAP_CHANNEL_CAPACITY` = 4096). The 0.1.1 run loop keeps up with
+  every burst measured, but if the app truly stalls, 4096 × ~200 KiB
+  events could still queue (~800 MiB). A byte budget would make the
+  worst case honest. The adapter in `main.rs` also clones every event
+  for `--tap-record` even when nothing is recorded.
 - **ebman parity, deferred**: a `--read-write` opt-in flag mirroring
   ebman's `--read-only`; the `D` key means describe in ebman and diff
   here; a Ctrl-K command palette on top of the `:` bar.
 
 ### After v0.1.0 — Tom's decisions (2026-10-22)
+- **Leaving read-only is quit, edit, relaunch** (0.1.1 product panel).
+  `:readonly off` points at `safety.toml`; running a write then shows a
+  confirm popup for a statement the popup says Postgres will refuse,
+  and `y` gets SQLSTATE 25006 with the same hint. Options: a typed,
+  session-only `:readonly off` (with its own confirm), and skipping the
+  popup when the session is read-only. A safety posture call — Tom's.
+- **The title's date reads as unexplained** (`pgman 0.1.0 · 2026-10-22`
+  on a later day). Say it is the release date, or drop it.
+- **Postgres-log parameters are all typed `text`**: `select $1 + $2`
+  reconstructs as `'1' + '2'` (operator is not unique). JDBC binds are
+  typed; leaving numeric-looking values bare would fix that case and
+  break a text column holding `007`. Needs a rule.
+- **`I` and `:fixture` treat a subquery alias as a table**:
+  `SELECT * FROM (SELECT …) sub` infers `public.sub`, a table that
+  doesn't exist. Refuse instead.
+- **An unqualified FROM is assumed to be in `public`** for the INSERT
+  yank and `:fixture`, ignoring `search_path`; `:fixture` also drops a
+  given schema.
+- **Tests under `tests/` build the library without `cfg(test)`**, so a
+  yank reached from a journey or render test would hit the real
+  clipboard. None does today; a runtime seam would make it impossible.
+- **A long filter pattern loses its `filter: /` prompt in the footer**
+  (schema browser, help, other filter modes): `fit_status` shrinks and
+  then drops the leading segment, so the prompt and the cursor go
+  missing. A typing prompt should keep its head and show the pattern's
+  tail.
+- **Log formats not yet read**: Log4j's bracketed logger (`DEBUG
+  [org.hibernate.SQL] select …`); p6spy's multi-line Spring Boot
+  starter format; Hibernate 5 ARRAY binds (only Hibernate 6's form is
+  converted). datasource-proxy values containing `,` are ambiguous in
+  its default format and split there (documented).
+- **Tap: 64 silent connections lock a real client out for up to 30 s**
+  (documented trade-off of the connection cap). A per-connection idle
+  timeout shorter than 30 s, or evicting the oldest idle connection.
 - **Require CI checks on `main`.** Branch protection blocks force-push
   and deletion but requires no status checks, so a PR can merge red.
   Require `ci.yml`'s jobs once the release is out.

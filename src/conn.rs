@@ -750,12 +750,17 @@ fn mask_password_params(s: String) -> String {
 /// never grants: only those the user may connect to are sized.
 pub const BOOTSTRAP_SQL: &str = "select datname as database, \
     case when has_database_privilege(datname, 'CONNECT') \
-         then pg_size_pretty(pg_database_size(datname)) end as size \
+         then pg_database_size(datname) end as size \
     from pg_database where not datistemplate order by datname";
 
 /// A successful connection's bootstrap result.
 pub struct Booted {
     pub server_version: String,
+    /// `pg_is_in_recovery()`: the server is a standby (a read replica).
+    /// `None` when the probe failed. Every connection asks — `:connect`
+    /// and `--dsn` included, not only an environment that names a
+    /// replica.
+    pub in_recovery: Option<bool>,
     pub grid: Grid,
     /// The live client — handed to `App` so subsequent queries run on the
     /// same session (and the read-only / statement-timeout settings stick).
@@ -953,14 +958,21 @@ pub async fn connect_and_bootstrap(
     // connection) instead of serially, cutting time-to-interactive on a
     // high-latency / tunnelled link.
     let (version_res, grid_res, schema_cache) = tokio::join!(
-        client.query_one("SHOW server_version", &[]),
+        client.query_one(
+            "SELECT current_setting('server_version'), pg_is_in_recovery()",
+            &[]
+        ),
         run_query(&client, &bootstrap_sql),
         crate::query::schema::fetch(&client),
     );
-    let server_version = version_res
-        .ok()
+    let version_row = version_res.ok();
+    let server_version = version_row
+        .as_ref()
         .and_then(|row| row.try_get::<usize, String>(0).ok())
         .unwrap_or_else(|| "unknown".to_string());
+    let in_recovery = version_row
+        .as_ref()
+        .and_then(|row| row.try_get::<usize, bool>(1).ok());
     // The list only feeds the start card: a server that won't give it
     // up still gives the operator a connection.
     let grid = grid_res.unwrap_or_else(|e| {
@@ -969,6 +981,7 @@ pub async fn connect_and_bootstrap(
     });
     Ok(Booted {
         server_version,
+        in_recovery,
         grid,
         client,
         schema_cache,
@@ -1046,14 +1059,16 @@ async fn connect_inner(
     // A host that drops packets would otherwise hold "connecting…" until
     // the OS gives up (75 s on macOS, minutes on Linux).
     cfg.connect_timeout(CONNECT_TIMEOUT);
-    let verify = apply_ssl_mode(&mut cfg, &dsn);
+    let roots = root_source(&dsn)?;
+    let verify = apply_ssl_mode(&mut cfg, &dsn, &roots);
 
-    // Connect with TLS when we can build a connector; fall back to
-    // NoTls only when connector init itself fails (e.g. crypto provider
-    // panic) — that's expected to be rare. The connection driver is
-    // spawned inside each branch because its stream type depends on
-    // which connector ran the handshake.
-    let client = match build_tls_connector(verify) {
+    // Connect with TLS when we can build a connector. Falling back to
+    // NoTls when connector init itself fails (rare: a crypto-provider
+    // or verifier build error) is allowed only where plaintext was
+    // acceptable anyway — never for `require` or `verify-*`. The
+    // connection driver is spawned inside each branch because its
+    // stream type depends on which connector ran the handshake.
+    let client = match build_tls_connector(verify, &roots) {
         Ok(connector) => {
             let (client, connection) = cfg
                 .connect(connector)
@@ -1061,6 +1076,9 @@ async fn connect_inner(
                 .map_err(|e| chain_message(&e))?;
             spawn_connection_driver(connection, notice_tx.clone(), notification_tx.clone());
             client
+        }
+        Err(tls_err) if !plaintext_fallback_allowed(verify, cfg.get_ssl_mode()) => {
+            return Err(format!("TLS setup failed: {tls_err}"));
         }
         Err(tls_err) => {
             // TLS connector setup failed. Fall back to NoTls so localhost
@@ -1504,11 +1522,15 @@ pub fn application_name(dsn: &Dsn) -> String {
 ///   by IP needs.
 /// - `verify-full`          → the chain AND the hostname.
 ///
+/// With an `sslrootcert` file ([`RootSource::File`]), `require` checks
+/// the chain as `verify-ca` does — libpq's rule: naming a CA means it
+/// is to be checked.
+///
 /// `Dsn::parse` validates `sslmode` against [`KNOWN_SSLMODES`] before
 /// this ever runs, so every arm below except the last is reachable
 /// only with a value from that exact set — the `unreachable!` is a
 /// tripwire for that invariant, not a real code path.
-fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> TlsVerify {
+fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn, roots: &RootSource) -> TlsVerify {
     use tokio_postgres::config::SslMode;
     let mode = dsn
         .params
@@ -1526,7 +1548,10 @@ fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> TlsVerify {
         }
         Some("require") => {
             cfg.ssl_mode(SslMode::Require);
-            TlsVerify::Nothing
+            match roots {
+                RootSource::File(_) => TlsVerify::Chain,
+                RootSource::Default => TlsVerify::Nothing,
+            }
         }
         Some("verify-ca") => {
             cfg.ssl_mode(SslMode::Require);
@@ -1540,6 +1565,15 @@ fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> TlsVerify {
             unreachable!("Dsn::parse should have rejected sslmode={other:?}")
         }
     }
+}
+
+/// Whether a connection whose TLS connector couldn't be built may go
+/// ahead in plaintext: only when the operator's `sslmode` already
+/// accepted plaintext (`disable`, `allow`, `prefer`) and nothing was to
+/// be verified. `require` and `verify-*` fail closed.
+fn plaintext_fallback_allowed(verify: TlsVerify, mode: tokio_postgres::config::SslMode) -> bool {
+    use tokio_postgres::config::SslMode;
+    verify == TlsVerify::Nothing && matches!(mode, SslMode::Disable | SslMode::Prefer)
 }
 
 /// How much of the server's certificate the TLS handshake checks —
@@ -1562,13 +1596,75 @@ enum TlsVerify {
 /// self-signed dev DBs would fail the handshake.
 fn build_tls_connector(
     verify: TlsVerify,
+    source: &RootSource,
 ) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
-    let roots = if verify == TlsVerify::Nothing {
-        rustls::RootCertStore::empty()
-    } else {
-        trusted_roots()
+    let roots = match (verify, source) {
+        (TlsVerify::Nothing, _) => rustls::RootCertStore::empty(),
+        (_, RootSource::Default) => trusted_roots(),
+        (_, RootSource::File(path)) => roots_from_file(path)?,
     };
     tls_connector(verify, roots)
+}
+
+/// Where a verifying handshake's trusted roots come from — libpq's
+/// `sslrootcert`. Absent, empty or `system` (PostgreSQL 16's spelling)
+/// is [`trusted_roots`]; anything else is a PEM file whose CAs are
+/// then the *only* ones trusted, as libpq does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RootSource {
+    Default,
+    File(std::path::PathBuf),
+}
+
+/// Read `sslrootcert` (and refuse the TLS parameters pgman can't honour)
+/// from `dsn`. Ignoring `sslcrl` would accept a revoked certificate the
+/// operator asked to refuse, so it is an error rather than a no-op;
+/// client certificates (`sslcert` / `sslkey`) only matter to a server
+/// that asks for one, which then says so itself.
+fn root_source(dsn: &Dsn) -> Result<RootSource, String> {
+    let param = |name: &str| {
+        dsn.params
+            .iter()
+            .find(|(k, v)| k.eq_ignore_ascii_case(name) && !v.is_empty())
+            .map(|(_, v)| v.as_str())
+    };
+    for name in ["sslcrl", "sslcrldir"] {
+        if param(name).is_some() {
+            return Err(format!(
+                "{name} is not supported — pgman can't check certificate revocation lists"
+            ));
+        }
+    }
+    for name in ["sslcert", "sslkey"] {
+        if param(name).is_some() {
+            tracing::warn!("{name} is ignored: pgman doesn't send client certificates");
+        }
+    }
+    Ok(match param("sslrootcert") {
+        None | Some("system") => RootSource::Default,
+        Some(path) => RootSource::File(std::path::PathBuf::from(path)),
+    })
+}
+
+/// The CA certificates in the PEM file at `path`, as a root store. A
+/// file that can't be read or holds no certificate is an error: the
+/// operator pinned a CA, and connecting without it would quietly trust
+/// a different set.
+fn roots_from_file(path: &std::path::Path) -> Result<rustls::RootCertStore, String> {
+    use rustls::pki_types::pem::PemObject;
+    let shown = path.display();
+    let bytes = std::fs::read(path).map_err(|e| format!("sslrootcert {shown}: {e}"))?;
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls::pki_types::CertificateDer::pem_slice_iter(&bytes) {
+        let cert = cert.map_err(|e| format!("sslrootcert {shown}: {e}"))?;
+        roots
+            .add(cert)
+            .map_err(|e| format!("sslrootcert {shown}: {e}"))?;
+    }
+    if roots.is_empty() {
+        return Err(format!("sslrootcert {shown}: no certificate in the file"));
+    }
+    Ok(roots)
 }
 
 /// [`build_tls_connector`] with the trusted roots given, so the
@@ -2368,7 +2464,7 @@ mod tests {
         fn parsed(s: &str) -> (tokio_postgres::Config, TlsVerify) {
             let dsn = Dsn::parse(s).unwrap();
             let mut cfg = tokio_postgres::Config::new();
-            let verify = super::apply_ssl_mode(&mut cfg, &dsn);
+            let verify = super::apply_ssl_mode(&mut cfg, &dsn, &super::RootSource::Default);
             (cfg, verify)
         }
         // Default — no sslmode in URL — is Prefer, no verify.
@@ -2407,6 +2503,82 @@ mod tests {
         assert_eq!(v, TlsVerify::Nothing);
     }
 
+    #[test]
+    fn only_a_plaintext_tolerant_sslmode_falls_back_to_plaintext() {
+        use super::{plaintext_fallback_allowed, TlsVerify};
+        for (url, allowed) in [
+            ("postgres://h/d", true),
+            ("postgres://h/d?sslmode=disable", true),
+            ("postgres://h/d?sslmode=allow", true),
+            ("postgres://h/d?sslmode=prefer", true),
+            ("postgres://h/d?sslmode=require", false),
+            ("postgres://h/d?sslmode=verify-ca", false),
+            ("postgres://h/d?sslmode=verify-full", false),
+        ] {
+            let dsn = Dsn::parse(url).unwrap();
+            let mut cfg = tokio_postgres::Config::new();
+            let verify = super::apply_ssl_mode(&mut cfg, &dsn, &super::RootSource::Default);
+            assert_eq!(
+                plaintext_fallback_allowed(verify, cfg.get_ssl_mode()),
+                allowed,
+                "{url}"
+            );
+        }
+        // A verifying mode never falls back, whatever the wire mode says.
+        assert!(!plaintext_fallback_allowed(
+            TlsVerify::Chain,
+            tokio_postgres::config::SslMode::Prefer
+        ));
+    }
+
+    #[test]
+    fn sslrootcert_and_revocation_params_are_read_not_ignored() {
+        use super::{root_source, RootSource};
+        let src = |url: &str| root_source(&Dsn::parse(url).unwrap());
+        assert_eq!(src("postgres://h/d"), Ok(RootSource::Default));
+        assert_eq!(src("postgres://h/d?sslrootcert="), Ok(RootSource::Default));
+        assert_eq!(
+            src("postgres://h/d?sslrootcert=system"),
+            Ok(RootSource::Default)
+        );
+        assert_eq!(
+            src("postgres://h/d?sslmode=verify-full&sslrootcert=/etc/ssl/ca.pem"),
+            Ok(RootSource::File("/etc/ssl/ca.pem".into()))
+        );
+        assert_eq!(
+            src("postgres://h/d?SSLROOTCERT=ca.pem"),
+            Ok(RootSource::File("ca.pem".into()))
+        );
+        for p in ["sslcrl=crl.pem", "sslcrldir=/etc/crl"] {
+            let err = src(&format!("postgres://h/d?sslmode=verify-full&{p}")).unwrap_err();
+            assert!(err.contains("not supported"), "{p}: {err}");
+        }
+        // Client certificates are ignored (with a log line), not refused.
+        assert_eq!(
+            src("postgres://h/d?sslcert=c.pem&sslkey=k.pem"),
+            Ok(RootSource::Default)
+        );
+    }
+
+    /// libpq: `require` with a CA file checks the chain, as `verify-ca`.
+    #[test]
+    fn require_with_an_sslrootcert_file_checks_the_chain() {
+        use super::{apply_ssl_mode, RootSource, TlsVerify};
+        let dsn = Dsn::parse("postgres://h/d?sslmode=require&sslrootcert=ca.pem").unwrap();
+        let file = RootSource::File("ca.pem".into());
+        let mut cfg = tokio_postgres::Config::new();
+        assert_eq!(apply_ssl_mode(&mut cfg, &dsn, &file), TlsVerify::Chain);
+        // prefer stays unverified, as in libpq.
+        let dsn = Dsn::parse("postgres://h/d?sslmode=prefer&sslrootcert=ca.pem").unwrap();
+        assert_eq!(apply_ssl_mode(&mut cfg, &dsn, &file), TlsVerify::Nothing);
+        // verify-full is still the hostname check too.
+        let dsn = Dsn::parse("postgres://h/d?sslmode=verify-full&sslrootcert=ca.pem").unwrap();
+        assert_eq!(
+            apply_ssl_mode(&mut cfg, &dsn, &file),
+            TlsVerify::ChainAndHostname
+        );
+    }
+
     /// The verify-ca verifier against real certificates
     /// (`tests/fixtures/tls`, made with openssl, valid to 2126): a leaf
     /// for `db.internal.test` signed by `ca.pem`, and one with the same
@@ -2443,6 +2615,38 @@ mod tests {
 
         const TRUSTED: &[u8] = include_bytes!("../tests/fixtures/tls/leaf-ca.pem");
         const UNTRUSTED: &[u8] = include_bytes!("../tests/fixtures/tls/leaf-other-ca.pem");
+
+        const CA_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tls/ca.pem");
+
+        /// `sslrootcert=<file>`: the file's CA is trusted, and only it —
+        /// the same leaf the OS store would never vouch for passes, and
+        /// one from another CA is refused.
+        #[test]
+        fn an_sslrootcert_file_is_the_trust_store() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let roots = super::super::roots_from_file(std::path::Path::new(CA_FILE)).unwrap();
+            assert_eq!(roots.len(), 1);
+            let v = super::super::ChainOnlyVerifier::new(roots).unwrap();
+            assert!(check(&v, TRUSTED, "db.internal.test").is_ok());
+            assert!(check(&v, UNTRUSTED, "db.internal.test").is_err());
+        }
+
+        #[test]
+        fn an_unusable_sslrootcert_file_is_an_error_not_the_default_store() {
+            use super::super::roots_from_file;
+            let missing = roots_from_file(std::path::Path::new("/nonexistent/pgman/ca.pem"));
+            assert!(missing.unwrap_err().starts_with("sslrootcert /nonexistent"));
+            // A readable file with no certificate in it.
+            let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+            let empty = roots_from_file(std::path::Path::new(manifest)).unwrap_err();
+            assert!(empty.contains("no certificate"), "{empty}");
+            // And the connector build surfaces it, so `connect` fails
+            // closed instead of trusting the default store.
+            let source = super::super::RootSource::File("/nonexistent/pgman/ca.pem".into());
+            assert!(
+                super::super::build_tls_connector(super::super::TlsVerify::Chain, &source).is_err()
+            );
+        }
 
         #[test]
         fn a_trusted_chain_passes_whatever_host_was_dialled() {
@@ -2665,7 +2869,13 @@ mod tests {
         async fn sslmode_require_handshakes_with_any_certificate() {
             let (port, server) = serve_once(&pki());
             // The production builder, as `connect` calls it.
-            let client = connect(build_tls_connector(TlsVerify::Nothing).unwrap(), port, "x").await;
+            let client = connect(
+                build_tls_connector(TlsVerify::Nothing, &super::super::RootSource::Default)
+                    .unwrap(),
+                port,
+                "x",
+            )
+            .await;
             assert_talked(client, server.join().unwrap());
         }
 

@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 421
+assertion_line: 440
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X · YYYY-MM-DD ──────────────────────────────────────────╮╭──────────────────────────────────────╮
@@ -8,7 +8,7 @@ expression: dump(&buf)
 │ Status: connected · pg 16.0  •  Session:  read-only   •  Tabs: 1   ││                <?> help  <:> command │
 │ Via: —                                                             ││               <E> envs  <ctrl-t> tab │
 ╰────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────╯
- 1 empty                                                               ] [ switch · ctrl-t new · ctrl-w close
+ 1 empty                                                        [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]─────────────────────────────────────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                                                │
 ╰───╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh · enter copy · q close ────────────────────────╮────╯

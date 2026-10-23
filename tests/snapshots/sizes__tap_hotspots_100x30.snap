@@ -8,10 +8,10 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                     │
-│  F╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle ·╮   │
+│  F╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · sort: total time · … ───────╮   │
 │  W│   CALLS    ERR        P50        P95        P99  FINGERPRINT · LAST CALLER               │   │
 │  O│       8      0      465µs      525µs      525µs  select id, descript… · InvoiceService.lo│   │
 │   │       1      0      2.3ms      2.3ms      2.3ms  update subscription… · DunningJob.advanc│   │

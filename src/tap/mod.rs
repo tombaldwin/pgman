@@ -180,6 +180,47 @@ pub const TAP_TRUNCATION_MARKER: char = '…';
 /// scale this up.
 pub const TAP_CHANNEL_CAPACITY: usize = 4_096;
 
+/// Which transport a bound tap listener speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TapTransport {
+    /// `--tap-listen`: length-prefixed pgman-tap frames.
+    Tcp,
+    /// `--tap-udp`: one pgman-tap event per datagram.
+    Udp,
+    /// `--tap-otlp`: OTLP/HTTP JSON from an OpenTelemetry agent.
+    Otlp,
+}
+
+/// A tap listener that bound at startup, so the monitor can say where
+/// pgman is actually listening rather than name one flag regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TapListener {
+    pub transport: TapTransport,
+    pub addr: std::net::SocketAddr,
+}
+
+impl std::fmt::Display for TapListener {
+    /// `TCP 127.0.0.1:7432`, `UDP …`, `OTLP/HTTP …`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match self.transport {
+            TapTransport::Tcp => "TCP",
+            TapTransport::Udp => "UDP",
+            TapTransport::Otlp => "OTLP/HTTP",
+        };
+        write!(f, "{kind} {}", self.addr)
+    }
+}
+
+/// `listening on TCP 127.0.0.1:7432 · OTLP/HTTP 127.0.0.1:4318`, or
+/// `None` when nothing is bound. Pure.
+#[must_use]
+pub fn listening_summary(listeners: &[TapListener]) -> Option<String> {
+    (!listeners.is_empty()).then(|| {
+        let each: Vec<String> = listeners.iter().map(ToString::to_string).collect();
+        format!("listening on {}", each.join(" · "))
+    })
+}
+
 /// Process-global counter of events the listener side dropped
 /// because the downstream channel was full. Cumulative for
 /// the lifetime of the pgman process. Surfaced in the chrome
@@ -253,7 +294,7 @@ static DROPPED_OTHER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 /// used to fire once per bad packet — an attacker (or a
 /// misconfigured JAR) sending garbage at line rate turned a few
 /// hundred KB of input into tens of MB of log output. See
-/// [`listener::run_tcp_listener`] / [`listener::run_udp_listener`]
+/// [`listener::serve_tcp_listener`] / [`listener::serve_udp_listener`]
 /// and [`otlp::span_to_tap_event`] for the call sites.
 pub(crate) struct WarnThrottle {
     last_warn_micros: std::sync::atomic::AtomicU64,
@@ -580,7 +621,37 @@ pub fn parse(bytes: &[u8]) -> Result<TapEvent, String> {
     }
     validate_required(&event)?;
     enforce_field_caps(&mut event);
+    if let Some(raw) = clamp_duration(&mut event) {
+        WIRE_DURATION_CLAMP_WARN.warn(|suppressed| {
+            let suffix = if suppressed > 0 {
+                format!(" ({suppressed} more suppressed in the last second)")
+            } else {
+                String::new()
+            };
+            format!("tap: clamped duration {raw}µs to cap {TAP_DURATION_CAP_MICROS}µs{suffix}")
+        });
+    }
     Ok(event)
+}
+
+/// Sanity cap on an event's `duration_micros`: 1 hour. Anything past
+/// it is broken telemetry (clock skew, a hostile frame, a bug): one
+/// `u64::MAX` rendered as `18446744073709.55s`, pushed the duration
+/// column out of line, and took over every sort by time through the
+/// saturating sums in [`group_hotspots`]. Applied by [`parse`] (TCP,
+/// UDP, replay) and by the OTLP path as `otlp::OTLP_DURATION_CAP_MICROS`.
+pub const TAP_DURATION_CAP_MICROS: u64 = 3_600_000_000;
+
+static WIRE_DURATION_CLAMP_WARN: WarnThrottle = WarnThrottle::new();
+
+/// Clamp `event.duration_micros` to [`TAP_DURATION_CAP_MICROS`];
+/// the raw value when it had to be. Pure.
+fn clamp_duration(event: &mut TapEvent) -> Option<u64> {
+    let raw = event.duration_micros?;
+    (raw > TAP_DURATION_CAP_MICROS).then(|| {
+        event.duration_micros = Some(TAP_DURATION_CAP_MICROS);
+        raw
+    })
 }
 
 /// Truncate `s` in place to at most `max_bytes` UTF-8 bytes,
@@ -1213,6 +1284,45 @@ mod tests {
         assert_eq!(params[1], "short");
         assert!(e.caller.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
         assert!(e.error.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn listening_summary_names_each_bound_listener() {
+        assert_eq!(listening_summary(&[]), None);
+        let at = |transport, addr: &str| TapListener {
+            transport,
+            addr: addr.parse().unwrap(),
+        };
+        assert_eq!(
+            listening_summary(&[
+                at(TapTransport::Tcp, "127.0.0.1:7432"),
+                at(TapTransport::Udp, "127.0.0.1:7433"),
+                at(TapTransport::Otlp, "[::1]:4318"),
+            ])
+            .as_deref(),
+            Some("listening on TCP 127.0.0.1:7432 · UDP 127.0.0.1:7433 · OTLP/HTTP [::1]:4318")
+        );
+    }
+
+    #[test]
+    fn parse_clamps_an_absurd_duration_like_the_otlp_path() {
+        let frame = |dur: u64| {
+            format!(
+                r#"{{"v":1,"kind":"query","ts_unix_micros":1,"sql":"select 1","duration_micros":{dur}}}"#
+            )
+        };
+        let e = parse(frame(u64::MAX).as_bytes()).unwrap();
+        assert_eq!(e.duration_micros, Some(TAP_DURATION_CAP_MICROS));
+        assert_eq!(TAP_DURATION_CAP_MICROS, OTLP_DURATION_CAP_MICROS);
+        // At the cap, and below it, the value is the sender's.
+        let e = parse(frame(TAP_DURATION_CAP_MICROS).as_bytes()).unwrap();
+        assert_eq!(e.duration_micros, Some(TAP_DURATION_CAP_MICROS));
+        let just_under = TAP_DURATION_CAP_MICROS - 1;
+        let e = parse(frame(just_under).as_bytes()).unwrap();
+        assert_eq!(e.duration_micros, Some(just_under));
+        // No duration (a heartbeat) stays none.
+        let e = parse(br#"{"v":1,"kind":"heartbeat","ts_unix_micros":1}"#).unwrap();
+        assert_eq!(e.duration_micros, None);
     }
 
     #[test]
@@ -2273,6 +2383,108 @@ mod tests {
         assert_eq!(e.sql.as_deref(), Some("SELECT 1"));
         // Listener stamped received_at on the way through.
         assert!(e.received_at_unix_micros > 0);
+    }
+
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(bytes).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn process_otlp_request_inflates_a_gzip_body() {
+        // The OTel Collector's otlphttp exporter gzips by default; the
+        // body used to fail as `400 not utf-8`.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
+        let span = r#"{
+            "startTimeUnixNano": "1700000000000000000",
+            "endTimeUnixNano":   "1700000000010000000",
+            "attributes": [
+                {"key":"db.system","value":{"stringValue":"postgresql"}},
+                {"key":"db.statement","value":{"stringValue":"SELECT 7"}}
+            ]
+        }"#;
+        let req = HttpRequest {
+            method: "POST".into(),
+            path: "/v1/traces".into(),
+            headers: [
+                ("content-type".into(), "application/json".into()),
+                ("content-encoding".into(), "gzip".into()),
+            ]
+            .into_iter()
+            .collect(),
+            body: gzip(otlp_envelope("svc", span).as_bytes()),
+        };
+        let resp = process_otlp_request(req, &tx);
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        assert_eq!(rx.try_recv().unwrap().sql.as_deref(), Some("SELECT 7"));
+    }
+
+    #[test]
+    fn decode_otlp_body_passes_identity_through() {
+        for enc in [None, Some(""), Some("identity"), Some("Identity")] {
+            let got = decode_otlp_body(enc, b"{}", 16).unwrap();
+            assert!(matches!(got, std::borrow::Cow::Borrowed(b"{}")), "{enc:?}");
+        }
+    }
+
+    #[test]
+    fn decode_otlp_body_caps_the_inflated_size() {
+        // A zip bomb: 1 MiB of zeros gzips to about a kilobyte.
+        let bomb = gzip(&vec![0u8; 1024 * 1024]);
+        assert!(bomb.len() < 4096);
+        let err = decode_otlp_body(Some("gzip"), &bomb, 1024 * 1024 - 1).unwrap_err();
+        assert_eq!(err.status, 413);
+        // Exactly at the cap is fine.
+        let ok = decode_otlp_body(Some("gzip"), &bomb, 1024 * 1024).unwrap();
+        assert_eq!(ok.len(), 1024 * 1024);
+    }
+
+    #[test]
+    fn inflating_stops_at_the_cap_instead_of_reading_the_whole_stream() {
+        /// Counts the compressed bytes the decoder pulls.
+        struct Counting<'a>(&'a [u8], std::rc::Rc<std::cell::Cell<usize>>);
+        impl std::io::Read for Counting<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.0.read(buf)?;
+                self.1.set(self.1.get() + n);
+                Ok(n)
+            }
+        }
+        // Barely compressible bytes, so the compressed stream is long
+        // enough (2 MiB) to see how much of it the decoder reads — it
+        // pulls its input in buffer-sized chunks.
+        let mut state = 0x2545_f491_u32;
+        let noise: Vec<u8> = (0..2 * 1024 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        let stream = gzip(&noise);
+        let pulled = std::rc::Rc::new(std::cell::Cell::new(0));
+        let got = otlp::inflate_gzip_capped(Counting(&stream, pulled.clone()), 64 * 1024).unwrap();
+        assert!(got.is_none(), "2 MiB inflated is past a 64 KiB cap");
+        // A 64 KiB cap needs a sliver of the stream, not all of it.
+        assert!(
+            pulled.get() < stream.len() / 4,
+            "read {} of {} compressed bytes",
+            pulled.get(),
+            stream.len()
+        );
+    }
+
+    #[test]
+    fn decode_otlp_body_rejects_bad_gzip_and_unknown_encodings() {
+        let err = decode_otlp_body(Some("gzip"), b"not gzip at all", 1024).unwrap_err();
+        assert_eq!(err.status, 400);
+        assert!(err.body.contains("does not inflate"), "{}", err.body);
+        let err = decode_otlp_body(Some("br"), b"{}", 1024).unwrap_err();
+        assert_eq!(err.status, 415);
+        assert!(err.body.contains("send gzip or none"), "{}", err.body);
     }
 
     #[test]
@@ -4072,36 +4284,13 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_listener_rejects_connections_past_the_concurrency_cap() {
-        // Drive the real `run_tcp_listener` (not `handle_tcp_conn`
+        // Drive the real `serve_tcp_listener` (not `handle_tcp_conn`
         // directly) since the connection semaphore lives in the
         // accept loop, not the per-connection handler.
         let (tx, _rx) = tokio::sync::mpsc::channel::<TapEvent>(4096);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            // Reimplement the bind-then-serve split `run_tcp_listener`
-            // does internally isn't available with a pre-bound
-            // listener, so drive its accept loop inline against the
-            // SAME cap constant the production code uses — this is
-            // the smallest faithful stand-in that doesn't need a
-            // second `addr` to bind to (the test needs the actual
-            // bound port up front to dial in).
-            let permits =
-                std::sync::Arc::new(tokio::sync::Semaphore::new(TAP_MAX_CONCURRENT_CONNS));
-            loop {
-                let Ok((sock, _peer)) = listener.accept().await else {
-                    return;
-                };
-                let Ok(permit) = permits.clone().try_acquire_owned() else {
-                    continue; // drop the socket — same as the real listener
-                };
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    let _ = handle_tcp_conn(sock, &tx).await;
-                });
-            }
-        });
+        tokio::spawn(serve_tcp_listener(listener, tx));
 
         // Open TAP_MAX_CONCURRENT_CONNS idle connections and hold
         // them open — each one's `handle_tcp_conn` is blocked

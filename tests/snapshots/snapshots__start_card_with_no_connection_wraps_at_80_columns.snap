@@ -1,0 +1,28 @@
+---
+source: tests/snapshots.rs
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
+│ Server: —  •  Database: —  •  User: —           ││      PostgreSQL   results │
+│ Status: disconnected  •  Session:  read-only    ││     <?> help  <:> command │
+│ Via: —                                          ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
+│> (empty — press e to focus)                                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭[ ◆ pgman ◆ ]─────────────────────────────────────────────────────────────────╮
+│no connection — start pgman with --dsn postgres://…                           │
+│pgman also auto-discovers application*.yml, .idea/dataSources.xml and         │
+│.pgman/pgman.toml when run inside a project                                   │
+│or :connect postgres://… here · E environments · pgman --demo to try it with  │
+│no database                                                                   │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ RO   q quit · ? help · e editor · S schema · W wizard · Q saved · ? +9 more

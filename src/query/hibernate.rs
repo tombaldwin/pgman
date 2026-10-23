@@ -11,8 +11,8 @@
 //!   - Hibernate 6: `binding parameter (1:INTEGER) <- [42]`
 //!     (logger `org.hibernate.orm.jdbc.bind`).
 //!
-//! Lines are grouped by thread token (the first `[…]` group, before the
-//! logger) so interleaved requests pair correctly. Each SQL line opens a
+//! Lines are grouped by thread token (the last `[…]` group before the
+//! logger, see [`extract_thread`]) so interleaved requests pair correctly. Each SQL line opens a
 //! statement for its thread; subsequent bind lines on that thread attach to it
 //! until the next SQL line.
 //!
@@ -36,6 +36,8 @@ use std::collections::HashMap;
 
 /// Parse a Hibernate log into reconstructed queries.
 pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
+    // `hibernate.highlight_sql=true` colours every keyword.
+    let log = &*crate::query::logdetect::strip_sgr(log);
     // thread -> (sql, src_line) for the statement currently open on that thread.
     let mut current: HashMap<String, (String, usize)> = HashMap::new();
     // thread -> binds accumulated for the open statement.
@@ -152,15 +154,34 @@ fn looks_like_continuation(line: &str) -> bool {
     !line.contains('[')
 }
 
-/// The thread token — the first `[…]` group in `prefix` (the text before the
-/// logger / message). Empty when the log pattern carries no thread.
+/// The thread token — the last `[…]` group in `prefix` (the text before
+/// the logger / message), skipping a bracketed log level. Empty when the
+/// log pattern carries no thread.
+///
+/// The last, not the first: Spring Boot 3.2's default pattern puts the
+/// application name first (`--- [billing-api] [nio-8080-exec-1]
+/// org.hibernate.SQL`), and keyed by that every thread shares one
+/// bucket and binds pair with another thread's statement. The thread is
+/// the group nearest the logger in every common pattern. A level
+/// (`[DEBUG]`) differs between a statement and its binds, so it is not
+/// the key.
 fn extract_thread(prefix: &str) -> String {
-    if let Some(start) = prefix.find('[') {
-        if let Some(rel_end) = prefix[start + 1..].find(']') {
-            return prefix[start + 1..start + 1 + rel_end].trim().to_string();
-        }
+    let mut groups = Vec::new();
+    let mut rest = prefix;
+    while let Some(start) = rest.find('[') {
+        let Some(len) = rest[start + 1..].find(']') else {
+            break;
+        };
+        groups.push(rest[start + 1..start + 1 + len].trim());
+        rest = &rest[start + 1 + len + 1..];
     }
-    String::new()
+    const LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR"];
+    groups
+        .into_iter()
+        .rev()
+        .find(|g| !LEVELS.iter().any(|l| g.eq_ignore_ascii_case(l)))
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// `hibernate.show_sql=true` writes `Hibernate: select …` straight to
@@ -183,9 +204,23 @@ fn sql_message(line: &str) -> Option<(usize, &str)> {
             _ => Some((i, m.len())),
         }
     })?;
-    let after = &line[marker_pos + marker_len..];
-    let colon = after.find(':')?;
-    Some((marker_pos, after[colon + 1..].trim()))
+    let msg = message_after_logger(&line[marker_pos + marker_len..])?;
+    Some((marker_pos, msg))
+}
+
+/// The message after a logger name: one `:` (Spring Boot's
+/// `%logger : %msg`) or `-` (logback's default `%logger{36} - %msg`)
+/// separator, with the whitespace around it, is the pattern's; with
+/// neither (`%logger %msg`), the message starts at the first non-space
+/// character. Any later `:` or `-` is the SQL's (`like 'ref:%'`,
+/// `'10:00:00'`). `None` when the logger name runs straight into other
+/// text (`org.hibernate.SQL=DEBUG` in a config dump) — not a message.
+fn message_after_logger(after: &str) -> Option<&str> {
+    let trimmed = after.trim_start();
+    if let Some(msg) = trimmed.strip_prefix([':', '-']) {
+        return Some(msg.trim());
+    }
+    (after.is_empty() || after.starts_with(char::is_whitespace)).then(|| trimmed.trim_end())
 }
 
 /// Parse a `binding parameter …` message (Hibernate 5 or 6 form).
@@ -209,15 +244,48 @@ fn parse_bind(msg: &str) -> Option<BoundParam> {
         let (inside, r) = r.split_once(')')?;
         let (idx, sql_type) = inside.split_once(':')?;
         let index = idx.trim().parse::<usize>().ok()?;
-        let value = bracketed_value(r)?;
+        let sql_type = sql_type.trim();
+        let mut value = bracketed_value(r)?;
+        if sql_type.eq_ignore_ascii_case("ARRAY") {
+            if let ParamValue::Literal(v) = &value {
+                if let Some(literal) = java_array_to_pg(v) {
+                    value = ParamValue::Literal(literal);
+                }
+            }
+        }
         Some(BoundParam {
             index,
-            sql_type: sql_type.trim().to_string(),
+            sql_type: sql_type.to_string(),
             value,
         })
     } else {
         None
     }
+}
+
+/// An `ARRAY` bind as Hibernate 6 logs it — Java's `Arrays.toString`,
+/// `[a, b c, null]` — as a Postgres array literal, `{"a","b c",NULL}`.
+/// Logged as is, `'[a, b c]'` is a malformed array literal. Every element
+/// is double-quoted (with `"` and `\` escaped), so a space, comma or brace
+/// in one is data; a `null` element is the SQL NULL. `None` when `v` isn't
+/// bracketed. An element that itself contains `, ` can't be told apart
+/// from two — `Arrays.toString` doesn't escape it.
+fn java_array_to_pg(v: &str) -> Option<String> {
+    let inner = v.strip_prefix('[')?.strip_suffix(']')?;
+    if inner.is_empty() {
+        return Some("{}".to_string());
+    }
+    let elements: Vec<String> = inner
+        .split(", ")
+        .map(|e| {
+            if e == "null" {
+                "NULL".to_string()
+            } else {
+                format!("\"{}\"", e.replace('\\', "\\\\").replace('"', "\\\""))
+            }
+        })
+        .collect();
+    Some(format!("{{{}}}", elements.join(",")))
 }
 
 /// Extract the value from the last `[…]` group in `s` (Hibernate logs the bound
@@ -432,6 +500,128 @@ binding parameter [1] as [BIGINT] - [7]
         // emit a `ReconstructedQuery` with empty `raw_sql`.
         let log = "[main] org.hibernate.SQL : ";
         assert!(parse(log).is_empty());
+    }
+
+    /// Logback's default pattern, `%d{HH:mm:ss.SSS} [%thread] %-5level
+    /// %logger{36} - %msg%n`: the separator is ` - `, and a `:` in the
+    /// SQL is the SQL's.
+    #[test]
+    fn logback_default_pattern_keeps_the_whole_statement() {
+        let log = "\
+10:00:00.123 [http-nio-8080-exec-3] DEBUG org.hibernate.SQL - select c.id, c.name from customer c where c.status=? and c.region=?
+10:00:00.124 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [VARCHAR] - [active]
+10:00:00.124 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [2] as [VARCHAR] - [eu-west]
+10:00:00.130 [http-nio-8080-exec-3] DEBUG org.hibernate.SQL - select o.id from orders o where o.customer_id=? and o.note like 'ref:%'
+10:00:00.131 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [BIGINT] - [42]
+10:00:00.140 [http-nio-8080-exec-3] DEBUG org.hibernate.SQL - select o.id from orders o where o.created_at > '2026-01-01 10:00:00'::timestamptz and o.customer_id=?
+10:00:00.141 [http-nio-8080-exec-3] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [BIGINT] - [43]
+10:00:00.150 [main] DEBUG org.hibernate.SQL   select 1 from dual where 1=?
+10:00:00.151 [main] TRACE o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [INTEGER] - [1]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                "select c.id, c.name from customer c where c.status='active' and c.region='eu-west'",
+                "select o.id from orders o where o.customer_id=42 and o.note like 'ref:%'",
+                "select o.id from orders o where o.created_at > '2026-01-01 10:00:00'::timestamptz and o.customer_id=43",
+                "select 1 from dual where 1=1",
+            ]
+        );
+    }
+
+    /// Spring Boot 3.2+'s default pattern puts `[appName]` before the
+    /// thread: every line has the same first group, so the thread is the
+    /// group nearest the logger.
+    #[test]
+    fn spring_boot_3_2_app_name_group_does_not_merge_threads() {
+        let log = "\
+2026-10-21T09:12:48.001Z DEBUG 4242 --- [billing-api] [nio-8080-exec-1] org.hibernate.SQL                        : select i1_0.id,i1_0.total from invoices i1_0 where i1_0.customer_id=?
+2026-10-21T09:12:48.002Z DEBUG 4242 --- [billing-api] [nio-8080-exec-2] org.hibernate.SQL                        : select u1_0.id,u1_0.email from users u1_0 where u1_0.id=?
+2026-10-21T09:12:48.003Z TRACE 4242 --- [billing-api] [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [2107]
+2026-10-21T09:12:48.004Z DEBUG 4242 --- [billing-api] [nio-8080-exec-3] org.hibernate.SQL                        : delete from sessions s1_0 where s1_0.user_id=?
+2026-10-21T09:12:48.005Z TRACE 4242 --- [billing-api] [nio-8080-exec-2] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [777]
+2026-10-21T09:12:48.006Z TRACE 4242 --- [billing-api] [nio-8080-exec-3] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [31]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                "select i1_0.id,i1_0.total from invoices i1_0 where i1_0.customer_id=2107",
+                "select u1_0.id,u1_0.email from users u1_0 where u1_0.id=777",
+                "delete from sessions s1_0 where s1_0.user_id=31",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bracketed_level_is_not_the_thread() {
+        // `[%thread] [%level]`: the statement is DEBUG and its bind TRACE.
+        let log = "\
+[2026-10-21 09:12:48,001] [exec-1] [DEBUG] org.hibernate.SQL - select * from a where id=?
+[2026-10-21 09:12:48,002] [exec-2] [DEBUG] org.hibernate.SQL - select * from b where id=?
+[2026-10-21 09:12:48,003] [exec-1] [TRACE] o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [INTEGER] - [1]
+[2026-10-21 09:12:48,004] [exec-2] [TRACE] o.h.type.descriptor.sql.BasicBinder - binding parameter [1] as [INTEGER] - [2]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            ["select * from a where id=1", "select * from b where id=2"]
+        );
+    }
+
+    /// `hibernate.highlight_sql=true` colours each keyword with an SGR
+    /// escape, which put a `[` on every continuation line.
+    #[test]
+    fn highlight_sql_colour_escapes_are_stripped() {
+        let log = "\
+2026-10-21T09:12:48.001Z DEBUG 4242 --- [nio-8080-exec-1] org.hibernate.SQL :
+    \x1b[34mselect\x1b[0m
+        i1_0.id
+    \x1b[34mfrom\x1b[0m
+        invoices i1_0
+    \x1b[34mwhere\x1b[0m
+        i1_0.customer_id=?
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind : binding parameter (1:BIGINT) <- [2107]";
+        let q = parse(log);
+        assert_eq!(q.len(), 1, "{q:#?}");
+        let words: Vec<&str> = q[0].runnable_sql.split_whitespace().collect();
+        assert_eq!(
+            words,
+            [
+                "select",
+                "i1_0.id",
+                "from",
+                "invoices",
+                "i1_0",
+                "where",
+                "i1_0.customer_id=2107"
+            ]
+        );
+    }
+
+    /// Hibernate 6 logs an ARRAY bind with `Arrays.toString`; substituted
+    /// as is, `'[a, b c]'` is a malformed array literal.
+    #[test]
+    fn an_array_bind_becomes_a_postgres_array_literal() {
+        let log = "\
+2026-10-21T09:12:48.001Z DEBUG 4242 --- [nio-8080-exec-1] org.hibernate.SQL                        : insert into probe_h (id,name,tags) values (?,?,?)
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:BIGINT) <- [42]
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (2:VARCHAR) <- [O'Brien, Jane [junior]]
+2026-10-21T09:12:48.002Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (3:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]
+2026-10-21T09:12:48.010Z DEBUG 4242 --- [nio-8080-exec-1] org.hibernate.SQL                        : update probe_h set tags=? where id=?
+2026-10-21T09:12:48.011Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (1:ARRAY) <- [[]]
+2026-10-21T09:12:48.011Z TRACE 4242 --- [nio-8080-exec-1] org.hibernate.orm.jdbc.bind              : binding parameter (2:BIGINT) <- [42]";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                r#"insert into probe_h (id,name,tags) values (42,'O''Brien, Jane [junior]',E'{"a","b c",NULL,"it''s \\"q\\" \\\\x","{x}"}')"#,
+                "update probe_h set tags='{}' where id=42",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_logger_name_running_into_other_text_is_not_a_statement() {
+        assert!(parse("logging.level.org.hibernate.SQL=DEBUG").is_empty());
     }
 
     #[test]

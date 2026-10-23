@@ -27,7 +27,7 @@ pub(crate) fn view_label(mode: Mode) -> &'static str {
     match mode {
         Mode::Normal | Mode::GridFilter | Mode::GridFind => "results",
         Mode::Editor | Mode::HistorySearch => "editor",
-        Mode::Help => "help",
+        Mode::Help | Mode::HelpFilter => "help",
         Mode::Confirm | Mode::TxDecision | Mode::ConfirmTerminate => "confirm",
         Mode::LogPick => "logs → SQL",
         Mode::ConnPick => "connections",
@@ -163,6 +163,10 @@ pub(crate) fn draw_tall_header(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
     ];
+    if crate::ui::shows_replica_badge(app) {
+        status.push(Span::raw(" "));
+        status.push(pill("replica", theme.row_alt_bg, theme.health_yellow));
+    }
     if app.tx_open || app.mode == Mode::TxDecision {
         status.push(Span::raw(" "));
         status.push(pill("TX", theme.row_alt_bg, theme.health_yellow));

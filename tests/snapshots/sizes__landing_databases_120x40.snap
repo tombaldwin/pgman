@@ -8,7 +8,7 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-staging/ledger … ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 empty                                                                         ] [ switch · ctrl-t new · ctrl-w close
+ 1 empty                                                                  [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                                                          │
 │                                                                                                                      │
@@ -28,7 +28,7 @@ expression: dump(&buf)
 │                                                                                                                      │
 │   TAP below: your app's queries are arriving over the JDBC tap · N+1 ×1: one query it runs once per row · F4 to look │
 │                                                                                                                      │
-│ recent                                                                                                               │
+│ recent · in the editor, ctrl-p recalls · ctrl-r searches                                                             │
 │   SELECT * FROM customers WHERE id = 2107;                                                                           │
 │   SELECT * FROM invoice_lines WHERE invoice_id = 48207;                                                              │
 │   SELECT count(*) FROM webhook_deliveries WHERE delivered_at IS NULL;                                                │

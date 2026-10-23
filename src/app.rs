@@ -152,7 +152,11 @@ pub fn environments_status(envs: usize, dbs: usize, failed: usize) -> String {
     if envs == 0 {
         return "environments · none configured".to_string();
     }
-    let mut s = format!("environments · {envs} · {dbs} databases");
+    let mut s = format!(
+        "{} · {}",
+        crate::ui::count_label(envs as u64, "environment", "environments"),
+        crate::ui::count_label(dbs as u64, "database", "databases")
+    );
     if failed > 0 {
         s.push_str(&format!(" · {failed} failed"));
     }
@@ -205,7 +209,7 @@ fn parse_bootstrap_databases(grid: &Grid) -> Vec<DatabaseInfo> {
         .iter()
         .filter_map(|row| {
             let name = cell_text(row.first()?).to_string();
-            let size = cell_text(row.get(1)?).to_string();
+            let size = crate::query::schema::format_size_cell(cell_text(row.get(1)?));
             // No size means no CONNECT (RDS's `rdsadmin`): not one to
             // offer on the start card.
             (!size.is_empty()).then_some(DatabaseInfo { name, size })
@@ -839,17 +843,26 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
 /// target column's type (`'42'` into an `integer`, `'t'` into a
 /// `boolean`). Bare, `007` in a text column came back as `7`, `1e3` as
 /// `1000`, `TRUE` as `true`, and `NaN` was read as a column name.
+///
+/// A value holding a backslash is written as an escape string,
+/// `E'…'`, with each backslash doubled: a plain `'…'` means the same
+/// value only while `standard_conforming_strings` is on, and with it
+/// off a bytea's `\x0102` text read as the escape `\x01`. `E'…'`
+/// reads the same under either setting.
 pub fn format_sql_literal(cell: Option<&str>) -> String {
     let Some(s) = cell else {
         return "NULL".to_string();
     };
-    let mut out = String::with_capacity(s.len() + 2);
+    let mut out = String::with_capacity(s.len() + 3);
+    if s.contains('\\') {
+        out.push('E');
+    }
     out.push('\'');
     for c in s.chars() {
-        if c == '\'' {
-            out.push_str("''");
-        } else {
-            out.push(c);
+        match c {
+            '\'' => out.push_str("''"),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
         }
     }
     out.push('\'');
@@ -1133,8 +1146,11 @@ pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
 /// grid row, each cell through [`format_sql_literal`]. Column names are
 /// the server's own, case and all, so they go through [`quote_ident`]
 /// (`createdAt` bare is `createdat`, a column the table lacks). The
-/// schema and table stay as the query spelled them — `FROM Users`
-/// infers `Users`, which only works bare. Pure / testable.
+/// schema and table are the server's names too: the FROM parse folds
+/// `FROM Users` to `users` and keeps `FROM "Users"` as `Users`, so
+/// quoting them names exactly the relation the query read. Bare, a
+/// mixed-case `"PgRevMixed"` landed in a lowercase twin `pgrevmixed`.
+/// Pure / testable.
 pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell]) -> String {
     let cols = columns
         .iter()
@@ -1146,7 +1162,11 @@ pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell
         .map(|c| format_sql_literal(c.as_deref()))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});")
+    format!(
+        "INSERT INTO {}.{} ({cols}) VALUES ({vals});",
+        quote_ident(schema),
+        quote_ident(table),
+    )
 }
 
 /// Build an `INSERT INTO <schema>.<table> (cols…) VALUES (NULL,
@@ -1359,6 +1379,10 @@ pub struct App {
     pub tx_open: bool,
     /// Log-import pick state (reconstructed queries, view, clusters, cursor).
     pub log_pick: LogPickUi,
+    /// The log picker as it was when last closed (Enter or Esc). Loading
+    /// a pick replaces the log in the buffer, so a later Ctrl-L that
+    /// finds no log reopens this instead; a new log replaces it.
+    pub last_log_pick: Option<LogPickUi>,
     /// A short status line shown in the footer after a run (e.g. "EXPLAIN ok").
     pub last_status: Option<String>,
     /// A query / safety error to surface to the user.
@@ -1470,6 +1494,10 @@ pub struct App {
     /// heartbeats. Lets the chrome badge distinguish "JAR
     /// connected, no traffic" from "JAR gone."
     pub tap_health: TapHealth,
+    /// The tap listeners that bound at startup (set by `main.rs`), so
+    /// the monitor's setup hint and status say where pgman is really
+    /// listening. Empty when no listener bound.
+    pub tap_listeners: Vec<crate::tap::TapListener>,
     /// Captured hotspots snapshot for the baseline-diff view.
     /// `None` until the operator presses `B`.
     pub tap_baseline: Option<TapBaseline>,
@@ -1575,6 +1603,12 @@ pub struct App {
     /// Set whenever the buffer is mutated; cleared on save. Avoids
     /// `write_atomic`-ing a buffer that hasn't changed.
     pub draft_dirty: bool,
+    /// The draft text this instance last read from, or wrote to,
+    /// `draft_file`. A save only writes when the buffer differs from
+    /// it (this window changed the draft), and only to `draft_file`
+    /// when the file still holds it (no other window wrote since) —
+    /// see [`plan_draft_write`].
+    pub draft_synced: String,
     /// Grid view-metadata for the live result grid: cursor column,
     /// sort, raw rows, filter, visible-row indices, and row source.
     /// Shared shape with `TabSnapshot` (snapshotted per tab).
@@ -1639,6 +1673,10 @@ pub struct App {
     /// the ssh subprocess) only fires when the App loses the client.
     tunnel: Option<crate::tunnel::SshTunnel>,
     safety_config: SafetyConfig,
+    /// The connected server is a standby (`pg_is_in_recovery()`, asked
+    /// at every connect). `None` until known. The header wears a
+    /// `replica` badge for it, as the environments overview names one.
+    pub in_recovery: Option<bool>,
     pub read_only: bool,
     /// What `:readonly on|off` last said, or `None` if the operator
     /// never said anything. Sticky across reconnects: `read_only`
@@ -1661,6 +1699,9 @@ pub struct App {
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
     msg_rx: Option<UnboundedReceiver<AppMsg>>,
+    /// The tap's own channel into the run loop ([`App::tap_tx_clone`]).
+    tap_tx: mpsc::Sender<crate::tap::TapEvent>,
+    tap_rx: Option<mpsc::Receiver<crate::tap::TapEvent>>,
 
     /// Whether an update check may run this session at all.
     /// Defaults to `false` — `App::new` alone (as every test harness
@@ -1690,11 +1731,20 @@ pub struct App {
 }
 
 impl App {
-    /// Clone of the message sender, for spawning listeners
-    /// that need to push events back into the run loop from
-    /// outside the App (the JDBC-tap listener, primarily).
+    /// Clone of the message sender, for pushing messages into the run
+    /// loop from outside the App.
     pub fn msg_tx_clone(&self) -> UnboundedSender<AppMsg> {
         self.msg_tx.clone()
+    }
+
+    /// Sender for the run loop's tap channel — bounded at
+    /// [`TAP_APP_CHANNEL_CAPACITY`], unlike the message channel. The
+    /// tap adapter in `main.rs` awaits on it, so an App that falls
+    /// behind backs the events up into the listeners' own bounded
+    /// channel, where an overflow is dropped and counted
+    /// (`tap::dropped_at_listener`) instead of queueing without limit.
+    pub fn tap_tx_clone(&self) -> mpsc::Sender<crate::tap::TapEvent> {
+        self.tap_tx.clone()
     }
 
     pub fn new(
@@ -1708,6 +1758,7 @@ impl App {
         let read_only = profile.read_only;
         let statement_timeout_ms = profile.statement_timeout_ms;
         let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+        let (tap_tx, tap_rx) = mpsc::channel(TAP_APP_CHANNEL_CAPACITY);
         // When the operator hasn't pre-selected a DSN and we discovered
         // *any* candidates, the post-splash mode is the picker — that's
         // the "lovely discovery" surface. Splash shows first, but never
@@ -1753,6 +1804,7 @@ impl App {
             pending_run: None,
             tx_open: false,
             log_pick: LogPickUi::default(),
+            last_log_pick: None,
             last_status: None,
             last_error: None,
             query_running: false,
@@ -1788,6 +1840,7 @@ impl App {
             tap_cache: crate::tap::TapInsightsCache::default(),
             tap_nav: TapNavUi::default(),
             tap_health: TapHealth::default(),
+            tap_listeners: Vec::new(),
             tap_baseline: None,
             saved_queries: crate::saved::SavedQueries::default(),
             saved_queries_file: saved_queries_path(),
@@ -1820,6 +1873,7 @@ impl App {
             external_edit_pending: false,
             draft_last_save: None,
             draft_dirty: false,
+            draft_synced: String::new(),
             grid_view: GridView::default(),
             grid_find: GridFind::default(),
             explain: ExplainUi::default(),
@@ -1848,11 +1902,14 @@ impl App {
             cancel_dispatcher: None,
             tunnel: None,
             safety_config,
+            in_recovery: None,
             read_only,
             read_only_override: None,
             statement_timeout_ms,
             msg_tx,
             msg_rx: Some(msg_rx),
+            tap_tx,
+            tap_rx: Some(tap_rx),
             update_check_enabled: false,
             update_available: None,
             update_check_done: false,
@@ -1921,6 +1978,10 @@ impl App {
             .msg_rx
             .take()
             .expect("App::run must be called exactly once");
+        let mut tap_rx = self
+            .tap_rx
+            .take()
+            .expect("App::run must be called exactly once");
 
         // Demo mode renders a synthetic, pre-populated app — never
         // open a real connection.
@@ -1973,6 +2034,16 @@ impl App {
                 }
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
+                    // Everything else already queued lands before the
+                    // next draw, rather than one draw per message.
+                    self.drain_pending_msgs(&mut msg_rx);
+                }
+                Some(event) = tap_rx.recv() => {
+                    // Likewise every tap event already queued, as one
+                    // batch: a frame per event held a burst in the
+                    // channel, redrawing — and re-aggregating — for
+                    // each.
+                    self.on_tap_events(drain_tap_batch(event, &mut tap_rx));
                 }
                 _ = tokio::time::sleep_until(
                     tokio::time::Instant::from_std(draft_save_at.unwrap_or_else(Instant::now)),
@@ -1995,7 +2066,9 @@ impl App {
                 && self.draft_dirty
                 && draft_save_due(self.draft_last_save, Instant::now(), DRAFT_SAVE_GAP)
             {
-                let _ = persist_draft_to(&self.draft_file, &self.editor.buffer);
+                if let Err(e) = self.save_draft() {
+                    tracing::warn!("could not auto-save editor draft: {e}");
+                }
                 self.draft_last_save = Some(Instant::now());
                 self.draft_dirty = false;
             }
@@ -2007,8 +2080,10 @@ impl App {
             self.remember_env_selection();
             // Persist the editor draft so the next launch can restore
             // whatever the operator had in flight. Best-effort: failure
-            // logs and moves on — the loop is already finishing.
-            if let Err(e) = persist_draft_to(&self.draft_file, &self.editor.buffer) {
+            // logs and moves on — the loop is already finishing. A
+            // window that never changed the draft writes nothing, so
+            // it can't overwrite what another window saved meanwhile.
+            if let Err(e) = self.save_draft() {
                 tracing::warn!("could not save editor draft: {e}");
             }
             // Persist the query history ring too. Same best-effort
@@ -2109,6 +2184,23 @@ impl App {
             || self.demo_tap_feed.is_some()
     }
 
+    /// Apply up to [`MSG_DRAIN_PER_FRAME`] − 1 messages already waiting
+    /// on `rx`, without blocking, so a backlog costs one draw rather
+    /// than one per message. The cap keeps a flood from starving key
+    /// input: the loop goes back to `select!` — and the key channel —
+    /// after each batch.
+    fn drain_pending_msgs(&mut self, rx: &mut UnboundedReceiver<AppMsg>) {
+        for _ in 1..MSG_DRAIN_PER_FRAME {
+            if self.should_quit {
+                break;
+            }
+            match rx.try_recv() {
+                Ok(msg) => self.on_msg(msg),
+                Err(_) => break,
+            }
+        }
+    }
+
     /// One frame of `--demo`'s tap feed: from its `due` time on, the
     /// next event arrives through [`Self::on_tap_event`], as a live
     /// tap's would. The feed is dropped with its last event, which
@@ -2138,21 +2230,39 @@ impl App {
     ///   update `tap_health` with the dropped-events counter
     ///   and bump the heartbeat-count tally.
     pub fn on_tap_event(&mut self, event: crate::tap::TapEvent) {
+        self.on_tap_events(std::iter::once(event));
+    }
+
+    /// Fold a batch of tap events — what the run loop hands over when
+    /// it drains everything queued behind one frame
+    /// ([`drain_tap_batch`]). The ring generation is bumped
+    /// once for the whole batch, not per event, so the memoised
+    /// aggregates (Hotspots, Callers, N+1) are recomputed at most once
+    /// per drawn frame however many events the batch carried.
+    pub fn on_tap_events(&mut self, events: impl IntoIterator<Item = crate::tap::TapEvent>) {
         // The monitor writes its summary into the status line when it
         // opens; an event landing while it is open must refresh that
         // line, or "no events yet" outlives the events. Only the
         // summary is replaced — any other status (a sort flash, an
         // error) is the operator's and stays.
         let shown_summary = (self.mode == Mode::TapMonitor)
-            .then(|| self.tap_health.monitor_status())
+            .then(|| self.tap_health.monitor_status(&self.tap_listeners))
             .filter(|s| self.last_status.as_deref() == Some(s.as_str()));
-        self.fold_tap_event(event);
+        let mut ring_changed = false;
+        for event in events {
+            ring_changed |= self.fold_tap_event(event);
+        }
+        if ring_changed {
+            self.bump_tap_generation();
+        }
         if shown_summary.is_some() {
-            self.last_status = Some(self.tap_health.monitor_status());
+            self.last_status = Some(self.tap_health.monitor_status(&self.tap_listeners));
         }
     }
 
-    fn fold_tap_event(&mut self, event: crate::tap::TapEvent) {
+    /// Fold one event; `true` when it went onto the ring, so the caller
+    /// owes a generation bump.
+    fn fold_tap_event(&mut self, event: crate::tap::TapEvent) -> bool {
         self.tap_health.last_event_at_unix_micros = event.received_at_unix_micros;
         match event.kind {
             crate::tap::TapKind::Heartbeat => {
@@ -2160,6 +2270,7 @@ impl App {
                 if let Some(d) = event.dropped_events_total {
                     self.tap_health.dropped_events_total = d;
                 }
+                false
             }
             crate::tap::TapKind::Query | crate::tap::TapKind::TxnBoundary => {
                 if matches!(event.kind, crate::tap::TapKind::Query) {
@@ -2175,10 +2286,10 @@ impl App {
                     TAP_CAP,
                     crate::tap::TAP_RING_MAX_BYTES,
                 );
-                self.bump_tap_generation();
                 // Cursor follows the eviction so a viewer parked on the
                 // oldest row doesn't suddenly jump forward in content.
                 self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(evicted);
+                true
             }
         }
     }
@@ -2350,7 +2461,8 @@ impl App {
         // on F1 / esc / ? / q). The cheat-sheet auto-scrolls to the
         // section for the mode we came from so the operator sees the
         // relevant keys immediately.
-        if matches!(key.code, KeyCode::F(1)) && self.mode != Mode::Help {
+        if matches!(key.code, KeyCode::F(1)) && !matches!(self.mode, Mode::Help | Mode::HelpFilter)
+        {
             self.open_help_from(self.mode);
             return;
         }
@@ -2518,7 +2630,7 @@ impl App {
         // tab's SQL under the name just typed.
         if alt && !typing_mode {
             if let KeyCode::Char(c) = key.code {
-                if self.jump_to_tab_digit(c) {
+                if self.mode != Mode::Help && self.jump_to_tab_digit(c) {
                     return;
                 }
             }
@@ -2535,7 +2647,8 @@ impl App {
         let mark_pending = self.pending_mark_set || self.pending_mark_jump;
         if !ctrl && !alt && !typing_mode && !mark_pending && !self.prompt_owns_keys() {
             if let KeyCode::Char(c) = key.code {
-                let bracket_is_mine = self.mode != Mode::SchemaBrowser;
+                // Help uses them for next / previous section.
+                let bracket_is_mine = !matches!(self.mode, Mode::SchemaBrowser | Mode::Help);
                 if c == ']' && bracket_is_mine {
                     self.cycle_tab(true);
                     return;
@@ -2544,7 +2657,9 @@ impl App {
                     self.cycle_tab(false);
                     return;
                 }
-                if self.jump_to_tab_digit(c) {
+                // Not behind the help overlay: the tab would change
+                // unseen, under the page being read.
+                if self.mode != Mode::Help && self.jump_to_tab_digit(c) {
                     return;
                 }
             }
@@ -2591,6 +2706,7 @@ impl App {
         let pre_mode = self.mode;
         match self.mode {
             Mode::Help => self.on_help_key(key),
+            Mode::HelpFilter => self.on_help_filter_key(key),
             Mode::Confirm => self.on_confirm_key(key),
             Mode::TxDecision => self.on_tx_decision_key(key),
             Mode::LogPick => self.on_log_pick_key(key),
@@ -2831,9 +2947,10 @@ impl App {
             .saved_ui
             .cursor
             .min(self.saved_queries.entries.len() - 1);
-        self.last_status = Some(format!(
-            "saved queries · {} entries",
-            self.saved_queries.entries.len()
+        self.last_status = Some(crate::ui::count_label(
+            self.saved_queries.entries.len() as u64,
+            "saved query",
+            "saved queries",
         ));
         self.mode = Mode::SavedQueries;
     }
@@ -2864,13 +2981,20 @@ impl App {
     }
 
     /// Drop `sql` into the editor buffer and switch to the editor.
-    /// Shared by the direct and post-`:param`-prompt load paths.
+    /// Shared by the direct and post-`:param`-prompt load paths. The
+    /// status ends with the key that runs it now — after a prompt for
+    /// values the next question is how to send it.
     fn load_sql_into_editor(&mut self, sql: String, status: String) {
+        let run_key = if editor::enter_runs(&sql) {
+            "⏎ runs it"
+        } else {
+            "alt-⏎ runs it"
+        };
         self.editor.buffer = sql;
         self.editor.cursor = self.editor.buffer.len();
         self.editor.preferred_col = None;
         self.history_pos = None;
-        self.last_status = Some(status);
+        self.last_status = Some(format!("{status} · {run_key}"));
         self.mode = Mode::Editor;
     }
 
@@ -3030,29 +3154,48 @@ impl App {
 
     /// Open the help overlay from `from`. Captures `from` so the
     /// close path restores that mode (instead of always going to
-    /// Normal), and pre-scrolls the help body to the section that
-    /// matches `from` — operators see the relevant keys without
-    /// hunting for them.
+    /// Normal), and shows the section that matches `from` — operators
+    /// see the relevant keys without hunting for them. A mode with no
+    /// section of its own (the grid's start) opens the section list.
     pub fn open_help_from(&mut self, from: Mode) {
-        self.open_help_anchored(from, from);
+        let section = Self::help_anchor_for(from).and_then(crate::ui::help_section_index);
+        self.open_help_section(section, from);
     }
 
-    /// Open help pre-scrolled to `anchor`'s section but returning to
+    /// Open help at section `section` (an index into
+    /// `ui::HELP_SECTIONS`; `None` opens the list) but return to
     /// `return_to` on close. `:help <topic>` is the reason the two
     /// can differ: the topic names the section to show, not the mode
     /// the operator was in. Collapsing them meant `:help tap` closed
     /// into the tap monitor and `:help commands` into
     /// `Mode::CommandBar` — a mode with no command bar behind it.
-    pub fn open_help_anchored(&mut self, anchor: Mode, return_to: Mode) {
-        self.help.origin = Some(anchor);
+    pub fn open_help_section(&mut self, section: Option<usize>, return_to: Mode) {
+        self.help.section = section.unwrap_or(0);
+        self.help.view = if section.is_some() {
+            HelpView::Section
+        } else {
+            HelpView::List
+        };
+        self.open_help_view(return_to);
+    }
+
+    /// `:help all` — every section on one scrolling page, as help was
+    /// before it had sections.
+    pub fn open_help_all(&mut self, return_to: Mode) {
+        self.help.section = 0;
+        self.help.view = HelpView::All;
+        self.open_help_view(return_to);
+    }
+
+    fn open_help_view(&mut self, return_to: Mode) {
         self.help.return_to = Some(return_to);
-        self.help.scroll = 0; // Renderer-side anchor pass will adjust.
+        self.help.scroll = 0;
+        self.help.filter = None;
         self.mode = Mode::Help;
     }
 
-    /// Pure: anchor heading text that `draw_help` uses to position
-    /// the initial scroll for a given source mode. `None` falls
-    /// back to top-of-document.
+    /// Pure: the heading of the help section a given source mode
+    /// opens at (`ui::HELP_SECTIONS`). `None` opens the section list.
     pub fn help_anchor_for(mode: Mode) -> Option<&'static str> {
         match mode {
             Mode::Normal => None,
@@ -3084,7 +3227,7 @@ impl App {
             Mode::GridFind => Some("grid"),
             Mode::About => Some("grid"),
             Mode::CommandBar => Some(": commands"),
-            Mode::Help => None,
+            Mode::Help | Mode::HelpFilter => None,
         }
     }
 
@@ -3251,14 +3394,21 @@ impl App {
         self.editor.cursor = self.editor.buffer.len();
         self.mode = Mode::Editor;
         self.start_log_import();
+        // This entry bypasses `on_key`, so spend the picker's
+        // first-visit tip here — on the first view, where it helps —
+        // rather than on a later Ctrl-L, where it would hide the
+        // "reopened the last log" status.
+        self.note_mode_entry(self.mode);
     }
 
     /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
     /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
     /// Ctrl-L / F8 outside the editor: reconstruct the log already in it,
-    /// or open it to paste one.
+    /// reopen the last log picker, or open the editor to paste one.
     pub(super) fn log_import_from_normal(&mut self) {
-        if query::logdetect::detect_log(&self.editor.buffer).is_some() {
+        if query::logdetect::detect_log(&self.editor.buffer).is_some()
+            || self.last_log_pick.is_some()
+        {
             return self.start_log_import();
         }
         self.mode = Mode::Editor;
@@ -3271,6 +3421,7 @@ impl App {
         let mut picks: Vec<ReconstructedQuery> = Vec::new();
         picks.extend(query::hibernate::parse(log));
         picks.extend(query::pglog::parse(log));
+        picks.extend(query::proxylog::parse(log));
         // Third way in: neither log parser found anything, but the
         // buffer has the "?-statement, blank line, typed param list"
         // shape a pasted JDBC statement makes — same shape
@@ -3281,6 +3432,16 @@ impl App {
             }
         }
         if picks.is_empty() {
+            if let Some(last) = self.last_log_pick.take() {
+                self.last_error = None;
+                self.last_status = Some(format!(
+                    "reopened the last log · {}",
+                    crate::ui::count_label(last.picks.len() as u64, "query", "queries")
+                ));
+                self.log_pick = last;
+                self.mode = Mode::LogPick;
+                return;
+            }
             self.last_error = Some(
                 "no queries found (paste a Hibernate or Postgres log into the editor first)"
                     .to_string(),
@@ -3929,17 +4090,7 @@ impl App {
                 if self.grid_view.raw_rows.is_none() {
                     self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
-                self.grid.rows.sort_by(|a, b| {
-                    // A short row's missing cell sorts as a NULL.
-                    let av = a.get(col).and_then(Option::as_deref);
-                    let bv = b.get(col).and_then(Option::as_deref);
-                    let ord = crate::grid::cmp_cells(av, bv);
-                    if asc {
-                        ord
-                    } else {
-                        ord.reverse()
-                    }
-                });
+                crate::grid::sort_rows(&mut self.grid.rows, col, asc);
                 self.grid_view.sort = Some((col, asc));
                 let dir = if asc { "ASC" } else { "DESC" };
                 self.last_status = Some(format!("sorted by {} {dir}", self.grid.columns[col]));
@@ -4144,7 +4295,7 @@ impl App {
     }
 
     /// `Y` in Normal mode — copy the (sorted, filtered) grid to the
-    /// clipboard as CSV. `arboard` is already a dep for cell yank.
+    /// clipboard as CSV. Written through `yank::write_clipboard`.
     fn export_grid_to_clipboard(&mut self) {
         if self.grid.columns.is_empty() {
             self.last_status = Some("nothing to export".into());
@@ -4164,17 +4315,15 @@ impl App {
             }
         }
         let csv = crate::batch::format_csv(&export);
-        match arboard::Clipboard::new() {
-            Ok(mut cb) => match cb.set_text(csv) {
-                Ok(()) => {
-                    self.last_status = Some(format!(
-                        "copied {} row(s) to clipboard as CSV",
-                        export.rows.len()
-                    ));
-                }
-                Err(e) => self.last_error = Some(format!("clipboard write: {e}")),
-            },
-            Err(e) => self.last_error = Some(format!("clipboard init: {e}")),
+        match yank::write_clipboard(&csv) {
+            Ok(()) => {
+                self.last_status = Some(format!(
+                    "copied {} row(s) to clipboard as CSV",
+                    export.rows.len()
+                ));
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
         }
     }
 
@@ -5730,6 +5879,39 @@ pub const NOTIFICATION_CAP: usize = 200;
 /// `tap::TAP_RING_MAX_BYTES` (`tap::push_bounded`).
 pub const TAP_CAP: usize = 2000;
 
+/// Most messages the run loop applies between two draws: the one it
+/// waited for, plus up to this many − 1 already queued behind it
+/// ([`App::drain_pending_msgs`]). Large enough that a tap burst lands
+/// in a handful of frames, small enough that a key press waits at most
+/// one batch. Tap events are batched to the same cap
+/// ([`drain_tap_batch`]).
+pub const MSG_DRAIN_PER_FRAME: usize = 1024;
+
+/// Capacity of the tap adapter → run loop channel
+/// ([`App::tap_tx_clone`]). Bounded so an App that falls behind holds
+/// at most this many events here; the backlog past it waits in the
+/// listeners' own channel (`tap::TAP_CHANNEL_CAPACITY`), whose
+/// overflow is dropped and counted. A quarter of a frame's batch, so a
+/// full channel is emptied in one wake.
+pub const TAP_APP_CHANNEL_CAPACITY: usize = 256;
+
+/// `first`, plus the tap events already queued behind it, up to
+/// [`MSG_DRAIN_PER_FRAME`] in all — one frame's worth for
+/// [`App::on_tap_events`]. Never waits.
+fn drain_tap_batch(
+    first: crate::tap::TapEvent,
+    rx: &mut mpsc::Receiver<crate::tap::TapEvent>,
+) -> Vec<crate::tap::TapEvent> {
+    let mut batch = vec![first];
+    while batch.len() < MSG_DRAIN_PER_FRAME {
+        match rx.try_recv() {
+            Ok(event) => batch.push(event),
+            Err(_) => break,
+        }
+    }
+    batch
+}
+
 /// Encode a multi-line SQL entry to a single line: `\\` → `\\\\`,
 /// `\n` → `\\n`. Operation is reversible via [`decode_history_line`].
 fn encode_history_line(s: &str) -> String {
@@ -5811,16 +5993,10 @@ pub fn persist_history_to(path: &std::path::Path, entries: &[String]) -> std::io
     crate::util::write_private(path, &text)
 }
 
-/// Best-effort restore of the editor buffer from the last session.
-/// `None` when the file is absent or unreadable — the operator gets
-/// a fresh blank buffer in either case rather than a startup error.
-pub fn load_draft() -> Option<String> {
-    load_draft_from(&draft_path())
-}
-
-/// Path-parameterised core of [`load_draft`]. Lets tests use a
-/// unique temp file so parallel tests don't race on the shared
-/// `~/.local/share/pgman/draft.sql`.
+/// Best-effort read of a saved editor draft. `None` when the file is
+/// absent, unreadable or empty — the operator gets a fresh blank
+/// buffer in each case rather than a startup error. Path-parameterised
+/// so tests use a unique temp file, never the real `draft.sql`.
 pub fn load_draft_from(path: &std::path::Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     if text.is_empty() {
@@ -5837,6 +6013,113 @@ pub fn load_draft_from(path: &std::path::Path) -> Option<String> {
 /// or the new file complete, never a truncated half-write.
 pub fn persist_draft_to(path: &std::path::Path, buf: &str) -> std::io::Result<()> {
     crate::util::write_private(path, buf)
+}
+
+/// What a draft save should do — see [`plan_draft_write`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftWrite {
+    /// This window hasn't changed the draft: write nothing.
+    Skip,
+    /// Write the buffer to the draft file.
+    Write,
+    /// Another window wrote the draft file since this one last read
+    /// or wrote it, and this window has edits of its own: write them
+    /// to a sibling file instead of clobbering the other window's.
+    Divert,
+}
+
+/// Pure: decide a draft save. `synced` is the text this window last
+/// read from / wrote to the draft file, `on_disk` what the file holds
+/// now (`""` when it's missing).
+///
+/// ```
+/// use pgman::app::{plan_draft_write, DraftWrite};
+/// // Untouched window: never writes, even if another window did.
+/// assert_eq!(plan_draft_write("old", "old", "new"), DraftWrite::Skip);
+/// // Edited, nobody else wrote: write.
+/// assert_eq!(plan_draft_write("mine", "old", "old"), DraftWrite::Write);
+/// // Edited, and another window wrote meanwhile: don't clobber.
+/// assert_eq!(plan_draft_write("mine", "old", "theirs"), DraftWrite::Divert);
+/// ```
+pub fn plan_draft_write(buffer: &str, synced: &str, on_disk: &str) -> DraftWrite {
+    if buffer == synced {
+        DraftWrite::Skip
+    } else if on_disk == synced || on_disk == buffer {
+        DraftWrite::Write
+    } else {
+        DraftWrite::Divert
+    }
+}
+
+/// Pure: the sibling a diverted draft goes to —
+/// `draft-YYYYMMDD-HHMMSS.sql` beside `draft_file`, with `-N` appended
+/// for `n > 1` so two diverts in the same second don't collide.
+pub fn draft_sibling_path(
+    draft_file: &std::path::Path,
+    unix_secs: u64,
+    n: u32,
+) -> std::path::PathBuf {
+    let stamp: String = format_unix_secs_utc(unix_secs)
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let (date, time) = stamp.split_at(8.min(stamp.len()));
+    let suffix = if n > 1 {
+        format!("-{n}")
+    } else {
+        String::new()
+    };
+    draft_file.with_file_name(format!("draft-{date}-{time}{suffix}.sql"))
+}
+
+impl App {
+    /// Restore the editor buffer from `draft_file` (best-effort) and
+    /// remember it as the synced text, so quitting without touching
+    /// it writes nothing.
+    pub fn restore_draft(&mut self) {
+        if let Some(draft) = load_draft_from(&self.draft_file) {
+            self.editor.cursor = draft.len();
+            self.editor.buffer = draft.clone();
+            self.draft_synced = draft;
+        }
+    }
+
+    /// Save the editor buffer per [`plan_draft_write`]. On a divert
+    /// the sibling becomes this window's draft file from then on, so
+    /// later saves keep going there rather than spawning one per tick.
+    pub fn save_draft(&mut self) -> std::io::Result<()> {
+        let on_disk = std::fs::read_to_string(&self.draft_file).unwrap_or_default();
+        match plan_draft_write(&self.editor.buffer, &self.draft_synced, &on_disk) {
+            DraftWrite::Skip => return Ok(()),
+            DraftWrite::Write => persist_draft_to(&self.draft_file, &self.editor.buffer)?,
+            DraftWrite::Divert => {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let sibling = (1..)
+                    .map(|n| draft_sibling_path(&self.draft_file, secs, n))
+                    .find(|p| !p.exists())
+                    .expect("an unbounded range always finds a free name");
+                persist_draft_to(&sibling, &self.editor.buffer)?;
+                let name = sibling
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                tracing::warn!(
+                    "{} changed in another pgman window; this window's draft saved to {} instead",
+                    self.draft_file.display(),
+                    sibling.display()
+                );
+                self.last_status = Some(format!(
+                    "another pgman window saved the draft — this one's is kept in {name}"
+                ));
+                self.draft_file = sibling;
+            }
+        }
+        self.draft_synced = self.editor.buffer.clone();
+        Ok(())
+    }
 }
 
 /// Split `$EDITOR` into program + initial args by whitespace. Matches

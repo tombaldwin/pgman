@@ -8,7 +8,7 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ environments · log errors ◆ ] q back · j/k scroll · r again ──────────────╮
 │  staging · staging — recent errors from its RDS log                          │
 │                                                                              │

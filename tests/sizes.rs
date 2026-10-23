@@ -342,6 +342,28 @@ fn scr_help() -> App {
     a
 }
 
+/// Help opened from the editor: the editor section, heading on row 0
+/// (beside the section list from 110 columns).
+fn scr_help_section() -> App {
+    let mut a = base();
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::from(KeyCode::F(1)));
+    assert_eq!(a.mode, Mode::Help);
+    a
+}
+
+/// The help filter, typed: matching rows from every section under
+/// their headings.
+fn scr_help_filter() -> App {
+    let mut a = scr_help_section();
+    a.on_key(key('/'));
+    for c in "yank".chars() {
+        a.on_key(key(c));
+    }
+    assert_eq!(a.mode, Mode::HelpFilter);
+    a
+}
+
 fn scr_about() -> App {
     // Pin the install channel so the snapshot doesn't depend on
     // whether `.git` exists in the tree these tests run from — see
@@ -789,6 +811,16 @@ fn editor_multiline() {
 #[test]
 fn help() {
     run_sizes("help", scr_help);
+}
+
+#[test]
+fn help_section() {
+    run_sizes("help_section", scr_help_section);
+}
+
+#[test]
+fn help_filter() {
+    run_sizes("help_filter", scr_help_filter);
 }
 
 #[test]

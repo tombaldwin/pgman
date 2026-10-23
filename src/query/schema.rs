@@ -132,25 +132,43 @@ pub struct SchemaCache {
     pub views: std::collections::HashSet<(String, String)>,
 }
 
-/// Pretty-print a byte count using IEC units (KiB, MiB, GiB).
-/// Uses 1024-based scaling because that's what most operators
-/// expect when sizing relations next to disk-free output.
+/// pgman's one size formatter — database sizes on the start card and in
+/// the environments overview, table sizes in the schema browser. Units
+/// as `pg_size_pretty` spells them (`bytes`, `kB`, `MB`, `GB`, `TB`,
+/// 1024-based), but always the largest unit the size reaches: one
+/// decimal under ten (`9.0 MB`), whole numbers from ten (`212 MB`).
+/// `pg_size_pretty` itself stays in kB up to 10 MB, so one database
+/// read `10199 kB` beside another's `10 MB`. Pure.
 pub fn format_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = 1024 * 1024;
-    const GIB: u64 = 1024 * 1024 * 1024;
-    const TIB: u64 = 1024_u64.pow(4);
-    if bytes >= TIB {
-        format!("{:.2} TiB", bytes as f64 / TIB as f64)
-    } else if bytes >= GIB {
-        format!("{:.2} GiB", bytes as f64 / GIB as f64)
-    } else if bytes >= MIB {
-        format!("{:.2} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.2} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
+    const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} bytes");
     }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    // Rounding can carry a value up to the next unit: 1023.7 kB is 1.0 MB.
+    if value.round() >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if value < 9.95 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
+    }
+}
+
+/// A size cell as the server sent it, through [`format_bytes`] when it
+/// is a byte count; anything else as it came. Pure.
+pub fn format_size_cell(cell: &str) -> String {
+    cell.trim()
+        .parse::<u64>()
+        .map(format_bytes)
+        .unwrap_or_else(|_| cell.to_string())
 }
 
 impl SchemaCache {
@@ -200,6 +218,14 @@ impl SchemaCache {
     /// isn't an FK. Case-insensitive (matches how the rest of
     /// the cache resolves identifiers).
     pub fn fk_edge_for_child(&self, schema: &str, table: &str, column: &str) -> Option<&FkEdge> {
+        // An exact match first: the grid's source is the server's own
+        // name (`"PgRevMixed"` stays mixed-case), and a lowercase twin
+        // `pgrevmixed` must not win just by sorting first.
+        if let Some(e) = self.fk_edges.iter().find(|e| {
+            e.child_schema == schema && e.child_table == table && e.child_column == column
+        }) {
+            return Some(e);
+        }
         self.fk_edges.iter().find(|e| {
             e.child_schema.eq_ignore_ascii_case(schema)
                 && e.child_table.eq_ignore_ascii_case(table)
@@ -605,6 +631,31 @@ mod tests {
         assert!(c.fk_edge_for_child("public", "orders", "other").is_none());
     }
 
+    /// A mixed-case table and its lowercase twin each have their own FK;
+    /// following from `"PgRevMixed"` must take its edge, not the twin's
+    /// that happens to come first.
+    #[test]
+    fn fk_edge_for_child_prefers_the_exact_name() {
+        let mut c = SchemaCache::default();
+        for (child, parent) in [
+            ("pgrevmixed", "lower_parent"),
+            ("PgRevMixed", "mixed_parent"),
+        ] {
+            c.fk_edges.push(FkEdge {
+                child_schema: "public".into(),
+                child_table: child.into(),
+                child_column: "pid".into(),
+                parent_schema: "public".into(),
+                parent_table: parent.into(),
+                parent_column: "id".into(),
+            });
+        }
+        let hit = c.fk_edge_for_child("public", "PgRevMixed", "pid").unwrap();
+        assert_eq!(hit.parent_table, "mixed_parent");
+        let hit = c.fk_edge_for_child("public", "pgrevmixed", "pid").unwrap();
+        assert_eq!(hit.parent_table, "lower_parent");
+    }
+
     #[test]
     fn fk_edges_sql_uses_array_zipped_unnest() {
         // Spot-check: the SQL must preserve column order across
@@ -615,14 +666,28 @@ mod tests {
 
     #[test]
     fn format_bytes_picks_human_units() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(1024), "1.00 KiB");
-        assert_eq!(format_bytes(1024 * 1024), "1.00 MiB");
-        assert_eq!(
-            format_bytes(1024 * 1024 * 1024 + 200 * 1024 * 1024),
-            "1.20 GiB"
-        );
+        const MB: u64 = 1024 * 1024;
+        assert_eq!(format_bytes(0), "0 bytes");
+        assert_eq!(format_bytes(512), "512 bytes");
+        assert_eq!(format_bytes(1024), "1.0 kB");
+        assert_eq!(format_bytes(MB), "1.0 MB");
+        assert_eq!(format_bytes(1024 * MB + 200 * MB), "1.2 GB");
+        // The reported pair: the same unit either side of 10 MB.
+        assert_eq!(format_bytes(9191 * 1024), "9.0 MB");
+        assert_eq!(format_bytes(10199 * 1024), "10 MB");
+        assert_eq!(format_bytes(212 * MB), "212 MB");
+        // Rounding carries to the next unit rather than `1024 kB`.
+        assert_eq!(format_bytes(MB - 100), "1.0 MB");
+        assert_eq!(format_bytes(10 * MB - 1), "10 MB");
+        // TB is the largest unit.
+        assert_eq!(format_bytes(2048 * 1024 * 1024 * MB), "2048 TB");
+    }
+
+    #[test]
+    fn format_size_cell_formats_byte_counts_and_passes_the_rest() {
+        assert_eq!(format_size_cell("9411584"), "9.0 MB");
+        assert_eq!(format_size_cell("1203 MB"), "1203 MB");
+        assert_eq!(format_size_cell(""), "");
     }
 
     #[test]

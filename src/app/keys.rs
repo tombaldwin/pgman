@@ -363,7 +363,12 @@ impl App {
     /// their common prefix and are listed in the status line.
     fn complete_command_bar(&mut self, bar: &mut CommandBarUi) {
         let typed = bar.input.text().to_string();
-        if typed.contains(char::is_whitespace) {
+        if let Some((name, arg)) = typed.split_once(char::is_whitespace) {
+            // `:help <topic>` is the one argument this bar can
+            // complete: the topics are the help's section names.
+            if name.eq_ignore_ascii_case("help") {
+                self.complete_help_topic(bar, arg.trim_start());
+            }
             return;
         }
         let candidates = crate::app::cmd::command_candidates(&typed);
@@ -384,6 +389,28 @@ impl App {
                     bar.input = TextInput::with_text(prefix);
                 }
                 Some(candidates.join(" · "))
+            }
+        };
+    }
+
+    /// Tab after `:help `: complete the section name, the way the
+    /// command name completes — one candidate fills in, several fill
+    /// their common prefix and are listed beside the bar.
+    fn complete_help_topic(&mut self, bar: &mut CommandBarUi, arg: &str) {
+        let candidates = crate::app::cmd::help_topic_candidates(arg);
+        self.command_bar_completions = match candidates.len() {
+            0 => Some(format!("no help section starts with {arg}")),
+            1 => {
+                bar.input = TextInput::with_text(format!("help {}", candidates[0]));
+                None
+            }
+            _ => {
+                let names: Vec<&str> = candidates.iter().map(String::as_str).collect();
+                let prefix = crate::app::cmd::longest_common_prefix(&names);
+                if prefix.len() > arg.len() {
+                    bar.input = TextInput::with_text(format!("help {prefix}"));
+                }
+                Some(names.join(" · "))
             }
         };
     }
@@ -736,44 +763,161 @@ impl App {
         }
     }
 
+    /// Keys in the help overlay. See `docs/backlog/help-overlay.md`
+    /// for the shape: a section list and one section (side by side on
+    /// a wide terminal, two levels on a narrow one), a `/` filter
+    /// across every section, and `:help all`'s flat page.
     pub(super) fn on_help_key(&mut self, key: KeyEvent) {
+        let count = crate::ui::HELP_SECTIONS.len();
+        // On a narrow terminal the list is a level of its own, and
+        // the keys move its selection rather than scroll a section.
+        let in_list =
+            !self.help.split && self.help.view == HelpView::List && self.help.filter.is_none();
+        // A flat page — `:help all`, or the filter's matches — has
+        // headings to jump between instead of sections to switch.
+        let flat = self.help.view == HelpView::All || self.help.filter.is_some();
+        let max = self.help.max_scroll;
+        let last = count.saturating_sub(1);
         match key.code {
-            KeyCode::Char('q' | '?') | KeyCode::Esc | KeyCode::F(1) => {
-                // Restore the mode the operator was in when they
-                // opened help — NOT `origin`, which is the section
-                // anchor (`:help tap` anchors on the tap monitor from
-                // wherever the operator was) and which the renderer
-                // consumes on the first draw anyway. Legacy
-                // `?`-from-Normal (nothing captured) falls back to
-                // Normal.
-                self.mode = self.help.return_to.take().unwrap_or(Mode::Normal);
-                self.help.origin = None;
+            KeyCode::Char('q' | '?') | KeyCode::F(1) => self.close_help(),
+            KeyCode::Esc => {
+                if self.help.filter.is_some() {
+                    self.help.filter = None;
+                    self.help.scroll = 0;
+                } else if !self.help.split && self.help.view == HelpView::Section {
+                    self.help.view = HelpView::List;
+                    self.help.scroll = 0;
+                } else {
+                    self.close_help();
+                }
+            }
+            KeyCode::Char('/') => {
+                self.help.filter.get_or_insert_with(String::new);
+                self.help.scroll = 0;
+                self.mode = Mode::HelpFilter;
+                self.refresh_help_filter_status();
+            }
+            KeyCode::Enter if in_list => {
+                self.help.view = HelpView::Section;
                 self.help.scroll = 0;
             }
+            KeyCode::Char('j') | KeyCode::Down if in_list => {
+                self.help.section = (self.help.section + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up if in_list => {
+                self.help.section = self.help.section.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home if in_list => self.help.section = 0,
+            KeyCode::Char('G') | KeyCode::End if in_list => self.help.section = last,
+            KeyCode::PageDown if in_list => {
+                self.help.section = (self.help.section + 10).min(last);
+            }
+            KeyCode::PageUp if in_list => {
+                self.help.section = self.help.section.saturating_sub(10);
+            }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.help.scroll = self.help.scroll.saturating_add(1).min(self.help.max_scroll);
+                self.help.scroll = self.help.scroll.saturating_add(1).min(max);
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.help.scroll = self.help.scroll.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => {
-                self.help.scroll = 0;
-            }
-            KeyCode::Char('G') | KeyCode::End => {
-                self.help.scroll = self.help.max_scroll;
-            }
+            KeyCode::Char('g') | KeyCode::Home => self.help.scroll = 0,
+            KeyCode::Char('G') | KeyCode::End => self.help.scroll = max,
             KeyCode::PageDown => {
-                self.help.scroll = self
-                    .help
-                    .scroll
-                    .saturating_add(10)
-                    .min(self.help.max_scroll);
+                self.help.scroll = self.help.scroll.saturating_add(10).min(max);
             }
             KeyCode::PageUp => {
                 self.help.scroll = self.help.scroll.saturating_sub(10);
             }
+            KeyCode::Tab | KeyCode::Char(']') if flat => {
+                self.help.scroll = crate::ui::help_heading_jump(
+                    &self.help.heading_rows,
+                    self.help.scroll,
+                    max,
+                    true,
+                );
+            }
+            KeyCode::BackTab | KeyCode::Char('[') if flat => {
+                self.help.scroll = crate::ui::help_heading_jump(
+                    &self.help.heading_rows,
+                    self.help.scroll,
+                    max,
+                    false,
+                );
+            }
+            KeyCode::Tab | KeyCode::Char(']') => {
+                self.help.section = (self.help.section + 1) % count.max(1);
+                self.help.scroll = 0;
+            }
+            KeyCode::BackTab | KeyCode::Char('[') => {
+                self.help.section = (self.help.section + count.max(1) - 1) % count.max(1);
+                self.help.scroll = 0;
+            }
             _ => {}
         }
+    }
+
+    /// Typing the help overlay's `/` filter. Same shape as the schema
+    /// browser's: each key narrows live, Enter keeps the filter, Esc
+    /// clears it. F1 still closes help — it is the one key that does
+    /// while a `?` is a character being typed.
+    pub(super) fn on_help_filter_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        match key.code {
+            KeyCode::F(1) => {
+                self.last_status = None;
+                self.close_help();
+            }
+            KeyCode::Esc => {
+                self.help.filter = None;
+                self.help.scroll = 0;
+                self.last_status = None;
+                self.mode = Mode::Help;
+            }
+            KeyCode::Enter => {
+                if matches!(self.help.filter.as_deref(), Some("")) {
+                    self.help.filter = None;
+                }
+                self.last_status = None;
+                self.mode = Mode::Help;
+            }
+            KeyCode::Backspace => {
+                if let Some(f) = self.help.filter.as_mut() {
+                    f.pop();
+                }
+                self.help.scroll = 0;
+                self.refresh_help_filter_status();
+            }
+            KeyCode::Down => {
+                self.help.scroll = self.help.scroll.saturating_add(1).min(self.help.max_scroll);
+            }
+            KeyCode::Up => self.help.scroll = self.help.scroll.saturating_sub(1),
+            KeyCode::Char(c) if !ctrl && !alt => {
+                self.help.filter.get_or_insert_with(String::new).push(c);
+                self.help.scroll = 0;
+                self.refresh_help_filter_status();
+            }
+            _ => {}
+        }
+    }
+
+    /// The footer line while the help filter is typed — the same
+    /// `filter: /<pat>` shape the schema browser's filter uses, which
+    /// is what the footer's cursor placement counts on.
+    fn refresh_help_filter_status(&mut self) {
+        let pat = self.help.filter.as_deref().unwrap_or("");
+        self.last_status = Some(format!("filter: /{pat}  · enter keep · esc clear"));
+    }
+
+    /// Close help: restore the mode the operator was in when they
+    /// opened it — NOT the section shown (`:help tap` shows the tap
+    /// section from wherever the operator was). Legacy
+    /// `?`-from-Normal (nothing captured) falls back to Normal.
+    fn close_help(&mut self) {
+        self.mode = self.help.return_to.take().unwrap_or(Mode::Normal);
+        self.help.scroll = 0;
+        self.help.filter = None;
     }
 
     pub(super) fn on_normal_key(&mut self, key: KeyEvent) {
@@ -1074,11 +1218,7 @@ impl App {
     /// editor, Esc cancels, `c` toggles cluster view.
     pub(super) fn on_log_pick_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.log_pick.picks.clear();
-                self.log_pick.clusters.clear();
-                self.mode = Mode::Editor;
-            }
+            KeyCode::Esc | KeyCode::Char('q') => self.close_log_pick(),
             KeyCode::Char('c') => self.toggle_log_pick_view(),
             KeyCode::Char('j') | KeyCode::Down => self.log_pick.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.log_pick.select_prev(),
@@ -1103,12 +1243,17 @@ impl App {
                         status.push_str(&crate::ui::footer_text(&err));
                     }
                 }
-                self.log_pick.picks.clear();
-                self.log_pick.clusters.clear();
-                self.mode = Mode::Editor;
+                self.close_log_pick();
             }
             _ => {}
         }
+    }
+
+    /// Leave the log picker for the editor, keeping it (selection and
+    /// all) so a Ctrl-L with no log in the buffer can reopen it.
+    fn close_log_pick(&mut self) {
+        self.last_log_pick = Some(std::mem::take(&mut self.log_pick));
+        self.mode = Mode::Editor;
     }
 
     pub(super) fn on_result_diff_key(&mut self, key: KeyEvent) {

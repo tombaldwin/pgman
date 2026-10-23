@@ -1393,6 +1393,81 @@ async fn panel_loads_render_every_column_type_as_the_server_prints_it() {
     assert!(!grid.truncated);
 }
 
+/// Run each reconstructed query's `runnable_sql` and return its single
+/// row's cells — the proof a reconstruction is SQL the server accepts
+/// and means the value the log bound.
+async fn run_reconstructed(
+    queries: &[pgman::query::reconstruct::ReconstructedQuery],
+) -> Vec<Vec<Option<String>>> {
+    let (client, _tunnel) = lib_client().await;
+    let mut rows = Vec::new();
+    for q in queries {
+        let grid = pgman::conn::run_query(&client, &q.runnable_sql)
+            .await
+            .unwrap_or_else(|e| panic!("{:?}: {e}", q.runnable_sql));
+        assert_eq!(grid.rows.len(), 1, "{:?}", q.runnable_sql);
+        rows.push(grid.rows[0].clone());
+    }
+    rows
+}
+
+/// A bound value with a newline in it continues on the log's next line;
+/// the reconstruction runs and yields the value the backend was given.
+#[tokio::test]
+async fn a_postgres_log_parameter_with_a_newline_reconstructs_to_the_same_value() {
+    let log = "\
+2026-10-23 09:53:54.341 UTC [1869] LOG:  execute <unnamed>: select $1::int as id, $2::text as note
+2026-10-23 09:53:54.341 UTC [1869] DETAIL:  parameters: $1 = '4', $2 = 'line one
+\tline two\ttabbed'";
+    let q = pgman::query::pglog::parse(log);
+    assert_eq!(q.len(), 1, "{q:#?}");
+    assert_eq!(
+        run_reconstructed(&q).await,
+        [vec![
+            Some("4".to_string()),
+            Some("line one\nline two\ttabbed".to_string())
+        ]]
+    );
+}
+
+/// A Hibernate 6 ARRAY bind (`Arrays.toString` form) reconstructs to an
+/// array literal the server parses into the elements the app bound.
+#[tokio::test]
+async fn a_hibernate_array_bind_reconstructs_to_the_same_array() {
+    let log = "\
+[main] org.hibernate.SQL : select (?::text[])[4] as fourth, cardinality(?::text[]) as n, (?::text[])[3] is null as third_null
+[main] org.hibernate.orm.jdbc.bind : binding parameter (1:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]
+[main] org.hibernate.orm.jdbc.bind : binding parameter (2:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]
+[main] org.hibernate.orm.jdbc.bind : binding parameter (3:ARRAY) <- [[a, b c, null, it's \"q\" \\x, {x}]]";
+    let q = pgman::query::hibernate::parse(log);
+    assert_eq!(q.len(), 1, "{q:#?}");
+    assert_eq!(
+        run_reconstructed(&q).await,
+        [vec![
+            Some("it's \"q\" \\x".to_string()),
+            Some("5".to_string()),
+            Some("t".to_string())
+        ]]
+    );
+}
+
+/// datasource-proxy logs its values untyped; quoted, the server still
+/// casts each to what the statement compares it with.
+#[tokio::test]
+async fn a_datasource_proxy_line_reconstructs_to_sql_the_server_runs() {
+    let log = "Name:dataSource, Connection:1, Time:3, Success:True, Type:Prepared, Batch:False, QuerySize:1, BatchSize:0, Query:[\"select ? = 2107 as a, ? is null as b, ? as c\"], Params:[(2107,null,it's)]";
+    let q = pgman::query::proxylog::parse(log);
+    assert_eq!(q.len(), 1, "{q:#?}");
+    assert_eq!(
+        run_reconstructed(&q).await,
+        [vec![
+            Some("t".to_string()),
+            Some("t".to_string()),
+            Some("it's".to_string())
+        ]]
+    );
+}
+
 /// Drive `pgman mcp serve` over stdio: send `requests` (one frame each),
 /// close stdin, and return every frame it wrote. Every stdout line must
 /// parse as JSON — stdout is protocol only.
@@ -2755,6 +2830,31 @@ fn connecting_works_when_a_database_on_the_server_refuses_connect() {
     });
     let booted = booted.unwrap_or_else(|e| panic!("a failed list failed the connection: {e}"));
     assert!(booted.grid.rows.is_empty());
+}
+
+/// Every connect asks the server whether it is a standby: the compose
+/// file's streaming standby says yes, the primary no.
+#[test]
+fn connect_and_bootstrap_reports_whether_the_server_is_a_standby() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for (dsn, want) in [(DSN, Some(false)), (STANDBY_DSN, Some(true))] {
+        let booted = rt.block_on(async {
+            let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+            let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+            pgman::conn::connect_and_bootstrap(
+                pgman::conn::Dsn::parse(dsn).unwrap(),
+                true,
+                5_000,
+                pgman::conn::BOOTSTRAP_SQL.to_string(),
+                notice_tx,
+                notification_tx,
+            )
+            .await
+        });
+        let booted = booted.unwrap_or_else(|e| panic!("{dsn}: {e}"));
+        assert_eq!(booted.in_recovery, want, "{dsn}");
+        assert_ne!(booted.server_version, "unknown", "{dsn}");
+    }
 }
 
 /// The schema fetch learns each partition's parent from a real server,
@@ -5736,4 +5836,230 @@ async fn the_insert_yank_puts_back_the_row_it_copied() {
     assert_eq!(after.rows[0][1], Some(String::new()));
     assert_eq!(after.rows[0][2], None);
     assert_eq!(after.rows[0][4].as_deref(), Some("007"));
+}
+
+/// A writable library connection to the compose database.
+async fn writable_client() -> (
+    std::sync::Arc<tokio_postgres::Client>,
+    Option<pgman::tunnel::SshTunnel>,
+) {
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect writable")
+}
+
+/// A mixed-case table and its lowercase twin. `SELECT * FROM "Mixed"`,
+/// then `I`: the yanked INSERT puts the row back in the quoted table,
+/// never the twin (bare, `INSERT INTO public.Mixed` folded to the twin).
+/// `:fixture` refuses the capture — DBUnit names are case-insensitive,
+/// so no fixture can name the quoted table — and a hand-written fixture
+/// naming `RevMixed` applies to the lowercase twin, as DBUnit reads it.
+#[tokio::test]
+async fn the_insert_yank_lands_in_the_quoted_table_and_fixtures_read_names_as_dbunit() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let mixed = format!("pgman_it_RevMixed_{pid}");
+    let twin = mixed.to_ascii_lowercase();
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE \"{mixed}\" (id int PRIMARY KEY, v text); \
+             CREATE TABLE {twin} (id int PRIMARY KEY, v text); \
+             INSERT INTO \"{mixed}\" VALUES (1, 'mixed')"
+        ))
+        .await
+        .expect("create the tables");
+    let select = format!("SELECT * FROM \"{mixed}\"");
+    let grid = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let (schema, table) =
+        pgman::app::infer_single_source_table(&select).expect("a single source table");
+    assert_eq!(table, mixed);
+    let count = |t: String| {
+        let client = client.clone();
+        async move {
+            pgman::conn::run_statement(&client, &format!("SELECT count(*) FROM {t}"))
+                .await
+                .expect("count")
+                .rows[0][0]
+                .clone()
+                .unwrap()
+        }
+    };
+
+    let insert = pgman::app::row_insert_sql(&schema, &table, &grid.columns, &grid.rows[0]);
+    let yank = client
+        .batch_execute(&format!("DELETE FROM \"{mixed}\"; {insert}"))
+        .await;
+    let (yank_mixed, yank_twin) = (
+        count(format!("\"{mixed}\"")).await,
+        count(twin.clone()).await,
+    );
+
+    let refused = pgman::dbunit::fixture_from_rows(&table, &grid.columns, &grid.rows);
+
+    let hand_written =
+        pgman::dbunit::parse_flat_xml(&format!(r#"<dataset><{mixed} Id="7" V="twin"/></dataset>"#))
+            .unwrap();
+    let script =
+        pgman::dbunit::generate_apply_script(&hand_written, pgman::dbunit::CleanMode::DeleteFrom);
+    let apply = client.batch_execute(&script).await;
+    let (fx_mixed, fx_twin) = (
+        count(format!("\"{mixed}\"")).await,
+        count(twin.clone()).await,
+    );
+
+    let _ = client
+        .batch_execute(&format!("DROP TABLE \"{mixed}\"; DROP TABLE {twin}"))
+        .await;
+    yank.unwrap_or_else(|e| panic!("{insert}: {e}"));
+    assert_eq!(
+        (yank_mixed.as_str(), yank_twin.as_str()),
+        ("1", "0"),
+        "{insert}"
+    );
+    let err = refused.expect_err("a mixed-case table can't be a fixture element");
+    assert!(err.contains("case-insensitively"), "{err}");
+    apply.unwrap_or_else(|e| panic!("{script}: {e}"));
+    assert_eq!(
+        (fx_mixed.as_str(), fx_twin.as_str()),
+        ("1", "1"),
+        "{script}"
+    );
+}
+
+/// A fixture captured from a table with a reserved column name
+/// applies back to it: the apply script quotes `"user"` (bare, a syntax
+/// error). A table with a mixed-case column refuses the capture: DBUnit
+/// would read `createdAt` back as `createdat`.
+#[tokio::test]
+async fn a_fixture_with_a_reserved_column_applies_back_and_a_mixed_case_one_is_refused() {
+    let (client, _tunnel) = writable_client().await;
+    let table = it_name("fxcols");
+    let mixed = it_name("fxmixed");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int PRIMARY KEY, \"user\" text, \"order\" text); \
+             INSERT INTO {table} VALUES (1, 'someone', 'first'); \
+             CREATE TABLE {mixed} (id int, \"createdAt\" text); \
+             INSERT INTO {mixed} VALUES (1, 'then')"
+        ))
+        .await
+        .expect("create the tables");
+    let mixed_grid = pgman::conn::run_statement(&client, &format!("SELECT * FROM {mixed}"))
+        .await
+        .expect("select mixed");
+    let refused = pgman::dbunit::fixture_from_rows(&mixed, &mixed_grid.columns, &mixed_grid.rows);
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let fixture = pgman::dbunit::fixture_from_rows(&table, &before.columns, &before.rows)
+        .expect("every name round-trips");
+    let reparsed =
+        pgman::dbunit::parse_flat_xml(&pgman::dbunit::generate_flat_xml(&fixture)).unwrap();
+    let script =
+        pgman::dbunit::generate_apply_script(&reparsed, pgman::dbunit::CleanMode::DeleteFrom);
+    let applied = client.batch_execute(&script).await;
+    let after = pgman::conn::run_statement(&client, &select).await;
+    let _ = client
+        .batch_execute(&format!("DROP TABLE {table}; DROP TABLE {mixed}"))
+        .await;
+    applied.unwrap_or_else(|e| panic!("{script}: {e}"));
+    assert_eq!(after.expect("select again").rows, before.rows, "{script}");
+    let err = refused.expect_err("createdAt can't round-trip");
+    assert!(err.contains("column \"createdAt\""), "{err}");
+}
+
+/// A value with a backslash — text, and a bytea, whose text form is
+/// `\x…` — comes back the same through the `I` yank and the fixture
+/// apply with `standard_conforming_strings` on or off. A plain `'…'`
+/// literal read `\x0102` as the escape `\x01` with it off.
+#[tokio::test]
+async fn backslashes_survive_the_yank_and_fixture_under_either_string_setting() {
+    let (client, _tunnel) = writable_client().await;
+    let table = it_name("bslash");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int PRIMARY KEY, t text, b bytea); \
+             INSERT INTO {table} VALUES (1, E'C:\\\\dir\\\\n''q', '\\x0102ff'::bytea)"
+        ))
+        .await
+        .expect("create the table");
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    assert_eq!(before.rows[0][2].as_deref(), Some("\\x0102ff"));
+    let mut failures = Vec::new();
+    for scs in ["on", "off"] {
+        let insert = pgman::app::row_insert_sql("public", &table, &before.columns, &before.rows[0]);
+        let fixture = pgman::dbunit::fixture_from_rows(&table, &before.columns, &before.rows)
+            .expect("names round-trip");
+        let apply =
+            pgman::dbunit::generate_apply_script(&fixture, pgman::dbunit::CleanMode::DeleteFrom);
+        for (what, sql) in [
+            ("yank", format!("DELETE FROM {table}; {insert}")),
+            ("fixture", apply),
+        ] {
+            // The SET in a message of its own: a simple-query message
+            // is lexed whole before any of it runs, so a SET sharing
+            // one with the INSERT would not change how its literals read.
+            client
+                .batch_execute(&format!("SET standard_conforming_strings = {scs}"))
+                .await
+                .expect("set standard_conforming_strings");
+            let ran = client.batch_execute(&sql).await;
+            client
+                .batch_execute("SET standard_conforming_strings = on")
+                .await
+                .expect("reset standard_conforming_strings");
+            let after = pgman::conn::run_statement(&client, &select).await;
+            match (ran, after) {
+                (Ok(()), Ok(after)) if after.rows == before.rows => {}
+                (ran, after) => {
+                    failures.push(format!("{what} scs={scs}: {ran:?} {after:?}\n{sql}"))
+                }
+            }
+        }
+    }
+    let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A multi-statement script's SELECT rows don't come back — the simple
+/// query protocol has none to give — and `--format json` printed only
+/// `[{"status":"batch executed"}]`. stderr now says why; a single
+/// statement still prints its rows with nothing on stderr.
+#[test]
+fn batch_json_script_with_a_select_explains_where_the_rows_went() {
+    let home = scratch_home_without_profile("json-script");
+    let out = batch_with_home(
+        &home,
+        &["--sql", "SELECT 1 AS a; SELECT 2 AS b", "--format", "json"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        r#"[{"status":"batch executed"}]"#
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("prints only its status, not rows"),
+        "{stderr}"
+    );
+    let out = batch_with_home(&home, &["--sql", "SELECT 1 AS a", "--format", "json"]);
+    assert!(out.status.success());
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

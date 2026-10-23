@@ -1,7 +1,7 @@
 //! pgman binary entry point — argument parsing, logging, then the TUI.
 
 use clap::Parser;
-use pgman::app::{AppMsg, DataSourcePick};
+use pgman::app::DataSourcePick;
 use pgman::discover::{
     discover_intellij_datasources, discover_spring_datasources, project_connection_pick,
 };
@@ -16,6 +16,7 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (beta)",
+    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman env discover [--save]\n       pgman mcp serve",
     after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
 )]
 struct Cli {
@@ -111,12 +112,62 @@ struct Cli {
     no_tap: bool,
 }
 
+/// The words that start a sub-command rather than name a DSN.
+const SUBCOMMANDS: &[&str] = &["query", "env", "mcp"];
+
+/// `argv` with a sub-command that follows global options moved to the
+/// front: `pgman --dsn X query 'SQL'` becomes `pgman query 'SQL' --dsn X`.
+/// Only the first positional argument can be one — a later bare word is
+/// the DSN's, or the sub-command's own. `takes_value` says whether a flag
+/// (long name, or a short letter) consumes the next argument, so a flag's
+/// value is never mistaken for the sub-command. Pure.
+fn hoist_subcommand(argv: Vec<String>, takes_value: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut i = 1;
+    while let Some(arg) = argv.get(i).map(String::as_str) {
+        if arg == "--" {
+            break;
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            if !long.contains('=') && takes_value(long) {
+                i += 1;
+            }
+        } else if let Some(short) = arg.strip_prefix('-').filter(|s| s.len() == 1) {
+            if takes_value(short) {
+                i += 1;
+            }
+        } else if !arg.starts_with('-') {
+            if i > 1 && SUBCOMMANDS.contains(&arg) {
+                let mut out = vec![argv[0].clone(), argv[i].clone()];
+                out.extend(argv[i + 1..].iter().cloned());
+                out.extend(argv[1..i].iter().cloned());
+                return out;
+            }
+            break;
+        }
+        i += 1;
+    }
+    argv
+}
+
+/// Does `Cli`'s flag `name` (long, or a one-letter short) take a value?
+fn cli_flag_takes_value(name: &str) -> bool {
+    use clap::CommandFactory;
+    Cli::command().get_arguments().any(|a| {
+        let named = a.get_long() == Some(name)
+            || (name.chars().count() == 1 && a.get_short() == name.chars().next());
+        named && a.get_action().takes_values()
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // `pgman mcp serve` is a sub-command the flat flag set can't express
     // (clap would read `mcp` as the positional DSN). stdout belongs to
     // the protocol, so diagnostics go to the rolling log file.
-    let argv: Vec<String> = std::env::args().collect();
+    // A sub-command after global options (`pgman --dsn X query 'SQL'`)
+    // is moved to the front, its options after it, so the checks below
+    // see it where they look.
+    let argv = hoist_subcommand(std::env::args().collect(), cli_flag_takes_value);
     if argv.get(1).map(String::as_str) == Some("mcp") {
         if pgman::mcp::wants_help(&argv[2..]) {
             println!("{}", pgman::mcp::USAGE);
@@ -434,10 +485,7 @@ async fn main() -> anyhow::Result<()> {
         !cli.no_update_check && std::env::var_os("PGMAN_NO_UPDATE_CHECK").is_none();
     // Restore the editor draft from the last session (best-effort).
     // Cursor lands at the end so the operator can keep typing.
-    if let Some(draft) = app::load_draft() {
-        application.editor.cursor = draft.len();
-        application.editor.buffer = draft;
-    }
+    application.restore_draft();
     // `--log PATH`: preload the editor with a log and run the same
     // importer F8 / ctrl-l use, so pgman opens straight into the
     // reconstructed-query picker (`Mode::LogPick`) once the splash
@@ -486,7 +534,7 @@ async fn main() -> anyhow::Result<()> {
     let tap_auto_enabled = cli.tap_listen.is_none() && tap_listen_effective.is_some();
     //
     // Both --tap-listen and --tap-otlp share one adapter task
-    // that translates `tap::TapEvent` → `AppMsg::TapEvent`
+    // that hands `tap::TapEvent`s to the App on its bounded tap channel
     // so the tap module stays App-agnostic.
     // --tap-record alone wouldn't see any events (it sits on
     // the adapter, which only gets fed from a transport).
@@ -509,7 +557,7 @@ async fn main() -> anyhow::Result<()> {
         || cli.tap_replay.is_some()
         || cli.tap_udp.is_some();
     let tap_channels = if needs_tap_adapter {
-        let app_tx = application.msg_tx_clone();
+        let app_tx = application.tap_tx_clone();
         // Two bounded channels so replay can't starve the live
         // transports. Live (TCP / UDP / OTLP) listeners share
         // `live_tap_tx` and try_send through forward_or_drop —
@@ -612,9 +660,15 @@ async fn main() -> anyhow::Result<()> {
                 // failure disables the recorder for this
                 // session (rather than spamming the log for
                 // every subsequent event).
-                let app_send = app_tx.send(AppMsg::TapEvent {
-                    event: event.clone(),
-                });
+                //
+                // Awaited: the App's tap channel is bounded, so an
+                // App that falls behind stalls this task, the
+                // listeners' channel fills, and the listeners drop
+                // and count the overflow (`tap::dropped_at_listener`)
+                // — the hop that used to be unbounded queued a burst
+                // here without limit and without counting it. Replay
+                // waits too, keeping its delivery guarantee.
+                let app_send = app_tx.send(event.clone()).await;
                 if let Some(f) = record_file.as_mut() {
                     // Drop-marker: when the listener has
                     // dropped events since the last write, write
@@ -723,71 +777,81 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    // Each listener is bound HERE, before anything says it is
+    // listening: a bind spawned off with the accept loop failed
+    // (port in use) only into the log, while the status line had
+    // already announced the port. A failure doesn't stop pgman —
+    // it is still a database tool without the tap — but it is
+    // said on stderr (left on the screen after exit) and on the
+    // status line.
+    let mut tap_notes: Vec<String> = Vec::new();
     if let Some(addr_raw) = tap_listen_effective.as_deref() {
-        match parse_tap_addr(addr_raw) {
-            Ok(addr) => {
+        let addr = tap_addr_or_exit_cli("--tap-listen", addr_raw);
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
                 let tap_tx = tap_channels
                     .as_ref()
                     .expect("adapter spawned above")
                     .0
                     .clone();
-                tokio::spawn(async move {
-                    if let Err(e) = tap::run_tcp_listener(addr, tap_tx).await {
-                        tracing::error!("tap-tcp listener bind failed: {e}");
-                    }
+                application.tap_listeners.push(tap::TapListener {
+                    transport: tap::TapTransport::Tcp,
+                    addr: listener.local_addr().unwrap_or(addr),
                 });
+                tokio::spawn(tap::serve_tcp_listener(listener, tap_tx));
                 tracing::info!("tap: listening on {addr} (tcp)");
                 if tap_auto_enabled {
-                    application.last_status = Some(tap_auto_status_line(&addr));
+                    tap_notes.push(tap_auto_status_line(&addr));
                 }
             }
-            Err(e) => {
-                eprintln!("invalid --tap-listen {addr_raw:?}: {e}");
-                std::process::exit(2);
-            }
+            Err(e) => tap_notes.push(tap_bind_failed_cli(
+                "--tap-listen",
+                &addr,
+                &e,
+                tap_auto_enabled,
+            )),
         }
     }
     if let Some(addr_raw) = cli.tap_udp.as_deref() {
-        match parse_tap_addr(addr_raw) {
-            Ok(addr) => {
+        let addr = tap_addr_or_exit_cli("--tap-udp", addr_raw);
+        match tokio::net::UdpSocket::bind(addr).await {
+            Ok(socket) => {
                 let tap_tx = tap_channels
                     .as_ref()
                     .expect("adapter spawned above")
                     .0
                     .clone();
-                tokio::spawn(async move {
-                    if let Err(e) = tap::run_udp_listener(addr, tap_tx).await {
-                        tracing::error!("tap-udp listener bind failed: {e}");
-                    }
+                application.tap_listeners.push(tap::TapListener {
+                    transport: tap::TapTransport::Udp,
+                    addr: socket.local_addr().unwrap_or(addr),
                 });
+                tokio::spawn(tap::serve_udp_listener(socket, tap_tx));
                 tracing::info!("tap: listening on {addr} (udp)");
             }
-            Err(e) => {
-                eprintln!("invalid --tap-udp {addr_raw:?}: {e}");
-                std::process::exit(2);
-            }
+            Err(e) => tap_notes.push(tap_bind_failed_cli("--tap-udp", &addr, &e, false)),
         }
     }
     if let Some(addr_raw) = cli.tap_otlp.as_deref() {
-        match parse_tap_addr(addr_raw) {
-            Ok(addr) => {
+        let addr = tap_addr_or_exit_cli("--tap-otlp", addr_raw);
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
                 let tap_tx = tap_channels
                     .as_ref()
                     .expect("adapter spawned above")
                     .0
                     .clone();
-                tokio::spawn(async move {
-                    if let Err(e) = tap::run_otlp_listener(addr, tap_tx).await {
-                        tracing::error!("tap-otlp listener bind failed: {e}");
-                    }
+                application.tap_listeners.push(tap::TapListener {
+                    transport: tap::TapTransport::Otlp,
+                    addr: listener.local_addr().unwrap_or(addr),
                 });
+                tokio::spawn(tap::serve_otlp_listener(listener, tap_tx));
                 tracing::info!("tap: OTLP/HTTP listening on {addr}");
             }
-            Err(e) => {
-                eprintln!("invalid --tap-otlp {addr_raw:?}: {e}");
-                std::process::exit(2);
-            }
+            Err(e) => tap_notes.push(tap_bind_failed_cli("--tap-otlp", &addr, &e, false)),
         }
+    }
+    if !tap_notes.is_empty() {
+        application.last_status = Some(tap_notes.join(" · "));
     }
     if let Some(path) = cli.tap_replay.clone() {
         // Replay uses its own channel so backpressure on the
@@ -824,12 +888,75 @@ fn tap_auto_status_line(addr: &std::net::SocketAddr) -> String {
     format!("tap listener on {addr} (auto: Java project detected) · --no-tap to disable")
 }
 
+/// The line for a tap listener that could not bind. Pure so the
+/// wording is pinned: which flag, which address, why — and, for the
+/// auto-enabled listener the operator never asked for, how to stop
+/// pgman trying.
+fn tap_bind_failure_line(
+    flag: &str,
+    addr: &std::net::SocketAddr,
+    err: &std::io::Error,
+    auto: bool,
+) -> String {
+    let why = match err.kind() {
+        std::io::ErrorKind::AddrInUse => "address already in use".to_string(),
+        std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
+        std::io::ErrorKind::AddrNotAvailable => "not an address of this machine".to_string(),
+        _ => err.to_string(),
+    };
+    if auto {
+        format!("tap listener not started on {addr} (auto: Java project detected): {why} · --no-tap to disable, --tap-listen to pick a port")
+    } else {
+        format!("{flag} {addr} not listening: {why}")
+    }
+}
+
+/// Report a tap listener's bind failure on stderr and the log, and
+/// return the line for the status bar. `_cli`: runs before the TUI is
+/// up, so the stderr line stays on the screen after pgman exits.
+fn tap_bind_failed_cli(
+    flag: &str,
+    addr: &std::net::SocketAddr,
+    err: &std::io::Error,
+    auto: bool,
+) -> String {
+    let line = tap_bind_failure_line(flag, addr, err, auto);
+    tracing::warn!("tap: {line}");
+    eprintln!("warning: {line}");
+    line
+}
+
+/// [`parse_tap_addr`], or exit 2 naming the flag. `_cli`: before the TUI.
+fn tap_addr_or_exit_cli(flag: &str, raw: &str) -> std::net::SocketAddr {
+    parse_tap_addr(raw).unwrap_or_else(|e| {
+        eprintln!("invalid {flag} {raw:?}: {e}");
+        std::process::exit(2);
+    })
+}
+
 /// Parse the `--tap-listen` value. Accepts `host:port`, `:port`
 /// (binds 127.0.0.1 by default — local-only, since the wire
 /// shape doesn't yet authenticate), or bare `port`. Returns a
 /// useful error message on parse failure so the operator sees
 /// what went wrong without grepping logs.
+///
+/// `host` may be a name (`localhost:7432`), resolved by the system
+/// resolver — it used to fail as `invalid socket address syntax`.
 fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
+    parse_tap_addr_with(raw, |host, port| {
+        use std::net::ToSocketAddrs;
+        (host, port).to_socket_addrs().map(Iterator::collect)
+    })
+}
+
+/// [`parse_tap_addr`] with the name lookup injected, so the tests
+/// don't depend on a resolver. Of several addresses a name resolves
+/// to, the first IPv4 one wins: `localhost` resolving to `::1` first
+/// would otherwise bind a listener a JVM dialling 127.0.0.1 misses.
+fn parse_tap_addr_with(
+    raw: &str,
+    resolve: impl FnOnce(&str, u16) -> std::io::Result<Vec<std::net::SocketAddr>>,
+) -> Result<std::net::SocketAddr, String> {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix(':') {
@@ -841,8 +968,21 @@ fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
         let port: u16 = raw.parse().map_err(|e| format!("port {raw:?}: {e}"))?;
         return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     }
-    raw.parse::<SocketAddr>()
-        .map_err(|e| format!("expected host:port or :port, got {raw:?}: {e}"))
+    if let Ok(addr) = raw.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    let (host, port) = raw.rsplit_once(':').expect("checked above: raw has a ':'");
+    let port: u16 = port.parse().map_err(|e| format!("port {port:?}: {e}"))?;
+    let unresolved = |why: String| {
+        format!("cannot resolve {host:?} ({why}); use an IP address such as 127.0.0.1:{port}")
+    };
+    let addrs = resolve(host, port).map_err(|e| unresolved(e.to_string()))?;
+    addrs
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or_else(|| addrs.first())
+        .copied()
+        .ok_or_else(|| unresolved("no addresses".into()))
 }
 
 /// The log `--log` names: what was already read from stdin for
@@ -935,7 +1075,8 @@ fn batch_dsn_from_picks(
     let picks = collapse_same_connection(picks);
     match picks.len() {
         0 => Err(
-            "no DSN — pass --dsn or run from a project with .pgman/pgman.toml or .idea/dataSources.xml"
+            "no DSN — pass --dsn or run from a project with .pgman/pgman.toml, \
+             .idea/dataSources.xml or a Spring application*.yml"
                 .into(),
         ),
         1 => {
@@ -1440,6 +1581,44 @@ mod main_tests {
     }
 
     #[test]
+    fn a_tap_bind_failure_names_flag_address_and_cause() {
+        let addr: std::net::SocketAddr = "127.0.0.1:4318".parse().unwrap();
+        let in_use = std::io::Error::from(std::io::ErrorKind::AddrInUse);
+        assert_eq!(
+            tap_bind_failure_line("--tap-otlp", &addr, &in_use, false),
+            "--tap-otlp 127.0.0.1:4318 not listening: address already in use"
+        );
+        // Anything unclassified keeps the OS's own words.
+        let other = std::io::Error::other("no route");
+        assert_eq!(
+            tap_bind_failure_line("--tap-udp", &addr, &other, false),
+            "--tap-udp 127.0.0.1:4318 not listening: no route"
+        );
+    }
+
+    #[test]
+    fn an_auto_tap_bind_failure_says_how_to_stop_it() {
+        let addr: std::net::SocketAddr = "127.0.0.1:7432".parse().unwrap();
+        let in_use = std::io::Error::from(std::io::ErrorKind::AddrInUse);
+        assert_eq!(
+            tap_bind_failure_line("--tap-listen", &addr, &in_use, true),
+            "tap listener not started on 127.0.0.1:7432 (auto: Java project detected): address already in use · --no-tap to disable, --tap-listen to pick a port"
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_a_port_already_held_fails_up_front() {
+        // The premise the startup path relies on: the bind itself — not
+        // the accept loop spawned after it — is what reports the clash.
+        let held = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = held.local_addr().unwrap();
+        let err = tokio::net::TcpListener::bind(addr).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(tap_bind_failure_line("--tap-listen", &addr, &err, false)
+            .ends_with("not listening: address already in use"));
+    }
+
+    #[test]
     fn no_tap_parses_and_conflicts_with_an_explicit_listener() {
         use clap::Parser;
         let cli = Cli::try_parse_from(["pgman", "--no-tap"]).expect("parses");
@@ -1455,6 +1634,47 @@ mod main_tests {
     fn parse_tap_addr_rejects_oversize_port() {
         let err = parse_tap_addr(":99999").unwrap_err();
         assert!(err.contains("port"), "expected port-range error: {err}");
+    }
+
+    #[test]
+    fn parse_tap_addr_resolves_localhost() {
+        // From the hosts file — no network.
+        let got = parse_tap_addr("localhost:7432").unwrap();
+        assert!(got.ip().is_loopback(), "{got}");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_prefers_an_ipv4_address_of_a_name() {
+        let v6: std::net::SocketAddr = "[::1]:7432".parse().unwrap();
+        let v4: std::net::SocketAddr = "127.0.0.1:7432".parse().unwrap();
+        let got = parse_tap_addr_with("tap-host:7432", |host, port| {
+            assert_eq!((host, port), ("tap-host", 7432));
+            Ok(vec![v6, v4])
+        });
+        assert_eq!(got, Ok(v4));
+        // Only IPv6: that, rather than nothing.
+        let got = parse_tap_addr_with("tap-host:7432", |_, _| Ok(vec![v6]));
+        assert_eq!(got, Ok(v6));
+        // Literals never reach the resolver.
+        let got = parse_tap_addr_with("[::1]:7432", |_, _| panic!("resolved a literal"));
+        assert_eq!(got, Ok(v6));
+    }
+
+    #[test]
+    fn parse_tap_addr_says_to_use_an_ip_when_a_name_does_not_resolve() {
+        let err = parse_tap_addr_with("no-such-host:7432", |_, _| {
+            Err(std::io::Error::other("nodename nor servname provided"))
+        })
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "cannot resolve \"no-such-host\" (nodename nor servname provided); use an IP address such as 127.0.0.1:7432"
+        );
+        let err = parse_tap_addr_with("empty-host:7432", |_, _| Ok(vec![])).unwrap_err();
+        assert!(err.contains("no addresses"), "{err}");
+        let err = parse_tap_addr_with("tap-host:http", |_, _| Ok(vec![])).unwrap_err();
+        assert!(err.starts_with("port \"http\""), "{err}");
     }
 
     /// Unique-per-test scratch project dir under the OS temp dir with a
@@ -1803,11 +2023,66 @@ mod main_tests {
         assert!(err.contains("no usable connection URL"), "got: {err}");
     }
 
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn hoist_subcommand_moves_it_past_global_options() {
+        let h = |a: &[&str]| hoist_subcommand(args(a), cli_flag_takes_value);
+        assert_eq!(
+            h(&["pgman", "--dsn", "postgres://h/d", "query", "select 1"]),
+            args(&["pgman", "query", "select 1", "--dsn", "postgres://h/d"])
+        );
+        assert_eq!(
+            h(&["pgman", "--dsn=postgres://h/d", "--json", "query"]),
+            args(&["pgman", "query", "--dsn=postgres://h/d", "--json"])
+        );
+        assert_eq!(
+            h(&["pgman", "--theme", "light", "mcp", "serve"]),
+            args(&["pgman", "mcp", "serve", "--theme", "light"])
+        );
+        assert_eq!(
+            h(&["pgman", "--redact", "env", "discover"]),
+            args(&["pgman", "env", "discover", "--redact"])
+        );
+    }
+
+    #[test]
+    fn hoist_subcommand_leaves_everything_else_alone() {
+        let h = |a: &[&str]| hoist_subcommand(args(a), cli_flag_takes_value);
+        for a in [
+            // Already first.
+            &["pgman", "query", "select 1", "--dsn", "x"][..],
+            // A flag's value that happens to be a sub-command's name.
+            &["pgman", "--dsn", "query"],
+            &["pgman", "--theme", "env", "--demo"],
+            // The first positional is the DSN: a later `query` is not ours.
+            &["pgman", "postgres://h/d", "query"],
+            // No sub-command at all.
+            &["pgman", "--demo"],
+            &["pgman"],
+            // After `--`, everything is positional.
+            &["pgman", "--", "query"],
+        ] {
+            assert_eq!(h(a), args(a), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn cli_flag_takes_value_reads_clap_s_own_definition() {
+        assert!(cli_flag_takes_value("dsn"));
+        assert!(cli_flag_takes_value("theme"));
+        assert!(!cli_flag_takes_value("demo"));
+        assert!(!cli_flag_takes_value("yes"));
+        assert!(!cli_flag_takes_value("no-such-flag"));
+    }
+
     #[test]
     fn batch_refuses_zero_or_ambiguous_candidates() {
-        assert!(batch_dsn_from_picks(Vec::new(), true)
-            .unwrap_err()
-            .contains("no DSN"));
+        let none = batch_dsn_from_picks(Vec::new(), true).unwrap_err();
+        assert!(none.contains("no DSN"), "{none}");
+        assert!(none.contains("Spring application*.yml"), "{none}");
         let err = batch_dsn_from_picks(
             vec![
                 batch_pick("a", "postgres://app@a/main"),

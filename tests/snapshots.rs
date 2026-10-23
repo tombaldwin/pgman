@@ -121,6 +121,19 @@ fn landing_after_connect() {
     insta::assert_snapshot!(dump(&buf));
 }
 
+/// With no connection and nothing discovered, the start card's three
+/// ways forward wrap at 80 columns instead of being cut mid-word.
+#[test]
+fn start_card_with_no_connection_wraps_at_80_columns() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.conn_state = ConnState::Disconnected;
+    a.mode = Mode::Normal;
+    let buf = render(&mut a, 80, 24);
+    insta::assert_snapshot!(dump(&buf));
+}
+
 /// The header shows a `⬆ <version>` badge, after the connection
 /// state, when `update_available` is set.
 #[test]
@@ -240,7 +253,9 @@ fn grid_with_filter_active() {
 #[test]
 fn help_overlay() {
     let mut a = settle_app();
-    a.mode = Mode::Help;
+    // `:help all`: every section on one page, the overlay as it was
+    // before it had sections.
+    a.open_help_all(Mode::Normal);
     // Tall viewport — the help popup is centered_pct(area, 70, 70)
     // so the visible content area is ~70% of the test height. With
     // ~70 help lines we need ~100 rows to fit them all.

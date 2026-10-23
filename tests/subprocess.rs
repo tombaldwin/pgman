@@ -303,6 +303,60 @@ fn help_output_fits_a_screen_and_names_no_rust_types() {
 }
 
 #[test]
+fn help_usage_lists_the_sub_commands() {
+    let out = pgman().arg("--help").output().expect("spawn pgman");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let usage: String = stdout
+        .lines()
+        .skip_while(|l| !l.starts_with("Usage:"))
+        .take_while(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for sub in ["pgman [--dsn DSN] query", "pgman env", "pgman mcp"] {
+        assert!(usage.contains(sub), "{sub} missing from:\n{usage}");
+    }
+}
+
+#[test]
+fn query_after_a_global_dsn_is_the_query_sub_command() {
+    // Port 1 on loopback refuses at once: this checks the argument
+    // parse, not a connection.
+    let out = pgman()
+        .args([
+            "--dsn",
+            "postgres://nobody@127.0.0.1:1/none",
+            "query",
+            "select 1",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn pgman");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("unexpected argument"), "{stderr}");
+    assert!(!stderr.contains("Usage:"), "{stderr}");
+    // It got as far as connecting, which only `query` does.
+    assert!(stderr.contains("connect failed"), "{stderr}");
+}
+
+#[test]
+fn query_with_no_dsn_names_spring_config_too() {
+    let cwd = std::env::temp_dir().join(format!("pgman-test-nodsn-{}", std::process::id()));
+    std::fs::create_dir_all(&cwd).unwrap();
+    let out = pgman()
+        .current_dir(&cwd)
+        .env_remove("DATABASE_URL")
+        .env_remove("PGHOST")
+        .args(["query", "select 1"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn pgman");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no DSN"), "{stderr}");
+    assert!(stderr.contains("Spring application*.yml"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&cwd);
+}
+
+#[test]
 fn positional_dsn_and_dsn_flag_must_agree() {
     let out = pgman()
         .args([

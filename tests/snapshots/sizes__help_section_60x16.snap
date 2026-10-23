@@ -1,0 +1,21 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+ pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
+╭[ ◆ help · editor ◆ ]─────────────────────────────────────╮
+│ pgman — keys (? / F1 help · : commands · ! / F2 error d… │
+│   editor                                                 │
+│     ↵             run the statement once it ends with ;  │
+│                   (guarded)                              │
+│     alt-↵ / F5    run it regardless of the ; (ctrl-↵ /   │
+│                   ctrl-j too)                            │
+│     ctrl-z         undo last edit ctrl-y / ctrl-shift-z  │
+│                    redo                                  │
+│     ctrl-c         cancel the running query (while       │
+│                    in-flight)                            │
+│ ↓ 47 more below                                          │
+╰──────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   esc list · ? close help · +3 more

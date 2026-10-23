@@ -1,0 +1,29 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
+│ Server: ledger-staging…  •  Database: ledger    ││         PostgreSQL   help │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
+│ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
+ 1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
+╭[ ◆ help · editor ◆ ]─────────────────────────────────────────────────────────╮
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)    │
+│   editor                                                                     │
+│     ↵             run the statement once it ends with ; (guarded)            │
+│     alt-↵ / F5    run it regardless of the ; (ctrl-↵ / ctrl-j too)           │
+│     ctrl-z         undo last edit         ctrl-y / ctrl-shift-z  redo        │
+│     ctrl-c         cancel the running query (while in-flight)                │
+│     ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)               │
+│     ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)              │
+│     ctrl-/         toggle `-- ` line comment on the current line             │
+│     ( [ {  ' " autoclose / skip-over — pairs the open with its close (cursor │
+│            between); typing the close (or matching quote) over it just steps │
+│            past                                                              │
+│     ctrl-r         reverse-incremental history search (ctrl-d in there       │
+│                    deletes the focused entry)                                │
+│ ↓ 23 more below                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   esc list · ? close help · j/k scroll · +2 more

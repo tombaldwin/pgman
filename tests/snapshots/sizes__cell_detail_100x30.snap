@@ -8,9 +8,9 @@ expression: dump(&buf)
 │ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SE╭[ ◆ data · row 1 of 1 · field 1/1 · JSON ◆ ]────────────────────────────────────────────╮    │
+│> SE╭[ ◆ data · row 1 of 1 · field 1 of 1 · JSON ◆ ]─────────────────────────────────────────╮    │
 │  FR│                                                                                        │    │
 │  WH│ ▼ { 3 }                                                                                │    │
 │  OR│   "id": 1                                                                              │    │

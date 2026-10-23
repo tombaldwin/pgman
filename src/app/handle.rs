@@ -1,15 +1,15 @@
 use super::*;
 
 impl App {
-    /// Apply a finished message from a spawned task. Tap events
-    /// bypass the generation filter — the tap listener is bound
-    /// at startup and lives independently of the DB connection,
-    /// so events arriving across a reconnect are still meaningful.
+    /// Apply a finished message from a spawned task. Messages from a
+    /// superseded connection generation are dropped, except the kinds
+    /// that don't belong to a connection (update check, environments,
+    /// terminate). Tap events don't come through here at all: they
+    /// have their own bounded channel (`App::tap_tx_clone`).
     pub(super) fn on_msg(&mut self, msg: AppMsg) {
         if !matches!(
             msg,
-            AppMsg::TapEvent { .. }
-                | AppMsg::UpdateCheck(_)
+            AppMsg::UpdateCheck(_)
                 | AppMsg::Terminate
                 | AppMsg::EnvironmentsLoaded(_)
                 | AppMsg::EnvSecretResolved { .. }
@@ -33,6 +33,7 @@ impl App {
             }
             AppMsg::Booted {
                 server_version,
+                in_recovery,
                 grid,
                 client,
                 schema_cache,
@@ -40,6 +41,7 @@ impl App {
                 ..
             } => {
                 self.conn_state = ConnState::Connected { server_version };
+                self.in_recovery = in_recovery;
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
                 // without touching the Client. Replaced on every new
                 // Booted so the dispatcher always matches the live
@@ -117,13 +119,15 @@ impl App {
                 } else {
                     String::new()
                 };
+                // The cap note goes last: its CLI pointer is the way out,
+                // and the footer's fitting keeps the last segment.
                 let cap_suffix = if self.grid.truncated {
-                    format!(" · capped at {}", crate::grid::MAX_ROWS)
+                    format!(" · {}", crate::grid::cap_status_note())
                 } else {
                     String::new()
                 };
                 self.last_status = Some(format!(
-                    "{kind_label} ok · {} row(s){cap_suffix}{timing_suffix}",
+                    "{kind_label} ok · {} row(s){timing_suffix}{cap_suffix}",
                     self.grid.row_count()
                 ));
                 // EXPLAIN / EXPLAIN ANALYZE: parse the JSON we asked
@@ -444,7 +448,6 @@ impl App {
                     self.notifications.items.drain(..drop);
                 }
             }
-            AppMsg::TapEvent { event } => self.on_tap_event(event),
             AppMsg::UpdateCheck(latest) => {
                 self.update_check_done = true;
                 self.update_available = latest;

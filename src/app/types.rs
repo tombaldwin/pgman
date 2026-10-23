@@ -72,6 +72,10 @@ pub enum Mode {
     Normal,
     /// Help overlay.
     Help,
+    /// Typing the help overlay's `/` filter (`/` from Help). Each
+    /// typed char narrows the matches across every section; Enter
+    /// keeps the filter (back to Help), Esc clears it.
+    HelpFilter,
     /// Typing SQL in the editor.
     Editor,
     /// Confirmation modal for a guarded statement.
@@ -214,6 +218,7 @@ impl Mode {
                 | Mode::GridFilter
                 | Mode::GridFind
                 | Mode::SchemaBrowserFilter
+                | Mode::HelpFilter
                 | Mode::SaveQueryPrompt
                 | Mode::ParamPrompt
                 | Mode::SavedQueriesFilter
@@ -1421,30 +1426,57 @@ impl ListCursorNav for SchemaLintUi {
     }
 }
 
-/// Help-overlay state — vertical scroll, the mode to restore on close,
-/// and the last-rendered max scroll used to clamp incremental scrolls.
+/// Which page of the help overlay is up. See
+/// `docs/backlog/help-overlay.md`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum HelpView {
+    /// The section list. On a narrow terminal it is the whole
+    /// overlay, a teaser beside each name; on a wide one it is the
+    /// left column whatever the view, so `List` and `Section` draw
+    /// the same there.
+    #[default]
+    List,
+    /// One section (`HelpUi::section`).
+    Section,
+    /// `:help all`: every section on one scrolling page.
+    All,
+}
+
+/// Help-overlay state — the selected section and view, the filter,
+/// the scroll, the mode to restore on close, and what the renderer
+/// wrote back from the last frame.
 #[derive(Debug, Default)]
 pub struct HelpUi {
-    /// Vertical scroll offset for the help overlay (number of leading lines
-    /// hidden above the viewport).
+    /// Vertical scroll of whatever the content pane shows: the
+    /// section, the filter's matches, or the `:help all` page.
     pub scroll: u16,
-    /// Mode whose help section the overlay pre-scrolls to
-    /// (`App::help_anchor_for`). Usually the mode help was opened
-    /// from; for `:help <topic>` it is the topic's mode, which is
-    /// *not* where the operator was. Consumed by the renderer after
-    /// the first draw so j/k navigation doesn't snap back.
-    pub origin: Option<Mode>,
+    /// Selected section: an index into `ui::HELP_SECTIONS`.
+    pub section: usize,
+    pub view: HelpView,
+    /// The `/` filter across every section. `Some` while typing it
+    /// (`Mode::HelpFilter`) and after Enter kept it; `None` once Esc
+    /// cleared it.
+    pub filter: Option<String>,
     /// Mode to restore when help closes, so F1 from inside Editor /
     /// SchemaBrowser / etc. doesn't dump the operator back to Normal.
-    /// Separate from `origin` for two reasons: `:help tap` anchors on
-    /// `TapMonitor` but must return to where the `:` bar was opened
-    /// from, and `origin` is cleared by the renderer long before the
-    /// operator presses Esc. `None` falls back to Normal.
+    /// Not the section shown: `:help tap` shows the tap section but
+    /// must return to where the `:` bar was opened from. `None` falls
+    /// back to Normal.
     pub return_to: Option<Mode>,
-    /// Last-rendered max scroll for the help overlay. Written by `draw_help`
-    /// each frame and read by the j/k handler so an incremental scroll past
-    /// the bottom doesn't accumulate phantom offsets.
+    /// Last-rendered max scroll of the content pane. Written by
+    /// `draw_help` each frame and read by the j/k handler so an
+    /// incremental scroll past the bottom doesn't accumulate phantom
+    /// offsets.
     pub max_scroll: u16,
+    /// Whether the last frame drew the list beside the section (a wide
+    /// terminal). Written by `draw_help`; on a narrow one the list and
+    /// the section are separate levels, so Enter and Esc move between
+    /// them.
+    pub split: bool,
+    /// Content rows holding a section heading, when the content pane
+    /// is a flat page (`:help all`, or the filter's matches) — where
+    /// Tab / `]` / `[` jump. Written by `draw_help`.
+    pub heading_rows: Vec<u16>,
 }
 
 /// A cheap stand-in for "is this the same buffer text as last time",
@@ -1710,20 +1742,30 @@ impl TapHealth {
     /// the setup hint before anything has arrived, the counters after.
     /// Pure, so opening the monitor and every event that lands while
     /// it is open render the same line.
-    pub fn monitor_status(&self) -> String {
+    /// `listeners` are the ones that bound: before anything arrives the
+    /// line says where pgman is listening, and names `--tap-otlp` only
+    /// when nothing is.
+    pub fn monitor_status(&self, listeners: &[crate::tap::TapListener]) -> String {
         let queries = self.query_count;
         let beats = self.heartbeat_count;
         if queries == 0 && beats == 0 {
-            return "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into();
+            return match crate::tap::listening_summary(listeners) {
+                Some(listening) => format!("JDBC tap · no events yet · {listening}"),
+                None => "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into(),
+            };
         }
         let dropped_suffix = if self.dropped_events_total > 0 {
             format!(
                 " · {} dropped (JAR backpressure)",
-                self.dropped_events_total
+                crate::ui::compact_count(self.dropped_events_total)
             )
         } else {
             String::new()
         };
-        format!("JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}")
+        format!(
+            "JDBC tap · {} · {}{dropped_suffix}",
+            crate::ui::count_label(queries, "query", "queries"),
+            crate::ui::count_label(beats, "heartbeat", "heartbeats"),
+        )
     }
 }

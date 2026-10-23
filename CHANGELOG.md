@@ -8,6 +8,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `sslrootcert=<file>` in a connection string pins the trusted CAs, as
+  in libpq (and `require` with a CA file checks the chain). It used to
+  be ignored, with the default trust store used instead. `sslcrl` and
+  `sslcrldir` are refused rather than ignored.
+- `Tab` after `:help ` completes the help section names, as it completes
+  command names.
 - The JDBC tap's List view shows the focused statement's bound
   parameters beneath the list, labelled `params (some redacted)` when
   the producer masked a value and `params (withheld by source)` for
@@ -17,20 +23,194 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `log_min_error_statement` logs with nothing else on. A statement
   `log_statement` already logged is marked failed rather than listed
   twice. The log picker marks a failed pick `✗` and shows its error.
+- Logs → SQL reads Postgres's `csvlog` and `jsonlog` (PG 15+) formats as
+  well as stderr: same pairing of parameters and errors, by pid.
+- Logs → SQL reads p6spy (default single-line format) and
+  datasource-proxy query logs, tagged `[p6spy]` / `[ds-proxy]` in the
+  picker.
 
 ### Changed
 
+- Help is a list of sections and one section at a time instead of one
+  ~275-row page: from 110 columns the list sits beside the section, and
+  on a narrower terminal the list comes first, each section with a
+  one-line summary, and `Enter` opens one. `Tab` / `]` / `[` move between
+  sections, `/` filters every section live (matching rows under their
+  headings), and `:help all` keeps the single page. `:help <topic>`
+  takes any section name or the start of one, and an unknown topic lists
+  every section.
+- One size format everywhere: database sizes on the start card and in
+  the environments overview, and table sizes in the schema browser, read
+  `9.0 MB` / `212 MB` / `1.2 GB`. The start card used `pg_size_pretty`,
+  which stays in kB up to 10 MB (`10199 kB` beside `10 MB`), and the
+  schema browser used `MiB` with two decimals.
+- In the editor and the prompts the error footer points at `F2 / :error
+  detail`, not F2 alone: F2 takes fn on a Mac.
+- The start card's `recent` list says how to bring an entry back: `in
+  the editor, ctrl-p recalls · ctrl-r searches`.
+- Loading a saved query (after its `:param` values, if any) ends the
+  status with the key that runs it: `⏎ runs it`, or `alt-⏎ runs it` when
+  the statement has no `;` and Enter would be a newline.
+- The tab bar's hint reads `[ ] prev/next tab` instead of `] [ switch`,
+  which looked like a stray pair of brackets.
 - One TLS crypto provider (ring) instead of two: no cmake / C build of
   aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
   Postgres connection no longer offers the post-quantum X25519MLKEM768
   key exchange, which only the aws-lc provider had.
+- Logs → SQL: a Postgres `FATAL:` or `PANIC:` followed by its
+  `STATEMENT:` (a read replica's `terminating connection due to
+  conflict with recovery`) is reconstructed as a failed query, like an
+  `ERROR:`'s.
 
 ### Fixed
 
+- Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
+  comparisons in the SCRAM path's digest crates) and `clipboard-win`
+  5.4.3 (5.4.1 was yanked).
+- `lo_from_bytea`, `lo_put`, `lo_unlink`, `lo_creat`, `lowrite` and
+  `lo_truncate` classified as plain reads, so a writable connection ran
+  them with no confirmation. They now need one, like other writes.
+- If the TLS connector couldn't be built, a `require` / `verify-*`
+  connection fell back to plaintext. It now fails instead.
+- Help opened from a mode (`F1` / `?`, or `:help editor`) now shows the
+  section's heading; it was hidden under the `↑ N more above` marker,
+  so the section opened on its first key.
+- The help overlay's footer shows its own keys; a status left from before
+  help opened used to take the footer instead.
+- `I` (row as INSERT) named a quoted mixed-case table bare: a row
+  yanked from `"OrderLine"` was inserted into a lowercase twin
+  `orderline` if there was one, and failed otherwise. The FROM parse
+  now folds unquoted names to lower case and keeps quoted ones (spaces
+  and `""` included), and the INSERT quotes the table. `:fixture`
+  refuses such a table instead of capturing it under the twin's name:
+  DBUnit names tables case-insensitively, so no fixture can name it.
+  `F` (FK follow) prefers the exact table over a case-insensitive match.
+- A fixture's apply script quotes a reserved table or column name
+  (`user`), which was a syntax error, and still reads every other
+  name as DBUnit does, case-insensitively (`<UserAccount Id="1">` is
+  `useraccount (id)`). `:fixture` refuses, naming it, a column that
+  can't round-trip — one with upper-case letters (`createdAt`) or one
+  XML can't carry (`a"b`, `with space`, `?column?`) — instead of
+  renaming it with `_` into a column the table doesn't have.
+- `\fixture`, `\report` and `\i` (and their `:` spellings) take the
+  rest of the line as the path, so a path with spaces works; a
+  double-quoted path has its quotes removed. They took the first word,
+  so `:fixture my dir/f.xml` wrote `./my`.
+- `I` (row as INSERT), `F` (FK follow) and the fixture apply script
+  write a value holding a backslash as an `E'…'` string with the
+  backslash doubled, so it inserts the same value whatever
+  `standard_conforming_strings` is. With it off, a bytea's `\x0102`
+  was read as the escape `\x01`.
+- `I`'s footer counted the INSERT's bytes and called them characters;
+  it counts characters now. Every yank reports a clipboard failure the
+  same way (`yank failed: …`), and the test suite no longer writes to
+  the system clipboard.
+- `--batch` with a script of several statements, one of them a
+  `SELECT`, says on stderr that a script prints only its status, not
+  rows: `--format json` printed `[{"status":"batch executed"}]` and the
+  rows seemed lost. Run the `SELECT` on its own to get them.
+- `:fixture` with a grid filter active captures the rows the filter
+  shows, as `Y` exports them, and the status says `N of M row(s)
+  (filtered)`. It captured every row, hidden ones included.
+- Sorting a column (`s`) decides once per column whether to compare
+  numbers or text: a column that is all numbers sorts by exact value
+  (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in
+  Postgres); any other column sorts as text, byte by byte. Deciding per
+  pair was not an order (`2 < 10 < 1a < 2`), so ascending and descending
+  disagreed, and text such as `inf` or `nan` sorted as a number.
+- Connected to a standby by `:connect` or `--dsn`, nothing said it was
+  one; only an environment naming a replica did. Every connect now asks
+  `pg_is_in_recovery()`, and the header wears a `replica` badge on a
+  standby whichever way it was reached.
+- A result stopped at 1000 rows said only `capped at 1000`, which read as
+  though that was the whole table. It now says `more rows not fetched`,
+  and the status line adds that `pgman query '…' --json` returns every
+  row.
+- The completion popup's title was cut to `Tab to cyc`: its width was
+  measured without the title's decoration.
+- Counts read as English: `1 match · Tab to cycle`, `4 saved queries`,
+  `2 environments · 6 databases` (the bare first number now says what it
+  counts), and the row-detail title `row 1 of 50 · field 1 of 24` like
+  the cell detail's. Row detail's `↓ N more below` counts fields, as the
+  title does, rather than wrapped lines of text (`↓ 3 more fields
+  below`); the cell detail says `more lines`.
+- A footer tip too wide for the terminal cut a key hint down to its
+  label (`… expand-all/collapse-all`, `y… suggestion`). Key hints are now
+  dropped whole, from the end; prose goes before them, and a prose
+  segment that would shrink to a stub (`r…`) is dropped whole too.
+- `pgman --dsn X query 'SQL'` failed with clap's "unexpected argument":
+  a sub-command (`query`, `env`, `mcp`) now works after global options.
+  `--help`'s Usage lists the three sub-commands, and `query`'s no-DSN
+  error mentions Spring `application*.yml` alongside the other configs
+  it reads.
+- The no-connection start card wraps at 80 columns instead of cutting
+  its lines off mid-word.
+- `--redact` blocked out pgman's own name — the title read `▓▓▓▓▓ 0.1.0`
+  — when a database name had `pgman` in it (`pgman_test`). The product
+  name is now never redacted; the rest of such a name still is.
+- A typo like `selec 1;` no longer reads as a guarded write. It is still
+  guarded (pgman never assumes an unrecognised statement is safe), but the
+  confirm card now says "`selec` isn't an SQL statement pgman recognises —
+  send it to Postgres anyway? (it will likely be a syntax error)" rather
+  than that a read-only session will refuse it, and `pgman query` says it
+  isn't a statement pgman recognises (typo?) — re-run with `--yes` to send
+  it anyway.
+- After loading a query from the log picker, `Ctrl-L` / `F8` said "no
+  queries found", because the loaded query had replaced the log in the
+  buffer. With no log in the buffer it now reopens the last log's picker
+  (`reopened the last log · N queries`); a new log replaces it.
+- Two pgman windows no longer lose each other's editor draft. A window
+  that never changed the draft writes nothing when it quits, so it can't
+  overwrite what another window saved meanwhile; and a window with edits
+  of its own, finding `draft.sql` changed by another window, saves to a
+  sibling `draft-YYYYMMDD-HHMMSS.sql` and says so, instead of clobbering it.
 - The tap monitor's status line kept reading "no events yet" after
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than
   their start, which inflated the Pools view's peak concurrency.
+- A burst of tap events no longer piles up in memory behind the
+  screen. pgman redrew once per event, so 4 000 large events took over
+  30 s to land and held more than 800 MiB on the way; they now land in
+  a few frames (under a second, 100–200 MiB at peak). The hop into the
+  app is bounded, so events pgman cannot keep up with are dropped and
+  counted on the `DROP` badge instead of queueing without limit.
+- A tap listener that cannot bind (port in use) is now reported on the
+  status line and on stderr — `--tap-listen`, `--tap-udp`, `--tap-otlp`
+  and the listener a Java project turns on by itself. The status line
+  used to announce the port as listening while the failure went only
+  to the log.
+- `--tap-otlp` accepts gzip-compressed bodies, which the OpenTelemetry
+  Collector's `otlphttp` exporter sends by default; they failed with
+  `400 not utf-8`. The inflated body has the same 4 MiB cap as the raw
+  one. Any other `Content-Encoding` gets a 415 saying to send gzip or
+  none.
+- A pgman-tap event claiming an absurd duration is clamped to one hour,
+  as OpenTelemetry spans already were; `u64::MAX` showed as
+  `18446744073709.55s`, broke the column alignment and topped every
+  sort by time.
+- The tap List view's app column is cut by display width, so a CJK app
+  name no longer pushes its row's SQL out of line. A name too long for
+  the column ends in `…`.
+- The tap monitor's status line says `1 query · 1 heartbeat`, not
+  `1 queries · 1 heartbeats`, as its title already did.
+- `--tap-listen`, `--tap-udp` and `--tap-otlp` take a host name
+  (`localhost:7432`), which failed as `invalid socket address syntax`.
+  A name that does not resolve says to use an IP address instead.
+- The tap monitor's empty state and status line say where pgman is
+  listening (`listening on TCP 127.0.0.1:7432 · OTLP/HTTP …`). They
+  told the operator to start pgman with `--tap-otlp :4318` even with a
+  listener — that one included — already bound; the hint now points
+  the JVM at the bound OTLP port.
+- The tap monitor's title is no longer cut mid-word by its border: the
+  room it was fitted to left out the decoration round the panel name.
+- A producer's huge drop counter no longer pushes the tap monitor's key
+  hints off its title: counts from 10 000 up read `12.3k`, `4.5M`, …,
+  `1.0e18`, and the drop count now comes after the hints, so a narrow
+  panel gives it up first (the status line still shows it).
+- The tap monitor's OpenTelemetry hint gives
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces`.
+  Without the path, which the exporter does not add to that variable,
+  the agent's exports got a 404.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2
@@ -59,6 +239,34 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `y` on a NULL field leaves the clipboard alone.
 - The result diff counts a NULL → `''` change and shows it; `\fixture`
   leaves NULL cells out (flat XML's NULL) instead of writing `col=""`.
+- Logs → SQL: a Postgres log's bound value with a newline in it no
+  longer corrupts the reconstruction. The rest of the value, which
+  Postgres writes on the next line, went into the statement's SQL and
+  the value was cut short; it now stays in the value.
+- Logs → SQL: a multi-line statement from a Postgres log no longer
+  keeps the tab Postgres adds to each continuation line, which changed
+  a string literal that spans lines.
+- Logs → SQL: Hibernate logs in logback's default pattern
+  (`%logger{36} - %msg`) are read whole. pgman cut the statement at
+  its first `:` (`like 'ref:%'`, a `10:00:00` timestamp), or dropped a
+  statement with no `:` in it.
+- Logs → SQL: under Spring Boot 3.2's default log pattern, which puts
+  `[appName]` before the thread, a Hibernate bind paired with whichever
+  thread logged a statement last. The thread is now the bracket group
+  nearest the logger.
+- Logs → SQL: `BEGIN` / `COMMIT` / `ROLLBACK`, `SET` / `SHOW` / `RESET` /
+  `DISCARD` and `select 1` pool pings are no longer reported as N+1
+  clusters, where they outranked the real one. They stay in the list.
+- Logs → SQL: ANSI colour codes in a pasted log (Hibernate's
+  `highlight_sql=true`, a coloured console or pager) are ignored. A
+  highlighted formatted statement was dropped, and a one-line one kept
+  the codes in its SQL.
+- Logs → SQL: a Postgres `duration: … execute` record whose SQL
+  contains `statement:` (`like 'statement:%'`) was cut there, leaving
+  the tail of the statement as the query.
+- Logs → SQL: a Hibernate 6 `ARRAY` bind (`[a, b c]`) is substituted as
+  a Postgres array literal (`'{"a","b c"}'`) instead of a string the
+  server rejects as a malformed array.
 
 ## [0.1.0] — 2026-10-22
 

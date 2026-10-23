@@ -79,6 +79,25 @@ pub fn truncated_warning() -> String {
     )
 }
 
+/// What stderr says after a multi-statement script that had a `SELECT`
+/// in it, or `None`. A script runs through the simple-query protocol,
+/// which hands back no result sets, so its output is the one-row
+/// `batch executed` status in every format: `--format json` printed
+/// `[{"status":"batch executed"}]`, and the rows looked lost. Pure.
+pub fn script_rows_hint(statements: &[String]) -> Option<String> {
+    let selects = statements
+        .iter()
+        .filter(|s| crate::safety::classify(s) == crate::safety::StatementKind::Select)
+        .count();
+    (statements.len() > 1 && selects > 0).then(|| {
+        format!(
+            "note: a script of {} statements prints only its status, not rows — \
+             run the SELECT as a statement of its own to get them",
+            statements.len()
+        )
+    })
+}
+
 pub struct Opts {
     pub dsn: Dsn,
     pub sql: String,
@@ -123,6 +142,9 @@ pub enum Refusal {
         kind: String,
         db: String,
         stmt: String,
+        /// The statement's leading word when no Postgres statement starts
+        /// with it — most likely a typo ([`crate::safety::unrecognised_statement_word`]).
+        unrecognised: Option<String>,
     },
     /// A `Block` guard.
     Block {
@@ -177,6 +199,7 @@ pub fn check_statements(
                     kind: decision.kind.describe(),
                     db: db.to_string(),
                     stmt: stmt_summary(stmt),
+                    unrecognised: crate::safety::unrecognised_statement_word(stmt),
                 });
             }
             // Not a category guard: the profile asked for a read-only
@@ -206,7 +229,15 @@ pub fn check_batch_safety(
         Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
         Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
         Refusal::ServerControl => crate::safety::SERVER_CONTROL_REFUSAL.to_string(),
-        Refusal::Confirm { kind, db, stmt } => format!(
+        Refusal::Confirm {
+            unrecognised: Some(word),
+            stmt,
+            ..
+        } => format!(
+            "blocked by safety: `{word}` isn't a statement pgman recognises (typo?) \
+             — re-run with --yes to send it anyway (statement: {stmt})"
+        ),
+        Refusal::Confirm { kind, db, stmt, .. } => format!(
             "blocked by safety: {kind} on '{db}' would need confirmation \
              — re-run with --yes to allow guarded writes in batch mode (statement: {stmt})"
         ),
@@ -221,6 +252,30 @@ pub fn check_batch_safety(
 mod read_only_batch_tests {
     use super::check_batch_safety;
     use crate::safety::{SafetyConfig, READ_ONLY_ESCAPE_REFUSAL};
+
+    #[test]
+    fn a_typo_is_refused_as_unrecognised_not_as_a_guarded_write() {
+        let err =
+            check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", false).unwrap_err();
+        assert!(
+            err.starts_with(
+                "blocked by safety: `selec` isn't a statement pgman recognises (typo?)"
+            ),
+            "{err}"
+        );
+        assert!(err.contains("re-run with --yes to send it anyway"), "{err}");
+        // Still guarded: --yes is what lets it through, as before.
+        assert!(check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", true).is_ok());
+        // A known write keeps the guarded-write wording.
+        let write = check_batch_safety(
+            &SafetyConfig::default(),
+            "db",
+            "merge into t using s on true when matched then delete",
+            false,
+        )
+        .unwrap_err();
+        assert!(write.contains("would need confirmation"), "{write}");
+    }
 
     #[test]
     fn server_control_is_refused_under_a_read_only_profile_even_with_yes() {
@@ -392,6 +447,9 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 // add one when the format doesn't).
                 if !text.ends_with('\n') {
                     println!();
+                }
+                if let Some(hint) = script_rows_hint(&checked) {
+                    eprintln!("{hint}");
                 }
                 // A partial export must not pass for a whole one.
                 if grid.truncated {
@@ -1297,6 +1355,26 @@ mod tests {
         assert_eq!(
             checked,
             vec!["SELECT 1".to_string(), "-- note\nSELECT 2".to_string()]
+        );
+    }
+
+    /// A script with a SELECT in it says on stderr that its rows don't
+    /// come back; a single statement, or a script of writes only, says
+    /// nothing.
+    #[test]
+    fn script_rows_hint_only_for_a_script_with_a_select() {
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let hint =
+            script_rows_hint(&v(&["INSERT INTO t VALUES (1)", "SELECT * FROM t"])).expect("a hint");
+        assert!(hint.contains("2 statements"), "{hint}");
+        assert!(hint.contains("not rows"), "{hint}");
+        assert_eq!(script_rows_hint(&v(&["SELECT 1"])), None);
+        assert_eq!(
+            script_rows_hint(&v(&[
+                "INSERT INTO t VALUES (1)",
+                "DELETE FROM t WHERE id = 1"
+            ])),
+            None
         );
     }
 
