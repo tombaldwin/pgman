@@ -6,13 +6,14 @@ to end.
 
 ## What it reads
 
-Three input shapes are recognised:
+Four input shapes are recognised:
 
 - **Hibernate application logs** — an `org.hibernate.SQL` logger line opens a
   statement, followed by the separately-logged bind parameters (`binding
   parameter [1] as [INTEGER] - [42]` on Hibernate 5, `binding parameter
   (1:INTEGER) <- [42]` on Hibernate 6). Multi-line `hibernate.format_sql=true`
-  output is reassembled. `hibernate.show_sql=true`'s console form —
+  output is reassembled. Spring Boot's default pattern (`logger : message`)
+  and logback's (`logger - message`) both work. `hibernate.show_sql=true`'s console form —
   `Hibernate: select …`, what Spring Boot prints by default — works too,
   with its binds attached.
 
@@ -39,6 +40,12 @@ Three input shapes are recognised:
   include `%p` in it so a `bind`'s parameters pair with the right backend's
   `execute`.
 
+  `log_destination = 'csvlog'` and `'jsonlog'` (Postgres 15+) work too:
+  pgman recognises the format from the first line and reads each record's
+  message, detail, context and statement fields the same way, pairing by
+  the record's pid. A csvlog field that spans lines (a multi-line
+  statement) is one record.
+
   A failed statement is reconstructed too: an `ERROR:` followed by its
   `STATEMENT:` from the same backend — which the default
   `log_min_error_statement = error` logs with nothing else turned on —
@@ -47,8 +54,18 @@ Three input shapes are recognised:
   (Postgres 13+, `log_parameter_max_length_on_error`) or the backend's
   last `bind`. When `log_statement` already logged the statement before
   it ran, that query is the one marked failed rather than a second copy
-  appearing, so the failure doesn't read as a ×2 N+1 cluster. A `FATAL`'s
-  `STATEMENT:` isn't reconstructed.
+  appearing, so the failure doesn't read as a ×2 N+1 cluster. A `FATAL:`
+  or `PANIC:` followed by its `STATEMENT:` — a backend terminated
+  mid-statement, such as a read replica's `terminating connection due to
+  conflict with recovery` — is reconstructed the same way.
+- **JDBC proxy logs** — p6spy's default single-line format
+  (`now|elapsed|statement|connection N|url …|prepared|sql`), whose last
+  field is the statement with values already in it, and
+  datasource-proxy's query log (`… Query:["select … ?"],
+  Params:[(2107,open)]`). A datasource-proxy batch becomes one query
+  per statement or parameter set. Its values are logged without types,
+  so each is substituted as a quoted literal (`null` as `NULL`), which
+  Postgres casts on re-run.
 - **Pasted JDBC** — no log at all, just a `?`-placeholder statement plus a
   typed parameter list you already have (a debugger watch, a
   `PreparedStatement` toString, whatever). See "Three ways in" below for the
@@ -102,7 +119,7 @@ line lookup that should have been a join.
   (`VARCHAR:NULL`); lines without a `TYPE:` prefix are skipped, so stray
   blank lines or comments in the tail don't break the parse.
 
-All three paths run through the same picker.
+Every path runs through the same picker.
 
 ## The pick list
 
@@ -173,7 +190,14 @@ different one-off queries never cluster; two copies of the same query with
 different literals always do — which is exactly the loop-driven-select
 signature this is built to catch.
 
+Statements that repeat by design never cluster: transaction control
+(`BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, …), session settings
+(`SET`, `RESET`, `SHOW`, `DISCARD`) and a connection pool's `select 1`
+ping. They wrap every request, so as clusters they would outrank the
+loop you are looking for. They still appear in the all-queries list.
+
 ## Implementation notes
 
-Reconstruction: `src/query/hibernate.rs`, `src/query/pglog.rs`,
-`src/query/jdbc.rs`. Clustering: `src/query/nplus1.rs`.
+Reconstruction: `src/query/hibernate.rs`, `src/query/pglog.rs` (csvlog / jsonlog:
+`src/query/pglog_structured.rs`),
+`src/query/proxylog.rs`, `src/query/jdbc.rs`. Clustering: `src/query/nplus1.rs`.

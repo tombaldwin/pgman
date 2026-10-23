@@ -21,7 +21,10 @@
 //!     from a `DETAIL:` / `CONTEXT:  … with parameters:` line in the report or
 //!     the backend's last `bind`. When `log_statement` already logged the
 //!     statement before it ran, that query is marked failed instead of a second
-//!     copy being emitted — two copies would read as an N+1 loop.
+//!     copy being emitted — two copies would read as an N+1 loop. A
+//!     `FATAL` / `PANIC` + `STATEMENT` (a backend terminated mid-statement,
+//!     e.g. a replica's `terminating connection due to conflict with
+//!     recovery`) is read the same way.
 //!
 //! Parameter values are logged by Postgres as quoted text regardless of type
 //! (`$1 = '42'`), so they are reconstructed as quoted literals — re-running
@@ -34,22 +37,74 @@
 //! a severity marker (`ERROR:  …` at column 0, e.g. the second line of a
 //! multi-line string literal in a paste that lost Postgres's tabs) reads
 //! as a record; backends with no `[%p]` in the prefix share one pairing
-//! bucket; a `FATAL` / `PANIC` + `STATEMENT` pair (a terminated backend)
-//! is not reconstructed, only `ERROR`.
+//! bucket.
 
+use crate::query::pglog_structured;
 use crate::query::reconstruct::{BoundParam, ParamValue, ReconstructedQuery, Source};
 use crate::query::subst::{self, PlaceholderStyle};
 use std::collections::HashMap;
 
-/// Parse a Postgres server log into reconstructed queries.
+/// Parse a Postgres server log into reconstructed queries: the stderr
+/// format, or `csvlog` / `jsonlog` (see [`super::pglog_structured`]).
 pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
+    // A log viewed through a colouring tool keeps its escapes when copied.
+    let log = &*crate::query::logdetect::strip_sgr(log);
+    let Some(format) = pglog_structured::sniff(log) else {
+        return parse_stderr(log);
+    };
+    let (text, origin) = pglog_structured::to_stderr(log, format);
+    let mut out = parse_stderr(&text);
+    for q in &mut out {
+        if let Some(&line) = origin.get(q.src_line.wrapping_sub(1)) {
+            q.src_line = line;
+        }
+    }
+    out
+}
+
+/// True if `s` is a severity marker Postgres prints (`LOG`, `ERROR`, …).
+pub(crate) fn is_severity(s: &str) -> bool {
+    LEVELS.contains(&s)
+}
+
+/// [`parse`] for the stderr format.
+fn parse_stderr(log: &str) -> Vec<ReconstructedQuery> {
     let mut out: Vec<ReconstructedQuery> = Vec::new();
     let mut seen = Seen::default();
     let mut current: Option<Pending> = None;
+    // A `parameters:` message whose last quoted value is still open: a
+    // bound value with a newline in it runs on over continuation lines,
+    // which belong to the value, not to the statement's SQL.
+    let mut open_params: Option<OpenParams> = None;
 
     for (idx, line) in log.lines().enumerate() {
         let line_no = idx + 1;
         let Some(Record { prefix, level, msg }) = split_record(line) else {
+            // Postgres writes a tab after every newline in a message;
+            // that tab is the log's, not the statement's or the value's
+            // — inside a string literal it would change the data.
+            let line = line.strip_prefix('\t').unwrap_or(line);
+            if let Some(open) = open_params.as_mut() {
+                open.text.push('\n');
+                open.text.push_str(line);
+                let params = parse_parameters(&open.text);
+                match &open.target {
+                    ParamTarget::Current => {
+                        if let Some(cur) = current.as_mut() {
+                            cur.params = params;
+                        }
+                    }
+                    ParamTarget::Error(pid) => {
+                        if let Some(err) = seen.errors.get_mut(pid) {
+                            err.params = params;
+                        }
+                    }
+                }
+                if !quote_open(&open.text) {
+                    open_params = None;
+                }
+                continue;
+            }
             // Not a record line — a continuation of a multi-line statement.
             if let Some(cur) = current.as_mut() {
                 cur.sql.push('\n');
@@ -57,6 +112,7 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
             }
             continue;
         };
+        open_params = None;
         let pid = extract_pid(prefix).unwrap_or_default();
         // An ERROR's report runs on through DETAIL / HINT / CONTEXT / …
         // to its STATEMENT; anything else from that backend means the
@@ -69,13 +125,18 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
             "DETAIL" => {
                 if msg.contains("parameters:") {
                     let params = parse_parameters(msg);
-                    if let Some(cur) = current.as_mut() {
+                    let target = if let Some(cur) = current.as_mut() {
                         if !params.is_empty() {
                             cur.params = params;
                         }
+                        Some(ParamTarget::Current)
                     } else if let Some(err) = seen.errors.get_mut(&pid) {
                         err.params = params;
-                    }
+                        Some(ParamTarget::Error(pid.clone()))
+                    } else {
+                        None
+                    };
+                    open_params = OpenParams::new(msg, target);
                 }
                 // Non-parameter DETAIL lines belong to `current` — don't finalize.
             }
@@ -95,7 +156,9 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
                 // A LOG line we don't recognise ends the current statement.
                 None => finalize(current.take(), &mut seen, &mut out),
             },
-            "ERROR" => {
+            // A FATAL / PANIC report ends with the statement that was
+            // running, as an ERROR's does.
+            "ERROR" | "FATAL" | "PANIC" => {
                 finalize(current.take(), &mut seen, &mut out);
                 seen.errors.insert(
                     pid,
@@ -112,6 +175,7 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
                 if msg.contains("parameters:") {
                     if let Some(err) = seen.errors.get_mut(&pid) {
                         err.params = parse_parameters(msg);
+                        open_params = OpenParams::new(msg, Some(ParamTarget::Error(pid.clone())));
                     }
                 }
             }
@@ -129,13 +193,45 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
                     });
                 }
             }
-            // WARNING / HINT / FATAL / … end the current statement.
+            // WARNING / HINT / NOTICE / … end the current statement.
             _ => finalize(current.take(), &mut seen, &mut out),
         }
     }
     finalize(current.take(), &mut seen, &mut out);
     out.sort_by_key(|q| q.src_line);
     out
+}
+
+/// Where a `parameters:` message's values go: the statement being
+/// built, or a backend's pending `ERROR:`.
+enum ParamTarget {
+    Current,
+    Error(String),
+}
+
+/// A `parameters:` message that ended inside a quoted value — the rest
+/// of the value is on the continuation lines that follow.
+struct OpenParams {
+    text: String,
+    target: ParamTarget,
+}
+
+impl OpenParams {
+    /// `Some` only when `msg`'s last quoted value is unterminated.
+    fn new(msg: &str, target: Option<ParamTarget>) -> Option<Self> {
+        let target = target?;
+        quote_open(msg).then(|| OpenParams {
+            text: msg.to_string(),
+            target,
+        })
+    }
+}
+
+/// True if `params` (a `parameters: $1 = '…', …` message) ends inside a
+/// quoted value. Postgres doubles a quote inside a value, so an odd
+/// number of quotes means the last one opened a value that hasn't closed.
+fn quote_open(params: &str) -> bool {
+    params.bytes().filter(|&b| b == b'\'').count() % 2 == 1
 }
 
 /// The levels an `ERROR`'s report carries between it and its
@@ -376,12 +472,14 @@ fn parse_log_message(msg: &str) -> Option<(Kind, &str)> {
 /// Strip a `duration: N ms  ` prefix, leaving the statement that follows it.
 fn strip_duration_prefix(msg: &str) -> &str {
     if let Some(rest) = msg.strip_prefix("duration:") {
-        for kw in ["statement:", "execute ", "bind ", "parse "] {
-            if let Some(i) = rest.find(kw) {
-                return &rest[i..];
-            }
-        }
-        return rest.trim_start();
+        // The earliest keyword, not the first in this list: a statement
+        // that mentions `statement:` (`like 'statement:%'`) after its
+        // `execute <tag>:` is still an execute.
+        return ["statement:", "execute ", "bind ", "parse "]
+            .iter()
+            .filter_map(|kw| rest.find(kw))
+            .min()
+            .map_or(rest.trim_start(), |i| &rest[i..]);
     }
     msg
 }
@@ -712,9 +810,9 @@ mod tests {
                 sql,
                 [
                     "select id, total from invoices where status = 'open' and total > '100'",
-                    "select id\n\tfrom customer\n\twhere active",
+                    "select id\nfrom customer\nwhere active",
                     "select * from invoices where id = '48202'",
-                    "select * from invoice_lnes\n\twhere invoice_id = 1",
+                    "select * from invoice_lnes\nwhere invoice_id = 1",
                     "select 1",
                 ],
                 "log_line_prefix = '{format}'"
@@ -752,7 +850,7 @@ mod tests {
 2026-10-21 09:12:50 UTC [101] LOG:  statement: select 1";
         let q = parse(log);
         assert_eq!(q.len(), 2, "{q:?}");
-        assert_eq!(q[0].raw_sql, "select totl\n\tfrom invoices\n\twhere id = 7");
+        assert_eq!(q[0].raw_sql, "select totl\nfrom invoices\nwhere id = 7");
         assert_eq!(q[0].runnable_sql, q[0].raw_sql);
         assert_eq!(q[0].src_line, 4, "the STATEMENT line, where the SQL is");
         assert_eq!(
@@ -929,6 +1027,133 @@ mod tests {
         assert_eq!(q.len(), 2);
         assert_eq!(q[0].runnable_sql, "select * from t where id = 'one'");
         assert_eq!(q[1].runnable_sql, "select * from t where id = 'two'");
+    }
+
+    /// A bound value with a newline in it: Postgres 16 writes the rest of
+    /// the value on a tab-indented continuation line. It belongs to the
+    /// value, not to the statement.
+    #[test]
+    fn a_parameter_value_with_a_newline_continues_on_the_next_line() {
+        let log = "\
+2026-10-23 09:53:54.340 UTC [1869] LOG:  duration: 0.018 ms  parse <unnamed>: insert into probe_t (id, note) values ($1, $2)
+2026-10-23 09:53:54.341 UTC [1869] LOG:  duration: 0.048 ms  bind <unnamed>: insert into probe_t (id, note) values ($1, $2)
+2026-10-23 09:53:54.341 UTC [1869] DETAIL:  parameters: $1 = '4', $2 = 'line one
+\tline two\ttabbed'
+2026-10-23 09:53:54.341 UTC [1869] LOG:  execute <unnamed>: insert into probe_t (id, note) values ($1, $2)
+2026-10-23 09:53:54.341 UTC [1869] DETAIL:  parameters: $1 = '4', $2 = 'line one
+\tit''s
+\tthree'
+2026-10-23 09:53:54.341 UTC [1869] LOG:  duration: 0.193 ms
+2026-10-23 09:53:54.342 UTC [1869] ERROR:  value too long for type character varying(3)
+2026-10-23 09:53:54.342 UTC [1869] CONTEXT:  unnamed portal with parameters: $1 = 'a
+\tb'
+2026-10-23 09:53:54.342 UTC [1869] STATEMENT:  select $1::varchar(3)";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "{q:#?}");
+        assert_eq!(
+            q[0].raw_sql,
+            "insert into probe_t (id, note) values ($1, $2)"
+        );
+        assert_eq!(
+            q[0].params[1].value,
+            ParamValue::Literal("line one\nit's\nthree".to_string())
+        );
+        assert_eq!(
+            q[0].runnable_sql,
+            "insert into probe_t (id, note) values ('4', 'line one\nit''s\nthree')"
+        );
+        assert_eq!(q[1].runnable_sql, "select 'a\nb'::varchar(3)");
+        // The bind's own value, with the tab inside the value kept.
+        let bind_only = log.lines().take(4).collect::<Vec<_>>().join("\n")
+            + "\n2026-10-23 09:53:54.341 UTC [1869] LOG:  execute <unnamed>: insert into probe_t (id, note) values ($1, $2) ";
+        let q = parse(&bind_only);
+        assert_eq!(
+            q[0].runnable_sql,
+            "insert into probe_t (id, note) values ('4', 'line one\nline two\ttabbed')"
+        );
+    }
+
+    /// The tab Postgres writes after each newline of a message is the
+    /// log's: inside a string literal that spans lines, keeping it would
+    /// change the data the statement writes.
+    #[test]
+    fn a_statements_continuation_lines_lose_the_tab_postgres_added() {
+        let log = "\
+[7] LOG:  statement: insert into notes values ('line one
+\t\tindented two')";
+        let q = parse(log);
+        assert_eq!(
+            q[0].raw_sql,
+            "insert into notes values ('line one\n\tindented two')"
+        );
+    }
+
+    /// A replica cancelling a query for recovery conflict terminates the
+    /// backend: a FATAL report, then its STATEMENT. Reconstructed like an
+    /// ERROR's, alongside the ERROR + CONTEXT parameters next to it.
+    #[test]
+    fn a_fatal_and_its_statement_become_a_failed_query() {
+        let log = "\
+2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:LOG:  duration: 12.345 ms  execute S_1: select id, total from invoices where status = $1 and total > $2
+2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:DETAIL:  parameters: $1 = 'open', $2 = '100'
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:FATAL:  terminating connection due to conflict with recovery
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:DETAIL:  User query might have needed to see row versions that must be removed.
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2026-10-21 09:12:49 UTC:10.0.1.23(51234):billing@ledger:[31840]:STATEMENT:  select l.id, l.amount from invoice_lines l where l.invoice_id = 7
+2026-10-21 09:12:50 UTC:10.0.1.24(51235):billing@ledger:[31841]:ERROR:  canceling statement due to statement timeout
+2026-10-21 09:12:50 UTC:10.0.1.24(51235):billing@ledger:[31841]:CONTEXT:  unnamed portal with parameters: $1 = '48202', $2 = 'it''s \"quoted\", really'
+2026-10-21 09:12:50 UTC:10.0.1.24(51235):billing@ledger:[31841]:STATEMENT:  select l.id, l.amount from invoice_lines l where l.invoice_id = $1 and l.note = $2
+2026-10-21 09:12:51 UTC [55] PANIC:  could not write to file \"pg_wal/xlogtemp.55\": No space left on device
+2026-10-21 09:12:51 UTC [55] STATEMENT:  insert into audit values (1)";
+        let got: Vec<(String, Option<String>)> = parse(log)
+            .into_iter()
+            .map(|q| (q.runnable_sql, q.error))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "select id, total from invoices where status = 'open' and total > '100'"
+                        .to_string(),
+                    None
+                ),
+                (
+                    "select l.id, l.amount from invoice_lines l where l.invoice_id = 7".to_string(),
+                    Some("terminating connection due to conflict with recovery".to_string())
+                ),
+                (
+                    "select l.id, l.amount from invoice_lines l where l.invoice_id = '48202' and l.note = 'it''s \"quoted\", really'"
+                        .to_string(),
+                    Some("canceling statement due to statement timeout".to_string())
+                ),
+                (
+                    "insert into audit values (1)".to_string(),
+                    Some(
+                        "could not write to file \"pg_wal/xlogtemp.55\": No space left on device"
+                            .to_string()
+                    )
+                ),
+            ]
+        );
+    }
+
+    /// `duration: … execute <tag>: <sql>` where the SQL itself says
+    /// `statement:` (or `bind `): the record is the execute, cut at its
+    /// own keyword, not at the later one inside the SQL.
+    #[test]
+    fn a_duration_record_is_cut_at_its_earliest_keyword() {
+        let log = "\
+2026-10-21 09:12:52 UTC:10.0.1.24(51235):billing@ledger:[31841]:LOG:  duration: 0.5 ms  execute <unnamed>: select * from t where note like 'statement:%' and id = $1
+2026-10-21 09:12:52 UTC:10.0.1.24(51235):billing@ledger:[31841]:DETAIL:  parameters: $1 = '5'
+2026-10-21 09:12:53 UTC:10.0.1.24(51235):billing@ledger:[31841]:LOG:  duration: 0.5 ms  statement: select 'bind me' as execute ";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                "select * from t where note like 'statement:%' and id = '5'",
+                "select 'bind me' as execute",
+            ]
+        );
     }
 
     #[test]

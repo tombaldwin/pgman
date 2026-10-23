@@ -7253,6 +7253,19 @@ fn preload_log_with_jdbc_paste_shape_enters_log_pick_with_substituted_sql() {
 }
 
 #[test]
+fn preload_log_with_a_p6spy_log_enters_log_pick() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let log = "1729501968001|3|statement|connection 0|url jdbc:postgresql://db.example/ledger|select * from orders where id=?|select * from orders where id=42";
+    a.preload_log(log.to_string());
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(a.log_pick.picks.len(), 1);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from orders where id=42"
+    );
+}
+
+#[test]
 fn preload_log_with_prose_lands_in_editor_with_no_queries_error() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.preload_log("just some notes, not a log or SQL at all".to_string());

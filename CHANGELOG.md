@@ -23,6 +23,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `log_min_error_statement` logs with nothing else on. A statement
   `log_statement` already logged is marked failed rather than listed
   twice. The log picker marks a failed pick `✗` and shows its error.
+- Logs → SQL reads Postgres's `csvlog` and `jsonlog` (PG 15+) formats as
+  well as stderr: same pairing of parameters and errors, by pid.
+- Logs → SQL reads p6spy (default single-line format) and
+  datasource-proxy query logs, tagged `[p6spy]` / `[ds-proxy]` in the
+  picker.
 
 ### Changed
 
@@ -38,6 +43,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
   Postgres connection no longer offers the post-quantum X25519MLKEM768
   key exchange, which only the aws-lc provider had.
+- Logs → SQL: a Postgres `FATAL:` or `PANIC:` followed by its
+  `STATEMENT:` (a read replica's `terminating connection due to
+  conflict with recovery`) is reconstructed as a failed query, like an
+  `ERROR:`'s.
 
 ### Fixed
 
@@ -124,6 +133,34 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `y` on a NULL field leaves the clipboard alone.
 - The result diff counts a NULL → `''` change and shows it; `\fixture`
   leaves NULL cells out (flat XML's NULL) instead of writing `col=""`.
+- Logs → SQL: a Postgres log's bound value with a newline in it no
+  longer corrupts the reconstruction. The rest of the value, which
+  Postgres writes on the next line, went into the statement's SQL and
+  the value was cut short; it now stays in the value.
+- Logs → SQL: a multi-line statement from a Postgres log no longer
+  keeps the tab Postgres adds to each continuation line, which changed
+  a string literal that spans lines.
+- Logs → SQL: Hibernate logs in logback's default pattern
+  (`%logger{36} - %msg`) are read whole. pgman cut the statement at
+  its first `:` (`like 'ref:%'`, a `10:00:00` timestamp), or dropped a
+  statement with no `:` in it.
+- Logs → SQL: under Spring Boot 3.2's default log pattern, which puts
+  `[appName]` before the thread, a Hibernate bind paired with whichever
+  thread logged a statement last. The thread is now the bracket group
+  nearest the logger.
+- Logs → SQL: `BEGIN` / `COMMIT` / `ROLLBACK`, `SET` / `SHOW` / `RESET` /
+  `DISCARD` and `select 1` pool pings are no longer reported as N+1
+  clusters, where they outranked the real one. They stay in the list.
+- Logs → SQL: ANSI colour codes in a pasted log (Hibernate's
+  `highlight_sql=true`, a coloured console or pager) are ignored. A
+  highlighted formatted statement was dropped, and a one-line one kept
+  the codes in its SQL.
+- Logs → SQL: a Postgres `duration: … execute` record whose SQL
+  contains `statement:` (`like 'statement:%'`) was cut there, leaving
+  the tail of the statement as the query.
+- Logs → SQL: a Hibernate 6 `ARRAY` bind (`[a, b c]`) is substituted as
+  a Postgres array literal (`'{"a","b c"}'`) instead of a string the
+  server rejects as a malformed array.
 
 ## [0.1.0] — 2026-10-22
 
