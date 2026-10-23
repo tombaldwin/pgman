@@ -2537,15 +2537,27 @@ fn list_panels_keep_the_cursor_row_on_screen_under_their_header() {
     assert!(s.contains("chan_39"), "notifications:\n{s}");
 }
 
-/// Twenty query events, each with its own table and caller frame: one
-/// List row, hotspot and caller group apiece, the SQL ending `kNN`.
+/// Twenty statements, each with its own table, caller frame and
+/// transaction, run five times apiece: one hotspot, caller group,
+/// transaction and N+1 finding each, and a baseline diff entry each
+/// against the empty ring captured first. The SQL ends `kNN`.
 fn tap_app_with_twenty_tokens() -> App {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     let mut a = settled_app(false, false);
+    a.mode = crate::app::Mode::TapMonitor;
+    a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
+    assert!(a.tap_baseline.is_some());
     for i in 0..20 {
-        let mut e = tap_query_with_params(&format!("SELECT a FROM k{i:02}"), &[], false);
-        e.caller = Some(vec![format!("com.example.Repo.k{i:02}(Repo.java:1)")]);
-        a.on_tap_event(e);
+        for _ in 0..crate::tap::NPLUS1_MIN_REPEATS {
+            let mut e = tap_query_with_params(&format!("SELECT a FROM k{i:02}"), &[], false);
+            e.caller = Some(vec![format!("com.example.Repo.k{i:02}(Repo.java:1)")]);
+            e.txn = Some(format!("c-1#{i}"));
+            a.on_tap_event(e);
+        }
     }
+    assert_eq!(a.current_nplus1().len(), 20);
+    assert_eq!(a.current_txns().len(), 20);
+    assert_eq!(a.current_baseline_diff().len(), 20);
     a
 }
 
@@ -2566,15 +2578,23 @@ fn selected_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
         .collect()
 }
 
-/// The tap List, Hotspots and Callers views draw a header row above
-/// their rows. Scrolling as if the header were a row left the focused
-/// row one past the panel's bottom edge: at 80x24, `j` ×7 showed row
-/// 7's parameters with row 7 not drawn, and `G` hid the last row.
+/// The tap views draw a header row above their rows (Baseline, its
+/// summary lines too). Scrolling as if the header were a row left the
+/// focused row one past the panel's bottom edge: at 80x24, `j` ×7 in
+/// the List showed row 7's parameters with row 7 not drawn, and `G`
+/// hid the last row.
 #[test]
 fn tap_views_keep_the_focused_row_on_screen_under_their_header() {
     use crate::app::TapView;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    for view in [TapView::List, TapView::Hotspots, TapView::Callers] {
+    for view in [
+        TapView::List,
+        TapView::Hotspots,
+        TapView::Callers,
+        TapView::Transactions,
+        TapView::NplusOne,
+        TapView::Baseline,
+    ] {
         let mut a = tap_app_with_twenty_tokens();
         a.mode = crate::app::Mode::TapMonitor;
         a.tap_nav.view = view;

@@ -786,12 +786,7 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
     )));
     let inner_w = inner.width as usize;
     let body_col = inner_w.saturating_sub(2 + 11 + 2 + 6 + 2 + 6 + 2 + 9 + 2 + 9 + 2);
-    for (i, d) in diffs
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(table_h.saturating_sub(1))
-    {
+    for (i, d) in diffs.iter().enumerate().skip(scroll).take(table_h) {
         let is_focus = i == cursor;
         let row_style = if is_focus {
             Style::default()
@@ -891,7 +886,7 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
         return;
     }
-    let visible_h = inner.height as usize;
+    let visible_h = (inner.height as usize).saturating_sub(1); // under the header
     let cursor = app.tap_nav.txns_cursor.min(txns.len() - 1);
     let scroll = scroll_offset(cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
@@ -907,12 +902,7 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
     )));
     let inner_w = inner.width as usize;
     let body_col = inner_w.saturating_sub(2 + 10 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 10 + 2 + 12 + 2);
-    for (i, t) in txns
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(visible_h.saturating_sub(1))
-    {
+    for (i, t) in txns.iter().enumerate().skip(scroll).take(visible_h) {
         let is_focus = i == cursor;
         let state_label = match t.outcome {
             None => "open",
@@ -1062,7 +1052,7 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
         return;
     }
-    let visible_h = inner.height as usize;
+    let visible_h = (inner.height as usize).saturating_sub(1); // under the header
     let cursor = app.tap_nav.nplus1_cursor.min(findings.len() - 1);
     let scroll = scroll_offset(cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
@@ -1078,12 +1068,7 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
     )));
     let inner_w = inner.width as usize;
     let body_col = inner_w.saturating_sub(2 + 6 + 2 + 10 + 2 + 18 + 2);
-    for (i, fnd) in findings
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(visible_h.saturating_sub(1))
-    {
+    for (i, fnd) in findings.iter().enumerate().skip(scroll).take(visible_h) {
         let is_focus = i == cursor;
         let style = if is_focus {
             Style::default()
