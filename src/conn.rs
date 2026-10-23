@@ -1463,6 +1463,113 @@ pub async fn run_in_tx_rollback(
     result
 }
 
+/// How a one-row edit ([`run_single_row_update`]) left the transaction
+/// once the row had changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditTx {
+    /// Committed: the change is in the database.
+    Committed,
+    /// `auto_tx`: pgman's own transaction is still open, for the
+    /// operator's commit or rollback.
+    LeftOpen,
+    /// The operator had a transaction of their own open (a `BEGIN` from
+    /// the editor); the change is inside it, not committed yet.
+    InOperatorTx,
+}
+
+/// What a one-row edit sent back: the column's value as the server
+/// stored and renders it (`RETURNING`), and how the transaction stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SingleRowUpdate {
+    pub value: Option<String>,
+    pub tx: EditTx,
+}
+
+/// The savepoint [`run_single_row_update`] brackets an edit with when
+/// the session is already inside a transaction.
+const EDIT_SAVEPOINT: &str = "pgman_cell_edit";
+
+/// Run a cell edit's `UPDATE … RETURNING col` so that it changes exactly
+/// one row or nothing (`query::cell_edit::check_one_row`).
+///
+/// It runs inside a transaction of its own — or, when the operator
+/// already has one open (pgman does not track a `BEGIN` typed into the
+/// editor), inside a savepoint, so that undoing the edit can never take
+/// the operator's earlier work with it. `SAVEPOINT` is how it tells:
+/// outside a transaction block it fails with `25P01`, and the edit
+/// begins its own. Any count but one, or any error, is rolled back (to
+/// the savepoint) before the error comes back. On success: a savepoint
+/// is released and the operator's transaction stays open; with
+/// `keep_open` (`auto_tx`) pgman's transaction is left for the commit /
+/// rollback prompt; otherwise it commits.
+pub async fn run_single_row_update(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    keep_open: bool,
+) -> Result<SingleRowUpdate, QueryErr> {
+    let nested = match client
+        .batch_execute(&format!("SAVEPOINT {EDIT_SAVEPOINT}"))
+        .await
+    {
+        Ok(()) => true,
+        Err(e) if e.code() == Some(&tokio_postgres::error::SqlState::NO_ACTIVE_SQL_TRANSACTION) => {
+            client
+                .batch_execute("BEGIN")
+                .await
+                .map_err(QueryErr::from)?;
+            false
+        }
+        Err(e) => return Err(QueryErr::from(e)),
+    };
+    let outcome = async {
+        let mut value = None;
+        let mut rows = 0;
+        for msg in client.simple_query(sql).await.map_err(QueryErr::from)? {
+            match msg {
+                tokio_postgres::SimpleQueryMessage::Row(row) if rows == 0 => {
+                    value = row.try_get(0).ok().flatten().map(str::to_string);
+                }
+                tokio_postgres::SimpleQueryMessage::CommandComplete(n) => rows = n,
+                _ => {}
+            }
+        }
+        crate::query::cell_edit::check_one_row(rows).map_err(QueryErr::msg)?;
+        Ok(value)
+    }
+    .await;
+    let value = match outcome {
+        Ok(value) => value,
+        Err(e) => {
+            let undo = if nested {
+                format!(
+                    "ROLLBACK TO SAVEPOINT {EDIT_SAVEPOINT}; RELEASE SAVEPOINT {EDIT_SAVEPOINT}"
+                )
+            } else {
+                "ROLLBACK".to_string()
+            };
+            let _ = client.batch_execute(&undo).await;
+            return Err(e);
+        }
+    };
+    let tx = if nested {
+        client
+            .batch_execute(&format!("RELEASE SAVEPOINT {EDIT_SAVEPOINT}"))
+            .await
+            .map_err(QueryErr::from)?;
+        EditTx::InOperatorTx
+    } else if keep_open {
+        EditTx::LeftOpen
+    } else {
+        // A failed COMMIT has already ended the transaction.
+        client
+            .batch_execute("COMMIT")
+            .await
+            .map_err(QueryErr::from)?;
+        EditTx::Committed
+    };
+    Ok(SingleRowUpdate { value, tx })
+}
+
 /// Run `sql` and collect the result into a `Grid` (capped at `grid::MAX_ROWS`).
 ///
 /// Streams via `query_raw` and sets `Grid.truncated` if more rows existed
