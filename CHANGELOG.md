@@ -27,22 +27,21 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
-- `I` (row as INSERT) and `:fixture` named a quoted mixed-case table
-  bare: a row yanked from `"OrderLine"` was inserted into a lowercase
-  twin `orderline` if there was one, and failed otherwise. The FROM
-  parse now folds unquoted names to lower case and keeps quoted ones
-  (spaces and `""` included), and the INSERT and the fixture's apply
-  script quote the table. A fixture element in one case (`USERS`,
-  `users`) still means `users`, as DBUnit reads it; a mixed-case one
-  now means exactly that table. A table whose name a fixture can't
-  carry is refused rather than captured under another name. `F` (FK
-  follow) prefers the exact table over a case-insensitive match.
-- A fixture's column names are quoted on apply, so a mixed-case
-  (`createdAt`) or reserved (`user`) column round-trips; an
-  all-uppercase attribute (`FULL_NAME`) still means `full_name`. A
-  column XML can't carry (`a"b`, `with space`, `?column?`) refuses
-  the `:fixture` capture and names the column, instead of being
-  renamed with `_` into a column the table doesn't have.
+- `I` (row as INSERT) named a quoted mixed-case table bare: a row
+  yanked from `"OrderLine"` was inserted into a lowercase twin
+  `orderline` if there was one, and failed otherwise. The FROM parse
+  now folds unquoted names to lower case and keeps quoted ones (spaces
+  and `""` included), and the INSERT quotes the table. `:fixture`
+  refuses such a table instead of capturing it under the twin's name:
+  DBUnit names tables case-insensitively, so no fixture can name it.
+  `F` (FK follow) prefers the exact table over a case-insensitive match.
+- A fixture's apply script quotes a reserved table or column name
+  (`user`), which was a syntax error, and still reads every other
+  name as DBUnit does, case-insensitively (`<UserAccount Id="1">` is
+  `useraccount (id)`). `:fixture` refuses, naming it, a column that
+  can't round-trip — one with upper-case letters (`createdAt`) or one
+  XML can't carry (`a"b`, `with space`, `?column?`) — instead of
+  renaming it with `_` into a column the table doesn't have.
 - `\fixture`, `\report` and `\i` (and their `:` spellings) take the
   rest of the line as the path, so a path with spaces works; a
   double-quoted path has its quotes removed. They took the first word,

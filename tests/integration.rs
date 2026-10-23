@@ -5752,11 +5752,13 @@ async fn writable_client() -> (
 }
 
 /// A mixed-case table and its lowercase twin. `SELECT * FROM "Mixed"`,
-/// then `I` and `:fixture`: the yanked INSERT and the fixture's apply
-/// script each put the row back in the quoted table, never the twin.
-/// Bare, `INSERT INTO public.Mixed` folded to the twin.
+/// then `I`: the yanked INSERT puts the row back in the quoted table,
+/// never the twin (bare, `INSERT INTO public.Mixed` folded to the twin).
+/// `:fixture` refuses the capture — DBUnit names are case-insensitive,
+/// so no fixture can name the quoted table — and a hand-written fixture
+/// naming `RevMixed` applies to the lowercase twin, as DBUnit reads it.
 #[tokio::test]
-async fn the_insert_yank_and_fixture_land_in_the_quoted_table_not_its_twin() {
+async fn the_insert_yank_lands_in_the_quoted_table_and_fixtures_read_names_as_dbunit() {
     let (client, _tunnel) = writable_client().await;
     let pid = std::process::id();
     let mixed = format!("pgman_it_RevMixed_{pid}");
@@ -5797,12 +5799,13 @@ async fn the_insert_yank_and_fixture_land_in_the_quoted_table_not_its_twin() {
         count(twin.clone()).await,
     );
 
-    let fixture = pgman::dbunit::fixture_from_rows(&table, &grid.columns, &grid.rows)
-        .expect("the table name round-trips");
-    let reparsed =
-        pgman::dbunit::parse_flat_xml(&pgman::dbunit::generate_flat_xml(&fixture)).unwrap();
+    let refused = pgman::dbunit::fixture_from_rows(&table, &grid.columns, &grid.rows);
+
+    let hand_written =
+        pgman::dbunit::parse_flat_xml(&format!(r#"<dataset><{mixed} Id="7" V="twin"/></dataset>"#))
+            .unwrap();
     let script =
-        pgman::dbunit::generate_apply_script(&reparsed, pgman::dbunit::CleanMode::DeleteFrom);
+        pgman::dbunit::generate_apply_script(&hand_written, pgman::dbunit::CleanMode::DeleteFrom);
     let apply = client.batch_execute(&script).await;
     let (fx_mixed, fx_twin) = (
         count(format!("\"{mixed}\"")).await,
@@ -5818,28 +5821,38 @@ async fn the_insert_yank_and_fixture_land_in_the_quoted_table_not_its_twin() {
         ("1", "0"),
         "{insert}"
     );
+    let err = refused.expect_err("a mixed-case table can't be a fixture element");
+    assert!(err.contains("case-insensitively"), "{err}");
     apply.unwrap_or_else(|e| panic!("{script}: {e}"));
     assert_eq!(
         (fx_mixed.as_str(), fx_twin.as_str()),
-        ("1", "0"),
+        ("1", "1"),
         "{script}"
     );
 }
 
-/// A fixture captured from a table with a mixed-case and a reserved
-/// column name applies back to it: the apply script quotes them. Bare,
-/// `createdAt` was `createdat` and `user` a syntax error.
+/// A fixture captured from a table with a reserved column name
+/// applies back to it: the apply script quotes `"user"` (bare, a syntax
+/// error). A table with a mixed-case column refuses the capture: DBUnit
+/// would read `createdAt` back as `createdat`.
 #[tokio::test]
-async fn a_fixture_of_mixed_case_and_reserved_columns_applies_back() {
+async fn a_fixture_with_a_reserved_column_applies_back_and_a_mixed_case_one_is_refused() {
     let (client, _tunnel) = writable_client().await;
     let table = it_name("fxcols");
+    let mixed = it_name("fxmixed");
     client
         .batch_execute(&format!(
-            "CREATE TABLE {table} (id int PRIMARY KEY, \"createdAt\" text, \"user\" text); \
-             INSERT INTO {table} VALUES (1, 'then', 'someone')"
+            "CREATE TABLE {table} (id int PRIMARY KEY, \"user\" text, \"order\" text); \
+             INSERT INTO {table} VALUES (1, 'someone', 'first'); \
+             CREATE TABLE {mixed} (id int, \"createdAt\" text); \
+             INSERT INTO {mixed} VALUES (1, 'then')"
         ))
         .await
-        .expect("create the table");
+        .expect("create the tables");
+    let mixed_grid = pgman::conn::run_statement(&client, &format!("SELECT * FROM {mixed}"))
+        .await
+        .expect("select mixed");
+    let refused = pgman::dbunit::fixture_from_rows(&mixed, &mixed_grid.columns, &mixed_grid.rows);
     let select = format!("SELECT * FROM {table}");
     let before = pgman::conn::run_statement(&client, &select)
         .await
@@ -5852,9 +5865,13 @@ async fn a_fixture_of_mixed_case_and_reserved_columns_applies_back() {
         pgman::dbunit::generate_apply_script(&reparsed, pgman::dbunit::CleanMode::DeleteFrom);
     let applied = client.batch_execute(&script).await;
     let after = pgman::conn::run_statement(&client, &select).await;
-    let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
+    let _ = client
+        .batch_execute(&format!("DROP TABLE {table}; DROP TABLE {mixed}"))
+        .await;
     applied.unwrap_or_else(|e| panic!("{script}: {e}"));
     assert_eq!(after.expect("select again").rows, before.rows, "{script}");
+    let err = refused.expect_err("createdAt can't round-trip");
+    assert!(err.contains("column \"createdAt\""), "{err}");
 }
 
 /// A value with a backslash — text, and a bytea, whose text form is

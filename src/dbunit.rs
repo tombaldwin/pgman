@@ -21,10 +21,10 @@
 //! attributes are columns. A missing attribute is treated as a missing column
 //! (the INSERT just doesn't mention it, so the DB default applies).
 //!
-//! Names in the XML are read the way DBUnit reads them — case-insensitively
-//! when they are written in one case (`users`, `USERS` both mean `users`),
-//! exactly otherwise (`PgRevMixed` means the quoted `"PgRevMixed"`, not its
-//! lowercase twin). See [`sql_ident_name`].
+//! Names in the XML are read the way DBUnit reads them — case-insensitively:
+//! `users`, `USERS` and `Users` all mean `users`. Only a name that can't be
+//! a bare identifier (`order items`) is taken exactly. See
+//! [`sql_ident_name`].
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -229,22 +229,31 @@ pub fn fixture_from_rows(
 }
 
 /// How a fixture name (an element or attribute name) reads as a SQL
-/// identifier on apply. A name in a single case is DBUnit's
-/// case-insensitive spelling and folds the way the server folds an
-/// unquoted name — `USERS` and `users` both mean `users`, which keeps
-/// hand-written uppercase fixtures from Java projects working. Any
-/// other name is the exact catalog name: `PgRevMixed` is
-/// `"PgRevMixed"`, not its lowercase twin `pgrevmixed`. Reserved words
-/// and names that need it are quoted (`user` → `"user"`).
+/// identifier on apply, with DBUnit's semantics: names are
+/// case-insensitive. Any name shaped like a bare identifier folds to
+/// lower case the way the server folds an unquoted one — `USERS`,
+/// `Users` and `users` all mean `users`, and `<UserAccount Id="1">`
+/// means table `useraccount`, column `id`, as Java projects write it.
+/// Only a name that can't be a bare identifier (`order items`,
+/// `Café`) is taken exactly, quoted. A reserved word is quoted after
+/// folding (`user` → `"user"`): that is syntax, not case.
 pub fn sql_ident_name(name: &str) -> String {
-    let single_upper = name.chars().any(|c| c.is_ascii_uppercase())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-    if single_upper {
+    if is_bare_identifier_shape(name) {
         crate::app::quote_ident(&name.to_ascii_lowercase())
     } else {
         crate::app::quote_ident(name)
+    }
+}
+
+/// `[A-Za-z_][A-Za-z0-9_]*` — a name that, unquoted, the server reads
+/// as an identifier (folded to lower case).
+fn is_bare_identifier_shape(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        _ => false,
     }
 }
 
@@ -263,9 +272,10 @@ pub fn sql_table_name(name: &str) -> String {
 /// Why `name` — a catalog name captured from a result, a table's
 /// (`table`) or a column's — can't be written as a fixture name and
 /// read back as itself, or `None` when it can. XML can't carry every
-/// identifier (`?column?`, `a b`, `a"b`), an all-uppercase name
-/// (`"USERS"`) reads back folded, and a table name with a dot reads
-/// back as schema.table.
+/// identifier (`?column?`, `a b`, `a"b`), a name with an upper-case
+/// letter (`"PgRevMixed"`, `"createdAt"`) reads back folded — DBUnit
+/// names are case-insensitive — and a table name with a dot reads back
+/// as schema.table.
 pub fn fixture_name_problem(name: &str, table: bool) -> Option<&'static str> {
     if !is_xml_name(name) {
         return Some("not a valid XML name");
@@ -274,7 +284,10 @@ pub fn fixture_name_problem(name: &str, table: bool) -> Option<&'static str> {
         return Some("a dot reads back as schema.table");
     }
     if sql_ident_name(name) != crate::app::quote_ident(name) {
-        return Some("an all-uppercase name reads back folded to lowercase");
+        return Some(
+            "DBUnit fixtures name tables and columns case-insensitively, \
+             so a name with upper-case letters can't round-trip",
+        );
     }
     None
 }
@@ -468,30 +481,32 @@ mod tests {
         assert_eq!(generate_inserts(&f), vec!["INSERT INTO t DEFAULT VALUES"]);
     }
 
-    /// A captured mixed-case table applies to itself, not its lowercase
-    /// twin; a single-case name stays DBUnit's case-insensitive one;
-    /// a reserved word and a schema-qualified element both work.
+    /// DBUnit names are case-insensitive: any bare-identifier-shaped
+    /// element folds, whatever its case — `<UserAccount Id="1">` is table
+    /// `useraccount` — in the INSERT and in both clean modes. A reserved
+    /// word is still quoted; a name that can't be bare is taken exactly.
     #[test]
-    fn apply_names_the_table_the_fixture_was_captured_from() {
-        let f = fixture_from_rows("PgRevMixed", &["id".to_string()], &[vec![Some("1".into())]])
-            .unwrap();
+    fn apply_reads_names_case_insensitively_as_dbunit_does() {
+        let f = parse_flat_xml(r#"<dataset><UserAccount Id="1" FullName="x"/></dataset>"#).unwrap();
         assert_eq!(
             generate_inserts(&f),
-            vec!["INSERT INTO \"PgRevMixed\" (id) VALUES ('1')"]
+            vec!["INSERT INTO useraccount (id, fullname) VALUES ('1', 'x')"]
         );
         assert_eq!(
             generate_clean(&f, CleanMode::DeleteFrom),
-            vec!["DELETE FROM \"PgRevMixed\""]
+            vec!["DELETE FROM useraccount"]
         );
         assert_eq!(
             generate_clean(&f, CleanMode::Truncate),
-            vec!["TRUNCATE TABLE \"PgRevMixed\" RESTART IDENTITY CASCADE"]
+            vec!["TRUNCATE TABLE useraccount RESTART IDENTITY CASCADE"]
         );
         assert_eq!(sql_table_name("USERS"), "users");
         assert_eq!(sql_table_name("users"), "users");
+        assert_eq!(sql_table_name("PgRevMixed"), "pgrevmixed");
         assert_eq!(sql_table_name("user"), "\"user\"");
         assert_eq!(sql_table_name("audit.events"), "audit.events");
-        assert_eq!(sql_table_name("AUDIT.PgEvents"), "audit.\"PgEvents\"");
+        assert_eq!(sql_table_name("AUDIT.PgEvents"), "audit.pgevents");
+        assert_eq!(sql_table_name("Café"), "\"Café\"");
         let f = parse_flat_xml("<dataset><USER ID=\"1\"/></dataset>").unwrap();
         assert_eq!(
             generate_inserts(&f)[0],
@@ -503,12 +518,17 @@ mod tests {
     /// renamed into some other table.
     #[test]
     fn capture_refuses_a_table_name_that_does_not_round_trip() {
-        for bad in ["weird table", "USERS", "a.b", "?column?", ""] {
+        for bad in ["weird table", "USERS", "PgRevMixed", "a.b", "?column?", ""] {
             assert!(
                 fixture_from_rows(bad, &["id".to_string()], &[]).is_err(),
                 "{bad:?} must be refused"
             );
         }
+        let err = fixture_from_rows("PgRevMixed", &["id".to_string()], &[]).unwrap_err();
+        assert!(err.contains("case-insensitively"), "{err}");
+        // A reserved lowercase word is not a case problem: it is quoted
+        // on apply and round-trips.
+        assert!(fixture_from_rows("user", &["id".to_string()], &[]).is_ok());
         // Accepted means written as is: not renamed to `Caf__1` on the
         // way out, which applied to a table that isn't there.
         let f = fixture_from_rows("Café_1", &["prénom".to_string()], &[vec![Some("x".into())]])
@@ -518,15 +538,14 @@ mod tests {
         assert_eq!(parse_flat_xml(&xml).unwrap(), f);
     }
 
-    /// Mixed-case, reserved and dotted column names round-trip: capture,
-    /// XML, parse, apply names the same columns, quoted where they must
-    /// be. Bare, `createdAt` was `createdat` and `user` a syntax error.
+    /// Reserved and dotted column names round-trip: capture, XML, parse,
+    /// apply names the same columns, quoted where they must be. Bare,
+    /// `user` was a syntax error.
     #[test]
     fn column_names_round_trip_through_capture_and_apply() {
-        let cols = ["id", "createdAt", "user", "a.b"].map(String::from);
+        let cols = ["id", "user", "a.b"].map(String::from);
         let row = vec![
             Some("1".to_string()),
-            Some("t".to_string()),
             Some("u".to_string()),
             Some("d".to_string()),
         ];
@@ -535,9 +554,7 @@ mod tests {
         assert_eq!(reparsed, f);
         assert_eq!(
             generate_inserts(&reparsed),
-            vec![
-                "INSERT INTO t (id, \"createdAt\", \"user\", \"a.b\") VALUES ('1', 't', 'u', 'd')"
-            ]
+            vec!["INSERT INTO t (id, \"user\", \"a.b\") VALUES ('1', 'u', 'd')"]
         );
         // A hand-written uppercase fixture still means the lowercase columns.
         let f = parse_flat_xml("<dataset><USERS ID=\"1\" FULL_NAME=\"x\"/></dataset>").unwrap();
@@ -563,7 +580,7 @@ mod tests {
     /// column, refuses the capture and names the column — no `_` rename.
     #[test]
     fn capture_refuses_a_column_name_that_does_not_round_trip() {
-        for bad in ["a\"b", "with space", "?column?", "ID", "1st"] {
+        for bad in ["a\"b", "with space", "?column?", "ID", "createdAt", "1st"] {
             let err =
                 fixture_from_rows("t", &["id".to_string(), bad.to_string()], &[]).expect_err(bad);
             assert!(err.contains(&format!("column {bad:?}")), "{err}");
