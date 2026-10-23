@@ -1316,6 +1316,7 @@ impl App {
             KeyCode::PageDown => self.schema_lint.page_down(),
             KeyCode::PageUp => self.schema_lint.page_up(),
             KeyCode::Char('y') => self.yank_schema_lint_suggestion(),
+            KeyCode::Char('e') => self.yank_schema_lint_evidence(),
             KeyCode::Char('r') => self.start_schema_lint(),
             _ => {}
         }

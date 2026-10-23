@@ -2223,3 +2223,46 @@ fn the_no_connection_card_points_at_a_broken_environments_toml() {
         assert!(!screen(false, picks).contains("environments.toml"));
     }
 }
+
+/// An advisor finding's detail strip puts the setting and the
+/// suggestion right under its title, so an 80×24 terminal shows them;
+/// a lint finding's keeps its object line.
+#[test]
+fn the_advisor_detail_strip_leads_with_what_to_do() {
+    let theme = crate::theme::Theme::default();
+    let text = |lines: Vec<Line<'static>>| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    };
+    let adv = crate::demo::advisor()
+        .findings
+        .into_iter()
+        .find(|f| f.code == "ADV004")
+        .unwrap();
+    let rows = text(super::schema::lint_detail_lines(&adv, 70, &theme));
+    assert!(rows[0].starts_with("  ADV004 · "), "{rows:?}");
+    assert!(
+        rows[1]
+            .starts_with("  setting:  idle_in_transaction_session_timeout 0ms → 5min (no restart)"),
+        "{rows:?}"
+    );
+    assert!(
+        rows[2].starts_with("  suggest:  ALTER ROLE finance_ro"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with("  evidence: a snapshot, now")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.starts_with("  RDS:      ")),
+        "{rows:?}"
+    );
+    assert!(rows.iter().all(|r| display_width(r) <= 72), "{rows:?}");
+    let lint = crate::query::lint::fk_without_index_finding("public", "t", "fk", "c");
+    let rows = text(super::schema::lint_detail_lines(&lint, 70, &theme));
+    assert_eq!(rows[1], "  object: public.t.fk");
+}

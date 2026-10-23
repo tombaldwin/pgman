@@ -2768,7 +2768,7 @@ impl App {
                 "tip · from environments.toml · replicas under their primary · r refresh · ? full keys",
             ),
             Mode::SchemaLint => {
-                Some("tip · severity-sorted (HIGH first) · y yanks SQL suggestion · ? full keys")
+                Some("tip · severity-sorted (HIGH first) · y yanks SQL suggestion · e evidence query · ? full keys")
             }
             Mode::LogPick => {
                 Some("tip · c toggles cluster view · enter loads selected · ? full keys")
@@ -4521,19 +4521,26 @@ impl App {
         });
         self.schema_lint.findings = findings;
         self.schema_lint.cursor = 0;
+        self.schema_lint.live_note = None;
+        self.schema_lint.advisor_note = None;
         self.mode = Mode::SchemaLint;
-        // Kick off the live-query checks (LINT101+). Results land
-        // via `AppMsg::LiveLintLoaded` and get merged into
-        // `schema_lint_findings` — see the handler. `--demo` has no
-        // server to ask: its fixture answers for one.
+        // Kick off the live-query checks (LINT101+) and the config
+        // advisor (ADV…). Results land via `AppMsg::LiveLintLoaded` /
+        // `AppMsg::AdvisorLoaded` and get merged into
+        // `schema_lint.findings` — see the handlers. `--demo` has no
+        // server to ask: its fixtures answer for one.
         if self.demo {
             self.on_live_lint_loaded(Ok(crate::demo::live_lint()));
+            self.on_advisor_loaded(Ok(crate::demo::advisor()));
         } else if let Some(client) = self.client.clone() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;
             tokio::spawn(async move {
                 let result = crate::query::lint::fetch_live(&client).await;
                 let _ = tx.send(AppMsg::LiveLintLoaded { generation, result });
+                let th = crate::query::advisor::Thresholds::default();
+                let result = crate::query::advisor::fetch(&client, &th).await;
+                let _ = tx.send(AppMsg::AdvisorLoaded { generation, result });
             });
         }
     }

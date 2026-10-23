@@ -6597,6 +6597,133 @@ fn live_lint_failure_surfaces_status_keeps_pure_findings() {
     );
 }
 
+/// An advisor finding as the demo would make one: ADV004, MED.
+fn advisor_lock_finding() -> crate::query::lint::Finding {
+    crate::demo::advisor()
+        .findings
+        .into_iter()
+        .find(|f| f.code == "ADV004")
+        .expect("the demo has a lock finding")
+}
+
+#[test]
+fn advisor_loaded_merges_after_the_live_lint_and_both_show_in_the_status() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.on_msg(AppMsg::LiveLintLoaded {
+        generation: a.generation,
+        result: Ok(vec![crate::query::lint::fk_without_index_finding(
+            "public",
+            "orders",
+            "orders_user_id_fkey",
+            "user_id",
+        )]),
+    });
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: Vec::new(),
+        }),
+    });
+    let codes: Vec<&str> = a.schema_lint.findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["LINT101", "ADV004"], "HIGH first, then MED");
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert_eq!(
+        status,
+        "schema lint · 2 finding(s) · 1 high · live: +1 · advisor: +1"
+    );
+}
+
+#[test]
+fn advisor_loaded_after_the_wizard_closed_is_dropped() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: Vec::new(),
+        }),
+    });
+    assert!(a.schema_lint.findings.is_empty());
+    assert!(a.schema_lint.advisor_note.is_none());
+}
+
+#[test]
+fn advisor_names_the_checks_that_could_not_run_and_a_failure_keeps_the_rest() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: vec!["ADV005: permission denied for view pg_stat_bgwriter".into()],
+        }),
+    });
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(
+        status.ends_with(
+            "advisor: +1 (1 couldn't run: ADV005: permission denied for view pg_stat_bgwriter)"
+        ),
+        "{status}"
+    );
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Err("permission denied for function pg_postmaster_start_time".into()),
+    });
+    assert_eq!(a.schema_lint.findings.len(), 1, "the earlier findings stay");
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(
+        status.ends_with("advisor failed: permission denied for function pg_postmaster_start_time"),
+        "{status}"
+    );
+}
+
+#[test]
+fn a_stale_generation_advisor_result_is_ignored() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation.wrapping_add(1),
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: Vec::new(),
+        }),
+    });
+    assert!(a.schema_lint.findings.is_empty());
+}
+
+#[test]
+fn e_in_the_wizard_yanks_an_advisor_finding_s_evidence_query() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.schema_lint.findings = vec![
+        crate::query::lint::fk_without_index_finding("public", "orders", "fk", "user_id"),
+        advisor_lock_finding(),
+    ];
+    crate::app::yank::take_test_clipboard();
+    press(&mut a, KeyCode::Char('e'));
+    assert!(crate::app::yank::take_test_clipboard().is_none());
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("LINT101: no evidence query"),
+        "{:?}",
+        a.last_status
+    );
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('e'));
+    let sql = crate::app::yank::take_test_clipboard().expect("copied");
+    assert!(sql.starts_with("/* pgman:advisor */ WITH s AS"), "{sql}");
+    assert!(sql.contains("pg_blocking_pids"), "{sql}");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("yanked ADV004 evidence query")
+    );
+}
+
 #[test]
 fn schema_lint_jk_navigation_clamps_to_findings() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());

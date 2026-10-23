@@ -1412,6 +1412,43 @@ pub struct SchemaLintUi {
     pub findings: Vec<crate::query::lint::Finding>,
     /// Cursor into `findings`.
     pub cursor: usize,
+    /// How the live lint checks went (`live: +3`), once they land.
+    pub live_note: Option<String>,
+    /// How the config advisor went (`advisor: +2`), once it lands.
+    pub advisor_note: Option<String>,
+}
+
+impl SchemaLintUi {
+    /// Merge findings from an async check, keeping the sort
+    /// `lint::run_all` uses and the cursor in range.
+    pub fn merge(&mut self, more: Vec<crate::query::lint::Finding>) {
+        self.findings.extend(more);
+        self.findings.sort_by(|a, b| {
+            a.severity
+                .cmp(&b.severity)
+                .then_with(|| a.code.cmp(b.code))
+                .then_with(|| a.object.cmp(&b.object))
+        });
+        self.cursor = self.cursor.min(self.findings.len().saturating_sub(1));
+    }
+
+    /// The status line: counts, then each async check's note.
+    pub fn status(&self) -> String {
+        let high = self
+            .findings
+            .iter()
+            .filter(|f| f.severity == crate::query::lint::Severity::High)
+            .count();
+        let mut s = format!(
+            "schema lint · {} finding(s) · {high} high",
+            self.findings.len()
+        );
+        for note in [&self.live_note, &self.advisor_note].into_iter().flatten() {
+            s.push_str(" · ");
+            s.push_str(note);
+        }
+        s
+    }
 }
 
 impl ListCursorNav for SchemaLintUi {
