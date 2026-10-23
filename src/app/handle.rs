@@ -17,6 +17,29 @@ impl App {
         }
     }
 
+    /// The footer line for a statement the guard refused
+    /// ([`super::blocked_by_safety_message`]), except that an escape from
+    /// a session read-only by more than its profile names that session's
+    /// reason — the replica's pin or `:readonly on` — not `safety.toml`,
+    /// which says the database is writable.
+    pub(super) fn blocked_message(&self, decision: &crate::safety::Decision, db: &str) -> String {
+        if decision.read_only_escape {
+            return self.read_only_escape_message(db);
+        }
+        super::blocked_by_safety_message(decision, db)
+    }
+
+    /// [`Self::blocked_message`]'s line for an escape.
+    pub(super) fn read_only_escape_message(&self, db: &str) -> String {
+        if self.safety_config.profile_for(db).read_only {
+            super::read_only_escape_refusal(super::safety_toml_exists())
+        } else if self.replica_pin {
+            super::cmd::REPLICA_READONLY_REFUSAL.to_string()
+        } else {
+            super::SESSION_READ_ONLY_ESCAPE_REFUSAL.to_string()
+        }
+    }
+
     /// Why this session is read-only, for the hint a read-only refusal
     /// (SQLSTATE `25006`) carries: what the server said at connect, the
     /// replica pin, the database's profile, `:readonly on`.

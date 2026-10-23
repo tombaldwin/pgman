@@ -1360,10 +1360,26 @@ pub fn changes_schema(sql: &str) -> bool {
 
 /// Check a statement against the profile for `db`.
 pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
+    evaluate_in_session(config, db, sql, false)
+}
+
+/// [`evaluate`] for a session that may be read-only by more than its
+/// profile: `:readonly on`, or a standby's pin. Turning read-only off
+/// from inside such a session (`SET default_transaction_read_only =
+/// off`, `BEGIN READ WRITE`, …) is blocked as it is under a read-only
+/// profile — confirmed, it used to write while the header still said
+/// read-only. `:readonly off` is the way out the operator is offered.
+pub fn evaluate_in_session(
+    config: &SafetyConfig,
+    db: &str,
+    sql: &str,
+    session_read_only: bool,
+) -> Decision {
     let profile = config.profile_for(db);
     let kind = classify(sql);
-    let read_only_escape = profile.read_only && attempts_read_only_escape(sql);
-    let server_control = profile.read_only && calls_server_control(&strip_sql_comments(sql));
+    let pinned = profile.read_only || session_read_only;
+    let read_only_escape = pinned && attempts_read_only_escape(sql);
+    let server_control = pinned && calls_server_control(&strip_sql_comments(sql));
     Decision {
         kind,
         // The escape overrides the category guard: whatever `other` is set to,
@@ -2973,6 +2989,31 @@ mod tests {
         let d = evaluate(&cfg, "db", "SET default_transaction_read_only = off");
         assert!(!d.read_only_escape);
         assert_eq!(d.guard, Guard::Confirm, "the `other` guard, as before");
+    }
+
+    /// A writable profile in a read-only session (`:readonly on`, a
+    /// standby's pin) blocks the escape too, and the server-control
+    /// calls; a writable session under it doesn't.
+    #[test]
+    fn a_read_only_session_blocks_the_escape_whatever_the_profile() {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        for sql in [
+            "SET default_transaction_read_only = off",
+            "BEGIN READ WRITE",
+            "SELECT set_config('default_transaction_read_only', 'off', false)",
+        ] {
+            let d = evaluate_in_session(&cfg, "db", sql, true);
+            assert!(d.read_only_escape, "{sql}");
+            assert_eq!(d.guard, Guard::Block, "{sql}");
+            assert!(
+                !evaluate_in_session(&cfg, "db", sql, false).read_only_escape,
+                "{sql}"
+            );
+        }
+        let d = evaluate_in_session(&cfg, "db", "SELECT pg_stat_reset()", true);
+        assert!(d.server_control);
+        assert_eq!(d.guard, Guard::Block);
     }
 
     #[test]

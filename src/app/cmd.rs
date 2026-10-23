@@ -547,9 +547,9 @@ impl App {
             .as_ref()
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
-        let decision = safety::evaluate(&self.safety_config, db, &sql);
+        let decision = safety::evaluate_in_session(&self.safety_config, db, &sql, self.read_only);
         if decision.guard != Guard::Allow {
-            self.last_error = Some(blocked_by_safety_message(&decision, db));
+            self.last_error = Some(self.blocked_message(&decision, db));
             return false;
         }
         if demo_no_client {

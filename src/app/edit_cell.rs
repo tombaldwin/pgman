@@ -246,7 +246,7 @@ impl App {
             .as_ref()
             .map(|d| d.dbname.clone())
             .unwrap_or_else(|| "default".into());
-        let decision = safety::evaluate(&self.safety_config, &db, &sql);
+        let decision = safety::evaluate_in_session(&self.safety_config, &db, &sql, self.read_only);
         let summary = format!("edit {}", edit_target(&ui.edit));
         let pending = PendingCellEdit {
             edit: ui.edit,
@@ -255,7 +255,7 @@ impl App {
             return_to: ui.return_to,
         };
         match decision.guard {
-            Guard::Block => self.last_error = Some(blocked_by_safety_message(&decision, &db)),
+            Guard::Block => self.last_error = Some(self.blocked_message(&decision, &db)),
             Guard::Confirm => {
                 self.pending_run = Some(PendingRun {
                     sql,

@@ -66,6 +66,13 @@ pub fn blocked_by_safety_message(decision: &Decision, db: &str) -> String {
 /// that does not exist sent the operator looking for it; say instead
 /// how to get one ([`crate::conn::READ_ONLY_DEFAULT_HINT`], the same
 /// line the server-side 25006 refusal carries). Pure / testable.
+/// The escape refused in a session that is read-only by more than its
+/// profile, which is writable: `:readonly on` turned it on, and
+/// `:readonly off` turns it off ([`crate::app::cmd`] names a replica's
+/// pin instead).
+pub const SESSION_READ_ONLY_ESCAPE_REFUSAL: &str =
+    "this session is read-only by :readonly on · :readonly off to write, not a SET";
+
 pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
     if safety_toml_exists {
         safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
@@ -4340,7 +4347,7 @@ impl App {
             return;
         };
 
-        let decision = safety::evaluate(&self.safety_config, db, &sql);
+        let decision = safety::evaluate_in_session(&self.safety_config, db, &sql, self.read_only);
 
         // EXPLAIN (without ANALYZE) never executes the inner statement — bypass
         // guards entirely.
@@ -4357,7 +4364,7 @@ impl App {
         // rollback transaction inside `spawn_run`).
         match decision.guard {
             Guard::Block => {
-                self.last_error = Some(blocked_by_safety_message(&decision, db));
+                self.last_error = Some(self.blocked_message(&decision, db));
             }
             Guard::Confirm => {
                 self.pending_run = Some(PendingRun {
@@ -4423,7 +4430,7 @@ impl App {
         let sql = safety::join_verified(&statements);
         let decisions: Vec<Decision> = statements
             .iter()
-            .map(|s| safety::evaluate(&self.safety_config, &db, s))
+            .map(|s| safety::evaluate_in_session(&self.safety_config, &db, s, self.read_only))
             .collect();
         let max_guard = decisions
             .iter()
@@ -4449,7 +4456,7 @@ impl App {
                 // A script that opens by turning read-only off gets told so:
                 // the per-kind summary would blame the wrong statement.
                 self.last_error = Some(if synthesized.read_only_escape {
-                    read_only_escape_refusal(safety_toml_exists())
+                    self.read_only_escape_message(&db)
                 } else if synthesized.server_control {
                     safety::SERVER_CONTROL_REFUSAL.to_string()
                 } else {

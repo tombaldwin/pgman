@@ -8525,6 +8525,45 @@ fn the_editor_blocks_every_lift_of_the_read_only_floor_without_a_prompt() {
     }
 }
 
+/// A writable profile in a read-only session — `:readonly on`, a
+/// standby's pin — blocks the escape too, without a prompt, and says
+/// what holds the session read-only. Confirmed, the `SET` used to write
+/// while the header still said read-only. A writable session still
+/// gets the `other` guard's prompt.
+#[test]
+fn the_editor_blocks_the_escape_in_a_session_read_only_by_more_than_its_profile() {
+    let mut a = crate::demo::app(Theme::default());
+    a.safety_config.default.read_only = false;
+    a.safety_config.databases.clear();
+    for (replica, want) in [
+        (false, SESSION_READ_ONLY_ESCAPE_REFUSAL),
+        (true, super::cmd::REPLICA_READONLY_REFUSAL),
+    ] {
+        a.read_only = true;
+        a.replica_pin = replica;
+        for sql in [
+            "SET default_transaction_read_only = off",
+            "SELECT 1; SET default_transaction_read_only = off",
+        ] {
+            a.last_error = None;
+            a.pending_run = None;
+            a.mode = Mode::Editor;
+            run_in_demo(&mut a, sql);
+            assert_eq!(a.last_error.as_deref(), Some(want), "{sql}");
+            assert!(a.pending_run.is_none(), "{sql}: a block never prompts");
+        }
+    }
+    a.read_only = false;
+    a.replica_pin = false;
+    a.last_error = None;
+    a.mode = Mode::Editor;
+    run_in_demo(&mut a, "SET default_transaction_read_only = off");
+    assert!(
+        a.pending_run.is_some(),
+        "writable: the other guard's confirm"
+    );
+}
+
 #[test]
 fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
     // The default safety profile is read-only. The bar is inside the

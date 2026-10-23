@@ -1139,6 +1139,18 @@ pub async fn connect_and_bootstrap(
     let in_recovery = version_row
         .as_ref()
         .and_then(|row| row.try_get::<usize, bool>(1).ok());
+    // A standby is pinned read-only however it was reached
+    // (`App::note_server_role`); make the session say so too, as a
+    // read-only profile's does, before any statement of the operator's
+    // can run. Then a standby promoted under pgman, or a `SET … = off`
+    // that got past the guard, still writes nothing while the header
+    // says read-only. Recovery refuses writes anyway, so a failed SET
+    // is logged, not fatal.
+    if in_recovery == Some(true) && !read_only {
+        if let Err(e) = set_session_read_only(&client, true).await {
+            tracing::warn!("pinning the standby's session read-only failed: {e}");
+        }
+    }
     // The list only feeds the start card: a server that won't give it
     // up still gives the operator a connection.
     let grid = grid_res.unwrap_or_else(|e| {

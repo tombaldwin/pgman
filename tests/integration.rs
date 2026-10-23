@@ -2936,6 +2936,37 @@ fn connect_and_bootstrap_reports_whether_the_server_is_a_standby() {
     }
 }
 
+/// Booted writable, a standby's session is still made read-only on the
+/// server, before the operator can run anything: the pin the header
+/// shows is the server's too. A writable primary stays writable.
+#[test]
+fn a_standby_booted_writable_is_read_only_on_the_server() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for (dsn, want) in [(DSN, "off"), (STANDBY_DSN, "on")] {
+        let shown = rt.block_on(async {
+            let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+            let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+            let booted = pgman::conn::connect_and_bootstrap(
+                pgman::conn::Dsn::parse(dsn).unwrap(),
+                false,
+                5_000,
+                pgman::conn::BOOTSTRAP_SQL.to_string(),
+                notice_tx,
+                notification_tx,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{dsn}: {e}"));
+            booted
+                .client
+                .query_one("SHOW default_transaction_read_only", &[])
+                .await
+                .unwrap()
+                .get::<_, String>(0)
+        });
+        assert_eq!(shown, want, "{dsn}");
+    }
+}
+
 /// The schema fetch learns each partition's parent from a real server,
 /// sub-partitions included.
 #[test]
