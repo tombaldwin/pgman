@@ -40,6 +40,11 @@ Shown at startup when more than one data source was discovered, and via `c`
 
 On a failed connection (Normal mode, "connection failed" screen): `r` retries
 the same DSN; `p` re-opens the picker (shown when there are candidates to pick).
+A connection that drops while pgman is running — the server ended the
+session (`pg_terminate_backend`, a restart, a standby's recovery conflict,
+an idle timeout) or the network went — lands on the same screen, its error
+`connection lost · ` and the server's own message, and the same `r`
+reconnects.
 
 ## Start card / grid (Normal mode)
 

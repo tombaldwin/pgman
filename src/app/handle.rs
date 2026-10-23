@@ -40,6 +40,13 @@ impl App {
                 tunnel,
                 ..
             } => {
+                if client.is_closed() {
+                    // Closed between the bootstrap and now: its
+                    // `ConnectionLost` landed while this was still
+                    // connecting, and went unheeded.
+                    self.conn_state = ConnState::Failed(super::msg::connection_lost_reason(None));
+                    return;
+                }
                 self.conn_state = ConnState::Connected { server_version };
                 self.in_recovery = in_recovery;
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
@@ -74,6 +81,7 @@ impl App {
             AppMsg::BootFailed { error, .. } => {
                 self.conn_state = ConnState::Failed(error);
             }
+            AppMsg::ConnectionLost { reason, .. } => self.on_connection_lost(reason),
             AppMsg::QueryOk {
                 grid,
                 origins,

@@ -51,6 +51,11 @@ pub enum AppMsg {
     },
     /// Connection or the bootstrap query failed.
     BootFailed { generation: u64, error: String },
+    /// The live connection closed under the App: the server ended the
+    /// session (`pg_terminate_backend`, a recovery conflict, a restart)
+    /// or the network went. `reason` carries the server's own message
+    /// when it sent one ([`connection_lost_reason`]).
+    ConnectionLost { generation: u64, reason: String },
     /// A user-initiated query (Run / EXPLAIN / EXPLAIN ANALYZE) finished.
     QueryOk {
         generation: u64,
@@ -233,6 +238,16 @@ pub enum AppMsg {
     Terminate,
 }
 
+/// What the App says when the connection closed under it: the server's
+/// parting `FATAL`, if it sent one, else that the connection closed.
+/// Pure.
+pub fn connection_lost_reason(fatal: Option<&crate::conn::NoticeMsg>) -> String {
+    match fatal {
+        Some(n) => format!("connection lost · {}", n.message),
+        None => "connection lost · the connection to the server closed".to_string(),
+    }
+}
+
 impl AppMsg {
     /// The generation this message was produced for. Tap events
     /// return 0 (they aren't tied to a connection generation).
@@ -240,6 +255,7 @@ impl AppMsg {
         match self {
             AppMsg::Booted { generation, .. }
             | AppMsg::BootFailed { generation, .. }
+            | AppMsg::ConnectionLost { generation, .. }
             | AppMsg::QueryOk { generation, .. }
             | AppMsg::PageLoaded { generation, .. }
             | AppMsg::QueryFailed { generation, .. }

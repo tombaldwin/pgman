@@ -63,6 +63,14 @@ pub struct NoticeMsg {
     pub hint: Option<String>,
 }
 
+impl NoticeMsg {
+    /// A `FATAL` or `PANIC`: not a notice but the error the server ends
+    /// the session with, sent unasked as the connection closes. Pure.
+    pub fn ends_session(&self) -> bool {
+        matches!(self.severity.as_str(), "FATAL" | "PANIC")
+    }
+}
+
 /// One LISTEN/NOTIFY arrival: the channel the operator
 /// subscribed to with `LISTEN <chan>`, the publisher's backend
 /// pid, and the payload (often empty). Surfaced in
@@ -843,7 +851,34 @@ fn spawn_connection_driver<S, T>(
                         _ => {}
                     },
                     Poll::Ready(Some(Err(e))) => {
-                        tracing::warn!("postgres connection error: {e}");
+                        // An error the server sent with no request
+                        // waiting for it: the FATAL a terminated backend
+                        // says goodbye with (`pg_terminate_backend`, a
+                        // recovery conflict, an idle timeout). Its
+                        // `Display` is only "db error"; the message is
+                        // the reason the session ended, so it is logged
+                        // and handed on — the notice channel's close
+                        // tells the App the connection is gone, and
+                        // this is what it says why.
+                        match e.as_db_error() {
+                            Some(db) => {
+                                tracing::warn!(
+                                    "postgres connection error: {} {}: {}",
+                                    db.severity(),
+                                    db.code().code(),
+                                    db.message()
+                                );
+                                let _ = notice_tx.send(NoticeMsg {
+                                    severity: db.severity().to_string(),
+                                    message: db.message().to_string(),
+                                    detail: db.detail().map(str::to_string),
+                                    hint: db.hint().map(str::to_string),
+                                });
+                            }
+                            None => {
+                                tracing::warn!("postgres connection error: {}", chain_message(&e))
+                            }
+                        }
                         return Poll::Ready(());
                     }
                     Poll::Ready(None) => return Poll::Ready(()),

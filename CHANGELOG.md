@@ -115,6 +115,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A connection that dropped under a running pgman — a session the server
+  ended (`pg_terminate_backend`, a restart, an idle timeout) or a network
+  that went — left the header saying `connected`, and every later command
+  failed with `connection closed`; the log said only `postgres connection
+  error: db error`. pgman now shows the connection-failed screen, with
+  `connection lost` and the server's own message (`terminating connection
+  due to administrator command`), and `r` reconnects; the log keeps the
+  message and its SQLSTATE.
 - A long pattern typed into a footer prompt (the schema browser's and
   help's `/` filter, the grid's `/` filter and `f` find, `ctrl-r`
   history search) no longer loses its `filter: /` / `find:` head or the

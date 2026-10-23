@@ -6486,6 +6486,41 @@ async fn on_a_standby_the_pager_commits_after_the_first_page() {
     }
 }
 
+/// A session the server ends under pgman — `pg_terminate_backend` from
+/// another connection here; a recovery conflict or an idle timeout in the
+/// field — hands its parting FATAL to the notice channel, which then
+/// closes: the close is how the App learns the connection is gone, and
+/// the FATAL is the reason it shows. (Its `Display` is only "db error".)
+#[tokio::test]
+async fn a_terminated_session_hands_on_the_servers_reason_and_closes() {
+    let (notice_tx, mut notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    let (client, _t) = pgman::conn::connect_only(dsn, true, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect");
+    let pid = backend_pid(&client).await;
+    let killer = probe_client(DSN).await;
+    killer
+        .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+        .await
+        .expect("terminate the backend");
+    let fatal = tokio::time::timeout(std::time::Duration::from_secs(5), notices.recv())
+        .await
+        .expect("the driver reports before 5 s")
+        .expect("a parting message, not just the close");
+    assert!(fatal.ends_session(), "{fatal:?}");
+    assert_eq!(
+        fatal.message, "terminating connection due to administrator command",
+        "{fatal:?}"
+    );
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), notices.recv())
+        .await
+        .expect("the channel closes before 5 s");
+    assert!(closed.is_none(), "then the channel closes: {closed:?}");
+    assert!(client.is_closed());
+}
+
 /// A result that fits in a page never holds a transaction open.
 #[tokio::test]
 async fn a_small_result_commits_at_once() {

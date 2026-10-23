@@ -3909,6 +3909,13 @@ impl App {
         // The barrier closes the cursor (and with no client there is
         // none); the title follows.
         self.cursor = None;
+        if matches!(self.conn_state, ConnState::Failed(_)) {
+            // The connection-failed card is up: the session was lost
+            // (`App::on_connection_lost`), or a reconnect failed and the
+            // client still held is the session that was left. Neither is
+            // one to send work to; `r` reconnects.
+            return None;
+        }
         let client = self.client.clone()?;
         Some(crate::query::paging::Db::new(client, self.pager.as_ref()))
     }

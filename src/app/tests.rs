@@ -14406,3 +14406,107 @@ fn the_result_diff_keys_on_a_composite_key_and_only_when_both_sides_agree() {
         (RowKey::Columns(vec![0]), false)
     );
 }
+
+// --- A connection lost under the App ---------------------------------------
+
+/// The server's parting FATAL is the reason; without one, the close is.
+#[test]
+fn a_lost_connection_names_the_servers_reason() {
+    let fatal = crate::conn::NoticeMsg {
+        severity: "FATAL".into(),
+        message: "terminating connection due to conflict with recovery".into(),
+        detail: None,
+        hint: None,
+    };
+    assert!(fatal.ends_session());
+    assert_eq!(
+        super::msg::connection_lost_reason(Some(&fatal)),
+        "connection lost · terminating connection due to conflict with recovery"
+    );
+    assert_eq!(
+        super::msg::connection_lost_reason(None),
+        "connection lost · the connection to the server closed"
+    );
+    for severity in ["NOTICE", "WARNING", "INFO", "ERROR"] {
+        let n = crate::conn::NoticeMsg {
+            severity: severity.into(),
+            ..fatal.clone()
+        };
+        assert!(!n.ends_session(), "{severity}");
+    }
+    let panic = crate::conn::NoticeMsg {
+        severity: "PANIC".into(),
+        ..fatal
+    };
+    assert!(panic.ends_session());
+}
+
+/// A connected App whose connection closes shows the connection-failed
+/// card with the reason — `r` reconnects from there — and drops what
+/// belonged to the session; it stops saying "connected".
+#[test]
+fn a_lost_connection_leaves_connected_for_the_failure_card() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Connected {
+        server_version: "16.4".into(),
+    };
+    a.mode = Mode::Editor;
+    a.query_running = true;
+    a.tx_open = true;
+    a.last_status = Some("run ok · 1000 row(s) · partial · M fetches more".into());
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · terminating connection due to administrator command".into(),
+    });
+    match &a.conn_state {
+        ConnState::Failed(reason) => assert_eq!(
+            reason,
+            "connection lost · terminating connection due to administrator command"
+        ),
+        other => panic!("still {other:?}"),
+    }
+    assert_eq!(
+        a.mode,
+        Mode::Normal,
+        "the card's r / p keys are Normal mode's"
+    );
+    assert!(!a.query_running);
+    assert_eq!(
+        a.last_status, None,
+        "the last run's status is the old session's"
+    );
+    assert!(
+        !a.tx_open,
+        "the server ended the transaction with the session"
+    );
+    assert_eq!(
+        a.not_connected_message(),
+        "not connected · r to retry · c to choose a connection"
+    );
+}
+
+/// Only a connected App is lost: a failed connect keeps its own error, a
+/// connect in flight is not touched, and an old session's close (after a
+/// reconnect bumped the generation) is dropped.
+#[test]
+fn a_connection_lost_message_only_moves_a_connected_app() {
+    let lost = |a: &App| AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · x".into(),
+    };
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Failed("connection refused".into());
+    a.on_msg(lost(&a));
+    assert!(matches!(&a.conn_state, ConnState::Failed(e) if e == "connection refused"));
+    a.conn_state = ConnState::Connecting;
+    a.on_msg(lost(&a));
+    assert!(matches!(a.conn_state, ConnState::Connecting));
+    a.conn_state = ConnState::Connected {
+        server_version: "16.4".into(),
+    };
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation.wrapping_sub(1),
+        reason: "connection lost · x".into(),
+    });
+    assert!(matches!(a.conn_state, ConnState::Connected { .. }));
+}
