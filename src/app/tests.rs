@@ -2405,6 +2405,86 @@ fn format_sql_literal_quotes_strings_and_doubles_internal_quotes() {
     assert_eq!(format_sql_literal(Some("it's fine")), "'it''s fine'");
 }
 
+/// `I` writes through the test clipboard (never the real one) and
+/// counts characters, not bytes: `é` is one.
+#[test]
+fn yank_row_as_insert_copies_through_the_clipboard_seam_and_counts_chars() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id", "name"], &[&["1", "é"]]);
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    crate::app::yank::take_test_clipboard();
+    a.yank_row_as_insert();
+    let sql = crate::app::yank::take_test_clipboard().expect("copied");
+    assert_eq!(
+        sql,
+        "INSERT INTO public.users (id, name) VALUES ('1', 'é');"
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(
+            format!(
+                "copied INSERT for public.users · {} char(s)",
+                sql.chars().count()
+            )
+            .as_str()
+        )
+    );
+    assert_ne!(
+        sql.chars().count(),
+        sql.len(),
+        "the test tells chars from bytes"
+    );
+}
+
+/// `Y` writes the visible rows as CSV through the test clipboard.
+#[test]
+fn export_grid_copies_csv_through_the_clipboard_seam() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"], &["2"]]);
+    a.grid_view.visible_rows = vec![1];
+    crate::app::yank::take_test_clipboard();
+    a.export_grid_to_clipboard();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("id\n2\n")
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("copied 1 row(s) to clipboard as CSV")
+    );
+}
+
+/// The row-detail field yank and the notification yank go through the
+/// seam too, and both count characters.
+#[test]
+fn field_and_notification_yanks_copy_through_the_clipboard_seam() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["name"], &[&["añb"]]);
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.row_detail.field = 0;
+    crate::app::yank::take_test_clipboard();
+    a.yank_focused_field();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("añb")
+    );
+    assert_eq!(a.last_status.as_deref(), Some("yanked 'name' · 3 char(s)"));
+    a.notifications.items = vec![crate::conn::NotificationMsg {
+        channel: "x".into(),
+        pid: 1,
+        payload: "pä".into(),
+    }];
+    a.yank_focused_notification();
+    assert_eq!(
+        crate::app::yank::take_test_clipboard().as_deref(),
+        Some("pä")
+    );
+    assert_eq!(a.last_status.as_deref(), Some("yanked payload · 2 char(s)"));
+}
+
 #[test]
 fn yank_row_as_insert_no_source_surfaces_actionable_error() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());

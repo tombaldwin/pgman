@@ -52,6 +52,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   backslash doubled, so it inserts the same value whatever
   `standard_conforming_strings` is. With it off, a bytea's `\x0102`
   was read as the escape `\x01`.
+- `I`'s footer counted the INSERT's bytes and called them characters;
+  it counts characters now. Every yank reports a clipboard failure the
+  same way (`yank failed: …`), and the test suite no longer writes to
+  the system clipboard.
 - Sorting a column (`s`) decides once per column whether to compare
   numbers or text: a column that is all numbers sorts by exact value
   (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in

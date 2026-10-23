@@ -7,10 +7,10 @@ impl App {
             return;
         };
         let text = n.payload.clone();
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text.clone())) {
+        match write_clipboard(&text) {
             Ok(()) => {
                 self.last_status =
-                    Some(format!("yanked payload ({} char(s))", text.chars().count()));
+                    Some(format!("yanked payload · {} char(s)", text.chars().count()));
                 self.last_error = None;
             }
             Err(e) => self.last_error = Some(format!("yank failed: {e}")),
@@ -28,7 +28,7 @@ impl App {
         } else {
             row.path.clone()
         };
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(path.clone())) {
+        match write_clipboard(&path) {
             Ok(()) => {
                 self.last_status = Some(format!("yanked path '{path}'"));
                 self.last_error = None;
@@ -64,7 +64,7 @@ impl App {
             self.last_error = None;
             return;
         };
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(value.to_string())) {
+        match write_clipboard(value) {
             Ok(()) => {
                 let chars = value.chars().count();
                 self.last_status = Some(format!("yanked '{column}' · {chars} char(s)"));
@@ -91,17 +91,15 @@ impl App {
             return;
         };
         let sql = row_insert_sql(&schema, &table, &self.grid.columns, row);
-        match arboard::Clipboard::new() {
-            Ok(mut cb) => match cb.set_text(sql.clone()) {
-                Ok(()) => {
-                    self.last_status = Some(format!(
-                        "copied INSERT for {schema}.{table} · {} char(s)",
-                        sql.len()
-                    ));
-                }
-                Err(e) => self.last_error = Some(format!("clipboard write: {e}")),
-            },
-            Err(e) => self.last_error = Some(format!("clipboard init: {e}")),
+        match write_clipboard(&sql) {
+            Ok(()) => {
+                self.last_status = Some(format!(
+                    "copied INSERT for {schema}.{table} · {} char(s)",
+                    sql.chars().count()
+                ));
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
         }
     }
 
@@ -120,7 +118,7 @@ impl App {
             ));
             return;
         };
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(snippet.clone())) {
+        match write_clipboard(&snippet) {
             Ok(()) => {
                 self.last_status = Some(format!("yanked {} suggestion", finding.code));
                 self.last_error = None;
@@ -159,7 +157,7 @@ impl App {
             return;
         };
         let sql = build_select_all_template(&schema, &table);
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(sql.clone())) {
+        match write_clipboard(&sql) {
             Ok(()) => {
                 self.last_status = Some(format!("yanked SELECT template for {schema}.{table}"));
                 self.last_error = None;
@@ -186,7 +184,7 @@ impl App {
             return;
         }
         let sql = build_insert_template(&schema, &table, &cols);
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(sql.clone())) {
+        match write_clipboard(&sql) {
             Ok(()) => {
                 self.last_status = Some(format!(
                     "yanked INSERT template for {schema}.{table} · {} col(s)",

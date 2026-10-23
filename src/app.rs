@@ -4150,7 +4150,7 @@ impl App {
     }
 
     /// `Y` in Normal mode — copy the (sorted, filtered) grid to the
-    /// clipboard as CSV. `arboard` is already a dep for cell yank.
+    /// clipboard as CSV. Written through `yank::write_clipboard`.
     fn export_grid_to_clipboard(&mut self) {
         if self.grid.columns.is_empty() {
             self.last_status = Some("nothing to export".into());
@@ -4170,17 +4170,15 @@ impl App {
             }
         }
         let csv = crate::batch::format_csv(&export);
-        match arboard::Clipboard::new() {
-            Ok(mut cb) => match cb.set_text(csv) {
-                Ok(()) => {
-                    self.last_status = Some(format!(
-                        "copied {} row(s) to clipboard as CSV",
-                        export.rows.len()
-                    ));
-                }
-                Err(e) => self.last_error = Some(format!("clipboard write: {e}")),
-            },
-            Err(e) => self.last_error = Some(format!("clipboard init: {e}")),
+        match yank::write_clipboard(&csv) {
+            Ok(()) => {
+                self.last_status = Some(format!(
+                    "copied {} row(s) to clipboard as CSV",
+                    export.rows.len()
+                ));
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
         }
     }
 
