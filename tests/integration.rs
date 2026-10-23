@@ -6063,3 +6063,52 @@ fn batch_json_script_with_a_select_explains_where_the_rows_went() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// The schema cache carries each table's real primary key, in key order
+/// (`a, "Cee", b`: neither column order nor sorted), under the server's own names;
+/// a table with only a unique key has no entry; and every relation is reachable by
+/// its OID, with each column's `attnum`.
+#[tokio::test]
+async fn the_schema_cache_knows_each_tables_primary_key_in_key_order() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let composite = format!("pgman_it_PkOrder_{pid}");
+    let keyless = it_name("pk_none");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE \"{composite}\" (b int, \"Cee\" int, m text, a int, \
+               PRIMARY KEY (a, \"Cee\", b)); \
+             ALTER TABLE \"{composite}\" DROP COLUMN m; \
+             ALTER TABLE \"{composite}\" ADD COLUMN later text; \
+             CREATE TABLE {keyless} (v text UNIQUE)"
+        ))
+        .await
+        .expect("create the tables");
+    let cache = pgman::query::schema::fetch(&client).await;
+    let oid: u32 = client
+        .query_one(&format!("SELECT '\"{composite}\"'::regclass::oid"), &[])
+        .await
+        .expect("oid")
+        .get(0);
+    let _ = client
+        .batch_execute(&format!("DROP TABLE \"{composite}\"; DROP TABLE {keyless}"))
+        .await;
+    assert_eq!(
+        cache.primary_key("public", &composite),
+        Some(&["a".to_string(), "Cee".to_string(), "b".to_string()][..])
+    );
+    assert_eq!(cache.primary_key("public", &composite.to_lowercase()), None);
+    assert_eq!(cache.primary_key("public", &keyless), None);
+    assert_eq!(
+        cache.relations_by_oid.get(&oid),
+        Some(&("public".to_string(), composite.clone()))
+    );
+    // attnum survives a dropped column: `later` is 5, not 4.
+    assert_eq!(
+        cache
+            .column_by_attnum("public", &composite, 5)
+            .map(|c| c.name.as_str()),
+        Some("later")
+    );
+    assert!(cache.column_by_attnum("public", &composite, 3).is_none());
+}

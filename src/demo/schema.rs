@@ -747,10 +747,12 @@ pub(super) fn schema_cache() -> SchemaCache {
             let cols = r
                 .columns
                 .iter()
-                .map(|(name, ty, not_null)| ColumnMeta {
+                .zip(1..)
+                .map(|((name, ty, not_null), attnum)| ColumnMeta {
                     name: name.to_string(),
                     type_name: ty.to_string(),
                     not_null: *not_null,
+                    attnum,
                 })
                 .collect();
             (key(r), cols)
@@ -854,6 +856,16 @@ pub(super) fn schema_cache() -> SchemaCache {
             .filter(|r| matches!(r.kind, Kind::View { .. }))
             .map(key)
             .collect(),
+        primary_keys: RELATIONS
+            .iter()
+            .filter_map(|r| {
+                let cols = r.pk?.split(',').map(|c| c.trim().to_string()).collect();
+                Some((key(r), cols))
+            })
+            .collect(),
+        // The demo's grids carry no column origins, so nothing looks a
+        // relation up by OID.
+        relations_by_oid: HashMap::new(),
     }
 }
 
