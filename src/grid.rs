@@ -7,6 +7,23 @@
 /// exhausting memory.
 pub const MAX_ROWS: usize = 1000;
 
+/// The result panel's title note for a capped grid: that it stopped,
+/// and that the rest was never fetched — `capped at 1000` alone read as
+/// though the table had a thousand rows. Pure.
+pub fn cap_title_note() -> String {
+    format!("capped at {MAX_ROWS} · more rows not fetched")
+}
+
+/// The status line's note for a capped grid: [`cap_title_note`] plus
+/// where to get every row (`pgman query` with JSON output is not
+/// capped; see `batch::truncated_warning`). Pure.
+pub fn cap_status_note() -> String {
+    format!(
+        "{} · pgman query '…' --json returns every row",
+        cap_title_note()
+    )
+}
+
 /// One result cell: the server's text rendering of the value, `None`
 /// for SQL NULL. An empty string is `Some("")` — a different value, and
 /// every reader has to decide what a NULL means for it

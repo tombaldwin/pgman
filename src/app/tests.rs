@@ -5627,6 +5627,11 @@ fn query_ok_status_flags_truncated_grids() {
         status.contains(&format!("capped at {}", crate::grid::MAX_ROWS)),
         "expected truncation hint in status, got: {status}"
     );
+    assert!(status.contains("more rows not fetched"), "{status}");
+    assert!(
+        status.ends_with("pgman query '…' --json returns every row"),
+        "{status}"
+    );
     assert!(a.grid.truncated);
 }
 

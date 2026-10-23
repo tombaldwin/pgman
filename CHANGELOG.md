@@ -29,6 +29,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A result stopped at 1000 rows said only `capped at 1000`, which read as
+  though that was the whole table. It now says `more rows not fetched`,
+  and the status line adds that `pgman query '…' --json` returns every
+  row.
 - The completion popup's title was cut to `Tab to cyc`: its width was
   measured without the title's decoration.
 - Counts read as English: `1 match · Tab to cycle`, `4 saved queries`,

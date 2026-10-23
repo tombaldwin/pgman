@@ -741,6 +741,11 @@ fn grid_render_shows_capped_hint_when_truncated() {
         "expected `capped at {}` in title; full render:\n{rendered}",
         pgman::grid::MAX_ROWS,
     );
+    let rendered = dump(&render(&mut a, 80, 24));
+    assert!(
+        rendered.contains("capped at 1000 · more rows not fetched"),
+        "{rendered}"
+    );
 }
 
 #[test]
