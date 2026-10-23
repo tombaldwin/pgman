@@ -446,12 +446,14 @@ fn parse_log_message(msg: &str) -> Option<(Kind, &str)> {
 /// Strip a `duration: N ms  ` prefix, leaving the statement that follows it.
 fn strip_duration_prefix(msg: &str) -> &str {
     if let Some(rest) = msg.strip_prefix("duration:") {
-        for kw in ["statement:", "execute ", "bind ", "parse "] {
-            if let Some(i) = rest.find(kw) {
-                return &rest[i..];
-            }
-        }
-        return rest.trim_start();
+        // The earliest keyword, not the first in this list: a statement
+        // that mentions `statement:` (`like 'statement:%'`) after its
+        // `execute <tag>:` is still an execute.
+        return ["statement:", "execute ", "bind ", "parse "]
+            .iter()
+            .filter_map(|kw| rest.find(kw))
+            .min()
+            .map_or(rest.trim_start(), |i| &rest[i..]);
     }
     msg
 }
@@ -1057,6 +1059,25 @@ mod tests {
         assert_eq!(
             q[0].raw_sql,
             "insert into notes values ('line one\n\tindented two')"
+        );
+    }
+
+    /// `duration: … execute <tag>: <sql>` where the SQL itself says
+    /// `statement:` (or `bind `): the record is the execute, cut at its
+    /// own keyword, not at the later one inside the SQL.
+    #[test]
+    fn a_duration_record_is_cut_at_its_earliest_keyword() {
+        let log = "\
+2026-10-21 09:12:52 UTC:10.0.1.24(51235):billing@ledger:[31841]:LOG:  duration: 0.5 ms  execute <unnamed>: select * from t where note like 'statement:%' and id = $1
+2026-10-21 09:12:52 UTC:10.0.1.24(51235):billing@ledger:[31841]:DETAIL:  parameters: $1 = '5'
+2026-10-21 09:12:53 UTC:10.0.1.24(51235):billing@ledger:[31841]:LOG:  duration: 0.5 ms  statement: select 'bind me' as execute ";
+        let sql: Vec<String> = parse(log).into_iter().map(|q| q.runnable_sql).collect();
+        assert_eq!(
+            sql,
+            [
+                "select * from t where note like 'statement:%' and id = '5'",
+                "select 'bind me' as execute",
+            ]
         );
     }
 

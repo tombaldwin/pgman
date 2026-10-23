@@ -81,6 +81,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `highlight_sql=true`, a coloured console or pager) are ignored. A
   highlighted formatted statement was dropped, and a one-line one kept
   the codes in its SQL.
+- Logs → SQL: a Postgres `duration: … execute` record whose SQL
+  contains `statement:` (`like 'statement:%'`) was cut there, leaving
+  the tail of the statement as the query.
 
 ## [0.1.0] — 2026-10-22
 
