@@ -61,13 +61,13 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
     out
 }
 
-/// True if `line` is a p6spy or datasource-proxy statement line —
-/// `logdetect`'s hint asks this, so it and [`parse`] agree.
+/// True if `line` is a p6spy statement line [`parse`] reads —
+/// `logdetect`'s hint asks this, so it and the parser agree.
 pub(crate) fn is_p6spy_line(line: &str) -> bool {
     p6spy_line(line).is_some()
 }
 
-/// True if `line` is a datasource-proxy statement line.
+/// True if `line` is a datasource-proxy statement line [`parse`] reads.
 pub(crate) fn is_dsproxy_line(line: &str) -> bool {
     dsproxy_line(line).is_some()
 }
