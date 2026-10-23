@@ -1151,6 +1151,22 @@ fn fit_status_drops_whole_key_hints_from_the_end_never_a_key_alone() {
 }
 
 #[test]
+fn fit_status_drops_a_middle_segment_it_would_shrink_to_a_stub() {
+    let tip =
+        "tip · from environments.toml · replicas under their primary · r refresh · ? full keys";
+    let fitted = fit_status(tip, 60);
+    assert_eq!(
+        fitted,
+        "tip · from environments.toml · r refresh · ? full keys"
+    );
+    for w in 10..display_width(tip) {
+        let fitted = fit_status(tip, w);
+        assert!(display_width(&fitted) <= w, "{w}: {fitted}");
+        assert!(!fitted.contains(" r… "), "{w}: {fitted}");
+    }
+}
+
+#[test]
 fn fit_status_never_cuts_a_prose_segment_mid_word() {
     let text = "confirm: run (DELETE without WHERE) · y run · n / esc cancel";
     let fitted = fit_status(text, 45);

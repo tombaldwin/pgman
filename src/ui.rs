@@ -1428,7 +1428,7 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
         return text.to_string();
     }
     let mut segments: Vec<String> = text.split(SEP).map(str::to_string).collect();
-    let last_idx = segments.len() - 1;
+    let mut last_idx = segments.len() - 1;
 
     // Step 2: shrink the longest non-last segment, repeatedly, until the
     // join fits or nothing non-last is left to shrink. Only segments
@@ -1460,7 +1460,16 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
             .max_by_key(|(_, s)| display_width(s));
         let Some((i, s)) = longest else { break };
         let target_len = display_width(s).saturating_sub(over).max(1);
-        segments[i] = middle_ellipsis(s, target_len);
+        // Shrunk to a stub (`r…` of `replicas under their primary`), a
+        // middle segment says nothing: drop it whole instead. The first
+        // is the context, so it keeps whatever of itself fits.
+        const MIN_KEEP: usize = 8;
+        if i > 0 && target_len < MIN_KEEP {
+            segments.remove(i);
+            last_idx -= 1;
+        } else {
+            segments[i] = middle_ellipsis(s, target_len);
+        }
     }
 
     // Step 2b: nothing left to shrink. Drop whole segments from the

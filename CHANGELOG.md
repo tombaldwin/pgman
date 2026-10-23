@@ -39,7 +39,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   below`); the cell detail says `more lines`.
 - A footer tip too wide for the terminal cut a key hint down to its
   label (`… expand-all/collapse-all`, `y… suggestion`). Key hints are now
-  dropped whole, from the end; prose goes before them.
+  dropped whole, from the end; prose goes before them, and a prose
+  segment that would shrink to a stub (`r…`) is dropped whole too.
 - `pgman --dsn X query 'SQL'` failed with clap's "unexpected argument":
   a sub-command (`query`, `env`, `mcp`) now works after global options.
   `--help`'s Usage lists the three sub-commands, and `query`'s no-DSN
