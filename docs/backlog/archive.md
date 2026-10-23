@@ -1788,3 +1788,11 @@ itself is done.
   table, limits, the two drop counts, record/replay, redaction.
 - A long typed footer pattern keeps its prompt head and the cursor,
   showing the pattern's tail.
+- Config advisor: ADV001–005 (cache hit ratio, temp spills, dead
+  tuples with their autovacuum cause, lock-wait chains, forced
+  checkpoints) in the schema wizard, each with evidence, the stats
+  window, current → suggested setting, restart need and the RDS /
+  Aurora parameter-group key; `e` yanks the evidence query.
+- Paging past `MAX_ROWS`: `M` fetches the next 1000 rows of a plain
+  SELECT through a server-side cursor, closed on idle / other work /
+  the end (`docs/backlog/paging.md`).

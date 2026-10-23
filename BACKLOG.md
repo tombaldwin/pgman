@@ -163,11 +163,29 @@ batch.
   The heuristic already covers the common id-column case.
 
 ### Performance / DBA — follow-ups
-- **Page beyond `MAX_ROWS`.** v1 streaming landed (rows fetched
-  via `query_raw` and capped at `grid::MAX_ROWS` so huge SELECTs
-  no longer pull every row into RAM). The grid still shows only
-  the first page; a portal-backed "fetch next N" / scroll-to-load
-  is the v2.
+- **Paging: one unexplained cursor close while hand-driving.** After
+  Esc and `M` arrived together (read as Alt-M), a later `M` said the
+  cursor had closed while the server still showed `idle in
+  transaction`. Not reproduced in four tries; look with the log on.
+- **Filtering after scrolling down leaves the grid scrolled** so only
+  the selected row shows, blank below (reproduces unpaged at 900 rows;
+  paging hits it more, since a fetch jumps the selection to row 1001).
+- **The result title is cut by the border at 80 columns** when a filter
+  is active and the counts reach five digits.
+- **Paging's 60 s idle / 10 min open limits are constants**; they could
+  be `pgman.toml` settings.
+- **Connect hangs behind an ACCESS EXCLUSIVE lock.** Bootstrap's catalog
+  reads (`pg_get_indexdef`) wait forever ("connecting…") with no
+  `lock_timeout`, and backends pile up behind it.
+- **The advisor and the live lint run on the editor's session**, so
+  inside an open user transaction `pg_stat_*` reads are the
+  transaction's cached snapshot and a refresh can be stale.
+- **MCP and the HTML report don't carry the advisor's evidence.**
+  `schema_lint` returns lint findings only; `report.rs` lists ADV rows
+  without evidence or `advice`.
+- **ADV002's suggested role** is the worst spiller's, even when that
+  spill is past 4x `work_mem` and the setting can't fix it; pick per
+  role instead.
 
 ### Code-review follow-ups (from the open-source-prep review)
 - The older single-line inputs (`SaveQueryPrompt` name,
@@ -303,33 +321,19 @@ no new I/O.
   convention encodes the role.
 
 #### L3 — tuning advisor
-A new panel (`Mode::Advisor`) that reads `pg_stat_database`,
-`pg_stat_bgwriter`, `pg_stat_statements`, `pg_stat_activity`,
-and the tap stream, then produces a **ranked list of tuning
-suggestions** with copy-pastable `ALTER SYSTEM SET …` snippets.
-Each finding has severity, evidence (the stats that triggered
-it), recommendation, and notes on whether a server restart is
-needed.
-- **Buffer cache hit ratio low** → `shared_buffers` ↑.
-- **High temp_bytes / temp_files** → `work_mem` ↑; surface
-  the spilling queries from the tap.
+The server-stats round shipped in the schema wizard (`W`: ADV001–005
+with evidence, stats window, setting and the RDS / Aurora mapping —
+`docs/backlog/config-advisor.md`). Still open:
 - **fsync wait time high** + many short transactions →
   `synchronous_commit=local` (or per-session for the relevant
-  pool) / `wal_writer_delay` ↑.
-- **Dead-tuple ratios over threshold** (already detected by
-  LINT104) → per-table autovacuum scale factors.
-- **Lock-wait pile-ups** in pg_stat_activity → `deadlock_
-  timeout` review + surface the contending transactions.
+  pool) / `wal_writer_delay` ↑. Needs `pg_stat_wal` timing.
+- **Temp spills from the tap**: name the spilling app queries, not
+  only `pg_stat_statements` rows.
 - **Connection thrash** (high conn-establish rate from tap
   + low cached-plan rate) → pool sizing / prepared-statement
   cache settings on HikariCP.
-- **RDS / Aurora mapping.** Each suggestion includes the
-  AWS Parameter Group key + whether it's static (reboot) or
-  dynamic. Aurora-specific knobs (`aurora_load_from_s3_role`
-  etc.) flagged when the dialect probe says Aurora. Note:
-  pg_stat_statements reset isn't available on RDS without
-  rds_superuser — advisor surfaces deltas via stored
-  snapshots instead.
+- **Stored snapshots for deltas**: `pg_stat_statements` reset isn't
+  available on RDS without rds_superuser, so diff stored snapshots.
 
 #### L4 — agent handoff (Claude Code, Cursor, Aider, …)
 pgman's job is to build a **structured evidence packet**;
