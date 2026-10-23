@@ -1,6 +1,7 @@
 //! Application state and the event loop.
 
 mod cmd;
+mod edit_cell;
 mod editor;
 mod handle;
 mod history;
@@ -813,6 +814,45 @@ pub trait CancelDispatcher: std::fmt::Debug + Send + Sync {
     fn dispatch(&self);
 }
 
+/// Pick the diff key for A against B, and whether it is the primary
+/// key. Keyed comparison compares non-key cells positionally, so it
+/// needs the same columns on both sides; then, when both were read from
+/// the same columns of one table (`origins` equal) whose primary key is
+/// all in the result, the key is that primary key
+/// (`query::cell_edit::resolve_key`). Otherwise the leftmost column
+/// unique on both sides, then the full row. Pure.
+pub fn choose_diff_key(
+    cache: &SchemaCache,
+    a: &PinnedResult,
+    b: &PinnedResult,
+) -> (crate::query::row_diff::RowKey, bool) {
+    use crate::query::row_diff::{infer_key_column, RowKey};
+    if a.columns != b.columns {
+        return (RowKey::FullRow, false);
+    }
+    if a.origins == b.origins {
+        let key = |p: &PinnedResult| {
+            crate::query::cell_edit::resolve_key(
+                cache,
+                p.source.as_ref(),
+                &p.columns,
+                &p.origins,
+                None,
+            )
+        };
+        if let (Ok(ka), Ok(kb)) = (key(a), key(b)) {
+            if ka == kb {
+                let cols = ka.pk.iter().map(|(idx, _)| *idx).collect();
+                return (RowKey::Columns(cols), true);
+            }
+        }
+    }
+    match infer_key_column(&a.rows, &b.rows, a.columns.len()) {
+        Some(col) => (RowKey::Columns(vec![col]), false),
+        None => (RowKey::FullRow, false),
+    }
+}
+
 /// Inspect `sql` for its FROM clause and return the single source
 /// table when there's exactly one. Joins / subqueries / no-FROM
 /// statements all return `None` — the row-as-INSERT yank only
@@ -1374,6 +1414,11 @@ pub struct App {
     pub history_pos: Option<usize>,
     /// A guarded run waiting on confirmation.
     pub pending_run: Option<PendingRun>,
+    /// `u`'s editor while it is open (`Mode::CellEdit`).
+    pub cell_edit: Option<CellEditUi>,
+    /// A cell edit inside the `auto_tx` transaction awaiting commit or
+    /// rollback: a rollback puts the old value back in the grid.
+    pub edit_awaiting_tx: Option<PendingCellEdit>,
     /// True while an explicit transaction is open (auto_tx write succeeded —
     /// waiting on the user to commit or rollback).
     pub tx_open: bool,
@@ -1816,6 +1861,8 @@ impl App {
             history_pos: None,
             history_draft: String::new(),
             pending_run: None,
+            cell_edit: None,
+            edit_awaiting_tx: None,
             tx_open: false,
             log_pick: LogPickUi::default(),
             last_log_pick: None,
@@ -2771,6 +2818,7 @@ impl App {
             Mode::ParamPrompt => self.on_param_prompt_key(key),
             Mode::ResultDiff => self.on_result_diff_key(key),
             Mode::CommandBar => self.on_command_bar_key(key),
+            Mode::CellEdit => self.on_cell_edit_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -3243,6 +3291,7 @@ impl App {
             Mode::ConnPick => Some("conn pick"),
             Mode::RowDetail => Some("row detail"),
             Mode::CellDetail => Some("cell detail"),
+            Mode::CellEdit => Some("cell edit"),
             Mode::SchemaBrowser | Mode::SchemaBrowserFilter => Some("schema browser"),
             Mode::SchemaLint => Some("schema wizard"),
             Mode::ErrorDetail => Some("editor"),
@@ -3390,7 +3439,13 @@ impl App {
     fn close_tx(&mut self, commit: bool) {
         let Some(db) = self.db() else {
             self.tx_open = false;
-            self.mode = Mode::Editor;
+            self.mode = match self.edit_awaiting_tx.take() {
+                Some(edit) => {
+                    self.revert_cell_edit(&edit);
+                    edit.return_to
+                }
+                None => Mode::Editor,
+            };
             return;
         };
         let tx = self.msg_tx.clone();
@@ -4268,6 +4323,7 @@ impl App {
                     decision,
                     is_batch: false,
                     summary: None,
+                    cell_edit: None,
                 });
                 self.mode = Mode::Confirm;
             }
@@ -4364,6 +4420,7 @@ impl App {
                     decision: synthesized,
                     is_batch: true,
                     summary: Some(summary),
+                    cell_edit: None,
                 });
                 self.mode = Mode::Confirm;
             }
@@ -4607,11 +4664,7 @@ impl App {
         match self.result_diff.pinned.take() {
             None => {
                 let n = self.grid.rows.len();
-                self.result_diff.pinned = Some(PinnedResult {
-                    columns: self.grid.columns.clone(),
-                    rows: self.grid.rows.clone(),
-                    label: self.current_result_label(),
-                });
+                self.result_diff.pinned = Some(self.current_result_pin());
                 self.last_status = Some(format!(
                     "pinned result A · {n} row(s) · run another query, then D to diff"
                 ));
@@ -4619,11 +4672,9 @@ impl App {
             Some(a) => {
                 // Baseline present — current grid is B. Put A back
                 // (it persists across diffs for iterative work).
-                let b_columns = self.grid.columns.clone();
-                let b_rows = self.grid.rows.clone();
-                let b_label = self.current_result_label();
-                let key = Self::choose_diff_key(&a, &b_columns, &b_rows);
-                let diff = crate::query::row_diff::diff_rows(&a.rows, &b_rows, &key);
+                let b = self.current_result_pin();
+                let (key, key_is_pk) = choose_diff_key(&self.schema_cache, &a, &b);
+                let diff = crate::query::row_diff::diff_rows(&a.rows, &b.rows, &key);
                 let summary = format!(
                     "diff · +{} -{} ~{} ={}",
                     diff.added.len(),
@@ -4633,10 +4684,13 @@ impl App {
                 );
                 self.result_diff.active = Some(ResultDiffState {
                     a: a.clone(),
-                    b_columns,
-                    b_rows,
-                    b_label,
+                    b_columns: b.columns,
+                    b_rows: b.rows,
+                    b_label: b.label,
+                    b_source: b.source,
+                    b_origins: b.origins,
                     key,
+                    key_is_pk,
                     diff,
                 });
                 self.result_diff.pinned = Some(a);
@@ -4647,23 +4701,16 @@ impl App {
         }
     }
 
-    /// Pick the diff key for A-vs-B. Use a single inferred unique
-    /// column (strong mode, with change-detection) only when the
-    /// column layouts match — comparing non-key cells positionally
-    /// requires aligned columns. Otherwise fall back to full-row
-    /// identity.
-    fn choose_diff_key(
-        a: &PinnedResult,
-        b_columns: &[String],
-        b_rows: &[Vec<Cell>],
-    ) -> crate::query::row_diff::RowKey {
-        use crate::query::row_diff::{infer_key_column, RowKey};
-        if a.columns == b_columns {
-            if let Some(col) = infer_key_column(&a.rows, b_rows, a.columns.len()) {
-                return RowKey::Columns(vec![col]);
-            }
+    /// The current grid as a diff side: its columns, rows, label, and
+    /// the source table and column origins the PK key needs.
+    fn current_result_pin(&self) -> PinnedResult {
+        PinnedResult {
+            columns: self.grid.columns.clone(),
+            rows: self.grid.rows.clone(),
+            label: self.current_result_label(),
+            source: self.grid_view.source.clone(),
+            origins: self.grid_view.origins.clone(),
         }
-        RowKey::FullRow
     }
 
     /// `Y` in Normal mode — copy the (sorted, filtered) grid to the
@@ -6538,6 +6585,24 @@ enum PageRequest {
     Fetch(usize),
     /// The statement again, behind a fresh cursor, for its first `n` rows.
     Rerun(String, usize),
+}
+
+/// [`execute`], keeping the column origins of the one kind of result a
+/// cell can be edited in: a plain single-statement run outside a
+/// transaction. Every other run's are empty.
+async fn execute_with_origins(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    kind: RunKind,
+    decision: &Decision,
+    is_batch: bool,
+) -> Result<(Grid, Vec<Option<crate::grid::ColumnOrigin>>), conn::QueryErr> {
+    if kind == RunKind::Run && !is_batch && !decision.wrap_in_tx {
+        return conn::run_statement_with_origins(client, sql).await;
+    }
+    execute(client, sql, kind, decision, is_batch)
+        .await
+        .map(|grid| (grid, Vec::new()))
 }
 
 /// Build and run the effective SQL for `kind`, honouring the safety decision.

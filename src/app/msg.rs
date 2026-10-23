@@ -53,6 +53,9 @@ pub enum AppMsg {
     QueryOk {
         generation: u64,
         grid: Grid,
+        /// Where each column came from (`conn::run_statement_with_origins`);
+        /// empty for any result but a plain editor run's.
+        origins: Vec<Option<crate::grid::ColumnOrigin>>,
         kind_label: String,
         /// True if the run wrapped the statement in a transaction that's still
         /// open — the app should prompt for commit/rollback.
@@ -82,6 +85,14 @@ pub enum AppMsg {
         /// for non-Postgres failures (TLS, IO, our own validation).
         /// Stashed on App so the rich-error overlay can render it.
         detail: Option<crate::conn::QueryErrDetail>,
+    },
+    /// A cell edit's UPDATE changed its one row. `value` is the column
+    /// as `RETURNING` rendered it; `tx` says whether it is committed.
+    CellUpdated {
+        generation: u64,
+        pending: crate::app::PendingCellEdit,
+        value: crate::grid::Cell,
+        tx: crate::conn::EditTx,
     },
     /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
     TxClosed {
@@ -231,6 +242,7 @@ impl AppMsg {
             | AppMsg::PageLoaded { generation, .. }
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. }
+            | AppMsg::CellUpdated { generation, .. }
             | AppMsg::Notice { generation, .. }
             | AppMsg::Notification { generation, .. }
             | AppMsg::SlowQueriesLoaded { generation, .. }

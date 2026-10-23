@@ -6,6 +6,10 @@ impl App {
     /// elsewhere we ignore so a stray paste on the grid doesn't trigger
     /// arbitrary keypress side effects.
     pub(super) fn on_paste(&mut self, text: String) {
+        if self.mode == Mode::CellEdit {
+            self.paste_into_cell_edit(&text);
+            return;
+        }
         if self.mode != Mode::Editor {
             return;
         }

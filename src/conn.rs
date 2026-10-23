@@ -1127,24 +1127,57 @@ async fn connect_inner(
 /// the returned `Grid` carries `truncated: true` so the renderer can
 /// surface that.
 pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
+    run_statement_with_origins(client, sql)
+        .await
+        .map(|(grid, _)| grid)
+}
+
+/// [`run_statement`], plus where each result column came from
+/// ([`column_origins`]) — the editor's plain run keeps them so a cell
+/// can be edited. Empty for a statement that returns no rows.
+pub async fn run_statement_with_origins(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<(Grid, Vec<Option<crate::grid::ColumnOrigin>>), QueryErr> {
     let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
     let columns = stmt.columns();
+    let origins = column_origins(columns);
     if columns.is_empty() {
         let affected = client.execute(&stmt, &[]).await.map_err(QueryErr::from)?;
-        Ok(Grid {
+        let grid = Grid {
             columns: vec!["status".to_string()],
             rows: vec![vec![Some(format!("{affected} row(s) affected"))]],
             truncated: false,
-        })
+        };
+        Ok((grid, origins))
     } else {
         let column_names: Vec<String> = columns.iter().map(|c| c.name().to_string()).collect();
         let (rows, truncated) = stream_text_rows(client, sql, column_names.len()).await?;
-        Ok(Grid {
+        let grid = Grid {
             columns: column_names,
             rows,
             truncated,
-        })
+        };
+        Ok((grid, origins))
     }
+}
+
+/// Each column's table OID and attnum from the RowDescription, `None`
+/// for one no table column backs. `tokio_postgres` already turns the
+/// wire's zero OID into `None`; a non-positive attnum (a system column
+/// such as `ctid`) is no column an UPDATE can set either.
+pub(crate) fn column_origins(
+    columns: &[tokio_postgres::Column],
+) -> Vec<Option<crate::grid::ColumnOrigin>> {
+    columns
+        .iter()
+        .map(|c| match (c.table_oid(), c.column_id()) {
+            (Some(table_oid), Some(attnum)) if attnum > 0 => {
+                Some(crate::grid::ColumnOrigin { table_oid, attnum })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Stream a row-returning statement over the simple-query (text)
@@ -1435,6 +1468,113 @@ pub async fn run_in_tx_rollback(
     let result = run_statement(client, sql).await;
     let _ = client.batch_execute("ROLLBACK").await;
     result
+}
+
+/// How a one-row edit ([`run_single_row_update`]) left the transaction
+/// once the row had changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditTx {
+    /// Committed: the change is in the database.
+    Committed,
+    /// `auto_tx`: pgman's own transaction is still open, for the
+    /// operator's commit or rollback.
+    LeftOpen,
+    /// The operator had a transaction of their own open (a `BEGIN` from
+    /// the editor); the change is inside it, not committed yet.
+    InOperatorTx,
+}
+
+/// What a one-row edit sent back: the column's value as the server
+/// stored and renders it (`RETURNING`), and how the transaction stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SingleRowUpdate {
+    pub value: Option<String>,
+    pub tx: EditTx,
+}
+
+/// The savepoint [`run_single_row_update`] brackets an edit with when
+/// the session is already inside a transaction.
+const EDIT_SAVEPOINT: &str = "pgman_cell_edit";
+
+/// Run a cell edit's `UPDATE … RETURNING col` so that it changes exactly
+/// one row or nothing (`query::cell_edit::check_one_row`).
+///
+/// It runs inside a transaction of its own — or, when the operator
+/// already has one open (pgman does not track a `BEGIN` typed into the
+/// editor), inside a savepoint, so that undoing the edit can never take
+/// the operator's earlier work with it. `SAVEPOINT` is how it tells:
+/// outside a transaction block it fails with `25P01`, and the edit
+/// begins its own. Any count but one, or any error, is rolled back (to
+/// the savepoint) before the error comes back. On success: a savepoint
+/// is released and the operator's transaction stays open; with
+/// `keep_open` (`auto_tx`) pgman's transaction is left for the commit /
+/// rollback prompt; otherwise it commits.
+pub async fn run_single_row_update(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    keep_open: bool,
+) -> Result<SingleRowUpdate, QueryErr> {
+    let nested = match client
+        .batch_execute(&format!("SAVEPOINT {EDIT_SAVEPOINT}"))
+        .await
+    {
+        Ok(()) => true,
+        Err(e) if e.code() == Some(&tokio_postgres::error::SqlState::NO_ACTIVE_SQL_TRANSACTION) => {
+            client
+                .batch_execute("BEGIN")
+                .await
+                .map_err(QueryErr::from)?;
+            false
+        }
+        Err(e) => return Err(QueryErr::from(e)),
+    };
+    let outcome = async {
+        let mut value = None;
+        let mut rows = 0;
+        for msg in client.simple_query(sql).await.map_err(QueryErr::from)? {
+            match msg {
+                tokio_postgres::SimpleQueryMessage::Row(row) if rows == 0 => {
+                    value = row.try_get(0).ok().flatten().map(str::to_string);
+                }
+                tokio_postgres::SimpleQueryMessage::CommandComplete(n) => rows = n,
+                _ => {}
+            }
+        }
+        crate::query::cell_edit::check_one_row(rows).map_err(QueryErr::msg)?;
+        Ok(value)
+    }
+    .await;
+    let value = match outcome {
+        Ok(value) => value,
+        Err(e) => {
+            let undo = if nested {
+                format!(
+                    "ROLLBACK TO SAVEPOINT {EDIT_SAVEPOINT}; RELEASE SAVEPOINT {EDIT_SAVEPOINT}"
+                )
+            } else {
+                "ROLLBACK".to_string()
+            };
+            let _ = client.batch_execute(&undo).await;
+            return Err(e);
+        }
+    };
+    let tx = if nested {
+        client
+            .batch_execute(&format!("RELEASE SAVEPOINT {EDIT_SAVEPOINT}"))
+            .await
+            .map_err(QueryErr::from)?;
+        EditTx::InOperatorTx
+    } else if keep_open {
+        EditTx::LeftOpen
+    } else {
+        // A failed COMMIT has already ended the transaction.
+        client
+            .batch_execute("COMMIT")
+            .await
+            .map_err(QueryErr::from)?;
+        EditTx::Committed
+    };
+    Ok(SingleRowUpdate { value, tx })
 }
 
 /// Run `sql` and collect the result into a `Grid` (capped at `grid::MAX_ROWS`).

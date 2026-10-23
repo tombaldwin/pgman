@@ -73,7 +73,11 @@ impl App {
         // Left set, `tx_open` refused `\watch` for the rest of the
         // session and `pending_run` could fire against the wrong DB.
         self.tx_open = false;
+        if let Some(edit) = self.edit_awaiting_tx.take() {
+            self.revert_cell_edit(&edit);
+        }
         self.pending_run = None;
+        self.cell_edit = None;
         self.pending_terminate = None;
         self.conn_state = ConnState::Connecting;
         self.in_recovery = None;
@@ -400,6 +404,20 @@ impl App {
         });
     }
 
+    /// Push a statement that is about to run onto the history ring:
+    /// consecutive duplicates skipped, capped at `HISTORY_CAP` entries
+    /// (shared with the persistence side so the in-memory and on-disk
+    /// rings can never drift), and any history browsing reset.
+    pub(super) fn remember_in_history(&mut self, sql: &str) {
+        if self.history.last().map(String::as_str) != Some(sql) {
+            self.history.push(sql.to_string());
+            if self.history.len() > HISTORY_CAP {
+                self.history.remove(0);
+            }
+        }
+        self.history_pos = None;
+    }
+
     pub(super) fn spawn_run(
         &mut self,
         sql: String,
@@ -429,16 +447,7 @@ impl App {
                 None => return,
             },
         };
-        // Push to history (skip consecutive duplicates, cap at
-        // HISTORY_CAP entries — shared with the persistence side
-        // so the in-memory + on-disk rings can never drift).
-        if self.history.last() != Some(&sql) {
-            self.history.push(sql.clone());
-            if self.history.len() > HISTORY_CAP {
-                self.history.remove(0);
-            }
-        }
-        self.history_pos = None;
+        self.remember_in_history(&sql);
         // Track the SQL of the most recent plain-Run so the
         // QueryOk handler can re-parse it for the source table.
         // EXPLAIN-wrapped runs hand back a JSON cell whose FROM is
@@ -468,13 +477,13 @@ impl App {
                 RunRoute::Db(db) => {
                     let client = db.ready().await;
                     (
-                        execute(&client, &sql, kind, &decision, is_batch).await,
+                        execute_with_origins(&client, &sql, kind, &decision, is_batch).await,
                         None,
                     )
                 }
                 RunRoute::Pager(rx) => match rx.await {
                     Ok(Ok(opened)) => (
-                        Ok(opened.grid),
+                        Ok((opened.grid, opened.origins)),
                         Some(RunPaging {
                             sql,
                             cursor: opened.cursor,
@@ -492,9 +501,10 @@ impl App {
             // caller will need to commit or rollback.
             let tx_open_after = is_run && wrap_in_tx && result.is_ok();
             let msg = match result {
-                Ok(grid) => AppMsg::QueryOk {
+                Ok((grid, origins)) => AppMsg::QueryOk {
                     generation,
                     grid,
+                    origins,
                     kind_label: kind.label().to_string(),
                     tx_open_after,
                     paging,
@@ -523,15 +533,7 @@ impl App {
     /// DELETE without WHERE hits `Guard::Block` same as it would
     /// live and never gets here.
     pub(super) fn spawn_run_demo(&mut self, sql: String, kind: RunKind) {
-        // Same history bookkeeping as `spawn_run` (skip consecutive
-        // duplicates, cap at HISTORY_CAP).
-        if self.history.last() != Some(&sql) {
-            self.history.push(sql.clone());
-            if self.history.len() > HISTORY_CAP {
-                self.history.remove(0);
-            }
-        }
-        self.history_pos = None;
+        self.remember_in_history(&sql);
         self.last_run_sql = if matches!(kind, RunKind::Run) {
             Some(sql.clone())
         } else {
@@ -565,6 +567,8 @@ impl App {
         let msg = AppMsg::QueryOk {
             generation: self.generation,
             grid,
+            // A canned answer was read from no table.
+            origins: Vec::new(),
             kind_label: kind.label().to_string(),
             // Demo never actually opens a transaction — there's no
             // connection for a COMMIT/ROLLBACK to run against.
@@ -591,6 +595,7 @@ impl App {
         // the old database. QueryOk re-infers source immediately after this on
         // the query path, so behaviour there is unchanged.
         self.grid_view.source = None;
+        self.grid_view.origins.clear();
         // A new grid landed — bookmarks keyed by the old grid's row indices
         // would resolve against unrelated rows, so drop them. (Per-tab
         // bookmarks are snapshotted/restored separately on tab switch.)

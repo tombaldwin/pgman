@@ -28,6 +28,15 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   timeouts are), and before any other database work; `M` then re-runs
   the query. `EXPLAIN`, scripts, `\watch`, locking `SELECT`s and a
   `SELECT` inside an open transaction stay capped at 1000 as before.
+- Cell editing: `u` on a cell in the grid (or a field in row detail)
+  edits it in place. Enter writes a one-row `UPDATE … WHERE <primary
+  key>` and sends it through the safety guard like any editor statement,
+  the statement shown in the confirm; `Ctrl-N` sets NULL (and NULL ↔ the
+  empty string). It works on a SELECT from one table with its primary
+  key in the result, and otherwise says why not (a join, a view, no
+  primary key, the key not selected, a computed column, read-only). The
+  UPDATE changes exactly one row or is rolled back, and the cell then
+  shows the value as the server stored it.
 
 - `sslrootcert=<file>` in a connection string pins the trusted CAs, as
   in libpq (and `require` with a CA file checks the chain). It used to
@@ -62,6 +71,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   for a second press.
 - `Y` and `:fixture` say `fetched rows only` when the result has more
   rows than pgman holds.
+- The result diff (`D`) matches rows on the table's real primary key
+  when A and B are the same columns from one table and the key is in
+  both (`key: id (primary key)` in the title), instead of the leftmost
+  column that happens to be unique; otherwise it infers as before.
 
 - Help is a list of sections and one section at a time instead of one
   ~275-row page: from 110 columns the list sits beside the section, and
@@ -107,6 +120,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The schema wizard, slow queries, sessions and notifications panels
   scrolled as if their header row were a list row, so moving the cursor
   past the bottom left the focused row one below the panel's edge.
+- After `SELECT … FROM ONLY t`, `I` yanked an `INSERT INTO public.only`:
+  `ONLY` was read as the table's name. It is now skipped; a quoted
+  `"only"` or a schema `only.t` is still a name.
 - Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
   comparisons in the SCRAM path's digest crates) and `clipboard-win`
   5.4.3 (5.4.1 was yanked).

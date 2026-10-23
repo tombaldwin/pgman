@@ -14,6 +14,7 @@
 pub mod advisor;
 pub mod apply;
 pub mod backslash;
+pub mod cell_edit;
 pub mod clause;
 pub mod complete;
 pub mod ddl;

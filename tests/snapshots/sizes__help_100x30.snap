@@ -9,7 +9,7 @@ expression: dump(&buf)
 │ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
-╭[ ◆ help · 22 sections ◆ ]────────────────────────────────────────────────────────────────────────╮
+╭[ ◆ help · 23 sections ◆ ]────────────────────────────────────────────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                        │
 │ ▸ grid                     the results: move, sort, filter, find, yank                           │
 │   editor                   write and run SQL · EXPLAIN · history · completion                    │
@@ -19,6 +19,7 @@ expression: dump(&buf)
 │   conn pick                the connection picker                                                 │
 │   row detail               one row, field by field (enter on the grid)                           │
 │   cell detail              one value, as text or as a JSON tree                                  │
+│   cell edit                change one value of a table row (u)                                   │
 │   schema browser           schemas, tables, columns, constraints (S)                             │
 │   EXPLAIN tree             the plan as a tree, hottest node in red                               │
 │   slow queries             pg_stat_statements, slowest first (T)                                 │
@@ -29,7 +30,6 @@ expression: dump(&buf)
 │   tabs                     an editor and a result per tab · ] / [ switch                         │
 │   saved queries            named queries kept across sessions (Q)                                │
 │   notifications            LISTEN / NOTIFY arrivals (F3)                                         │
-│   jdbc tap                 your app's statements, live from the JDBC tap (F4)                    │
-│   ↓ 3 more                                                                                       │
+│   ↓ 4 more                                                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ? close help · j/k select · enter open · / filter

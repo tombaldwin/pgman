@@ -658,6 +658,10 @@ impl App {
                 self.yank_focused_field();
                 return;
             }
+            KeyCode::Char('u') => {
+                self.start_cell_edit(Mode::RowDetail);
+                return;
+            }
             _ => {}
         }
         let len = self.row_detail.field_count;
@@ -1095,6 +1099,7 @@ impl App {
             KeyCode::Char('D') => self.pin_or_diff_result(),
             KeyCode::Char('I') => self.yank_row_as_insert(),
             KeyCode::Char('M') => self.fetch_more(),
+            KeyCode::Char('u') => self.start_cell_edit(Mode::Normal),
             KeyCode::Char('m') => {
                 self.pending_mark_set = true;
                 self.last_status = Some("set mark · press a-z".into());
@@ -1229,6 +1234,11 @@ impl App {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if let Some(pending) = self.pending_run.take() {
+                    if let Some(edit) = pending.cell_edit {
+                        self.mode = edit.return_to;
+                        self.spawn_cell_update(edit, pending.sql, pending.decision);
+                        return;
+                    }
                     // --demo has no client; a confirmed write is answered
                     // synthetically, the same as an allowed one.
                     if self.demo && self.client.is_none() {
@@ -1245,8 +1255,11 @@ impl App {
                 self.mode = Mode::Editor;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                self.pending_run = None;
-                self.mode = Mode::Editor;
+                let pending = self.pending_run.take();
+                self.mode = match pending.and_then(|p| p.cell_edit) {
+                    Some(edit) => edit.return_to,
+                    None => Mode::Editor,
+                };
                 self.last_status = Some("cancelled".to_string());
             }
             _ => {}
@@ -1319,6 +1332,8 @@ impl App {
                         columns: d.b_columns.clone(),
                         rows: d.b_rows.clone(),
                         label: d.b_label.clone(),
+                        source: d.b_source.clone(),
+                        origins: d.b_origins.clone(),
                     });
                     self.mode = Mode::Normal;
                     self.result_diff.active = None;

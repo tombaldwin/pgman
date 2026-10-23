@@ -6686,3 +6686,497 @@ async fn a_failing_open_rolls_back() {
     );
     assert_eq!(session_state(&observer, pid, "idle").await, "idle");
 }
+
+/// The schema cache carries each table's real primary key, in key order
+/// (`a, "Cee", b`: neither column order nor sorted), under the server's own names;
+/// a table with only a unique key has no entry; and every relation is reachable by
+/// its OID, with each column's `attnum`.
+#[tokio::test]
+async fn the_schema_cache_knows_each_tables_primary_key_in_key_order() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let composite = format!("pgman_it_PkOrder_{pid}");
+    let keyless = it_name("pk_none");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE \"{composite}\" (b int, \"Cee\" int, m text, a int, \
+               PRIMARY KEY (a, \"Cee\", b)); \
+             ALTER TABLE \"{composite}\" DROP COLUMN m; \
+             ALTER TABLE \"{composite}\" ADD COLUMN later text; \
+             CREATE TABLE {keyless} (v text UNIQUE)"
+        ))
+        .await
+        .expect("create the tables");
+    let cache = pgman::query::schema::fetch(&client).await;
+    let oid: u32 = client
+        .query_one(&format!("SELECT '\"{composite}\"'::regclass::oid"), &[])
+        .await
+        .expect("oid")
+        .get(0);
+    let _ = client
+        .batch_execute(&format!("DROP TABLE \"{composite}\"; DROP TABLE {keyless}"))
+        .await;
+    assert_eq!(
+        cache.primary_key("public", &composite),
+        Some(&["a".to_string(), "Cee".to_string(), "b".to_string()][..])
+    );
+    assert_eq!(cache.primary_key("public", &composite.to_lowercase()), None);
+    assert_eq!(cache.primary_key("public", &keyless), None);
+    assert_eq!(
+        cache.relations_by_oid.get(&oid),
+        Some(&("public".to_string(), composite.clone()))
+    );
+    // attnum survives a dropped column: `later` is 5, not 4.
+    assert_eq!(
+        cache
+            .column_by_attnum("public", &composite, 5)
+            .map(|c| c.name.as_str()),
+        Some("later")
+    );
+    assert!(cache.column_by_attnum("public", &composite, 3).is_none());
+}
+
+/// Each result column carries the table OID and attnum it was read from,
+/// and nothing for an expression or a system column — whatever the
+/// column is called. A view's columns name the view, not the table
+/// under it, and a join's name each side's own table.
+#[tokio::test]
+async fn result_columns_carry_the_table_and_attnum_they_were_read_from() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("origins");
+    let v = it_name("origins_v");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, gone int, name text); \
+             ALTER TABLE {t} DROP COLUMN gone; \
+             INSERT INTO {t} VALUES (1, 'a'); \
+             CREATE VIEW {v} AS SELECT id, name FROM {t}"
+        ))
+        .await
+        .expect("create");
+    let oid = |rel: String| {
+        let client = client.clone();
+        async move {
+            client
+                .query_one(&format!("SELECT '{rel}'::regclass::oid"), &[])
+                .await
+                .expect("oid")
+                .get::<_, u32>(0)
+        }
+    };
+    let (t_oid, v_oid) = (oid(t.clone()).await, oid(v.clone()).await);
+    let origins = |sql: String| {
+        let client = client.clone();
+        async move {
+            pgman::conn::run_statement_with_origins(&client, &sql)
+                .await
+                .expect("run")
+                .1
+        }
+    };
+    let plain = origins(format!(
+        "SELECT name AS id, id + 1 AS id2, id, ctid, 'x' AS lit FROM {t}"
+    ))
+    .await;
+    let view = origins(format!("SELECT * FROM {v}")).await;
+    let join = origins(format!(
+        "SELECT a.id, b.id FROM {t} a JOIN {v} b USING (id)"
+    ))
+    .await;
+    let _ = client
+        .batch_execute(&format!("DROP VIEW {v}; DROP TABLE {t}"))
+        .await;
+    let at = |table_oid, attnum| Some(pgman::grid::ColumnOrigin { table_oid, attnum });
+    // `name` is attnum 3: the dropped column kept its number.
+    assert_eq!(plain, vec![at(t_oid, 3), None, at(t_oid, 1), None, None]);
+    assert_eq!(view, vec![at(v_oid, 1), at(v_oid, 2)]);
+    assert_eq!(join, vec![at(t_oid, 1), at(v_oid, 1)]);
+}
+
+/// The library half of a cell edit, as `u` drives it: run the SELECT as
+/// the editor does (keeping column origins), plan the edit of cell
+/// (`row`, `col`) against a fresh schema cache, write the UPDATE, check
+/// it is the one statement the safety classifier sees as a keyed
+/// UPDATE, and run it under the one-row guard. A refusal or an error
+/// comes back as the line the footer would show.
+async fn edit_cell(
+    client: &std::sync::Arc<tokio_postgres::Client>,
+    select: &str,
+    (row, col): (usize, usize),
+    new: Option<&str>,
+    keep_open: bool,
+) -> Result<pgman::conn::SingleRowUpdate, String> {
+    let (grid, origins) = pgman::conn::run_statement_with_origins(client, select)
+        .await
+        .map_err(|e| e.msg)?;
+    let cache = pgman::query::schema::fetch(client).await;
+    let source = pgman::app::infer_single_source_table(select);
+    let edit = pgman::query::cell_edit::plan_cell_edit(
+        &cache,
+        source.as_ref(),
+        &grid.columns,
+        &origins,
+        &grid.rows[row],
+        row,
+        col,
+    )
+    .map_err(|r| r.to_string())?;
+    let sql = pgman::query::cell_edit::build_update_sql(&edit, new);
+    assert_eq!(
+        pgman::safety::split_verified(&sql).map(|s| s.len()),
+        Ok(1),
+        "{sql}"
+    );
+    assert_eq!(
+        pgman::safety::classify(&sql),
+        pgman::safety::StatementKind::Update { has_where: true },
+        "{sql}"
+    );
+    pgman::conn::run_single_row_update(client, &sql, keep_open)
+        .await
+        .map_err(|e| e.msg)
+}
+
+/// One value from the compose database, `None` for NULL.
+async fn scalar(client: &tokio_postgres::Client, sql: &str) -> Option<String> {
+    client
+        .simple_query(sql)
+        .await
+        .expect(sql)
+        .into_iter()
+        .find_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => Some(r.get(0).map(str::to_string)),
+            _ => None,
+        })
+        .expect("one row")
+}
+
+/// A text cell, then NULL → `''` → NULL, a value with quotes and
+/// backslashes (under `standard_conforming_strings = off` too), and a
+/// numeric typed loosely: each lands as itself, and the edit hands back
+/// the value as the server stored it.
+#[tokio::test]
+async fn a_cell_edit_writes_exactly_the_value_typed() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_values");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text, note text, price numeric(10,2)); \
+             INSERT INTO {t} VALUES (1, 'ann', NULL, 1), (2, 'bo', 'x', 2)"
+        ))
+        .await
+        .expect("create");
+    let select = format!("SELECT id, name, note, price FROM {t} ORDER BY id");
+    let at = |id: i32, col: &str| format!("SELECT {col} FROM {t} WHERE id = {id}");
+    let committed = |value: &str| pgman::conn::SingleRowUpdate {
+        value: Some(value.to_string()),
+        tx: pgman::conn::EditTx::Committed,
+    };
+
+    let text = edit_cell(&client, &select, (0, 1), Some("anna"), false).await;
+    let text_after = scalar(&client, &at(1, "name")).await;
+    let other_row = scalar(&client, &at(2, "name")).await;
+
+    let to_empty = edit_cell(&client, &select, (0, 2), Some(""), false).await;
+    let empty_after = scalar(&client, &at(1, "note IS NULL")).await;
+    let to_null = edit_cell(&client, &select, (0, 2), None, false).await;
+    let null_after = scalar(&client, &at(1, "note IS NULL")).await;
+
+    let tricky = r"it's C:\new\x01 ''";
+    let quoted = edit_cell(&client, &select, (1, 2), Some(tricky), false).await;
+    let quoted_after = scalar(&client, &at(2, "note")).await;
+    client
+        .batch_execute("SET standard_conforming_strings = off")
+        .await
+        .expect("scs off");
+    let quoted_off = edit_cell(&client, &select, (1, 1), Some(tricky), false).await;
+    client
+        .batch_execute("SET standard_conforming_strings = on")
+        .await
+        .expect("scs on");
+    let quoted_off_after = scalar(&client, &at(2, "name")).await;
+
+    let numeric = edit_cell(&client, &select, (0, 3), Some("1.5"), false).await;
+
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    assert_eq!(text, Ok(committed("anna")));
+    assert_eq!(text_after.as_deref(), Some("anna"));
+    assert_eq!(other_row.as_deref(), Some("bo"));
+    assert_eq!(to_empty, Ok(committed("")));
+    assert_eq!(empty_after.as_deref(), Some("f"), "'' is not NULL");
+    assert_eq!(
+        to_null,
+        Ok(pgman::conn::SingleRowUpdate {
+            value: None,
+            tx: pgman::conn::EditTx::Committed
+        })
+    );
+    assert_eq!(null_after.as_deref(), Some("t"));
+    assert_eq!(quoted, Ok(committed(tricky)));
+    assert_eq!(quoted_after.as_deref(), Some(tricky));
+    assert_eq!(quoted_off, Ok(committed(tricky)));
+    assert_eq!(quoted_off_after.as_deref(), Some(tricky));
+    // `RETURNING` hands back the server's rendering, not what was typed.
+    assert_eq!(numeric, Ok(committed("1.50")));
+}
+
+/// A composite key names one row, compared in key order; a mixed-case
+/// table is edited, never its lowercase twin.
+#[tokio::test]
+async fn a_cell_edit_keys_on_a_composite_key_and_keeps_a_quoted_tables_case() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let lines = it_name("ce_lines");
+    let mixed = format!("pgman_it_CeMixed_{pid}");
+    let twin = mixed.to_ascii_lowercase();
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {lines} (order_id int, line_no int, sku text, \
+               PRIMARY KEY (order_id, line_no)); \
+             INSERT INTO {lines} VALUES (10, 1, 'a'), (10, 2, 'b'), (11, 1, 'c'); \
+             CREATE TABLE \"{mixed}\" (\"Id\" int PRIMARY KEY, \"Label\" text); \
+             CREATE TABLE {twin} (id int PRIMARY KEY, label text); \
+             INSERT INTO \"{mixed}\" VALUES (1, 'mixed'); \
+             INSERT INTO {twin} VALUES (1, 'twin')"
+        ))
+        .await
+        .expect("create");
+    // The key's columns in neither key nor table order.
+    let composite = edit_cell(
+        &client,
+        &format!("SELECT sku, line_no, order_id FROM {lines} ORDER BY order_id, line_no"),
+        (1, 0),
+        Some("B!"),
+        false,
+    )
+    .await;
+    let skus = scalar(
+        &client,
+        &format!("SELECT string_agg(sku, ',' ORDER BY order_id, line_no) FROM {lines}"),
+    )
+    .await;
+    let quoted = edit_cell(
+        &client,
+        &format!("SELECT * FROM \"{mixed}\""),
+        (0, 1),
+        Some("edited"),
+        false,
+    )
+    .await;
+    let mixed_after = scalar(&client, &format!("SELECT \"Label\" FROM \"{mixed}\"")).await;
+    let twin_after = scalar(&client, &format!("SELECT label FROM {twin}")).await;
+    let _ = client
+        .batch_execute(&format!(
+            "DROP TABLE {lines}; DROP TABLE \"{mixed}\"; DROP TABLE {twin}"
+        ))
+        .await;
+    assert!(composite.is_ok(), "{composite:?}");
+    assert_eq!(skus.as_deref(), Some("a,B!,c"));
+    assert!(quoted.is_ok(), "{quoted:?}");
+    assert_eq!(mixed_after.as_deref(), Some("edited"));
+    assert_eq!(twin_after.as_deref(), Some("twin"));
+}
+
+/// No primary key, a join, a view, a computed column and a result
+/// without the key are each refused, with the reason, before anything
+/// is sent.
+#[tokio::test]
+async fn a_cell_edit_refuses_what_it_cannot_name_a_row_in() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_refuse");
+    let keyless = it_name("ce_keyless");
+    let v = it_name("ce_refuse_v");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); \
+             INSERT INTO {t} VALUES (1, 'ann'); \
+             CREATE TABLE {keyless} (name text UNIQUE); \
+             INSERT INTO {keyless} VALUES ('ann'); \
+             CREATE VIEW {v} AS SELECT * FROM {t}"
+        ))
+        .await
+        .expect("create");
+    let refused = |sql: String, col: usize| {
+        let client = client.clone();
+        async move { edit_cell(&client, &sql, (0, col), Some("x"), false).await }
+    };
+    let no_pk = refused(format!("SELECT name FROM {keyless}"), 0).await;
+    let join = refused(
+        format!("SELECT a.id, a.name FROM {t} a JOIN {t} b ON a.id = b.id"),
+        1,
+    )
+    .await;
+    let view = refused(format!("SELECT * FROM {v}"), 1).await;
+    let computed = refused(format!("SELECT id, upper(name) AS name FROM {t}"), 1).await;
+    let no_key = refused(format!("SELECT name FROM {t}"), 0).await;
+    let spoofed_key = refused(format!("SELECT id + 1 AS id, name FROM {t}"), 1).await;
+    let unchanged = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    let _ = client
+        .batch_execute(&format!(
+            "DROP VIEW {v}; DROP TABLE {t}; DROP TABLE {keyless}"
+        ))
+        .await;
+    let err = |r: Result<pgman::conn::SingleRowUpdate, String>| r.expect_err("refused");
+    assert_eq!(
+        err(no_pk),
+        format!("can't edit: public.{keyless} has no primary key to find the row by")
+    );
+    assert_eq!(
+        err(join),
+        "can't edit: not a SELECT from one table (a join, subquery or no FROM)"
+    );
+    assert_eq!(
+        err(view),
+        format!("can't edit: public.{v} is a view · edit the table under it")
+    );
+    assert_eq!(
+        err(computed),
+        "can't edit: 'name' is computed, not a table column"
+    );
+    let lacks = "can't edit: the result lacks the primary key · select id too";
+    assert_eq!(err(no_key), lacks);
+    assert_eq!(err(spoofed_key), lacks);
+    assert_eq!(unchanged.as_deref(), Some("ann"));
+}
+
+/// The one-row guard: an UPDATE that matches two rows (an inheritance
+/// child holds the same key) or none (the row went away) is rolled back
+/// and says so — and inside the operator's own transaction only the
+/// edit is undone, not what they did before it.
+#[tokio::test]
+async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let parent = it_name("ce_parent");
+    let child = it_name("ce_child");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {parent} (id int PRIMARY KEY, name text); \
+             CREATE TABLE {child} () INHERITS ({parent}); \
+             INSERT INTO {parent} VALUES (1, 'p'), (2, 'gone'); \
+             INSERT INTO {child} VALUES (1, 'c')"
+        ))
+        .await
+        .expect("create");
+    let select = format!("SELECT * FROM ONLY {parent} ORDER BY id");
+    let two = edit_cell(&client, &select, (0, 1), Some("x"), false).await;
+    let names = format!("SELECT string_agg(name, ',' ORDER BY name) FROM {parent}");
+    let after_two = scalar(&client, &names).await;
+
+    // The row is deleted between the query and the save.
+    let (grid, origins) = pgman::conn::run_statement_with_origins(&client, &select)
+        .await
+        .expect("select");
+    let cache = pgman::query::schema::fetch(&client).await;
+    let edit = pgman::query::cell_edit::plan_cell_edit(
+        &cache,
+        pgman::app::infer_single_source_table(&select).as_ref(),
+        &grid.columns,
+        &origins,
+        &grid.rows[1],
+        1,
+        1,
+    )
+    .expect("plan");
+    client
+        .batch_execute(&format!("DELETE FROM {parent} WHERE id = 2"))
+        .await
+        .expect("delete");
+    let none = pgman::conn::run_single_row_update(
+        &client,
+        &pgman::query::cell_edit::build_update_sql(&edit, Some("x")),
+        false,
+    )
+    .await
+    .map_err(|e| e.msg);
+    let open_tx = scalar(&client, "SELECT now() = statement_timestamp()").await;
+
+    // Inside the operator's transaction: their insert survives the
+    // edit's rollback, and the session is not left aborted.
+    client.batch_execute("BEGIN").await.expect("begin");
+    client
+        .batch_execute(&format!("INSERT INTO {parent} VALUES (3, 'mine')"))
+        .await
+        .expect("insert");
+    let nested = edit_cell(&client, &select, (0, 1), Some("x"), false).await;
+    let mine = scalar(&client, &format!("SELECT name FROM {parent} WHERE id = 3")).await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+
+    let _ = client
+        .batch_execute(&format!("DROP TABLE {parent} CASCADE"))
+        .await;
+    assert_eq!(
+        two,
+        Err("the UPDATE matched 2 rows, not 1 · rolled back, nothing changed".into())
+    );
+    assert_eq!(after_two.as_deref(), Some("c,gone,p"));
+    assert_eq!(
+        none,
+        Err("the UPDATE matched no row (deleted, or its key changed, since the query ran) · rolled back, nothing changed".into())
+    );
+    // The rollback ended the edit's own transaction: a new statement is
+    // its own transaction again.
+    assert_eq!(open_tx.as_deref(), Some("t"));
+    assert!(nested.is_err(), "{nested:?}");
+    assert_eq!(mine.as_deref(), Some("mine"));
+}
+
+/// Inside the operator's open transaction a good edit stays theirs to
+/// commit or roll back; under `auto_tx` pgman's own transaction is left
+/// open for the prompt. Rolled back, neither changed anything.
+#[tokio::test]
+async fn a_cell_edit_inside_an_open_transaction_is_not_committed() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_tx");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); INSERT INTO {t} VALUES (1, 'ann')"
+        ))
+        .await
+        .expect("create");
+    let select = format!("SELECT * FROM {t}");
+    client.batch_execute("BEGIN").await.expect("begin");
+    let nested = edit_cell(&client, &select, (0, 1), Some("x"), false).await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+    let after_nested = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    let open = edit_cell(&client, &select, (0, 1), Some("y"), true).await;
+    let inside = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+    let after_open = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    assert_eq!(nested.map(|u| u.tx), Ok(pgman::conn::EditTx::InOperatorTx));
+    assert_eq!(after_nested.as_deref(), Some("ann"));
+    assert_eq!(open.map(|u| u.tx), Ok(pgman::conn::EditTx::LeftOpen));
+    assert_eq!(inside.as_deref(), Some("y"));
+    assert_eq!(after_open.as_deref(), Some("ann"));
+}
+
+/// A read-only session's edit is refused by the server, with the hint
+/// every read-only refusal carries, and leaves no transaction behind.
+#[tokio::test]
+async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
+    let (writer, _w) = writable_client().await;
+    let t = it_name("ce_ro");
+    writer
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); INSERT INTO {t} VALUES (1, 'ann')"
+        ))
+        .await
+        .expect("create");
+    let (reader, _r) = lib_client().await;
+    let refused = edit_cell(
+        &reader,
+        &format!("SELECT * FROM {t}"),
+        (0, 1),
+        Some("x"),
+        false,
+    )
+    .await;
+    let open_tx = scalar(&reader, "SELECT now() = statement_timestamp()").await;
+    let after = scalar(&writer, &format!("SELECT name FROM {t}")).await;
+    let _ = writer.batch_execute(&format!("DROP TABLE {t}")).await;
+    let msg = refused.expect_err("read-only");
+    assert!(msg.contains("read-only transaction"), "{msg}");
+    assert!(msg.contains("hint: read-only"), "{msg}");
+    assert_eq!(open_tx.as_deref(), Some("t"));
+    assert_eq!(after.as_deref(), Some("ann"));
+}

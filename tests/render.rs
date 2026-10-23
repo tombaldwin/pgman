@@ -356,13 +356,18 @@ fn result_diff_view_renders_added_removed_changed() {
         columns: cols.clone(),
         rows: a_rows,
         label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
         b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
         key,
+        key_is_pk: false,
         diff,
     });
     a.result_diff.pinned = Some(pinned);
@@ -401,19 +406,55 @@ fn result_diff_shows_a_null_to_empty_string_change() {
         columns: cols.clone(),
         rows: a_rows,
         label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
         b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
         key,
+        key_is_pk: false,
         diff,
     });
     a.result_diff.pinned = Some(pinned);
     a.mode = Mode::ResultDiff;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(rendered.contains("note: NULL → ''"), "\n{rendered}");
+}
+
+/// A diff keyed on the source table's primary key says so in its title.
+#[test]
+fn result_diff_title_names_a_primary_key() {
+    let mut a = settle_app();
+    let cols = vec!["name".to_string(), "id".to_string()];
+    let rows = vec![vec![Some("ann".to_string()), Some("1".to_string())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![1]);
+    let diff = pgman::query::row_diff::diff_rows(&rows, &rows, &key);
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: rows.clone(),
+        label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned.clone(),
+        b_columns: cols,
+        b_rows: rows,
+        b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
+        key,
+        key_is_pk: true,
+        diff,
+    });
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 160, 30));
+    assert!(rendered.contains("key: id (primary key)"), "\n{rendered}");
 }
 
 #[test]
@@ -1327,6 +1368,7 @@ fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Confirm;
     let buf = render(&mut a, 80, 24);
@@ -2489,20 +2531,20 @@ fn narrow_help_lists_every_section_with_its_teaser_then_opens_one() {
     a.on_key(KeyEvent::from(KeyCode::Char('?')));
     let buf = render(&mut a, 80, 24);
     let text = dump(&buf);
-    assert!(text.contains("help · 22 sections"), "{text}");
+    assert!(text.contains("help · 23 sections"), "{text}");
     assert!(
         text.contains("▸ grid                     the results: move, sort, filter, find, yank"),
         "the selected section, marked, with its teaser:\n{text}"
     );
     assert!(
-        text.contains("↓ 9 more"),
+        text.contains("↓ 10 more"),
         "the list says there is more:\n{text}"
     );
     // Walk to the bottom: the list follows the selection.
     a.on_key(KeyEvent::from(KeyCode::Char('G')));
     let text = dump(&render(&mut a, 80, 24));
     assert!(text.contains("▸ help"), "{text}");
-    assert!(text.contains("↑ 9 more"), "{text}");
+    assert!(text.contains("↑ 10 more"), "{text}");
     // Enter opens the selected section full width, heading on row 0.
     a.on_key(KeyEvent::from(KeyCode::Char('g')));
     a.on_key(KeyEvent::from(KeyCode::Char('j')));
@@ -2869,4 +2911,117 @@ fn tap_event_detail_colours_the_redaction_label_and_the_causes() {
     assert_eq!(buf[(x, y)].fg, theme.health_yellow);
     let (x, y) = at("PSQLException");
     assert_eq!(buf[(x, y)].fg, theme.health_red);
+}
+
+// ---------------------------------------------------------------
+// Cell edit (docs/backlog/cell-editing.md)
+// ---------------------------------------------------------------
+
+/// `u`'s editor open on `public.users.name where id = 2`, with `value`
+/// (`None`: NULL).
+fn cell_edit_app(value: Option<&str>) -> App {
+    let mut a = settle_app();
+    a.grid = Grid {
+        columns: vec!["id".into(), "name".into()],
+        rows: vec![vec![Some("2".into()), value.map(str::to_string)]],
+        truncated: false,
+    };
+    let edit = pgman::query::cell_edit::CellEdit {
+        schema: "public".into(),
+        table: "users".into(),
+        column: "name".into(),
+        key: vec![("id".into(), "2".into())],
+        old: value.map(str::to_string),
+        row: 0,
+        col: 1,
+    };
+    a.cell_edit = Some(pgman::app::CellEditUi {
+        input: tui_common::TextInput::with_text(value.unwrap_or_default()),
+        null: value.is_none(),
+        row_cells: a.grid.rows[0].clone(),
+        edit,
+        return_to: Mode::Normal,
+    });
+    a.mode = Mode::CellEdit;
+    a
+}
+
+/// The editor names the cell and the row, shows a NULL as the grid's
+/// dimmed `NULL`, and says its keys — at 80 columns, and in the footer.
+#[test]
+fn the_cell_editor_names_the_cell_and_shows_null_as_the_grid_does() {
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut a = cell_edit_app(None);
+        let buf = render(&mut a, w, h);
+        let text = dump(&buf);
+        assert!(text.contains(" edit cell "), "{w}x{h}:\n{text}");
+        assert!(text.contains("public.users.name"), "{w}x{h}:\n{text}");
+        assert!(text.contains("where id = 2"), "{w}x{h}:\n{text}");
+        assert!(
+            text.contains("enter save · ctrl-n NULL · esc cancel"),
+            "{w}x{h}:\n{text}"
+        );
+        // The value row reads `NULL`, dimmed italic like the grid's
+        // marker — not the text "NULL".
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("│NULL "))
+            .unwrap_or_else(|| panic!("{w}x{h}: no NULL value row:\n{text}"));
+        let x: Vec<char> = line.chars().collect();
+        let col = x
+            .windows(5)
+            .position(|win| win.iter().collect::<String>() == "│NULL")
+            .expect("the marker")
+            + 1;
+        let cell = &buf[(col as u16, y as u16)];
+        assert_eq!(cell.symbol(), "N");
+        assert!(
+            cell.modifier.contains(Modifier::ITALIC),
+            "{w}x{h}: the NULL marker is italic"
+        );
+        let footer: String = (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect();
+        assert!(footer.contains("enter save"), "{w}x{h}: {footer}");
+    }
+}
+
+/// An empty string reads as one, not as nothing, and not as NULL.
+#[test]
+fn the_cell_editor_shows_an_empty_string_as_one() {
+    let mut a = cell_edit_app(Some(""));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("│(empty string)"), "{text}");
+    assert!(!text.contains("│NULL"), "{text}");
+}
+
+/// A value wider than the box scrolls to keep the cursor (at its end)
+/// in view: the tail shows, not the head.
+#[test]
+fn a_long_value_scrolls_to_the_cursor() {
+    let long = format!("{}TAIL", "x".repeat(200));
+    let mut a = cell_edit_app(Some(&long));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("xxxTAIL"), "{text}");
+}
+
+/// The confirm for an edit names the cell, says it is one row or
+/// nothing, and shows the statement it will send.
+#[test]
+fn the_confirm_for_a_cell_edit_shows_the_update_and_the_one_row_rule() {
+    let mut a = cell_edit_app(Some("bo"));
+    a.on_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Confirm);
+    let text = dump(&render(&mut a, 120, 40));
+    assert!(
+        text.contains("edit public.users.name where id = 2"),
+        "{text}"
+    );
+    assert!(text.contains("one row, or rolled back"), "{text}");
+    assert!(
+        text.contains("UPDATE public.users SET name = NULL WHERE id = '2' RETURNING name"),
+        "{text}"
+    );
 }

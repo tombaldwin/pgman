@@ -37,6 +37,7 @@ expression: dump(&buf)
 │     Y             copy the (filtered) grid to clipboard as CSV                                   │
 │     I             yank focused row as INSERT (single-table SELECTs)                              │
 │     M             fetch the next 1000 rows of a partial result                                   │
+│     u             edit the focused cell → one-row UPDATE (see cell edit)                         │
 │     D             pin result as A · run another query, D again to diff as B                      │
 │     m<a-z>        set bookmark at focused (row, col)                                             │
 │     '<a-z>        jump to bookmark                                                               │
@@ -107,9 +108,8 @@ expression: dump(&buf)
 │     g / G         first / last field                                                             │
 │     enter         zoom into focused field (cell detail)                                          │
 │     y             yank focused field value to clipboard                                          │
-│     esc / q       close                                                                          │
-│                                                                                                  │
-│ ↓ 159 more below                                                                                 │
+│     u             edit the focused field (see cell edit)                                         │
+│ ↓ 168 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   esc / ? close help · j/k scroll · ] / [ next / prev section · g/G top/bottom · / filter

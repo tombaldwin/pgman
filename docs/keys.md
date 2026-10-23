@@ -192,6 +192,7 @@ whole word `null` (any case), so `/null` finds them; `/nu` does not.
 | `Y` | Copy the (filtered) grid to clipboard as CSV (NULL an empty field, an empty string `""`) |
 | `I` | Yank the focused row as an `INSERT` (single-table SELECTs only): NULL as `NULL`, every value quoted, `''` included |
 | `M` | Fetch the next 1000 rows of a partial result; once its cursor has closed, re-run the query for them (see above) |
+| `u` | Edit the focused cell — a one-row `UPDATE` through the safety guard; see [Cell edit](#cell-edit-u) |
 | `D` | Pin the current result as baseline A; press again after running another query to diff B against A |
 | `Enter` | Open row detail |
 
@@ -212,6 +213,7 @@ typing a find, `n` and `N` are letters of the pattern; `↓`/`↑` (or
 | `g` / `G` | First / last field |
 | `Enter` | Zoom into the focused field (cell detail) |
 | `y` | Yank the focused field value (a NULL yanks nothing, and says so) |
+| `u` | Edit the focused field — see [Cell edit](#cell-edit-u) |
 | `Esc` / `q` | Close |
 
 ### Cell detail (`Enter` on a field)
@@ -235,7 +237,42 @@ JSON cells (value parses as an object/array):
 | `y` | Yank the jq-style path (`.foo[0].bar`) |
 | `Esc` / `q` | Back to row detail |
 
+### Cell edit (`u`)
+
+`u` on a cell in the grid (or on a field in row detail) opens a one-line
+editor holding its value. It works on a result the editor ran from **one
+table** whose **primary key is in the result**; anything else says why
+not (a join, a view, no primary key, the key column not selected, a
+computed column such as `upper(name)`, a read-only session, a
+transaction awaiting commit or rollback). A column is the table's only if
+Postgres says so, so `SELECT id + 1 AS id …` is not keyed on `id`.
+
+| Key | Action |
+|---|---|
+| `Enter` | Save: `UPDATE schema.table SET col = <value> WHERE <key> = … RETURNING col`, through the safety guard as any editor statement — confirmed (the modal shows the statement), allowed or blocked per database |
+| `Ctrl-N` | NULL ↔ empty string: a NULL shows as the grid's dimmed `NULL`; `Ctrl-N` on it makes `''`, and typing starts a text value |
+| `Esc` | Cancel |
+
+Text editing is the single-line prompt's: `←` / `→`, `Home` / `End`
+(`Ctrl-A` / `Ctrl-E`), `Backspace`, `Delete`, `Ctrl-W`, paste. A value
+with a newline or another control character can't be edited here (nor
+pasted in); write that UPDATE in the editor.
+
+The UPDATE changes **one row or nothing**: any other count (the row
+was deleted since the query ran; an inheritance child shares the key)
+is rolled back and the footer says so. Inside a transaction you opened
+with `BEGIN`, only the edit is undone, under a savepoint. On success
+the cell shows the value as the server stored it (`1.5` into a
+`numeric(10,2)` reads `1.50`); with `auto_tx` on, the commit / rollback
+prompt follows, and a rollback puts the old value back. The UPDATE goes
+into the history.
+
 ### Result diff (`D` twice)
+
+When A and B are the same columns read from the same table, and its
+primary key is in both, rows are matched on the primary key (the title
+says `key: id (primary key)`); otherwise on the leftmost column unique
+in both, then on the whole row.
 
 | Key | Action |
 |---|---|

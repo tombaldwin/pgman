@@ -76,6 +76,7 @@ impl App {
             }
             AppMsg::QueryOk {
                 grid,
+                origins,
                 kind_label,
                 tx_open_after,
                 paging,
@@ -124,6 +125,7 @@ impl App {
                     .last_run_sql
                     .as_deref()
                     .and_then(infer_single_source_table);
+                self.grid_view.origins = origins;
                 // psql `\x` — expanded output. Land the new result in
                 // the row-detail view for its first row instead of
                 // the grid. No-op when the result is empty (nothing
@@ -253,12 +255,27 @@ impl App {
                     }
                 }
             }
+            AppMsg::CellUpdated {
+                pending, value, tx, ..
+            } => self.on_cell_updated(pending, value, tx),
             AppMsg::TxClosed {
                 committed, error, ..
             } => {
                 self.tx_open = false;
                 self.query_running = false;
-                self.mode = Mode::Editor;
+                // A cell edit's transaction lands back where the edit
+                // began; a rollback (or a failed commit, which ends the
+                // transaction too) puts the old value back.
+                self.mode = match self.edit_awaiting_tx.take() {
+                    Some(edit) => {
+                        let landed = committed && error.is_none();
+                        if !landed {
+                            self.revert_cell_edit(&edit);
+                        }
+                        edit.return_to
+                    }
+                    None => Mode::Editor,
+                };
                 // A DDL run wrapped in this transaction is only durable once
                 // committed — refresh the schema cache then. On rollback (or a
                 // failed close) just drop the pending flag without refetching.
@@ -411,6 +428,7 @@ impl App {
                             decision,
                             is_batch: false,
                             summary: Some(summary),
+                            cell_edit: None,
                         });
                         self.mode = Mode::Confirm;
                     }

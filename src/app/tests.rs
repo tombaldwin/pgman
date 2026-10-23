@@ -5930,6 +5930,7 @@ fn query_ok_clears_last_error_detail() {
             rows: vec![],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
         paging: None,
@@ -5950,6 +5951,7 @@ fn query_ok_status_flags_truncated_grids() {
             rows,
             truncated: true,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
         paging: None,
@@ -5977,6 +5979,7 @@ fn query_ok_status_omits_cap_when_not_truncated() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
         paging: None,
@@ -6172,6 +6175,7 @@ fn expanded_on_lands_new_query_result_in_row_detail() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
         paging: None,
@@ -6191,6 +6195,7 @@ fn expanded_off_leaves_new_query_result_in_grid_mode() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
         paging: None,
@@ -8989,6 +8994,7 @@ fn confirm_modal_app() -> App {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.last_error = Some("relation \"orders\" does not exist".into());
     a.mode = Mode::Confirm;
@@ -9152,6 +9158,7 @@ async fn reconnect_drops_everything_a_decision_modal_was_holding() {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Editor;
     a.editor.buffer = "\\c other_db".into();
@@ -9216,6 +9223,7 @@ fn a_query_ok_landing_mid_command_bar_leaves_no_stale_bar_behind() {
     a.on_msg(AppMsg::QueryOk {
         generation: a.generation,
         grid: Grid::default(),
+        origins: Vec::new(),
         kind_label: "run".into(),
         tx_open_after: true,
         paging: None,
@@ -13683,6 +13691,7 @@ fn app_with_open_cursor() -> App {
             rows: id_rows(0..1000),
             truncated: true,
         },
+        origins: Vec::new(),
         kind_label: "run".into(),
         tx_open_after: false,
         paging: Some(RunPaging {
@@ -14044,6 +14053,7 @@ fn a_re_run_replaces_the_rows_and_keeps_the_sort() {
         },
         cursor: Some(cursor_limits()),
         in_transaction: false,
+        origins: Vec::new(),
     };
     a.on_msg(AppMsg::PageLoaded {
         generation: a.generation,
@@ -14186,4 +14196,151 @@ fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
         .as_deref()
         .unwrap_or("")
         .starts_with("no queries found"));
+}
+
+/// A plain run's column origins land on the grid view, and the next grid
+/// — one without them — clears them rather than inheriting the old ones.
+#[test]
+fn query_ok_keeps_the_column_origins_and_the_next_grid_replaces_them() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let origin = crate::grid::ColumnOrigin {
+        table_oid: 42,
+        attnum: 1,
+    };
+    let grid = crate::grid::Grid {
+        columns: vec!["id".into(), "n".into()],
+        rows: vec![vec![Some("1".into()), Some("2".into())]],
+        truncated: false,
+    };
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: grid.clone(),
+        origins: vec![Some(origin), None],
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: None,
+    });
+    assert_eq!(a.grid_view.origins, vec![Some(origin), None]);
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid,
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: None,
+    });
+    assert!(a.grid_view.origins.is_empty());
+    a.grid_view.origins = vec![Some(origin)];
+    a.reset_grid_view();
+    assert!(a.grid_view.origins.is_empty());
+}
+
+/// A cache knowing `public.users (name, id)` keyed on `id` (OID 100) and
+/// `public.lines (order_id, line_no, sku)` keyed on both (OID 200).
+fn diff_key_cache() -> SchemaCache {
+    use crate::query::schema::ColumnMeta;
+    let mut c = SchemaCache::default();
+    let meta = |cols: &[(&str, i16)]| -> Vec<ColumnMeta> {
+        cols.iter()
+            .map(|(name, attnum)| ColumnMeta {
+                name: name.to_string(),
+                type_name: "text".into(),
+                not_null: false,
+                attnum: *attnum,
+            })
+            .collect()
+    };
+    let users = ("public".to_string(), "users".to_string());
+    let lines = ("public".to_string(), "lines".to_string());
+    c.relations_by_oid.insert(100, users.clone());
+    c.relations_by_oid.insert(200, lines.clone());
+    c.columns_meta_by_table
+        .insert(users.clone(), meta(&[("name", 1), ("id", 2)]));
+    c.columns_meta_by_table.insert(
+        lines.clone(),
+        meta(&[("order_id", 1), ("line_no", 2), ("sku", 3)]),
+    );
+    c.primary_keys.insert(users, vec!["id".into()]);
+    c.primary_keys
+        .insert(lines, vec!["order_id".into(), "line_no".into()]);
+    c
+}
+
+fn pin(
+    table: &str,
+    columns: &[&str],
+    origins: &[Option<(u32, i16)>],
+    rows: &[&[&str]],
+) -> PinnedResult {
+    PinnedResult {
+        columns: columns.iter().map(|s| s.to_string()).collect(),
+        rows: rows
+            .iter()
+            .map(|r| r.iter().map(|c| Some(c.to_string())).collect())
+            .collect(),
+        label: "q".into(),
+        source: Some(("public".into(), table.into())),
+        origins: origins
+            .iter()
+            .map(|o| o.map(|(table_oid, attnum)| crate::grid::ColumnOrigin { table_oid, attnum }))
+            .collect(),
+    }
+}
+
+/// The leftmost column is unique on both sides too, but it isn't the
+/// key: a renamed user keyed on `name` read as one removed and one
+/// added; keyed on the real `id` it is one change.
+#[test]
+fn the_result_diff_keys_on_the_real_primary_key() {
+    use crate::query::row_diff::{diff_rows, RowKey};
+    let cache = diff_key_cache();
+    let o = [Some((100, 1)), Some((100, 2))];
+    let a = pin("users", &["name", "id"], &o, &[&["ann", "1"], &["bo", "2"]]);
+    let b = pin(
+        "users",
+        &["name", "id"],
+        &o,
+        &[&["anna", "1"], &["bo", "2"]],
+    );
+    let (key, is_pk) = choose_diff_key(&cache, &a, &b);
+    assert_eq!((key.clone(), is_pk), (RowKey::Columns(vec![1]), true));
+    let d = diff_rows(&a.rows, &b.rows, &key);
+    assert_eq!((d.changed.len(), d.added.len(), d.removed.len()), (1, 0, 0));
+    // Without origins (a panel, the demo) it is today's inference.
+    let mut a2 = a.clone();
+    let mut b2 = b.clone();
+    a2.origins.clear();
+    b2.origins.clear();
+    assert_eq!(
+        choose_diff_key(&cache, &a2, &b2),
+        (RowKey::Columns(vec![0]), false)
+    );
+}
+
+/// A composite key, in key order; and two results whose columns come
+/// from different places (the same names, a different table) fall back
+/// to inference.
+#[test]
+fn the_result_diff_keys_on_a_composite_key_and_only_when_both_sides_agree() {
+    use crate::query::row_diff::RowKey;
+    let cache = diff_key_cache();
+    let o = [Some((200, 3)), Some((200, 2)), Some((200, 1))];
+    let rows: &[&[&str]] = &[&["a", "1", "10"], &["b", "2", "10"]];
+    let a = pin("lines", &["sku", "line_no", "order_id"], &o, rows);
+    assert_eq!(
+        choose_diff_key(&cache, &a, &a.clone()),
+        (RowKey::Columns(vec![2, 1]), true)
+    );
+    let mut b = a.clone();
+    b.origins[0] = None;
+    assert_eq!(
+        choose_diff_key(&cache, &a, &b),
+        (RowKey::Columns(vec![0]), false)
+    );
+    // The key not in the result: inference.
+    let a = pin("lines", &["sku"], &[Some((200, 3))], &[&["a"], &["b"]]);
+    assert_eq!(
+        choose_diff_key(&cache, &a, &a.clone()),
+        (RowKey::Columns(vec![0]), false)
+    );
 }

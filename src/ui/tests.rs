@@ -2130,6 +2130,7 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
         },
         is_batch: false,
         summary: Some("delete without a where".into()),
+        cell_edit: None,
     });
     app.mode = crate::app::Mode::Confirm;
     app.last_status = Some("completed `users`".into());
@@ -2163,6 +2164,7 @@ fn the_confirm_card_calls_a_typo_unrecognised_not_a_refused_write() {
         decision,
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     app.mode = crate::app::Mode::Confirm;
     for (w, h) in [(80, 24), (120, 40)] {

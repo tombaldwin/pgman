@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   J / K next / prev row · j / k field · y yank · esc close · ? help
+ RO   TAP   N+1 ×1   J / K next / prev row · j / k field · y yank · u edit · esc close · ? help

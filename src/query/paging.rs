@@ -161,6 +161,9 @@ pub struct Opened {
     /// way, unpaged: closing a cursor there would end *their*
     /// transaction.
     pub in_transaction: bool,
+    /// Where each column came from ([`crate::conn::column_origins`]),
+    /// so a cell of a paged result can still be edited.
+    pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
 }
 
 /// What [`Pager::fetch`] hands back.
@@ -337,6 +340,7 @@ async fn open(
         .iter()
         .map(|c| c.name().to_string())
         .collect();
+    let origins = crate::conn::column_origins(stmt.columns());
     let idle = probe.ok().is_some_and(|msgs| {
         msgs.iter().any(
             |m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(r) if r.get(0) == Some("t")),
@@ -351,6 +355,7 @@ async fn open(
                 grid,
                 cursor: None,
                 in_transaction: !idle,
+                origins,
             },
             None,
         ));
@@ -382,6 +387,7 @@ async fn open(
         grid,
         cursor: more.then(|| close_limits(settings.0, settings.1)),
         in_transaction: false,
+        origins,
     };
     Ok((opened, open))
 }
