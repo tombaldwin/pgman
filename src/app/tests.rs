@@ -2074,6 +2074,22 @@ fn dispatch_fixture_errors_without_source_table() {
         .contains("single-table"));
 }
 
+/// `:fixture <path>` writes to the whole path, spaces included — it
+/// took the first word, so `:fixture my dir/f.xml` wrote `./my`.
+#[test]
+fn colon_fixture_writes_to_a_path_with_spaces() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "users".into()));
+    let dir = std::env::temp_dir().join(format!("pgman-fixture-sp-{}", std::process::id()));
+    let path = dir.join("my dir").join("users.xml");
+    a.dispatch_command(&format!("fixture {}", path.display()));
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    let xml = std::fs::read_to_string(&path).expect("written at the full path");
+    assert!(xml.contains("<users id=\"1\"/>"), "{xml}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A table whose name would not read back as itself is refused with a
 /// reason, and nothing is written — not renamed into another table.
 #[test]

@@ -43,6 +43,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   column XML can't carry (`a"b`, `with space`, `?column?`) refuses
   the `:fixture` capture and names the column, instead of being
   renamed with `_` into a column the table doesn't have.
+- `\fixture`, `\report` and `\i` (and their `:` spellings) take the
+  rest of the line as the path, so a path with spaces works; a
+  double-quoted path has its quotes removed. They took the first word,
+  so `:fixture my dir/f.xml` wrote `./my`.
 - Sorting a column (`s`) decides once per column whether to compare
   numbers or text: a column that is all numbers sorts by exact value
   (int8 past 2^53 no longer ties, `NaN` sorts above `Infinity` as in
