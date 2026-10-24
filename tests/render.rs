@@ -458,6 +458,44 @@ fn result_diff_title_names_a_primary_key() {
 }
 
 #[test]
+fn result_diff_title_keeps_the_key_at_80_columns() {
+    // A and B are labelled by their query text, which an 80-column
+    // overlay cannot hold: the key comes first so it survives, and the
+    // cut ends on `…` rather than at the border mid-word.
+    let mut a = settle_app();
+    let cols = vec!["name".to_string(), "id".to_string()];
+    let rows = vec![vec![Some("ann".to_string()), Some("1".to_string())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![1]);
+    let diff = pgman::query::row_diff::diff_rows(&rows, &rows, &key);
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: rows.clone(),
+        label: "SELECT name, id FROM ledger.accounts ORDER BY id".into(),
+        source: None,
+        origins: Vec::new(),
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned,
+        b_columns: cols,
+        b_rows: rows,
+        b_label: "SELECT name, id FROM ledger.accounts WHERE active".into(),
+        b_source: None,
+        b_origins: Vec::new(),
+        key,
+        key_is_pk: true,
+        diff,
+    });
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 80, 24));
+    let title = rendered
+        .lines()
+        .find(|l| l.contains("Result diff"))
+        .unwrap_or_else(|| panic!("no title row:\n{rendered}"));
+    assert!(title.contains("key: id (primary key)"), "{title}");
+    assert!(title.contains(" · … "), "the cut is marked: {title}");
+}
+
+#[test]
 fn saved_queries_panel_filters_live_and_shows_count() {
     let mut a = settle_app();
     for (n, b) in [

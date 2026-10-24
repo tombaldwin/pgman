@@ -2617,3 +2617,42 @@ fn tap_views_keep_the_focused_row_on_screen_under_their_header() {
         }
     }
 }
+
+// ---------------------------------------------------------------
+// The result diff's title: the key before the query text.
+// ---------------------------------------------------------------
+
+#[test]
+fn result_diff_title_is_whole_when_it_fits() {
+    let got = results::result_diff_title("key: id (primary key)", ("q1", 5), ("q2", 6), 200);
+    assert_eq!(
+        got,
+        "Result diff — key: id (primary key) · A: q1 (5 rows) vs B: q2 (6 rows) · r re-pin · c clear · q close"
+    );
+}
+
+#[test]
+fn result_diff_title_drops_the_hints_then_cuts_the_labels_never_the_key() {
+    let a = "SELECT name, id FROM ledger.accounts ORDER BY id";
+    let b = "SELECT name, id FROM ledger.accounts WHERE active";
+    for budget in [40usize, 64, 80, 100, 120] {
+        let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), budget);
+        assert!(display_width(&got) <= budget, "{budget}: {got}");
+        assert!(
+            got.starts_with("Result diff — key: id (primary key) · "),
+            "{budget}: {got}"
+        );
+        assert!(got.ends_with(" · …"), "{budget}: {got}");
+    }
+    // Room for both labels, cut: each ends on `…`, the counts stay.
+    let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), 100);
+    assert!(got.contains("A: SELECT"), "{got}");
+    assert!(got.contains("… (5 rows) vs B: SELECT"), "{got}");
+    assert!(got.contains("… (6 rows)"), "{got}");
+    // A short label keeps its whole text and leaves its room to the other.
+    let got = results::result_diff_title("key: id", ("q1", 5), (b, 6), 70);
+    assert!(got.contains("A: q1 (5 rows) vs B: SELECT name"), "{got}");
+    // Too narrow for labels: the key survives on its own.
+    let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), 50);
+    assert_eq!(got, "Result diff — key: id (primary key) · …");
+}

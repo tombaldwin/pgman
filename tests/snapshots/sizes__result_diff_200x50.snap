@@ -13,7 +13,7 @@ expression: dump(&buf)
 │> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
 │  FROM invoices                                                                                                                                                                                       │
 │  WHERE status = 'open'                                                                                                                                                                               │
-│  ORDER╭[ ◆ Result diff ◆ ] A: public.invoices (5 rows) vs B: public.invoices (5 rows) · key: number · r re-pin · c clear · q close ──────────────────────────────────────────────────────────╮       │
+│  ORDER╭[ ◆ Result diff ◆ ] key: number · A: public.invoices (5 rows) vs B: public.invoices (5 rows) · r re-pin · c clear · q close ──────────────────────────────────────────────────────────╮       │
 │       │+1 added   -1 removed   ~1 changed   =3 unchanged                                                                                                                                     │       │
 ╰───────│                                                                                                                                                                                      │───────╯
 ╭[ ◆ res│  - INV-004824 | 2104 | open | GBP | 768.00 | 2026-10-04 09:00:00+00                                                                                                                  │───────╮
