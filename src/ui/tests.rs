@@ -1956,7 +1956,7 @@ fn the_header_names_the_build_and_gives_way_before_the_connection_does() {
     let full = if crate::RELEASE_DATE.is_empty() {
         version.clone()
     } else {
-        format!("{version} · {}", crate::RELEASE_DATE)
+        format!("{version} · released {}", crate::RELEASE_DATE)
     };
     // " pgman" + build + " " + rest.
     let need = |s: &str| display_width(" pgman") + display_width(s) + 1;

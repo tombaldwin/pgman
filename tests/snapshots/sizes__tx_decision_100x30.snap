@@ -3,7 +3,7 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ────────────────────────────────────╮╭──────────────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ───────────────────────────╮╭──────────────────────────────────╮
 │ Server: ledger-staging…  •  Database: ledger                 ││             PostgreSQL   confirm │
 │ Status: connected · pg 16.4  TX   •  Session:  read-only     ││            <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │

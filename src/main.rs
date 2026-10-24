@@ -286,7 +286,9 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(2);
     }
 
-    init_logging();
+    if logs_to_file(&cli) {
+        init_logging();
+    }
     tracing::info!("pgman {} starting", env!("CARGO_PKG_VERSION"));
 
     // Probe the terminal font *before* entering the alternate screen.
@@ -1354,6 +1356,13 @@ fn repair_private_dirs() {
     let _ = util::ensure_private_dir(&util::config_dir());
 }
 
+/// Whether a TUI launch writes `pgman.log` (and repairs the private
+/// dirs, creating them). `--demo` doesn't: it promises no disk writes,
+/// so it installs no subscriber and its `tracing` calls go nowhere.
+fn logs_to_file(cli: &Cli) -> bool {
+    !cli.demo
+}
+
 fn init_logging() {
     let dir = util::cache_dir();
     repair_private_dirs();
@@ -1616,6 +1625,18 @@ mod main_tests {
         assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
         assert!(tap_bind_failure_line("--tap-listen", &addr, &err, false)
             .ends_with("not listening: address already in use"));
+    }
+
+    /// `--demo` claims no disk writes, so it opens no `pgman.log`; every
+    /// other TUI launch does.
+    #[test]
+    fn demo_does_not_log_to_a_file() {
+        use clap::Parser;
+        let parse = |args: &[&str]| Cli::try_parse_from(args).expect("parses");
+        assert!(!logs_to_file(&parse(&["pgman", "--demo"])));
+        assert!(!logs_to_file(&parse(&["pgman", "--demo", "--redact"])));
+        assert!(logs_to_file(&parse(&["pgman"])));
+        assert!(logs_to_file(&parse(&["pgman", "--redact"])));
     }
 
     #[test]

@@ -31,7 +31,7 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
         format!("pgman {} · beta", env!("CARGO_PKG_VERSION"))
     } else {
         format!(
-            "pgman {} · beta · {}",
+            "pgman {} · beta · released {}",
             env!("CARGO_PKG_VERSION"),
             crate::RELEASE_DATE
         )

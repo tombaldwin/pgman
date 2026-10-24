@@ -30,6 +30,19 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A start card too short for every key hint keeps its `?  all keys`
   line and says how many it left off (`+3 more`); at 60x16 the hints
   went with nothing to say so.
+- The README lists cell editing (`u`) and paging (`M`), and its links
+  to `docs/` and the licence files are absolute, so they resolve on
+  crates.io too.
+- `--demo` no longer writes `pgman.log` or creates pgman's cache,
+  config and data directories, as its "no disk writes" promised.
+- docs/tap.md says the monitor's "JAR backpressure" drop count comes
+  from TCP and UDP senders only, and never appears with `--tap-otlp`.
+
+### Changed
+
+- The header and About box say the date beside the version is the
+  release date: `pgman 0.2.0 · released 2026-10-23`. At 60
+  columns the header now shows the version alone.
 
 ## [0.2.0] — 2026-10-23
 

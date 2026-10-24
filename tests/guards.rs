@@ -5,7 +5,8 @@
 //! `util.rs`/`project.rs`, that a `KeyCode::Char(c) if <modifier>`-
 //! guarded arm always precedes the unguarded (or catch-all) arm for the
 //! same `c` — and a fifth guard, unrelated to `src/`, over what `cargo
-//! package` would actually ship to crates.io.
+//! package` would actually ship to crates.io, and a sixth that README.md
+//! (the crates.io page) has no relative links.
 //!
 //! `syn` is not a dependency here, so these do not parse an AST the way
 //! ebman's `key_arm_order.rs` does. They do, however, run off a real
@@ -1258,6 +1259,53 @@ fn cargo_package_ships_only_the_allowlist() {
 }
 
 // ---------------------------------------------------------------------
+// README links must resolve on crates.io
+// ---------------------------------------------------------------------
+
+/// Every Markdown link / image target in `text` (the `…` in `](…)`) that
+/// is neither an absolute URL nor an in-page `#anchor`. Such a link
+/// resolves on GitHub but not on the crates.io page, which renders the
+/// packaged README without `docs/` (Cargo.toml's `include` keeps it out).
+fn relative_markdown_links(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("](") {
+        rest = &rest[i + 2..];
+        let end = rest.find(')').unwrap_or(rest.len());
+        let target = rest[..end].trim();
+        let absolute = ["https://", "http://", "mailto:", "#"]
+            .iter()
+            .any(|p| target.starts_with(p));
+        if !absolute {
+            out.push(target.to_string());
+        }
+        rest = &rest[end..];
+    }
+    out
+}
+
+/// README.md is the crates.io page. A relative link there (`docs/tap.md`,
+/// `LICENSE-MIT`) works on GitHub and 404s on crates.io, so every link
+/// in it is absolute or an in-page anchor.
+#[test]
+fn readme_links_are_absolute() {
+    let readme = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
+        .expect("read README.md");
+    assert!(
+        readme.matches("](").count() > 10,
+        "README.md has almost no links — the scan is probably broken, and \
+         a guard over nothing passes vacuously"
+    );
+    let relative = relative_markdown_links(&readme);
+    assert!(
+        relative.is_empty(),
+        "README.md has relative links that won't resolve on crates.io — \
+         use https://github.com/tombaldwin/pgman/blob/main/<path>:\n{}",
+        relative.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------
 // Unit tests for the trickier detectors, on small inline samples —
 // CLAUDE.md: a guard is production code for the invariant it holds, so
 // it needs a test of its own, not just the real-tree sweep that uses
@@ -1267,6 +1315,17 @@ fn cargo_package_ships_only_the_allowlist() {
 #[cfg(test)]
 mod detector_tests {
     use super::*;
+
+    #[test]
+    fn relative_markdown_links_flags_relative_targets_only() {
+        let text = "[a](docs/tap.md) [b](https://x/y) [c](#install) \
+                    ![d](demo.gif) [e](mailto:a@b) [f](LICENSE-MIT)";
+        assert_eq!(
+            relative_markdown_links(text),
+            vec!["docs/tap.md", "demo.gif", "LICENSE-MIT"]
+        );
+        assert!(relative_markdown_links("no links here").is_empty());
+    }
 
     #[test]
     fn a_url_inside_a_string_literal_is_not_a_comment() {
