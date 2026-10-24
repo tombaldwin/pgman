@@ -104,9 +104,11 @@ pub(crate) fn tap_badges_line(nplus1: usize, width: usize) -> String {
 ///
 /// Under height pressure, sections drop in this order: `recent` first,
 /// then the tap line,
-/// then the one-column `ctrl-t` line, then `databases`, then the `?`
-/// line, then the F8/F4 row — so the connection line and the six core
-/// keys always survive down to 8 rows.
+/// then the one-column `ctrl-t` line, then `databases`, then the F8/F4
+/// row — so the connection line and the six core keys always survive
+/// down to 8 rows. The `?` line outlasts the F8/F4 row by taking the
+/// blank under the connection line, and once any hint is dropped it
+/// says how many (`?  all keys · +3 more`).
 pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> Vec<Line<'static>> {
     let theme = &app.theme;
     let key_style = Style::default()
@@ -181,6 +183,24 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         } else {
             (false, false, false, false, false)
         };
+    // Rows dropped with nothing on the card saying so read as all
+    // there is. The `?` line is the way to the rest, so it outlasts the
+    // blank under the connection line, and counts what is not shown.
+    let key_rows = if include_f8f4 {
+        key_lines_with_f8f4
+    } else {
+        key_lines_floor
+    };
+    // The connection line, the keys, the `?` line.
+    let keep_help_for_blank = !include_help && key_rows + 2 <= h;
+    let include_help = include_help || keep_help_for_blank;
+    let include_blank = !keep_help_for_blank;
+    let hidden_hints = hidden_hint_count(include_f8f4, include_new_tab);
+    let help = if hidden_hints > 0 {
+        Hint::new("?", format!("all keys · +{hidden_hints} more"))
+    } else {
+        help
+    };
     let include_recent = include_recent && !app.history.is_empty();
     let include_databases = include_databases && has_databases;
     // Dropped before `recent` goes: it rides on the room left over.
@@ -196,7 +216,9 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
             lines.push(Line::from(Span::styled(text, muted_style)));
         }
     }
-    lines.push(Line::from(""));
+    if include_blank {
+        lines.push(Line::from(""));
+    }
 
     // The card is still up while the FIRST query is in flight (the
     // grid has no columns yet), and `e write a query` is not what to
@@ -292,6 +314,19 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     }
 
     lines
+}
+
+/// How many key hints the start card leaves off: the F8 and tap pair,
+/// and `ctrl-t`. What the `?` line counts as `+N more`. Pure.
+fn hidden_hint_count(include_f8f4: bool, include_new_tab: bool) -> usize {
+    let mut n = 0;
+    if !include_f8f4 {
+        n += 2;
+    }
+    if !include_new_tab {
+        n += 1;
+    }
+    n
 }
 
 /// The `recent` section's label, with the keys that bring an entry back
@@ -638,31 +673,43 @@ mod tests {
     }
 
     #[test]
-    fn height_degradation_drops_help_second() {
+    fn height_degradation_trades_the_blank_for_the_help_line() {
         let mut a = app();
         a.history = vec!["select 1".into()];
         // Two-col floor is 5 (header+blank+3 core rows), F8/F4 adds 1 (6),
-        // `?` adds 1 more (7). At height 6 we should have F8/F4 but not `?`.
+        // `?` adds 1 more (7). At height 6 the blank under the header
+        // goes, so F8/F4 and `?` both stay, and `?` counts the hidden
+        // `ctrl-t`.
         let lines = landing_lines(&a, 80, 6);
+        assert_eq!(lines.len(), 6, "{lines:?}");
         let text = plain(&lines);
         assert!(!text.iter().any(|l| l.contains("recent")));
+        assert!(!text[1].trim().is_empty(), "no blank row: {text:?}");
         assert!(
-            !text
-                .iter()
-                .any(|l| l.contains('?') && l.contains("all keys")),
-            "`?` line should be dropped before F8/F4: {text:?}"
+            text.iter().any(|l| l.contains("?   all keys · +1 more")),
+            "`?` says a hint is hidden: {text:?}"
         );
         assert!(
             text.iter().any(|l| l.contains("ctrl-l")),
             "F8/F4 row should still be present at height 6: {text:?}"
         );
+        // With room for everything, no count and the blank stays.
+        let text = plain(&landing_lines(&a, 80, 30));
+        assert!(text[1].trim().is_empty(), "{text:?}");
+        assert!(
+            text.iter().any(|l| l.contains("?   all keys   ")),
+            "{text:?}"
+        );
+        assert!(!text.iter().any(|l| l.contains("more")), "{text:?}");
     }
 
     #[test]
     fn height_degradation_drops_f8f4_third_and_six_core_keys_survive_to_8_rows() {
         let mut a = app();
         a.history = vec!["select 1".into()];
-        // Single-column floor: header + blank + six core keys = 8 lines.
+        // Single-column floor: header + six core keys + `?`, the blank
+        // given up for the `?` line = 8 lines. (The 60x16 card: it
+        // dropped F8, the tap and `ctrl-t` with nothing saying so.)
         let lines = landing_lines(&a, 40, 8);
         assert_eq!(
             lines.len(),
@@ -671,9 +718,7 @@ mod tests {
         );
         let text = plain(&lines);
         assert!(!text.iter().any(|l| l.contains("recent")));
-        assert!(!text
-            .iter()
-            .any(|l| l.contains('?') && l.contains("all keys")));
+        assert_eq!(text[7], "   ?   all keys · +3 more", "{text:?}");
         assert!(
             !text
                 .iter()

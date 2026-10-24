@@ -27,6 +27,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The JDBC tap's N+1 view cuts a long caller with `…` rather than at
   the border, and shows its fingerprint only when there is room to
   read one.
+- A start card too short for every key hint keeps its `?  all keys`
+  line and says how many it left off (`+3 more`); at 60x16 the hints
+  went with nothing to say so.
 
 ## [0.2.0] — 2026-10-23
 
