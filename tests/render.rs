@@ -848,8 +848,44 @@ fn grid_render_shows_filtered_count_in_title() {
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
-        rendered.contains("2/3 row(s) (filtered · / esc clears)"),
-        "expected `2/3 row(s) (filtered · / esc clears)` in title; full render:\n{rendered}"
+        rendered.contains("2/3 row(s) (filtered) · / esc clears"),
+        "expected `2/3 row(s) (filtered) · / esc clears` in title; full render:\n{rendered}"
+    );
+}
+
+/// With a filter on, a partial result and five-digit counts, the
+/// result title at 80 columns is fitted to its border: whole segments
+/// dropped from the end with a `…`, never a word run into the corner.
+#[test]
+fn grid_title_with_a_filter_and_five_digit_counts_fits_80_columns() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    let names = ["alice", "bob", "carol", "dave"];
+    a.grid = Grid {
+        columns: vec!["name".into(), "id".into()],
+        rows: (0..12_000)
+            .map(|i| vec![Some(names[i % 4].to_string()), Some(i.to_string())])
+            .collect(),
+        truncated: true,
+    };
+    a.grid_view.filter = Some("a".into());
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
+    a.grid_state.select(Some(0));
+    let buf = render(&mut a, 80, 24);
+    let rendered = dump(&buf);
+    let title = rendered
+        .lines()
+        .find(|l| l.contains("result ·"))
+        .unwrap_or_else(|| panic!("no result title:\n{rendered}"));
+    assert!(
+        title.contains("result · 9000/12000 row(s) (filtered) · / esc clears"),
+        "{title}"
+    );
+    // The title ends on a whole segment and `…`, then the border.
+    let border_from = title.find(" ◆ ]").expect("decorated title");
+    assert!(
+        title[..border_from].ends_with(" · …"),
+        "the cut is marked: {title}"
     );
 }
 

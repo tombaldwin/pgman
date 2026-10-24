@@ -157,10 +157,16 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         } else {
             " · / esc clears"
         };
-        format!(" result · {visible}/{total} row(s) (filtered{way_out}){cap}{cols_note} ")
+        format!("result · {visible}/{total} row(s) (filtered){way_out}{cap}{cols_note}")
     } else {
-        format!(" result · {total} row(s){cap}{cols_note} ")
+        format!("result · {total} row(s){cap}{cols_note}")
     };
+    // Fitted to the border: with a filter on and five-digit counts an
+    // 80-column title ran into the corner mid-word. Whole ` · `
+    // segments go from the end, and a `…` says so.
+    let title_budget = (area.width.saturating_sub(2) as usize)
+        .saturating_sub(crate::ui::chrome::panel_title(theme, "x").width() - 1);
+    let title = crate::ui::fit_title(&title, title_budget);
     let table = Table::new(rows, constraints)
         .header(header)
         .column_spacing(SPACING)
@@ -168,7 +174,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .block(
             crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_idle))
-                .title(crate::ui::chrome::panel_title(theme, &title)),
+                .title(crate::ui::chrome::panel_title(theme, &format!(" {title} "))),
         );
     f.render_stateful_widget(table, area, &mut app.grid_state);
 }

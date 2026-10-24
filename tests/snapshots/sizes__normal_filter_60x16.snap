@@ -10,7 +10,7 @@ expression: dump(&buf)
 │  WHERE status = 'open'                                   │
 │  ORDER BY due_at;                                        │
 ╰──────────────────────────────────────────────────────────╯
-╭[ ◆ result · 3/5 row(s) (filtered · / esc clears) · cols 1╮
+╭[ ◆ result · 3/5 row(s) (filtered) · / esc clears · … ◆ ]─╮
 │number      customer_id  status  currency  total          │
 │INV-004824  2104         open    GBP       768.00         │
 │INV-004827  2107         open    GBP       22140.00       │

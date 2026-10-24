@@ -21,6 +21,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `referen` / `ces` at 80x24), and its list sizes the object column to
   leave the title room: at 80 columns the title column was three
   letters wide and its header read `tit`.
+- The result title is fitted to its border: with a filter on and
+  five-digit counts, an 80-column title ran into the corner mid-word;
+  it now drops whole segments from the end and ends on `…`.
 
 ## [0.2.0] — 2026-10-23
 
