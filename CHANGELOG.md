@@ -6,6 +6,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- The README lists cell editing (`u`) and paging (`M`), and its links
+  to `docs/` and the licence files are absolute, so they resolve on
+  crates.io too.
+
 ## [0.2.0] — 2026-10-23
 
 ### Highlights
