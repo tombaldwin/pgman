@@ -580,7 +580,15 @@ pub(crate) fn columns_differ_note(a: &[String], b: &[String]) -> Option<String> 
         return None;
     }
     let shape = if a.len() == b.len() {
-        format!("A and B name their {} columns differently", a.len())
+        let mut sorted_a = a.to_vec();
+        let mut sorted_b = b.to_vec();
+        sorted_a.sort();
+        sorted_b.sort();
+        if sorted_a == sorted_b {
+            format!("A and B have the same {} columns in another order", a.len())
+        } else {
+            format!("A and B name their {} columns differently", a.len())
+        }
     } else {
         format!("A has {} columns, B has {}", a.len(), b.len())
     };

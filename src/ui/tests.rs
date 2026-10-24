@@ -2869,6 +2869,9 @@ fn columns_differ_note_names_the_shape_or_nothing() {
         note.starts_with("columns differ: A has 3 columns, B has 1"),
         "{note}"
     );
-    let note = columns_differ_note(&cols(&["id", "name"]), &cols(&["name", "id"])).unwrap();
+    let note = columns_differ_note(&cols(&["id", "name"]), &cols(&["id", "email"])).unwrap();
     assert!(note.contains("name their 2 columns differently"), "{note}");
+    // The same names reordered are not named differently.
+    let note = columns_differ_note(&cols(&["id", "name"]), &cols(&["name", "id"])).unwrap();
+    assert!(note.contains("same 2 columns in another order"), "{note}");
 }
