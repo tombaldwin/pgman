@@ -63,6 +63,15 @@ pub struct NoticeMsg {
     pub hint: Option<String>,
 }
 
+/// A message's severity as the protocol's non-localized word (`FATAL`,
+/// `NOTICE`, …) when the server sent one (9.6+), else the localized
+/// field: under a non-English `lc_messages` the latter is a translation
+/// (`SCHWERWIEGEND`), which [`NoticeMsg::ends_session`] would not know.
+/// Pure.
+pub fn severity_word(parsed: Option<tokio_postgres::error::Severity>, localized: &str) -> String {
+    parsed.map_or_else(|| localized.to_string(), |s| s.to_string())
+}
+
 impl NoticeMsg {
     /// A `FATAL` or `PANIC`: not a notice but the error the server ends
     /// the session with, sent unasked as the connection closes. Pure.
@@ -959,7 +968,10 @@ fn spawn_connection_driver<S, T>(
                     Poll::Ready(Some(Ok(msg))) => match msg {
                         tokio_postgres::AsyncMessage::Notice(notice) => {
                             let n = NoticeMsg {
-                                severity: notice.severity().to_string(),
+                                severity: severity_word(
+                                    notice.parsed_severity(),
+                                    notice.severity(),
+                                ),
                                 message: notice.message().to_string(),
                                 detail: notice.detail().map(|s| s.to_string()),
                                 hint: notice.hint().map(|s| s.to_string()),
@@ -1000,7 +1012,7 @@ fn spawn_connection_driver<S, T>(
                                     db.message()
                                 );
                                 let _ = notice_tx.send(NoticeMsg {
-                                    severity: db.severity().to_string(),
+                                    severity: severity_word(db.parsed_severity(), db.severity()),
                                     message: db.message().to_string(),
                                     detail: db.detail().map(str::to_string),
                                     hint: db.hint().map(str::to_string),
@@ -2343,6 +2355,26 @@ mod tests {
     }
 
     use super::*;
+
+    /// The parting FATAL is told by the protocol's own word, not the
+    /// translation a German server sends in the localized field.
+    #[test]
+    fn severity_is_the_protocols_word_when_the_server_sent_it() {
+        use tokio_postgres::error::Severity;
+        assert_eq!(
+            severity_word(Some(Severity::Fatal), "SCHWERWIEGEND"),
+            "FATAL"
+        );
+        assert_eq!(severity_word(Some(Severity::Notice), "HINWEIS"), "NOTICE");
+        assert_eq!(severity_word(None, "FATAL"), "FATAL");
+        let n = NoticeMsg {
+            severity: severity_word(Some(Severity::Fatal), "SCHWERWIEGEND"),
+            message: "Verbindung wird abgebrochen".into(),
+            detail: None,
+            hint: None,
+        };
+        assert!(n.ends_session());
+    }
 
     #[test]
     fn project_cells_pads_a_row_narrower_than_its_header() {
