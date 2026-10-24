@@ -148,6 +148,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `:readonly on` under a writable profile could be undone from the
+  editor: `SET default_transaction_read_only = off` got the `other`
+  guard's confirm, and after `y` the session wrote while the header still
+  said `read-only`. A session read-only by `:readonly on` or a standby's
+  pin now blocks that `SET` (and `BEGIN READ WRITE`, `set_config(…)`) as
+  a read-only profile does, and says `:readonly off` is the way out.
 - A connection that dropped under a running pgman — a session the server
   ended (`pg_terminate_backend`, a restart, an idle timeout) or a network
   that went — left the header saying `connected`, and every later command
