@@ -1,9 +1,9 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 707
+assertion_line: 708
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ──────────────────────────────────────────╮╭──────────────────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ─────────────────────────────────╮╭──────────────────────────────────────╮
 │ Server: localhost:5432  •  Database: test  •  User: test           ││             PostgreSQL   schema lint │
 │ Status: connected · pg 16.0  •  Session:  read-only   •  Tabs: 1   ││                <?> help  <:> command │
 │ Via: —                                                             ││               <E> envs  <ctrl-t> tab │

@@ -409,7 +409,7 @@ pub(crate) fn shows_replica_badge(app: &App) -> bool {
     matches!(app.conn_state, ConnState::Connected { .. }) && app.in_recovery == Some(true)
 }
 
-/// What follows "pgman" in the header: ` 0.1.0 · 2026-10-19`, or without
+/// What follows "pgman" in the header: ` 0.1.0 · released 2026-10-19`, or without
 /// the date, or nothing, whichever is the widest that leaves the rest of
 /// the header (`rest` columns) whole in `width`. The date goes first and
 /// then the version, as in ebman — a half-cut date reads worse than none.
@@ -419,7 +419,7 @@ pub(crate) fn header_build(width: usize, rest: usize) -> String {
     let full = if crate::RELEASE_DATE.is_empty() {
         version.clone()
     } else {
-        format!("{version} · {}", crate::RELEASE_DATE)
+        format!("{version} · released {}", crate::RELEASE_DATE)
     };
     // " pgman" plus the space after the build.
     let fixed = display_width(" pgman") + 1 + rest;

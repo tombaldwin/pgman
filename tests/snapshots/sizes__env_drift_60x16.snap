@@ -3,7 +3,7 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
+ pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ environments · schema drift ◆ ] v / q back ───────────╮
 │  schema version by environment — yellow: behind, differs,│

@@ -1,9 +1,9 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 376
+assertion_line: 379
 expression: dump(&buf)
 ---
- pgman X.X.X · YYYY-MM-DD │ test  connected · pg 16.0
+ pgman X.X.X · released YYYY-MM-DD │ test  connected · pg 16.0
  1 SELECT * FROM us               [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor ◆ ]────────────────────────────────────────────────────────────────╮
 │> SELECT * FROM us                                                            │

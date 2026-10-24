@@ -14,6 +14,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - `--demo` no longer writes `pgman.log` or creates pgman's cache,
   config and data directories, as its "no disk writes" promised.
 
+### Changed
+
+- The header and About box say the date beside the version is the
+  release date: `pgman 0.2.0 · released 2026-10-23`. At 60
+  columns the header now shows the version alone.
+
 ## [0.2.0] — 2026-10-23
 
 ### Highlights

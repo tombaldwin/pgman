@@ -1,8 +1,9 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 134
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ──────────────╮╭───────────────────────────╮
 │ Server: —  •  Database: —  •  User: —           ││      PostgreSQL   results │
 │ Status: disconnected  •  Session:  read-only    ││     <?> help  <:> command │
 │ Via: —                                          ││    <E> envs  <ctrl-t> tab │
