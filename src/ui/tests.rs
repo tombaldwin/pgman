@@ -1586,18 +1586,24 @@ fn fit_status_never_cuts_a_prose_segment_mid_word() {
 fn confirm_wrap_note_says_refused_under_read_only_instead_of_wrapping() {
     use super::panels::confirm_wrap_note;
     assert_eq!(
-        confirm_wrap_note(true, true),
+        confirm_wrap_note(true, true, true),
         " · Postgres will refuse it — this session is read-only"
     );
     assert_eq!(
-        confirm_wrap_note(true, false),
+        confirm_wrap_note(true, false, true),
         " · Postgres will refuse it — this session is read-only"
     );
+    // `SET lock_timeout` under read-only runs: no promise of a refusal
+    // for a statement pgman can't classify.
     assert_eq!(
-        confirm_wrap_note(false, true),
+        confirm_wrap_note(true, true, false),
+        " · this session is read-only — Postgres refuses it if it writes"
+    );
+    assert_eq!(
+        confirm_wrap_note(false, true, true),
         " · will wrap in transaction"
     );
-    assert_eq!(confirm_wrap_note(false, false), "");
+    assert_eq!(confirm_wrap_note(false, false, true), "");
     use super::panels::confirm_action_line;
     assert_eq!(
         confirm_action_line(true),

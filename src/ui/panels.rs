@@ -154,10 +154,19 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
 /// The confirm card's note on what happens after `y`. A write under a
 /// read-only session is not going to be wrapped in anything — Postgres
 /// refuses it (`default_transaction_read_only = on`) — so promising a
-/// transaction there was the wrong thing to confirm. Pure / testable.
-pub(crate) fn confirm_wrap_note(read_only: bool, wrap_in_tx: bool) -> &'static str {
-    if read_only {
+/// transaction there was the wrong thing to confirm. A statement pgman
+/// can't classify (`kind_known` false: `SET`, `LISTEN`, …) may not write
+/// at all, and Postgres runs a `SET` in a read-only session, so the note
+/// says when it refuses rather than that it will. Pure / testable.
+pub(crate) fn confirm_wrap_note(
+    read_only: bool,
+    wrap_in_tx: bool,
+    kind_known: bool,
+) -> &'static str {
+    if read_only && kind_known {
         " · Postgres will refuse it — this session is read-only"
+    } else if read_only {
+        " · this session is read-only — Postgres refuses it if it writes"
     } else if wrap_in_tx {
         " · will wrap in transaction"
     } else {
@@ -197,7 +206,11 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
         Some(s) => s.clone(),
         None => pending.decision.kind.describe(),
     };
-    let wrap_note = confirm_wrap_note(app.read_only, pending.decision.wrap_in_tx);
+    let wrap_note = confirm_wrap_note(
+        app.read_only,
+        pending.decision.wrap_in_tx,
+        pending.decision.kind != crate::safety::StatementKind::Other,
+    );
     // A batch's statements are summarised, not shown one by one, so only
     // a single statement gets the typo wording.
     let typo = if pending.is_batch {
