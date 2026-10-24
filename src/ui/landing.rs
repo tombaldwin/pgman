@@ -233,25 +233,19 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     }
 
     if two_col {
-        // Shared left-column width: indent + key field + widest LEFT
-        // description among the paired rows (e, Q, W, F8).
-        let left_descs: Vec<&str> = if include_f8f4 {
-            vec![
-                e.desc.as_str(),
-                q.desc.as_str(),
-                w.desc.as_str(),
-                f8.desc.as_str(),
-            ]
-        } else {
-            vec![e.desc.as_str(), q.desc.as_str(), w.desc.as_str()]
-        };
-        let left_col_width = display_width(HINT_INDENT)
-            + KEY_FIELD_WIDTH
-            + left_descs
-                .iter()
-                .map(|d| display_width(d))
-                .max()
-                .unwrap_or(0);
+        // Shared left-column width: the widest LEFT cell among the
+        // paired rows (e, Q, W, F8, ?), each measured with its own key
+        // field — `ctrl-l`'s is wider than the 4 the others take, and
+        // counting 4 for it started `:tap` four columns right of the
+        // S / T / L / ctrl-t column above and below it.
+        let mut left_hints = vec![&e, &q, &w];
+        if include_f8f4 {
+            left_hints.push(&f8);
+        }
+        if include_help && include_new_tab {
+            left_hints.push(&help);
+        }
+        let left_col_width = left_col_width(&left_hints);
 
         lines.push(paired_line(&e, &s, key_style, desc_style, left_col_width));
         lines.push(paired_line(&q, &t, key_style, desc_style, left_col_width));
@@ -501,6 +495,19 @@ fn key_field(key: &str) -> String {
     format!("{key:<width$}")
 }
 
+/// The two-column layout's left column: the widest of `hints` as
+/// [`paired_line`] draws it (indent, key field, description), so the
+/// right column starts at one place on every row. Pure.
+fn left_col_width(hints: &[&Hint]) -> usize {
+    hints
+        .iter()
+        .map(|h| {
+            display_width(HINT_INDENT) + display_width(&key_field(h.key)) + display_width(&h.desc)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 /// Render one key hint on its own line (single-column layout).
 fn single_line(hint: &Hint, key_style: Style, desc_style: Style) -> Line<'static> {
     Line::from(vec![
@@ -585,6 +592,33 @@ mod tests {
             "two-col row should also carry S: {row:?}"
         );
         assert!(row.contains("schema browser"), "row: {row:?}");
+    }
+
+    /// In two columns the right column starts at one place on every
+    /// row: `ctrl-l`'s wider key field pushed `:tap` four columns right
+    /// of the S / T / L / ctrl-t above and below it.
+    #[test]
+    fn the_right_column_starts_at_one_column_on_every_row() {
+        let a = app();
+        for w in [64u16, 80, 100, 120, 200] {
+            let text = plain(&landing_lines(&a, w, 30));
+            let starts: Vec<(usize, &String)> = ["S   ", "T   ", "L   ", ":tap  ", "ctrl-t  "]
+                .iter()
+                .filter_map(|key| {
+                    let line = text.iter().find(|l| {
+                        l.find(key)
+                            .is_some_and(|i| i > display_width(HINT_INDENT) + KEY_FIELD_WIDTH)
+                    })?;
+                    let i = line.rfind(key)?;
+                    Some((display_width(&line[..i]), line))
+                })
+                .collect();
+            assert_eq!(starts.len(), 5, "{w}: {text:?}");
+            assert!(
+                starts.iter().all(|(x, _)| *x == starts[0].0),
+                "{w}: {starts:?}"
+            );
+        }
     }
 
     #[test]

@@ -224,9 +224,6 @@ batch.
 - **`demo.gif` still shows 0.1.0's chrome.** `demo.tape` installs into
   the real `~/.cargo/bin` and runs under the real HOME; make it use a
   `target/` binary and scratch HOME / XDG dirs, then re-record.
-- **The start card's two-column mode assumes 4-wide keys**: the
-  `ctrl-l … :tap` row's right column doesn't line up with the S/T/L
-  column above it.
 - **The schema wizard's detail strip at 60x16** is clipped by height
   with no "more" marker.
 - **The tap status still says "JAR backpressure"** (`src/app/types.rs`)

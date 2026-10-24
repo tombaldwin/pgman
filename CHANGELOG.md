@@ -43,6 +43,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The NOTIFY panel cuts a long payload, and its title's key hints, with
   `…` at the border rather than mid-token, and shows a payload's
   newline as `⏎` on its row.
+- The start card's two key columns line up: `:tap  JDBC tap (F4)`
+  started four columns right of the `S` / `T` / `L` / `ctrl-t` above
+  and below it, as `ctrl-l`'s key is wider than the others.
 - A start card too short for every key hint keeps its `?  all keys`
   line and says how many it left off (`+3 more`); at 60x16 the hints
   went with nothing to say so.

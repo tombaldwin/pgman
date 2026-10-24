@@ -16,11 +16,11 @@ expression: dump(&buf)
 │ connected to ledger on ledger-staging.c7xk2rpq9w1d…:5432 · pg 16.4 · RO      │
 │ databases  受 注 管 理 デ ー タ ベ ー ス  812 MB · +2 more                             │
 │                                                                              │
-│   e   write a query                    S   schema browser (26 tables)        │
-│   Q   saved queries (4)                T   slow queries                      │
-│   W   schema wizard                    L   sessions & locks                  │
+│   e   write a query                        S   schema browser (26 tables)    │
+│   Q   saved queries (4)                    T   slow queries                  │
+│   W   schema wizard                        L   sessions & locks              │
 │   ctrl-l  logs → SQL (paste a log first)   :tap  JDBC tap (F4)               │
-│   ?   all keys                         ctrl-t  new tab                       │
+│   ?   all keys                             ctrl-t  new tab                   │
 │                                                                              │
 │   TAP: app queries via the JDBC tap · N+1 ×1: repeated per row · :tap        │
 │                                                                              │
