@@ -3277,6 +3277,34 @@ async fn an_exclusive_db_holds_later_work_until_its_guard_drops() {
         .unwrap();
 }
 
+/// An [`pgman::query::paging::ExclusiveDb`] also waits for work queued
+/// *before* it whose turn has already come: that work runs on the
+/// client, not through the pager, so a hold the pager answered at once
+/// let a reload's lock bound race it — and its `RESET` land inside the
+/// `BEGIN` the earlier work sent.
+#[tokio::test]
+async fn an_exclusive_db_waits_for_earlier_work_still_running() {
+    use pgman::query::paging::{Db, ExclusiveDb, Pager};
+    let (client, _t) = lib_client().await;
+    let pager = Pager::spawn(client.clone());
+    let earlier = Db::new(client.clone(), Some(&pager));
+    let running = tokio::time::timeout(std::time::Duration::from_secs(5), earlier.ready())
+        .await
+        .expect("the earlier work's turn comes");
+    let exclusive = ExclusiveDb::new(client.clone(), Some(&pager));
+    let exclusive = tokio::spawn(exclusive.ready());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !exclusive.is_finished(),
+        "the exclusive work waits while earlier work runs"
+    );
+    drop(running);
+    tokio::time::timeout(std::time::Duration::from_secs(5), exclusive)
+        .await
+        .expect("the exclusive work runs once the earlier work is done")
+        .unwrap();
+}
+
 /// The schema fetch learns each partition's parent from a real server,
 /// sub-partitions included.
 #[test]

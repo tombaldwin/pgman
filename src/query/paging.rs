@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, OwnedRwLockReadGuard, RwLock};
 
 use crate::conn::QueryErr;
 use crate::grid::{Cell, Grid};
@@ -238,15 +238,23 @@ enum Req {
         want: usize,
         reply: Reply<Page>,
     },
-    /// Close any open cursor, then answer (a barrier) or not.
-    Close(Option<oneshot::Sender<()>>),
-    /// Close any open cursor, answer, then take nothing more from the
-    /// queue until `release` resolves (sent on or dropped).
+    /// Close any open cursor, then answer (a barrier, with its [`Turn`])
+    /// or not.
+    Close(Option<oneshot::Sender<Turn>>),
+    /// Close any open cursor, wait for every [`Turn`] given out to end,
+    /// answer, then take nothing more from the queue until `release`
+    /// resolves (sent on or dropped).
     Hold {
         ready: oneshot::Sender<()>,
         release: oneshot::Receiver<()>,
     },
 }
+
+/// A [`Db`]'s turn on the session: given out with its barrier's answer
+/// and held until the work is done, so a [`Req::Hold`] waits for work
+/// whose barrier it was queued behind — that work runs on the client
+/// directly, after the pager has moved on.
+type Turn = OwnedRwLockReadGuard<()>;
 
 /// The cursor's server-side state, owned by the pager task.
 struct OpenCursor {
@@ -295,7 +303,7 @@ impl Pager {
 
     /// A place in the queue: resolves once every earlier request is done
     /// and no cursor is open.
-    pub fn barrier(&self) -> oneshot::Receiver<()> {
+    pub fn barrier(&self) -> oneshot::Receiver<Turn> {
         let (reply, rx) = oneshot::channel();
         self.send(Req::Close(Some(reply)));
         rx
@@ -322,7 +330,22 @@ impl Pager {
 /// first, so the work never runs inside the cursor's transaction.
 pub struct Db {
     client: Arc<tokio_postgres::Client>,
-    barrier: Option<oneshot::Receiver<()>>,
+    barrier: Option<oneshot::Receiver<Turn>>,
+}
+
+/// A [`Db`]'s client once its turn has come. Derefs to the client; an
+/// [`ExclusiveDb`] queued after it waits until this is dropped, so keep
+/// it for as long as the work runs.
+pub struct DbClient {
+    client: Arc<tokio_postgres::Client>,
+    _turn: Option<Turn>,
+}
+
+impl std::ops::Deref for DbClient {
+    type Target = Arc<tokio_postgres::Client>;
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
 }
 
 impl Db {
@@ -336,18 +359,24 @@ impl Db {
     }
 
     /// The client, once the work queued before this is done.
-    pub async fn ready(self) -> Arc<tokio_postgres::Client> {
-        if let Some(barrier) = self.barrier {
-            // A dropped barrier means the pager is gone, and with it any
-            // cursor it held: nothing left to wait for.
-            let _ = barrier.await;
+    pub async fn ready(self) -> DbClient {
+        // A dropped barrier means the pager is gone, and with it any
+        // cursor it held: nothing left to wait for.
+        let turn = match self.barrier {
+            Some(barrier) => barrier.await.ok(),
+            None => None,
+        };
+        DbClient {
+            client: self.client,
+            _turn: turn,
         }
-        self.client
     }
 }
 
-/// [`Db`], but the session is the holder's alone: every piece of work
-/// queued after it waits until the [`Held`] guard is dropped. For work
+/// [`Db`], but the session is the holder's alone: its turn comes once
+/// every [`Db`] queued before it has dropped its [`DbClient`], and every
+/// piece of work queued after it waits until the [`Held`] guard is
+/// dropped. For work
 /// that changes a session setting and puts it back
 /// (`conn::with_lock_bound`), so nothing of the operator's runs under
 /// the changed setting, or opens a transaction between the change and
@@ -390,6 +419,7 @@ impl ExclusiveDb {
 
 async fn run(client: Arc<tokio_postgres::Client>, mut rx: mpsc::UnboundedReceiver<Req>) {
     let mut cursor: Option<OpenCursor> = None;
+    let turns = Arc::new(RwLock::new(()));
     while let Some(req) = rx.recv().await {
         match req {
             Req::Close(reply) => {
@@ -397,13 +427,17 @@ async fn run(client: Arc<tokio_postgres::Client>, mut rx: mpsc::UnboundedReceive
                     end(&client, "COMMIT").await;
                 }
                 if let Some(reply) = reply {
-                    let _ = reply.send(());
+                    // No writer is held between requests, so this never waits.
+                    let _ = reply.send(turns.clone().read_owned().await);
                 }
             }
             Req::Hold { ready, release } => {
                 if cursor.take().is_some() {
                     end(&client, "COMMIT").await;
                 }
+                // Work whose barrier was answered before this runs on the
+                // client, not through the queue: wait for it to finish.
+                let _all_turns = turns.clone().write_owned().await;
                 if ready.send(()).is_ok() {
                     let _ = release.await;
                 }
