@@ -16,18 +16,18 @@ use crate::conn::{self, TypedRows};
 /// primary. Shared by the probe and MCP's replica check.
 macro_rules! lag_secs_sql {
     () => {
-        "(CASE WHEN NOT pg_is_in_recovery() THEN NULL \
-           WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() \
-             AND EXISTS (SELECT 1 FROM pg_stat_wal_receiver WHERE status = 'streaming') THEN 0 \
-           ELSE EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp()) END)::float8"
+        "(CASE WHEN NOT pg_catalog.pg_is_in_recovery() THEN NULL \
+           WHEN pg_catalog.pg_last_wal_receive_lsn() = pg_catalog.pg_last_wal_replay_lsn() \
+             AND EXISTS (SELECT 1 FROM pg_catalog.pg_stat_wal_receiver WHERE status = 'streaming') THEN 0 \
+           ELSE EXTRACT(EPOCH FROM pg_catalog.now() - pg_catalog.pg_last_xact_replay_timestamp()) END)::float8"
     };
 }
 pub(crate) use lag_secs_sql;
 
 /// One round trip for everything that needs no configuration.
 pub const STATUS_SQL: &str = concat!(
-    "SELECT current_setting('server_version') AS server_version, \
-     pg_is_in_recovery() AS in_recovery, ",
+    "SELECT pg_catalog.current_setting('server_version') AS server_version, \
+     pg_catalog.pg_is_in_recovery() AS in_recovery, ",
     lag_secs_sql!(),
     " AS lag_secs, \
      (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()) AS sessions, \

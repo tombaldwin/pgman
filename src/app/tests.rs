@@ -12615,6 +12615,26 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     assert!(a.read_only && a.replica_pin);
 }
 
+/// A `:readonly off` that the server took, landing after the session was
+/// pinned as a standby's (a paged run's probe found it in recovery while
+/// the SET was on its way): the header stays read-only, and the status
+/// says why rather than "read-only off".
+#[test]
+fn readonly_off_applied_after_a_standby_pin_keeps_the_session_read_only() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.read_only = false;
+    a.note_server_role(Some(true));
+    let generation = a.generation;
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: false,
+        result: Ok(()),
+    });
+    assert!(a.read_only && a.replica_pin);
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(status.contains("stays read-only"), "{status}");
+}
+
 /// `r` keeps the cursor on the database it was on when the listing moves
 /// under it (a new instance sorting above, say), so Enter connects where
 /// the operator was looking.
@@ -14645,7 +14665,9 @@ fn ctrl_c_from_the_results_cancels_a_running_fetch() {
     assert_eq!(a.last_status.as_deref(), Some("ctrl-c again to quit"));
 }
 
-/// Every piece of database work reaches the client through `App::db`,
+/// Every piece of database work reaches the client through `App::db` (or
+/// `App::db_exclusive`, which also holds the queue for it — both by
+/// `App::work_client`),
 /// which queues it behind the pager so that it never runs inside the
 /// result cursor's transaction (docs/backlog/paging.md). A new
 /// `self.client.clone()` elsewhere would skip the queue: its statement
@@ -14851,6 +14873,10 @@ fn the_result_diff_keys_on_a_composite_key_and_only_when_both_sides_agree() {
 
 // --- A connection lost under the App ---------------------------------------
 
+/// The `HINT` Postgres sends with a hot-standby conflict's `FATAL`.
+const RECOVERY_CONFLICT_HINT: &str =
+    "In a moment you should be able to reconnect to the database and repeat your command.";
+
 /// The server's parting FATAL is the reason; without one, the close is.
 #[test]
 fn a_lost_connection_names_the_servers_reason() {
@@ -14864,6 +14890,21 @@ fn a_lost_connection_names_the_servers_reason() {
     assert_eq!(
         super::msg::connection_lost_reason(Some(&fatal)),
         "connection lost · terminating connection due to conflict with recovery"
+    );
+    // A hot-standby conflict's FATAL says what to do: the card says it
+    // too. Its DETAIL (why) stays in the log.
+    let conflict = crate::conn::NoticeMsg {
+        detail: Some(
+            "User query might have needed to see row versions that must be removed.".into(),
+        ),
+        hint: Some(RECOVERY_CONFLICT_HINT.into()),
+        ..fatal.clone()
+    };
+    assert_eq!(
+        super::msg::connection_lost_reason(Some(&conflict)),
+        format!(
+            "connection lost · terminating connection due to conflict with recovery · {RECOVERY_CONFLICT_HINT}"
+        )
     );
     assert_eq!(
         super::msg::connection_lost_reason(None),
@@ -14998,6 +15039,20 @@ fn a_fatal_query_failure_is_the_lost_cards_reason_whichever_lands_first() {
     );
     assert_eq!(a.last_error, None, "the card says it; the footer doesn't");
 
+    // A FATAL with a hint — a hot-standby conflict's — carries it to the
+    // card.
+    let mut a = connected();
+    let mut msg = fatal_query_failed(&a, "FATAL");
+    if let AppMsg::QueryFailed { detail, .. } = &mut msg {
+        detail.as_mut().unwrap().hint = Some(RECOVERY_CONFLICT_HINT.into());
+    }
+    a.on_msg(msg);
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if *r == format!("{lost} · {RECOVERY_CONFLICT_HINT}")),
+        "{:?}",
+        a.conn_state
+    );
+
     // An ERROR is an error: the session goes on.
     let mut a = connected();
     a.on_msg(fatal_query_failed(&a, "ERROR"));
@@ -15021,8 +15076,17 @@ fn a_query_error_ends_the_session_only_when_fatal_or_panic() {
     }
     assert!(!crate::conn::QueryErrDetail::default().ends_session());
     assert_eq!(
-        super::msg::connection_lost_saying(Some("x")),
+        super::msg::connection_lost_saying(Some("x"), None),
         "connection lost · x"
+    );
+    assert_eq!(
+        super::msg::connection_lost_saying(Some("x"), Some("reconnect")),
+        "connection lost · x · reconnect"
+    );
+    assert_eq!(
+        super::msg::connection_lost_saying(Some("x"), Some(" ")),
+        "connection lost · x",
+        "a blank hint adds nothing"
     );
 }
 

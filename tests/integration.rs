@@ -2967,6 +2967,16 @@ fn a_standby_booted_writable_is_read_only_on_the_server() {
     }
 }
 
+/// Held by a test that takes an `ACCESS EXCLUSIVE` lock on a catalog: it
+/// stalls every catalog read on the server, so two such tests here must
+/// not overlap, and each must hold it only briefly. (A panic poisons
+/// it; the next test takes it all the same.)
+static CATALOG_LOCKS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn catalog_locks() -> std::sync::MutexGuard<'static, ()> {
+    CATALOG_LOCKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// `connect_and_bootstrap` with no statement_timeout, as a profile with
 /// `statement_timeout_ms = 0` connects: nothing but pgman's own bound
 /// stops a read that waits for a lock.
@@ -3005,6 +3015,7 @@ async fn bootstrap_unbounded() -> (pgman::conn::Booted, std::time::Duration) {
 /// One test, so the two locks never overlap.
 #[test]
 fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
+    let _catalog = catalog_locks();
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let (holder, _tunnel) = writable_client().await;
@@ -3029,22 +3040,30 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
         holder.batch_execute("ROLLBACK").await.unwrap();
         let cache = &booted.schema_cache;
         let key = ("public".to_string(), t.clone());
-        assert!(
-            took < std::time::Duration::from_secs(2),
-            "skipped, not waited for at lock_timeout: {took:?} · {:?}",
-            cache.incomplete
-        );
         let why = cache.incomplete.as_deref().expect("says it is incomplete");
+        // Skipped, not waited for: no read gave up at the bound. Not a
+        // timing bound as tight as that 2 s — on a loaded runner a
+        // whole fetch can take that long without waiting on anything.
+        assert!(
+            !why.contains("gave up at lock_timeout"),
+            "skipped, not waited for at lock_timeout: {took:?} · {why}"
+        );
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
         // Another test's DDL may hold a lock of its own at this moment,
         // and be the one named; then ours is among the "more".
         assert!(
-            why.contains(&format!(
-                "ACCESS EXCLUSIVE lock on public.{t} held by pid {holder_pid}"
-            )) || why.contains(" more) held by pid "),
+            why.starts_with(&format!(
+                "pid {holder_pid} holds ACCESS EXCLUSIVE on public.{t}"
+            )) || why.contains(" more): no size or indexes"),
             "{why}"
         );
         assert!(cache.columns_by_table.contains_key(&key), "columns read");
         assert!(!cache.table_sizes.contains_key(&key), "size skipped");
+        assert!(
+            cache.skipped.contains(&key),
+            "and said to be: {:?}",
+            cache.skipped
+        );
         assert!(
             !cache.indexes_by_table.contains_key(&key),
             "indexes skipped"
@@ -3076,8 +3095,11 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
             .incomplete
             .as_deref()
             .expect("says it is incomplete");
+        // The holder named: another worktree's catalog lock could be the
+        // one, so the pid is not pinned — that a holder is, is.
         assert!(
-            why.contains("partitions") && why.contains("gave up at lock_timeout"),
+            why.contains("partitions gave up at lock_timeout (pid ")
+                && why.contains(" holds ACCESS EXCLUSIVE on pg_catalog.pg_inherits)"),
             "{why}"
         );
         assert!(took < std::time::Duration::from_secs(10), "{took:?}");
@@ -3095,6 +3117,164 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
             .await
             .unwrap();
     });
+}
+
+/// A lock on one of a table's indexes (here `ALTER INDEX … SET
+/// TABLESPACE`, which locks the index alone) keeps the table's size and
+/// that index out too; the cache files the skip under the table, which
+/// is what the schema browser shows as "not fetched".
+#[tokio::test]
+async fn a_locked_index_marks_its_table_skipped() {
+    let (holder, _t1) = writable_client().await;
+    let (client, _t2) = lib_client().await;
+    let t = it_name("idxlock");
+    let ix = format!("{t}_v");
+    holder
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int, v text); CREATE INDEX {ix} ON {t} (v)"
+        ))
+        .await
+        .unwrap();
+    let holder_pid = backend_pid(&holder).await;
+    holder
+        .batch_execute(&format!(
+            "BEGIN; ALTER INDEX {ix} SET TABLESPACE pg_default"
+        ))
+        .await
+        .unwrap();
+    let cache = pgman::query::schema::fetch(&client).await;
+    holder.batch_execute("ROLLBACK").await.unwrap();
+    holder
+        .batch_execute(&format!("DROP TABLE {t}"))
+        .await
+        .unwrap();
+    let key = ("public".to_string(), t.clone());
+    let why = cache.incomplete.as_deref().unwrap_or_default();
+    assert!(cache.skipped.contains(&key), "{:?} · {why}", cache.skipped);
+    assert!(!cache.table_sizes.contains_key(&key), "size skipped");
+    assert!(
+        why.contains(&format!(
+            "pid {holder_pid} holds ACCESS EXCLUSIVE on public.{ix}"
+        )) || why.contains(" more): no size or indexes"),
+        "{why}"
+    );
+}
+
+/// A reload (`S` then `r`, or the refresh after DDL) runs on the
+/// operator's session, where `lock_timeout` is theirs. It used to be
+/// unbounded there: behind an `ACCESS EXCLUSIVE` lock on a catalog it
+/// sat for `statement_timeout` (for good at 0), then said "reloaded"
+/// over the cancelled read. Now it gives up at the connect's bound, says
+/// which read did, and puts back the operator's own `SET lock_timeout`.
+///
+/// Inside the operator's transaction it is left unbounded (a `SET`
+/// there would outlive the reads, or be undone by a rollback): there a
+/// read the server cancels at `statement_timeout` is named as failed,
+/// not taken for a whole schema.
+#[test]
+fn a_reload_behind_a_catalog_lock_gives_up_and_says_why() {
+    let _catalog = catalog_locks();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (holder, _t1) = writable_client().await;
+        let (client, _t2) = writable_client().await;
+        let t = it_name("reloadlock");
+        client
+            .batch_execute(&format!(
+                "CREATE TABLE {t} (id int); SET statement_timeout = 0; SET lock_timeout = '1min'"
+            ))
+            .await
+            .unwrap();
+        let reload = || async {
+            let started = std::time::Instant::now();
+            let cache = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                pgman::query::schema::fetch_bounded(&client),
+            )
+            .await
+            .expect("the reload returns behind a catalog lock");
+            (cache, started.elapsed())
+        };
+        holder
+            .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_inherits IN ACCESS EXCLUSIVE MODE")
+            .await
+            .unwrap();
+        let (cache, took) = reload().await;
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        let why = cache.incomplete.as_deref().expect("says it is incomplete");
+        assert!(
+            why.contains("partitions") && why.contains("gave up at lock_timeout"),
+            "{why}"
+        );
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+        assert!(
+            cache
+                .columns_by_table
+                .contains_key(&("public".to_string(), t.clone())),
+            "the rest is there: {why}"
+        );
+        let shown: String = client
+            .query_one("SHOW lock_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "1min", "the operator's own lock_timeout is back");
+
+        // Inside a transaction: no bound — the read waits out the
+        // statement_timeout, longer than the bound — and the cancelled
+        // read is named.
+        client
+            .batch_execute("SET statement_timeout = '3s'; BEGIN")
+            .await
+            .unwrap();
+        holder
+            .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_inherits IN ACCESS EXCLUSIVE MODE")
+            .await
+            .unwrap();
+        let (cache, _) = reload().await;
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        client.batch_execute("ROLLBACK").await.unwrap();
+        let why = cache.incomplete.as_deref().expect("says it is incomplete");
+        assert!(
+            why.contains("failed: canceling statement due to statement timeout")
+                && !why.contains("gave up at lock_timeout"),
+            "{why}"
+        );
+        let shown: String = client
+            .query_one("SHOW lock_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "1min", "not bounded inside the transaction");
+        client
+            .batch_execute(&format!("DROP TABLE {t}"))
+            .await
+            .unwrap();
+    });
+}
+
+/// An [`pgman::query::paging::ExclusiveDb`] keeps every piece of work
+/// queued after it waiting until its guard drops — so nothing of the
+/// operator's runs under a reload's lock bound, or opens a transaction
+/// between the bound and its undoing.
+#[tokio::test]
+async fn an_exclusive_db_holds_later_work_until_its_guard_drops() {
+    use pgman::query::paging::{Db, ExclusiveDb, Pager};
+    let (client, _t) = lib_client().await;
+    let pager = Pager::spawn(client.clone());
+    let exclusive = ExclusiveDb::new(client.clone(), Some(&pager));
+    let later = Db::new(client.clone(), Some(&pager));
+    let (_, held) = tokio::time::timeout(std::time::Duration::from_secs(5), exclusive.ready())
+        .await
+        .expect("the exclusive work's turn comes");
+    let later = tokio::spawn(later.ready());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!later.is_finished(), "later work waits while held");
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(5), later)
+        .await
+        .expect("later work runs once the guard drops")
+        .unwrap();
 }
 
 /// The schema fetch learns each partition's parent from a real server,
@@ -6895,6 +7075,109 @@ async fn the_paging_probe_ignores_a_schema_ahead_of_pg_catalog() {
     assert_eq!(written, 0, "the probe ran the schema's lower");
     assert!(!opened.in_transaction, "the probe answered");
     assert!(opened.cursor.is_some(), "a plain SELECT still pages");
+}
+
+/// A schema ahead of `pg_catalog` on the path — here the database's
+/// default, so the connect's own session gets it — with a
+/// `pg_is_in_recovery()` of its own that says yes. The connect's probe
+/// pins a standby read-only, so an unqualified probe made a primary
+/// read-only and called it a read replica; the other recovery probes
+/// (MCP's replica refusal and checks, the dashboard's, the advisor's)
+/// are asked on the same kind of session.
+#[test]
+fn the_recovery_probes_ignore_a_schema_ahead_of_pg_catalog() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = it_name("recpath");
+        let admin = raw("pgman_test").await;
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+            format!("ALTER DATABASE {db} SET search_path = shadow, public, pg_catalog"),
+        ] {
+            admin.batch_execute(&sql).await.unwrap();
+        }
+        let owner = raw(&db).await;
+        owner
+            .batch_execute(
+                "CREATE SCHEMA shadow; \
+                 CREATE FUNCTION shadow.pg_is_in_recovery() RETURNS boolean \
+                 LANGUAGE sql AS 'SELECT true'",
+            )
+            .await
+            .unwrap();
+        let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+        let shadowed: bool = raw(&db)
+            .await
+            .query_one("SELECT pg_is_in_recovery()", &[])
+            .await
+            .unwrap()
+            .get(0);
+
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        let booted = pgman::conn::connect_and_bootstrap(
+            pgman::conn::Dsn::parse(&dsn).unwrap(),
+            false,
+            5_000,
+            pgman::conn::BOOTSTRAP_SQL.to_string(),
+            notice_tx,
+            notification_tx,
+        )
+        .await
+        .expect("connect");
+        let read_only: String = booted
+            .client
+            .query_one("SHOW default_transaction_read_only", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let client = &booted.client;
+        let apply_says = pgman::query::apply::in_recovery(client).await;
+        let is_replica: bool = client
+            .query_one(pgman::query::preflight::IS_REPLICA_SQL, &[])
+            .await
+            .unwrap()
+            .get("is_replica");
+        let lag_says: bool = client
+            .query_one(pgman::query::preflight::REPLICA_LAG_SQL, &[])
+            .await
+            .unwrap()
+            .get("in_recovery");
+        let status_says: bool = client
+            .query_one(pgman::query::probe::STATUS_SQL, &[])
+            .await
+            .unwrap()
+            .get("in_recovery");
+        let advisor_says: bool = client
+            .query_one(pgman::query::advisor::CONTEXT_SQL, &[])
+            .await
+            .unwrap()
+            .get(4);
+        let booted_in_recovery = booted.in_recovery;
+        drop(booted);
+        drop(owner);
+        admin
+            .batch_execute(&format!("DROP DATABASE {db} WITH (FORCE)"))
+            .await
+            .unwrap();
+
+        assert!(shadowed, "the fixture shadows pg_is_in_recovery");
+        // Every probe that was fooled, not just the first.
+        let fooled: Vec<&str> = [
+            (booted_in_recovery != Some(false), "the connect's probe"),
+            (read_only != "off", "the connect's read-only pin"),
+            (apply_says != Ok(false), "apply_patches' replica refusal"),
+            (is_replica, "preflight::IS_REPLICA_SQL"),
+            (lag_says, "preflight::REPLICA_LAG_SQL"),
+            (status_says, "probe::STATUS_SQL"),
+            (advisor_says, "advisor::CONTEXT_SQL"),
+        ]
+        .into_iter()
+        .filter_map(|(bad, what)| bad.then_some(what))
+        .collect();
+        assert!(fooled.is_empty(), "the shadow answered: {fooled:?}");
+    });
 }
 
 /// A session the server ends under pgman — `pg_terminate_backend` from

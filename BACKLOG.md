@@ -132,7 +132,9 @@ buckets were folded in once their initial passes shipped).
   function by a listed built-in's name is caught by the probe.) An xid
   check after the first FETCH would catch writes (not `nextval`).
 - **Qualify the rest of pgman's own SQL with `pg_catalog.`**: the paging
-  probe and the cell-edit check are; the schema fetch, the advisor's
+  probe, the cell-edit check and every recovery probe (the connect's,
+  `apply_patches`', MCP's replica checks, the dashboard's, the advisor's
+  context read) are; the schema fetch, the rest of the advisor's
   queries, the sessions and slow-query panels and the backslash commands
   still call `lower`, `unnest`, `format_type`, `pg_get_*`, … unqualified,
   so a schema listed ahead of `pg_catalog` on the operator's path can

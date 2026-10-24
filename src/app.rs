@@ -3965,6 +3965,23 @@ impl App {
     /// The only reader of `self.client` for database work; the cursor's
     /// own requests go to the pager directly.
     pub(crate) fn db(&mut self) -> Option<crate::query::paging::Db> {
+        let client = self.work_client()?;
+        Some(crate::query::paging::Db::new(client, self.pager.as_ref()))
+    }
+
+    /// [`App::db`], with the session held for this work alone until it
+    /// drops its guard: for work that changes a session setting and puts
+    /// it back (a schema reload's lock bound).
+    pub(crate) fn db_exclusive(&mut self) -> Option<crate::query::paging::ExclusiveDb> {
+        let client = self.work_client()?;
+        Some(crate::query::paging::ExclusiveDb::new(
+            client,
+            self.pager.as_ref(),
+        ))
+    }
+
+    /// The client [`App::db`] and [`App::db_exclusive`] hand out, if any.
+    fn work_client(&mut self) -> Option<std::sync::Arc<tokio_postgres::Client>> {
         // The barrier closes the cursor (and with no client there is
         // none); the title follows.
         self.cursor = None;
@@ -3976,7 +3993,7 @@ impl App {
             return None;
         }
         let client = self.client.clone()?;
-        Some(crate::query::paging::Db::new(client, self.pager.as_ref()))
+        Some(client)
     }
 
     /// Close the open result cursor, if any, without waiting — the

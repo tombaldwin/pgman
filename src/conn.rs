@@ -421,7 +421,7 @@ fn read_only_refusal_hint(
             },
             Some(
                 "pgman's profile for this database is writable · SHOW default_transaction_read_only, \
-                 SELECT pg_is_in_recovery(), and the role's and database's settings \
+                 SELECT pg_catalog.pg_is_in_recovery(), and the role's and database's settings \
                  (ALTER ROLE / ALTER DATABASE … SET) say where it comes from"
                     .to_string(),
             ),
@@ -1129,29 +1129,122 @@ pub async fn connect_via(
 /// (`lock_timeout`) before it gives up and the connect goes on without it.
 pub const BOOTSTRAP_LOCK_TIMEOUT: &str = "2s";
 
+/// What [`bound_lock_timeout`] did to the session's `lock_timeout`, for
+/// [`restore_lock_timeout`] to undo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockBound {
+    /// Left alone: it already waits no longer than the bound, or the
+    /// bound failed (logged).
+    Unchanged,
+    /// Left alone because the session is inside a transaction (the
+    /// operator's `BEGIN`): a session-level `SET` there is undone by a
+    /// rollback and lasts past the reads, so the reads go unbounded.
+    InTransaction,
+    /// Bounded. `RESET` puts back the value the session started with
+    /// (the role's, the database's, the server's or the client's): no
+    /// `SET` had changed it.
+    Reset,
+    /// Bounded over the session's own `SET lock_timeout`: put that
+    /// value back.
+    Restore(String),
+}
+
+/// One round trip: the session's `lock_timeout`, where it came from, and
+/// whether the session is outside a transaction (the first command of
+/// its own — see `query::paging::probe_sql`); then the bound, when it is
+/// outside one and waits longer than [`BOOTSTRAP_LOCK_TIMEOUT`] (or
+/// forever). `OFFSET 0` keeps the old value read before the `set_config`
+/// runs; `CASE` runs that only when the bound applies.
+fn lock_bound_sql() -> String {
+    format!(
+        "SELECT old.idle, old.v, old.src, \
+                CASE WHEN old.idle AND old.v::interval \
+                          NOT BETWEEN interval '1 ms' AND interval '{BOOTSTRAP_LOCK_TIMEOUT}' \
+                     THEN pg_catalog.set_config('lock_timeout', '{BOOTSTRAP_LOCK_TIMEOUT}', false) END \
+         FROM (SELECT pg_catalog.statement_timestamp() = pg_catalog.transaction_timestamp() AS idle, \
+                      pg_catalog.current_setting('lock_timeout') AS v, \
+                      (SELECT source FROM pg_catalog.pg_settings WHERE name = 'lock_timeout') AS src \
+               OFFSET 0) old"
+    )
+}
+
+/// [`lock_bound_sql`]'s answer, from its four text columns. No answer
+/// (the read failed) leaves it unchanged. Pure.
+fn read_lock_bound(row: Option<[Option<&str>; 4]>) -> LockBound {
+    let Some([idle, old, source, applied]) = row else {
+        return LockBound::Unchanged;
+    };
+    if idle != Some("t") {
+        return LockBound::InTransaction;
+    }
+    match (applied, old) {
+        (None, _) | (_, None) => LockBound::Unchanged,
+        (Some(_), Some(old)) if source == Some("session") => LockBound::Restore(old.to_string()),
+        (Some(_), Some(_)) => LockBound::Reset,
+    }
+}
+
 /// Bound the session's `lock_timeout` to [`BOOTSTRAP_LOCK_TIMEOUT`] for
-/// the connect's own reads — unless it already waits no longer than
-/// that, in which case it is left alone. `true` when it was set, and the
-/// caller must `RESET` it: nothing has `SET` it yet on a fresh
-/// connection, so `RESET` is the value the session started with (the
-/// role's, the database's or the server's). Works on a standby and in a
-/// read-only session; a failure is logged and leaves it unbounded.
-async fn bound_lock_timeout(client: &tokio_postgres::Client) -> bool {
-    let sql = format!(
-        "SELECT pg_catalog.set_config('lock_timeout', '{BOOTSTRAP_LOCK_TIMEOUT}', false) \
-         WHERE pg_catalog.current_setting('lock_timeout')::interval \
-               NOT BETWEEN interval '1 ms' AND interval '{BOOTSTRAP_LOCK_TIMEOUT}'"
-    );
+/// pgman's own catalog reads — unless it already waits no longer than
+/// that, or the session is inside a transaction ([`LockBound`]). Works on
+/// a standby and in a read-only session; a failure is logged and leaves
+/// it unbounded.
+async fn bound_lock_timeout(client: &tokio_postgres::Client) -> LockBound {
     // Simple protocol: one round trip, no prepare.
-    match client.simple_query(&sql).await {
-        Ok(msgs) => msgs
-            .iter()
-            .any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))),
+    match client.simple_query(&lock_bound_sql()).await {
+        Ok(msgs) => read_lock_bound(msgs.iter().find_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => {
+                Some([0, 1, 2, 3].map(|i| r.try_get(i).ok().flatten()))
+            }
+            _ => None,
+        })),
         Err(e) => {
-            tracing::warn!("bounding lock_timeout for the bootstrap failed: {e}");
-            false
+            tracing::warn!("bounding lock_timeout for pgman's catalog reads failed: {e}");
+            LockBound::Unchanged
         }
     }
+}
+
+/// Undo [`bound_lock_timeout`].
+async fn restore_lock_timeout(client: &tokio_postgres::Client, bound: &LockBound) {
+    let res = match bound {
+        LockBound::Unchanged | LockBound::InTransaction => return,
+        LockBound::Reset => client.batch_execute("RESET lock_timeout").await,
+        LockBound::Restore(old) => client
+            .query_one(
+                "SELECT pg_catalog.set_config('lock_timeout', $1, false)",
+                &[old],
+            )
+            .await
+            .map(|_| ()),
+    };
+    if let Err(e) = res {
+        tracing::warn!("restoring lock_timeout after pgman's catalog reads failed: {e}");
+    }
+}
+
+/// Run `reads` — pgman's own catalog reads — with the session's
+/// `lock_timeout` bounded to [`BOOTSTRAP_LOCK_TIMEOUT`], then put it back
+/// before anything of the operator's runs: their statements wait for
+/// locks as long as the session's own setting says. Inside a transaction
+/// the reads go unbounded ([`LockBound::InTransaction`]).
+///
+/// The caller keeps every other statement off the session until this
+/// returns (the connect: nothing else runs yet; a reload:
+/// `query::paging::ExclusiveDb`). One that ran in between would wait
+/// only as long as the bound — and a `BEGIN` there would put the
+/// restore inside the operator's transaction, where a rollback undoes it.
+pub async fn with_lock_bound<T>(
+    client: &tokio_postgres::Client,
+    reads: impl std::future::Future<Output = T>,
+) -> (T, LockBound) {
+    let bound = bound_lock_timeout(client).await;
+    if bound == LockBound::InTransaction {
+        tracing::info!("pgman's catalog reads run unbounded by lock_timeout: inside a transaction");
+    }
+    let out = reads.await;
+    restore_lock_timeout(client, &bound).await;
+    (out, bound)
 }
 
 pub async fn connect_and_bootstrap(
@@ -1176,26 +1269,22 @@ pub async fn connect_and_bootstrap(
     // EXCLUSIVE lock; this bounds what it can't see coming (a lock taken
     // between its look and its read, one on a catalog) so a connect never
     // sits at "connecting…" behind a migration.
-    let bounded = bound_lock_timeout(&client).await;
+    //
     // The version probe, the bootstrap query, and the schema-cache fetch are
     // independent reads — run them concurrently (pipelined on the one
     // connection) instead of serially, cutting time-to-interactive on a
     // high-latency / tunnelled link.
-    let (version_res, grid_res, schema_cache) = tokio::join!(
-        client.query_one(
-            "SELECT current_setting('server_version'), pg_is_in_recovery()",
-            &[]
-        ),
-        run_query(&client, &bootstrap_sql),
-        crate::query::schema::fetch(&client),
-    );
-    // Before anything of the operator's runs: their statements wait for
-    // locks as long as the session's own setting says.
-    if bounded {
-        if let Err(e) = client.batch_execute("RESET lock_timeout").await {
-            tracing::warn!("resetting lock_timeout after the bootstrap failed: {e}");
-        }
-    }
+    let ((version_res, grid_res, schema_cache), _) = with_lock_bound(&client, async {
+        tokio::join!(
+            client.query_one(
+                "SELECT pg_catalog.current_setting('server_version'), pg_catalog.pg_is_in_recovery()",
+                &[]
+            ),
+            run_query(&client, &bootstrap_sql),
+            crate::query::schema::fetch(&client),
+        )
+    })
+    .await;
     let version_row = version_res.ok();
     let server_version = version_row
         .as_ref()
@@ -2379,6 +2468,36 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The bound is undone the way it was made: `RESET` over a value no
+    /// `SET` gave, the operator's own value back over one theirs did;
+    /// nothing at all inside a transaction, where the bound was never
+    /// set, or when it wasn't needed or its read failed.
+    #[test]
+    fn a_lock_bound_is_undone_the_way_it_was_made() {
+        let row = |idle, old, src, applied| Some([Some(idle), Some(old), Some(src), applied]);
+        assert_eq!(
+            read_lock_bound(row("t", "0", "default", Some("2s"))),
+            LockBound::Reset
+        );
+        assert_eq!(
+            read_lock_bound(row("t", "0", "user", Some("2s"))),
+            LockBound::Reset
+        );
+        assert_eq!(
+            read_lock_bound(row("t", "1min", "session", Some("2s"))),
+            LockBound::Restore("1min".into())
+        );
+        assert_eq!(
+            read_lock_bound(row("t", "500ms", "session", None)),
+            LockBound::Unchanged
+        );
+        assert_eq!(
+            read_lock_bound(row("f", "0", "default", None)),
+            LockBound::InTransaction
+        );
+        assert_eq!(read_lock_bound(None), LockBound::Unchanged);
+    }
 
     /// Two sslmodes that disagree are refused: which one wins differs
     /// between pgman and libpq, and the loser could be the TLS one.

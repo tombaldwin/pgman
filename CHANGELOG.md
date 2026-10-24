@@ -66,18 +66,30 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `ACCESS EXCLUSIVE` lock: the schema fetch skips the sizes and indexes
   the lock covers, the connect's own catalog reads give up after a 2 s
   `lock_timeout` (the session's own setting is restored), and the status
-  line says the schema is incomplete, names the lock and its pid, and
-  how to reload.
+  line says the schema is incomplete, names the holder's pid first (a
+  narrow footer cut it off) then the lock — for a read that gave up
+  behind a lock on a catalog too — and how to reload. The schema
+  browser says `size: not fetched (locked)` and `indexes: not fetched`
+  for such a table, which read as a table with no indexes. A reload (`S` then `r`, or the refresh after DDL) is
+  bounded the same way, puts back your own `lock_timeout`, and no
+  longer says "schema reloaded" over a read the server cancelled: any
+  failed catalog read is named.
 - A session the server ends under a running statement
   (`pg_terminate_backend`, a crash shutdown) shows the server's reason
   on the connection-lost card, not "the connection to the server closed"
   with the reason in the footer; a session lost while still connecting
-  keeps its reason too.
+  keeps its reason too. The server's hint comes with it: a hot-standby
+  conflict's says to reconnect and repeat the command.
 - The header no longer says `Session: writable` on a standby whose
   connect-time probe went unanswered: when a paged run's probe finds the
   server in recovery, the session is pinned read-only there, in the
   header and on the server, as the connect would have pinned it; nor
-  after a `:readonly on` on a standby that failed to apply.
+  after a `:readonly on` on a standby that failed to apply, or a
+  `:readonly off` the server took just as the standby was pinned.
+- A primary is no longer pinned read-only as "a read replica" when a
+  schema ahead of `pg_catalog` on the search path has a
+  `pg_is_in_recovery()` of its own: the connect's probe, and MCP's,
+  the dashboard's and the advisor's, call `pg_catalog`'s.
 
 ### Changed
 

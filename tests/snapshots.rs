@@ -515,6 +515,44 @@ fn schema_browser_renders_focused_table_details() {
     insta::assert_snapshot!(dump(&buf));
 }
 
+/// A table whose size and indexes another session's `ACCESS EXCLUSIVE`
+/// lock kept out of the fetch says "not fetched" for both, instead of
+/// showing columns and constraints and nothing more — which read as a
+/// table with no indexes.
+#[test]
+fn schema_browser_says_a_locked_tables_size_and_indexes_were_not_fetched() {
+    use pgman::query::schema::{ConstraintMeta, SchemaCache, TableMeta};
+    let mut a = settle_app();
+    let key = ("public".to_string(), "t".to_string());
+    let mut cache = SchemaCache {
+        schemas: vec!["public".into()],
+        tables: vec![TableMeta {
+            schema: "public".into(),
+            name: "t".into(),
+        }],
+        incomplete: Some(
+            "pid 2670144 holds ACCESS EXCLUSIVE on public.t: no size or indexes".into(),
+        ),
+        ..Default::default()
+    };
+    cache
+        .columns_by_table
+        .insert(key.clone(), vec!["id".into(), "v".into()]);
+    cache.constraints.push(ConstraintMeta {
+        schema: "public".into(),
+        table: "t".into(),
+        name: "t_pkey".into(),
+    });
+    cache.skipped.insert(key);
+    a.schema_cache = cache;
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.expanded.insert("public".into());
+    // Row order: public, t.
+    a.schema_browser.cursor = 1;
+    let buf = render(&mut a, 100, 24);
+    insta::assert_snapshot!(dump(&buf));
+}
+
 #[test]
 fn explain_tree_renders_hash_join_plan() {
     let mut a = settle_app();

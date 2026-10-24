@@ -1,5 +1,9 @@
 use super::*;
 
+/// A table's size line when another session's lock kept it out of the
+/// fetch (`SchemaCache::skipped`). `r` is the browser's reload.
+const NOT_FETCHED_SIZE: &str = "size: not fetched (locked) · r reloads";
+
 /// Fit `text` to `width` display columns, marking a cut with `…`
 /// styled in `theme.accent` (bold) — the same truncation `grid.rs`
 /// gives the results table, so a clipped tree/detail row reads the
@@ -338,11 +342,8 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 detail_width,
                 theme,
             ));
-            if let Some(sz) = app
-                .schema_cache
-                .table_sizes
-                .get(&(schema.clone(), name.clone()))
-            {
+            let key = (schema.clone(), name.clone());
+            if let Some(sz) = app.schema_cache.table_sizes.get(&key) {
                 right_lines.push(clamped_line(
                     &format!(
                         "size: {} (total {})",
@@ -350,6 +351,13 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                         crate::query::schema::format_bytes(sz.total_bytes)
                     ),
                     Style::default().fg(theme.text),
+                    detail_width,
+                    theme,
+                ));
+            } else if app.schema_cache.skipped.contains(&key) {
+                right_lines.push(clamped_line(
+                    NOT_FETCHED_SIZE,
+                    Style::default().fg(theme.health_yellow),
                     detail_width,
                     theme,
                 ));
@@ -372,13 +380,18 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 theme,
             ));
             right_lines.push(Line::from(""));
-            // Size info (third-pass fetch). Missing entry =
-            // permission gap on pg_relation_size; render nothing.
-            if let Some(sz) = app
+            // Size info (third-pass fetch). Missing entry: another
+            // session's lock kept it out (said so), or a permission gap
+            // on pg_relation_size (render nothing).
+            let key = (schema.clone(), name.clone());
+            let skipped = app.schema_cache.skipped.contains(&key);
+            let indexes = app
                 .schema_cache
-                .table_sizes
-                .get(&(schema.clone(), name.clone()))
-            {
+                .indexes_by_table
+                .get(&key)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if let Some(sz) = app.schema_cache.table_sizes.get(&key) {
                 right_lines.push(clamped_line(
                     &format!(
                         "size: total {}  ·  heap {}",
@@ -389,6 +402,24 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                     detail_width,
                     theme,
                 ));
+                right_lines.push(Line::from(""));
+            } else if skipped {
+                // Up top, together: a short pane cuts from the bottom,
+                // where the index list would be.
+                right_lines.push(clamped_line(
+                    NOT_FETCHED_SIZE,
+                    Style::default().fg(theme.health_yellow),
+                    detail_width,
+                    theme,
+                ));
+                if indexes.is_empty() {
+                    right_lines.push(clamped_line(
+                        "indexes: not fetched (locked)",
+                        Style::default().fg(theme.health_yellow),
+                        detail_width,
+                        theme,
+                    ));
+                }
                 right_lines.push(Line::from(""));
             }
             // Columns from the cache (ordered by attnum).
@@ -442,16 +473,16 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                     ));
                 }
             }
-            let indexes = app
-                .schema_cache
-                .indexes_by_table
-                .get(&(schema.clone(), name.clone()))
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
             if !indexes.is_empty() {
                 right_lines.push(Line::from(""));
+                // A lock on one of its indexes kept that one out.
+                let heading = if skipped {
+                    format!("indexes ({}, more not fetched: locked)", indexes.len())
+                } else {
+                    format!("indexes ({})", indexes.len())
+                };
                 right_lines.push(clamped_line(
-                    &format!("indexes ({})", indexes.len()),
+                    &heading,
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),

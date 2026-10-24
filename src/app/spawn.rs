@@ -664,15 +664,20 @@ impl App {
     /// Re-fetch the schema cache in the background after a DDL run and
     /// deliver it as `AppMsg::SchemaRefreshed`. Keeps completion, the schema
     /// browser, lint, and FK-nav current without forcing a full reconnect.
+    ///
+    /// Lock-bounded as the connect's fetch is, so another session's lock
+    /// on a catalog can't stall it for `statement_timeout` (or for good);
+    /// the session is held meanwhile, so nothing of the operator's runs
+    /// under the bound.
     pub(super) fn spawn_schema_refresh(&mut self) {
-        let Some(db) = self.db() else {
+        let Some(db) = self.db_exclusive() else {
             return;
         };
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
-            let client = db.ready().await;
-            let schema_cache = crate::query::schema::fetch(&client).await;
+            let (client, _held) = db.ready().await;
+            let schema_cache = crate::query::schema::fetch_bounded(&client).await;
             let _ = tx.send(AppMsg::SchemaRefreshed {
                 generation,
                 schema_cache,

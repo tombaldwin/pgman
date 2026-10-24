@@ -342,7 +342,10 @@ impl App {
                     .as_ref()
                     .is_some_and(conn::QueryErrDetail::ends_session)
                 {
-                    let reason = super::msg::connection_lost_saying(Some(&error));
+                    let reason = super::msg::connection_lost_saying(
+                        Some(&error),
+                        detail.as_ref().and_then(|d| d.hint.as_deref()),
+                    );
                     match self.conn_state {
                         ConnState::Connected { .. } => {
                             self.on_connection_lost(reason);
@@ -522,12 +525,20 @@ impl App {
                 let state = if want { "on" } else { "off" };
                 match result {
                     Ok(()) => {
-                        self.read_only = want;
+                        // A standby pinned while the SET was on its way
+                        // (a paged run's probe found it in recovery)
+                        // stays read-only: recovery refuses writes.
+                        self.read_only = want || self.replica_pin;
                         self.last_error = None;
                         self.last_error_detail = None;
-                        self.last_status = Some(format!(
-                            "read-only {state} · this session from its next statement, and every later connect"
-                        ));
+                        self.last_status = Some(if self.read_only == want {
+                            format!(
+                                "read-only {state} · this session from its next statement, and every later connect"
+                            )
+                        } else {
+                            "read-only off not applied · the server is a standby, so this session stays read-only"
+                                .to_string()
+                        });
                     }
                     Err(e) => {
                         // The header must say what the server will do. A

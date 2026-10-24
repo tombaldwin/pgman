@@ -240,6 +240,12 @@ enum Req {
     },
     /// Close any open cursor, then answer (a barrier) or not.
     Close(Option<oneshot::Sender<()>>),
+    /// Close any open cursor, answer, then take nothing more from the
+    /// queue until `release` resolves (sent on or dropped).
+    Hold {
+        ready: oneshot::Sender<()>,
+        release: oneshot::Receiver<()>,
+    },
 }
 
 /// The cursor's server-side state, owned by the pager task.
@@ -295,6 +301,15 @@ impl Pager {
         rx
     }
 
+    /// Like [`Pager::barrier`], and every later request waits until the
+    /// returned sender is sent on or dropped.
+    fn hold(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (ready, ready_rx) = oneshot::channel();
+        let (release_tx, release) = oneshot::channel();
+        self.send(Req::Hold { ready, release });
+        (ready_rx, release_tx)
+    }
+
     fn send(&self, req: Req) {
         // The task only ends when every handle is gone, or a panic took
         // it; either way the reply channel's drop tells the caller.
@@ -331,6 +346,48 @@ impl Db {
     }
 }
 
+/// [`Db`], but the session is the holder's alone: every piece of work
+/// queued after it waits until the [`Held`] guard is dropped. For work
+/// that changes a session setting and puts it back
+/// (`conn::with_lock_bound`), so nothing of the operator's runs under
+/// the changed setting, or opens a transaction between the change and
+/// the putting back.
+pub struct ExclusiveDb {
+    client: Arc<tokio_postgres::Client>,
+    hold: Option<(oneshot::Receiver<()>, oneshot::Sender<()>)>,
+}
+
+/// Releases an [`ExclusiveDb`]'s hold on the queue when dropped.
+pub struct Held {
+    _release: Option<oneshot::Sender<()>>,
+}
+
+impl ExclusiveDb {
+    /// Take a place in `pager`'s queue now; `None` (no pager — a test
+    /// harness) holds nothing.
+    pub fn new(client: Arc<tokio_postgres::Client>, pager: Option<&Pager>) -> ExclusiveDb {
+        ExclusiveDb {
+            client,
+            hold: pager.map(Pager::hold),
+        }
+    }
+
+    /// The client, once the work queued before this is done, and the
+    /// guard that keeps later work waiting.
+    pub async fn ready(self) -> (Arc<tokio_postgres::Client>, Held) {
+        let release = match self.hold {
+            Some((ready, release)) => {
+                // A dropped `ready` means the pager is gone, and nothing
+                // is queued behind it.
+                let _ = ready.await;
+                Some(release)
+            }
+            None => None,
+        };
+        (self.client, Held { _release: release })
+    }
+}
+
 async fn run(client: Arc<tokio_postgres::Client>, mut rx: mpsc::UnboundedReceiver<Req>) {
     let mut cursor: Option<OpenCursor> = None;
     while let Some(req) = rx.recv().await {
@@ -341,6 +398,14 @@ async fn run(client: Arc<tokio_postgres::Client>, mut rx: mpsc::UnboundedReceive
                 }
                 if let Some(reply) = reply {
                     let _ = reply.send(());
+                }
+            }
+            Req::Hold { ready, release } => {
+                if cursor.take().is_some() {
+                    end(&client, "COMMIT").await;
+                }
+                if ready.send(()).is_ok() {
+                    let _ = release.await;
                 }
             }
             Req::Open { sql, want, reply } => {
