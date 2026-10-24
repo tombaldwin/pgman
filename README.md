@@ -162,6 +162,9 @@ Three things worth knowing:
 brew install tombaldwin/tap/pgman
 ```
 
+On Homebrew 6 or newer, run `brew trust tombaldwin/tap` first: Homebrew
+only loads formulae from taps you have trusted.
+
 **Cargo:**
 
 ```sh
