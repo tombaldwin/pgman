@@ -3049,9 +3049,9 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
         // Another test's DDL may hold a lock of its own at this moment,
         // and be the one named; then ours is among the "more".
         assert!(
-            why.contains(&format!(
-                "ACCESS EXCLUSIVE lock on public.{t} held by pid {holder_pid}"
-            )) || why.contains(" more) held by pid "),
+            why.starts_with(&format!(
+                "pid {holder_pid} holds ACCESS EXCLUSIVE on public.{t}"
+            )) || why.contains(" more): no size or indexes"),
             "{why}"
         );
         assert!(cache.columns_by_table.contains_key(&key), "columns read");
@@ -3087,8 +3087,11 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
             .incomplete
             .as_deref()
             .expect("says it is incomplete");
+        // The holder named: another worktree's catalog lock could be the
+        // one, so the pid is not pinned — that a holder is, is.
         assert!(
-            why.contains("partitions") && why.contains("gave up at lock_timeout"),
+            why.contains("partitions gave up at lock_timeout (pid ")
+                && why.contains(" holds ACCESS EXCLUSIVE on pg_catalog.pg_inherits)"),
             "{why}"
         );
         assert!(took < std::time::Duration::from_secs(10), "{took:?}");

@@ -193,22 +193,24 @@ impl ReadFailure {
 /// (`failed`, named by the parts they would have filled): those that
 /// gave up at `lock_timeout` together, the rest grouped by the server's
 /// message. Pure.
+///
+/// The pid leads — it is what the operator acts on (`pg_terminate_backend`,
+/// or asking whoever runs it), and a footer cuts from the right.
+/// `catalog_locked` are `ACCESS EXCLUSIVE` locks on `pg_catalog`
+/// relations: a read that gave up at `lock_timeout` names the first one's
+/// holder, as the likely cause.
 pub fn incomplete_reason(
     locked: &[LockedRelation],
+    catalog_locked: &[LockedRelation],
     failed: &[(&str, ReadFailure)],
 ) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(first) = locked.first() {
-        let rel = format!("{}.{}", first.schema, first.name);
         let more = match locked.len() - 1 {
             0 => String::new(),
-            n => format!(" (and {n} more)"),
+            n => format!(" (+{n} more)"),
         };
-        let how = if first.granted { "held" } else { "awaited" };
-        parts.push(format!(
-            "ACCESS EXCLUSIVE lock on {rel}{more} {how} by pid {}: no size or indexes",
-            first.pid
-        ));
+        parts.push(format!("{}{more}: no size or indexes", lock_phrase(first)));
     }
     let timed_out: Vec<&str> = failed
         .iter()
@@ -216,7 +218,14 @@ pub fn incomplete_reason(
         .map(|(what, _)| *what)
         .collect();
     if !timed_out.is_empty() {
-        parts.push(format!("{} gave up at lock_timeout", timed_out.join(", ")));
+        let holder = catalog_locked
+            .first()
+            .map(|l| format!(" ({})", lock_phrase(l)))
+            .unwrap_or_default();
+        parts.push(format!(
+            "{} gave up at lock_timeout{holder}",
+            timed_out.join(", ")
+        ));
     }
     // The other failures by message, in the order they first appear.
     let mut by_message: Vec<(&str, Vec<&str>)> = Vec::new();
@@ -232,6 +241,16 @@ pub fn incomplete_reason(
         parts.push(format!("{} failed: {msg}", whats.join(", ")));
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// `pid 4242 holds ACCESS EXCLUSIVE on public.orders` (or `awaits`: a
+/// waiting request blocks every later reader just the same). Pure.
+fn lock_phrase(l: &LockedRelation) -> String {
+    let how = if l.granted { "holds" } else { "awaits" };
+    format!(
+        "pid {} {how} ACCESS EXCLUSIVE on {}.{}",
+        l.pid, l.schema, l.name
+    )
 }
 
 /// pgman's one size formatter — database sizes on the start card and in
@@ -513,10 +532,14 @@ ORDER BY 1, 2, 3"
 /// The relations [`TABLE_SIZES_SQL`] and [`TABLE_INDEXES_SQL`] skip,
 /// and who holds (or waits for) the lock: what
 /// [`SchemaCache::incomplete`] names. Tables, matviews and indexes in
-/// the operator's schemas only — a lock on a catalog stalls every
-/// read, and the connect's `lock_timeout` is what bounds that.
+/// the operator's schemas — and, flagged by the fifth column, in
+/// `pg_catalog`: a lock there is not skipped (it stalls every read, and
+/// the `lock_timeout` bound is what stops that), but its holder is who
+/// to name when a read gave up. `pg_locks` itself takes no lock, so
+/// this answers behind a catalog lock (one on `pg_class` or
+/// `pg_namespace` aside, which it joins).
 pub const LOCKED_RELATIONS_SQL: &str = "\
-SELECT n.nspname, c.relname, l.pid, l.granted \
+SELECT n.nspname, c.relname, l.pid, l.granted, n.nspname = 'pg_catalog' \
 FROM pg_catalog.pg_locks l \
 JOIN pg_catalog.pg_class c ON c.oid = l.relation \
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
@@ -525,7 +548,7 @@ WHERE l.locktype = 'relation' AND l.mode = 'AccessExclusiveLock' \
                     WHERE datname = pg_catalog.current_database()) \
   AND l.pid IS DISTINCT FROM pg_catalog.pg_backend_pid() \
   AND c.relkind = ANY ('{r,p,m,i}') \
-  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
+  AND n.nspname NOT IN ('information_schema','pg_toast') \
 ORDER BY l.granted DESC, 1, 2, 3";
 
 /// Every primary key's columns, one row per column in key order
@@ -592,24 +615,34 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // What a lock kept out: the relations the sizes and indexes skipped,
     // and every read that failed.
     let mut lookup_failed = None;
-    let locked: Vec<LockedRelation> = match &locked_res {
-        Ok(rows) => rows
-            .iter()
-            .filter_map(|row| {
-                Some(LockedRelation {
-                    schema: row.try_get(0).ok()?,
-                    name: row.try_get(1).ok()?,
-                    pid: row.try_get(2).ok()?,
-                    granted: row.try_get(3).ok()?,
-                })
-            })
-            .collect(),
+    // The operator's relations (skipped) apart from the catalog's (named
+    // when a read gave up).
+    let mut locked: Vec<LockedRelation> = Vec::new();
+    let mut catalog_locked: Vec<LockedRelation> = Vec::new();
+    match &locked_res {
+        Ok(rows) => {
+            for row in rows {
+                let parsed = (|| {
+                    let lock = LockedRelation {
+                        schema: row.try_get(0).ok()?,
+                        name: row.try_get(1).ok()?,
+                        pid: row.try_get(2).ok()?,
+                        granted: row.try_get(3).ok()?,
+                    };
+                    Some((row.try_get::<_, bool>(4).ok()?, lock))
+                })();
+                match parsed {
+                    Some((true, lock)) => catalog_locked.push(lock),
+                    Some((false, lock)) => locked.push(lock),
+                    None => {}
+                }
+            }
+        }
         Err(e) => {
             tracing::warn!("lock lookup failed: {e}");
             lookup_failed = Some(("lock lookup", ReadFailure::of(e)));
-            Vec::new()
         }
-    };
+    }
     // Any read that failed leaves its part out, whatever the reason: a
     // reload must not say "reloaded" over a read the server cancelled.
     let read_failures = [
@@ -625,7 +658,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     .filter_map(|(what, e)| e.map(|e| (what, ReadFailure::of(e))));
     // The lookup names what the others skipped, so it goes last.
     let failed: Vec<(&str, ReadFailure)> = read_failures.chain(lookup_failed).collect();
-    let incomplete = incomplete_reason(&locked, &failed);
+    let incomplete = incomplete_reason(&locked, &catalog_locked, &failed);
     if let Some(why) = &incomplete {
         tracing::warn!("schema cache incomplete: {why}");
     }
@@ -861,20 +894,28 @@ mod tests {
 
     #[test]
     fn incomplete_reason_is_none_for_a_whole_fetch() {
-        assert_eq!(incomplete_reason(&[], &[]), None);
+        assert_eq!(incomplete_reason(&[], &[], &[]), None);
+        // A catalog lock that made no read give up is not news.
+        assert_eq!(
+            incomplete_reason(&[], &[locked("pg_inherits", 9, true)], &[]),
+            None
+        );
     }
 
+    /// The pid first, then the relation: a footer cuts from the right,
+    /// and the pid is what the operator acts on. At 140 columns the panel
+    /// saw `…ACCESS EXCLUSIVE lock on schema.t (and 1…`, the pid gone.
     #[test]
     fn incomplete_reason_names_the_lock_its_holder_and_what_is_missing() {
         assert_eq!(
-            incomplete_reason(&[locked("orders", 4242, true)], &[]).as_deref(),
-            Some("ACCESS EXCLUSIVE lock on public.orders held by pid 4242: no size or indexes")
+            incomplete_reason(&[locked("orders", 4242, true)], &[], &[]).as_deref(),
+            Some("pid 4242 holds ACCESS EXCLUSIVE on public.orders: no size or indexes")
         );
         // A request still waiting blocks readers just the same; the
         // message says it is waiting, not that it holds the lock.
         assert_eq!(
-            incomplete_reason(&[locked("orders", 7, false)], &[]).as_deref(),
-            Some("ACCESS EXCLUSIVE lock on public.orders awaited by pid 7: no size or indexes")
+            incomplete_reason(&[locked("orders", 7, false)], &[], &[]).as_deref(),
+            Some("pid 7 awaits ACCESS EXCLUSIVE on public.orders: no size or indexes")
         );
     }
 
@@ -886,6 +927,7 @@ mod tests {
                 locked("b", 2, true),
                 locked("c", 3, false),
             ],
+            &[],
             &[
                 ("partitions", ReadFailure::LockTimeout),
                 ("indexes", ReadFailure::LockTimeout),
@@ -894,12 +936,32 @@ mod tests {
         .unwrap();
         assert_eq!(
             why,
-            "ACCESS EXCLUSIVE lock on public.a (and 2 more) held by pid 1: no size or indexes \
+            "pid 1 holds ACCESS EXCLUSIVE on public.a (+2 more): no size or indexes \
              · partitions, indexes gave up at lock_timeout"
         );
         assert_eq!(
-            incomplete_reason(&[], &[("columns", ReadFailure::LockTimeout)]).as_deref(),
+            incomplete_reason(&[], &[], &[("columns", ReadFailure::LockTimeout)]).as_deref(),
             Some("columns gave up at lock_timeout")
+        );
+    }
+
+    /// A read that gave up at `lock_timeout` behind a catalog's lock names
+    /// that lock's holder, which the catalog read itself can't.
+    #[test]
+    fn incomplete_reason_names_the_catalog_locks_holder_when_a_read_gave_up() {
+        let mut inherits = locked("pg_inherits", 2670144, true);
+        inherits.schema = "pg_catalog".into();
+        assert_eq!(
+            incomplete_reason(
+                &[],
+                std::slice::from_ref(&inherits),
+                &[("partitions", ReadFailure::LockTimeout)]
+            )
+            .as_deref(),
+            Some(
+                "partitions gave up at lock_timeout \
+                 (pid 2670144 holds ACCESS EXCLUSIVE on pg_catalog.pg_inherits)"
+            )
         );
     }
 
@@ -912,6 +974,7 @@ mod tests {
             || ReadFailure::Other("canceling statement due to statement timeout".into());
         assert_eq!(
             incomplete_reason(
+                &[],
                 &[],
                 &[
                     ("partitions", cancelled()),
