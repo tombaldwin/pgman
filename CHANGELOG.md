@@ -70,10 +70,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   narrow footer cut it off) then the lock — for a read that gave up
   behind a lock on a catalog too — and how to reload. The schema
   browser says `size: not fetched (locked)` and `indexes: not fetched`
-  for such a table, which read as a table with no indexes. A reload (`S` then `r`, or the refresh after DDL) is
-  bounded the same way, puts back your own `lock_timeout`, and no
-  longer says "schema reloaded" over a read the server cancelled: any
-  failed catalog read is named.
+  for such a table, which read as a table with no indexes. A reload (`S`
+  then `r`, or the refresh after DDL) is bounded the same way, puts back
+  your own `lock_timeout` with nothing of yours running in between, and
+  no longer says "schema reloaded" over a read the server cancelled: any
+  failed catalog read is named. Inside an open transaction it reads
+  nothing and says so, since a read the server cancelled there would
+  abort your transaction.
 - A session the server ends under a running statement
   (`pg_terminate_backend`, a crash shutdown) shows the server's reason
   on the connection-lost card, not "the connection to the server closed"
@@ -89,7 +92,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A primary is no longer pinned read-only as "a read replica" when a
   schema ahead of `pg_catalog` on the search path has a
   `pg_is_in_recovery()` of its own: the connect's probe, and MCP's,
-  the dashboard's and the advisor's, call `pg_catalog`'s.
+  the dashboard's and the advisor's, call `pg_catalog`'s. So do
+  `apply_patches`' `statement_timeout` restore and the sessions panel's
+  terminate, which a shadow could make report a session ended that
+  wasn't.
+- Under a read-only session the confirm card no longer says Postgres
+  will refuse a statement pgman can't classify, such as `SET`, which it
+  runs: it says Postgres refuses it if it writes.
 
 ### Changed
 
