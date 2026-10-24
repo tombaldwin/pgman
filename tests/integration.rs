@@ -6650,6 +6650,16 @@ async fn a_built_in_name_a_schema_shadows_runs_unpaged() {
     let pid = backend_pid(&client).await;
     let schema = format!("pgman_it_shadow_{pid}");
     let sql = "SELECT log(10, 1000) AS n, i FROM generate_series(1, 3000) i".to_string();
+    // A run that died before its DROP left its shadow behind, and any
+    // shadow anywhere keeps the built-in from paging below.
+    observer
+        .batch_execute(
+            "DO $$ DECLARE s text; BEGIN \
+             FOR s IN SELECT nspname FROM pg_namespace WHERE nspname LIKE 'pgman\\_it\\_shadow\\_%' LOOP \
+             EXECUTE format('DROP SCHEMA %I CASCADE', s); END LOOP; END $$",
+        )
+        .await
+        .expect("drop old shadows");
 
     // Before the schema exists, the call is the built-in: it pages.
     // (Asked about any schema, so another test's shadow would show here;
@@ -6691,6 +6701,8 @@ async fn a_built_in_name_a_schema_shadows_runs_unpaged() {
         .await
         .expect("count the notes")
         .get(0);
+    // A cursor left open (the bug this pins) would hold the DROP.
+    let _ = pager.barrier().await;
     observer
         .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
         .await
