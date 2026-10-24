@@ -101,6 +101,29 @@ pub fn wrote_status(what: &str, path: &std::path::Path, home: Option<&std::ffi::
     format!("wrote {what} to {name} · in {shown}")
 }
 
+/// Where an export (`\report`, `\fixture`) writes: the path the
+/// operator typed, else `default()` — a stamped file under the cache
+/// dir. `None` under `--demo` with no path: the demo promises no disk
+/// writes, and a default location is one the operator never asked for.
+/// A path they typed is asking for the file, so it still writes. Pure;
+/// `default` is never called when the answer is `None`.
+pub(crate) fn export_path(
+    target: Option<String>,
+    demo: bool,
+    default: impl FnOnce() -> std::path::PathBuf,
+) -> Option<std::path::PathBuf> {
+    match target {
+        Some(p) if !p.trim().is_empty() => Some(std::path::PathBuf::from(p)),
+        _ if demo => None,
+        _ => Some(default()),
+    }
+}
+
+/// The status for an export [`export_path`] refused under `--demo`.
+pub(crate) fn demo_export_refusal(cmd: &str) -> String {
+    format!("--demo writes nothing to disk · give a path to export: {cmd} <file>")
+}
+
 /// Candidate command names for `typed` — every entry of
 /// [`COMMAND_NAMES`] it is a prefix of. Pure; drives Tab completion
 /// in the command bar.
@@ -716,9 +739,9 @@ impl App {
     /// extension, and writes atomically. Default path lives
     /// under the cache dir with a wall-clock-stamped filename.
     fn dispatch_report(&mut self, target: Option<String>) {
-        let path = match target {
-            Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
-            _ => default_report_path(),
+        let Some(path) = export_path(target, self.demo, default_report_path) else {
+            self.last_status = Some(demo_export_refusal("\\report"));
+            return;
         };
         let snapshot = self.report_snapshot();
         let body = match crate::report::format_for_path(&path) {
@@ -791,9 +814,9 @@ impl App {
             }
         };
         let xml = crate::dbunit::generate_flat_xml(&fixture);
-        let path = match target {
-            Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
-            _ => default_fixture_path(&table),
+        let Some(path) = export_path(target, self.demo, || default_fixture_path(&table)) else {
+            self.last_status = Some(demo_export_refusal("\\fixture"));
+            return;
         };
         let what = if filtered {
             format!(

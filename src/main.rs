@@ -41,7 +41,8 @@ struct Cli {
     #[arg(long)]
     no_update_check: bool,
 
-    /// Run against a synthetic dataset — no database, network, or disk writes.
+    /// Run against a synthetic dataset — no database, network, or disk writes
+    /// (only a `\report` / `\fixture` to a path you give writes a file).
     #[arg(long)]
     demo: bool,
 

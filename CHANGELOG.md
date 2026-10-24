@@ -36,7 +36,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   crates.io too; it says to run `brew trust tombaldwin/tap` first on
   Homebrew 6 or newer.
 - `--demo` no longer writes `pgman.log` or creates pgman's cache,
-  config and data directories, as its "no disk writes" promised.
+  config and data directories, as its "no disk writes" promised, and
+  `\fixture` / `\report` with no path write nothing to the cache
+  dir: they say `--demo writes nothing to disk` and ask for a path.
 - docs/tap.md says the monitor's "JAR backpressure" drop count comes
   from TCP and UDP senders only, and never appears with `--tap-otlp`.
 - A connect no longer hangs at "connecting…" behind another session's

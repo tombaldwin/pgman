@@ -2203,6 +2203,70 @@ fn a_partial_fixture_status_keeps_its_whole_note_in_the_footer() {
     );
 }
 
+/// `--demo` promises no disk writes: an export with no path never
+/// reaches for the default location (the closure would panic), and
+/// one the operator typed still resolves to that path.
+#[test]
+fn export_path_under_demo_refuses_the_default_location() {
+    let never = || -> std::path::PathBuf { panic!("--demo reached the default export path") };
+    assert_eq!(super::cmd::export_path(None, true, never), None);
+    assert_eq!(
+        super::cmd::export_path(Some("  ".into()), true, never),
+        None
+    );
+    assert_eq!(
+        super::cmd::export_path(Some("out.xml".into()), true, never),
+        Some(std::path::PathBuf::from("out.xml"))
+    );
+    assert_eq!(
+        super::cmd::export_path(None, false, || std::path::PathBuf::from("/c/d.xml")),
+        Some(std::path::PathBuf::from("/c/d.xml"))
+    );
+}
+
+/// `\fixture` and `\report` with no path under `--demo` say why
+/// nothing was written instead of writing to the cache dir.
+#[test]
+fn demo_export_without_a_path_writes_nothing_and_says_so() {
+    let mut a = crate::demo::app(Theme::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "customers".into()));
+    a.last_status = None;
+    a.last_error = None;
+    a.dispatch_fixture(None);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(super::cmd::demo_export_refusal("\\fixture").as_str())
+    );
+    assert_eq!(a.last_error, None);
+
+    a.last_status = None;
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\report".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(super::cmd::demo_export_refusal("\\report").as_str())
+    );
+}
+
+/// A path the operator typed is asking for the file: `--demo` writes it.
+#[test]
+fn demo_export_to_a_typed_path_still_writes() {
+    let mut a = crate::demo::app(Theme::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = Some(("public".into(), "customers".into()));
+    let dir = std::env::temp_dir().join(format!("pgman-demo-fixture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("customers.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("customers"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn dispatch_fixture_errors_without_source_table() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
