@@ -490,7 +490,7 @@ per tab: switching tabs restores each tab's own layout.
 
 ## JDBC tap monitor
 
-Opened with `F4` from any mode. Seven views, cycled with `v`: **List**
+Opened with `:tap` (or `F4`) from any mode. Seven views, cycled with `v`: **List**
 (recency-ordered event stream, default; the focused query's bound
 parameters show beneath it, labelled `params (some redacted)` when the
 producer masked any; `Enter` opens the whole event, as the strip's rule says) → **Hotspots** (by SQL fingerprint)
@@ -581,7 +581,7 @@ show.
 |---|---|
 | `Esc` / `q` / `!` / `F2` | Close |
 
-### Notifications (`F3`)
+### Notifications (`:notify` / `F3`)
 
 The `LISTEN`/`NOTIFY` arrivals panel — subscribe with `LISTEN <channel>` in
 the editor.
