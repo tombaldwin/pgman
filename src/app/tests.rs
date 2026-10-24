@@ -2203,24 +2203,25 @@ fn a_partial_fixture_status_keeps_its_whole_note_in_the_footer() {
     );
 }
 
-/// `--demo` promises no disk writes: an export with no path never
-/// reaches for the default location (the closure would panic), and
-/// one the operator typed still resolves to that path.
+/// `--demo` promises no disk writes: an export with no path is refused
+/// rather than sent to the default location, and one the operator
+/// typed still resolves to that path.
 #[test]
-fn export_path_under_demo_refuses_the_default_location() {
-    let never = || -> std::path::PathBuf { panic!("--demo reached the default export path") };
-    assert_eq!(super::cmd::export_path(None, true, never), None);
+fn export_target_under_demo_refuses_the_default_location() {
+    use super::cmd::{export_target, ExportTarget};
+    assert_eq!(export_target(None, true), ExportTarget::DemoRefused);
     assert_eq!(
-        super::cmd::export_path(Some("  ".into()), true, never),
-        None
+        export_target(Some("  ".into()), true),
+        ExportTarget::DemoRefused
     );
     assert_eq!(
-        super::cmd::export_path(Some("out.xml".into()), true, never),
-        Some(std::path::PathBuf::from("out.xml"))
+        export_target(Some("out.xml".into()), true),
+        ExportTarget::Typed("out.xml".into())
     );
+    assert_eq!(export_target(None, false), ExportTarget::Default);
     assert_eq!(
-        super::cmd::export_path(None, false, || std::path::PathBuf::from("/c/d.xml")),
-        Some(std::path::PathBuf::from("/c/d.xml"))
+        export_target(Some(" ".into()), false),
+        ExportTarget::Default
     );
 }
 

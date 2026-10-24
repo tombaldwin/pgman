@@ -101,25 +101,30 @@ pub fn wrote_status(what: &str, path: &std::path::Path, home: Option<&std::ffi::
     format!("wrote {what} to {name} · in {shown}")
 }
 
-/// Where an export (`\report`, `\fixture`) writes: the path the
-/// operator typed, else `default()` — a stamped file under the cache
-/// dir. `None` under `--demo` with no path: the demo promises no disk
-/// writes, and a default location is one the operator never asked for.
-/// A path they typed is asking for the file, so it still writes. Pure;
-/// `default` is never called when the answer is `None`.
-pub(crate) fn export_path(
-    target: Option<String>,
-    demo: bool,
-    default: impl FnOnce() -> std::path::PathBuf,
-) -> Option<std::path::PathBuf> {
+/// Where an export (`\report`, `\fixture`) writes — see [`export_target`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ExportTarget {
+    /// The path the operator typed.
+    Typed(std::path::PathBuf),
+    /// No path: the command's stamped file under the cache dir.
+    Default,
+    /// No path under `--demo`, which writes nothing it wasn't asked to.
+    DemoRefused,
+}
+
+/// Where an export writes: the path the operator typed, else the
+/// default location — except under `--demo`, which promises no disk
+/// writes: a default location is one the operator never asked for. A
+/// path they typed is asking for the file, so it still writes. Pure.
+pub(crate) fn export_target(target: Option<String>, demo: bool) -> ExportTarget {
     match target {
-        Some(p) if !p.trim().is_empty() => Some(std::path::PathBuf::from(p)),
-        _ if demo => None,
-        _ => Some(default()),
+        Some(p) if !p.trim().is_empty() => ExportTarget::Typed(std::path::PathBuf::from(p)),
+        _ if demo => ExportTarget::DemoRefused,
+        _ => ExportTarget::Default,
     }
 }
 
-/// The status for an export [`export_path`] refused under `--demo`.
+/// The status for an export [`export_target`] refused under `--demo`.
 pub(crate) fn demo_export_refusal(cmd: &str) -> String {
     format!("--demo writes no files · to export, {cmd} <file>")
 }
@@ -739,9 +744,13 @@ impl App {
     /// extension, and writes atomically. Default path lives
     /// under the cache dir with a wall-clock-stamped filename.
     fn dispatch_report(&mut self, target: Option<String>) {
-        let Some(path) = export_path(target, self.demo, default_report_path) else {
-            self.last_status = Some(demo_export_refusal("\\report"));
-            return;
+        let path = match export_target(target, self.demo) {
+            ExportTarget::Typed(p) => p,
+            ExportTarget::Default => default_report_path(),
+            ExportTarget::DemoRefused => {
+                self.last_status = Some(demo_export_refusal("\\report"));
+                return;
+            }
         };
         let snapshot = self.report_snapshot();
         let body = match crate::report::format_for_path(&path) {
@@ -814,9 +823,13 @@ impl App {
             }
         };
         let xml = crate::dbunit::generate_flat_xml(&fixture);
-        let Some(path) = export_path(target, self.demo, || default_fixture_path(&table)) else {
-            self.last_status = Some(demo_export_refusal("\\fixture"));
-            return;
+        let path = match export_target(target, self.demo) {
+            ExportTarget::Typed(p) => p,
+            ExportTarget::Default => default_fixture_path(&table),
+            ExportTarget::DemoRefused => {
+                self.last_status = Some(demo_export_refusal("\\fixture"));
+                return;
+            }
         };
         let what = if filtered {
             format!(
