@@ -495,6 +495,60 @@ fn result_diff_title_keeps_the_key_at_80_columns() {
     assert!(title.contains(" · … "), "the cut is marked: {title}");
 }
 
+/// A and B with different columns are compared whole, so every row
+/// reads as removed and added: the title and the summary say the
+/// columns differ, so `key: full row · +8 added -12 removed` doesn't
+/// look like a fault. Matching columns say nothing of the kind.
+#[test]
+fn a_result_diff_of_different_columns_says_so() {
+    let side = |cols: &[&str]| -> (Vec<String>, Vec<Vec<Option<String>>>) {
+        (
+            cols.iter().map(|c| c.to_string()).collect(),
+            vec![cols.iter().map(|c| Some(format!("{c}-1"))).collect()],
+        )
+    };
+    for (b_cols, differ) in [(&["id", "email"][..], true), (&["id", "name"][..], false)] {
+        let mut a = settle_app();
+        let (a_cols, a_rows) = side(&["id", "name"]);
+        let (b_cols, b_rows) = side(b_cols);
+        let key = pgman::query::row_diff::RowKey::FullRow;
+        let diff = pgman::query::row_diff::diff_rows(&a_rows, &b_rows, &key);
+        a.result_diff.active = Some(pgman::app::ResultDiffState {
+            a: pgman::app::PinnedResult {
+                columns: a_cols,
+                rows: a_rows,
+                label: "q1".into(),
+                source: None,
+                origins: Vec::new(),
+            },
+            b_columns: b_cols,
+            b_rows,
+            b_label: "q2".into(),
+            b_source: None,
+            b_origins: Vec::new(),
+            key,
+            key_is_pk: false,
+            diff,
+        });
+        a.mode = Mode::ResultDiff;
+        let rendered = dump(&render(&mut a, 120, 30));
+        let title = rendered
+            .lines()
+            .find(|l| l.contains("Result diff"))
+            .unwrap_or_else(|| panic!("no title row:\n{rendered}"));
+        assert_eq!(
+            title.contains("key: full row · columns differ"),
+            differ,
+            "{title}"
+        );
+        assert_eq!(
+            rendered.contains("columns differ: A and B name their 2 columns differently"),
+            differ,
+            "{rendered}"
+        );
+    }
+}
+
 #[test]
 fn saved_queries_panel_filters_live_and_shows_count() {
     let mut a = settle_app();

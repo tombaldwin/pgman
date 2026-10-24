@@ -2855,3 +2855,20 @@ fn grid_header_text_cuts_the_name_and_keeps_the_sort_marker() {
         );
     }
 }
+
+#[test]
+fn columns_differ_note_names_the_shape_or_nothing() {
+    use super::results::columns_differ_note;
+    let cols = |c: &[&str]| c.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        columns_differ_note(&cols(&["id", "name"]), &cols(&["id", "name"])),
+        None
+    );
+    let note = columns_differ_note(&cols(&["id", "name", "email"]), &cols(&["id"])).unwrap();
+    assert!(
+        note.starts_with("columns differ: A has 3 columns, B has 1"),
+        "{note}"
+    );
+    let note = columns_differ_note(&cols(&["id", "name"]), &cols(&["name", "id"])).unwrap();
+    assert!(note.contains("name their 2 columns differently"), "{note}");
+}

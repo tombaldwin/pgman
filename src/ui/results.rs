@@ -571,6 +571,24 @@ pub(super) fn result_diff_title(
     fit_title(&full, budget)
 }
 
+/// The result diff's note when A and B have different columns: such a
+/// pair is compared row by whole row, so `key: full row` and a count of
+/// every row added and removed looked like a fault. `None` when the
+/// columns match. Pure.
+pub(crate) fn columns_differ_note(a: &[String], b: &[String]) -> Option<String> {
+    if a == b {
+        return None;
+    }
+    let shape = if a.len() == b.len() {
+        format!("A and B name their {} columns differently", a.len())
+    } else {
+        format!("A has {} columns, B has {}", a.len(), b.len())
+    };
+    Some(format!(
+        "columns differ: {shape} · rows are compared whole, so few or none match"
+    ))
+}
+
 /// Result-diff overlay (`Mode::ResultDiff`). Renders A-vs-B as a
 /// grouped list: removed rows, then changed rows (with per-cell
 /// old→new deltas), then added rows. Unchanged rows are only
@@ -597,6 +615,13 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
             format!("key: {}{basis}", names.join(", "))
         }
         crate::query::row_diff::RowKey::FullRow => "key: full row".to_string(),
+    };
+    let columns_note = columns_differ_note(&state.a.columns, &state.b_columns);
+    // A and B with different columns are compared whole, so every row
+    // reads as removed and added; the title says why, beside the key.
+    let key_desc = match &columns_note {
+        Some(_) => format!("{key_desc} · columns differ"),
+        None => key_desc,
     };
     let title_budget = (popup.width.saturating_sub(2) as usize).saturating_sub(
         crate::ui::chrome::panel_title_overhead(theme, "Result diff"),
@@ -635,6 +660,12 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme.muted),
         ),
     ]));
+    if let Some(note) = columns_note {
+        lines.push(Line::from(Span::styled(
+            grid::truncate_cell(&note, inner.width as usize),
+            Style::default().fg(theme.health_yellow),
+        )));
+    }
 
     if diff.is_empty() {
         lines.push(Line::from(""));
@@ -714,8 +745,9 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
         }
     };
 
-    // Reserve the summary line; scroll the entry list under it.
-    let visible_h = (inner.height as usize).saturating_sub(2);
+    // Reserve the summary (and any columns note) and the blank line
+    // under it; scroll the entry list below.
+    let visible_h = (inner.height as usize).saturating_sub(lines.len() + 1);
     let cursor = app.result_diff.cursor.min(total.saturating_sub(1));
     let scroll = scroll_offset(cursor, visible_h);
     lines.push(Line::from(""));
