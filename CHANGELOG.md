@@ -8,9 +8,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
-- The start card and the help overlay name the JDBC tap and the NOTIFY
-  panel by `:tap` / `:notify` first, with `F4` / `F3` beside them: on a
-  Mac terminal the F-keys often never reach pgman.
+- The help overlay names the JDBC tap and the NOTIFY panel by `:tap` /
+  `:notify` first, with `F4` / `F3` beside them, and the start card
+  does the same for the tap: on a Mac terminal the F-keys often never
+  reach pgman.
 - The result diff's title names its key (`key: id (primary key)`) before
   the A and B query text, so an 80-column terminal no longer cuts it
   off; a title too long for its border ends on `…`.
@@ -32,7 +33,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   went with nothing to say so.
 - The README lists cell editing (`u`) and paging (`M`), and its links
   to `docs/` and the licence files are absolute, so they resolve on
-  crates.io too.
+  crates.io too; it says to run `brew trust tombaldwin/tap` first on
+  Homebrew 6 or newer.
 - `--demo` no longer writes `pgman.log` or creates pgman's cache,
   config and data directories, as its "no disk writes" promised.
 - docs/tap.md says the monitor's "JAR backpressure" drop count comes
