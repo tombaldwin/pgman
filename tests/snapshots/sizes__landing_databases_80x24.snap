@@ -19,10 +19,10 @@ expression: dump(&buf)
 │   e   write a query                    S   schema browser (26 tables)        │
 │   Q   saved queries (4)                T   slow queries                      │
 │   W   schema wizard                    L   sessions & locks                  │
-│   ctrl-l  logs → SQL (paste a log first)   F4  JDBC tap                      │
+│   ctrl-l  logs → SQL (paste a log first)   :tap  JDBC tap (F4)               │
 │   ?   all keys                         ctrl-t  new tab                       │
 │                                                                              │
-│   TAP: your app's queries via the JDBC tap · N+1 ×1: repeated per row · F4   │
+│   TAP: app queries via the JDBC tap · N+1 ×1: repeated per row · :tap        │
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

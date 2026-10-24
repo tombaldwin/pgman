@@ -1506,9 +1506,33 @@ fn is_key_hint_tells_keys_from_prose() {
         "1/3 match",
         "run (DELETE without WHERE)",
         "connecting…",
+        "in ~/Library/Caches/pgman",
+        "no rows",
         "",
     ] {
         assert!(!is_key_hint(prose), "{prose}");
+    }
+}
+
+/// `:fixture`'s status on a partial result: the path's `in <dir>` is
+/// prose to shrink, not a key hint to keep whole, so the file name and
+/// the row count survive alongside the note at the end.
+#[test]
+fn fit_status_shrinks_a_long_directory_before_the_file_name() {
+    let s = "wrote 1000 row(s) to public_invoices-fixture-20261024-101112.xml · in \
+             /var/folders/xy/abcdefghijklmnopqrstuvwxyz0000gn/T/pgman/a/directory/deep/enough \
+             · fetched rows only, more not fetched";
+    for width in [110usize, 130, 150] {
+        let got = fit_status(s, width);
+        assert!(display_width(&got) <= width, "{width}: {got}");
+        assert!(
+            got.starts_with("wrote 1000 row(s) to public_invoices-fixture-20261024-101112.xml · "),
+            "{width}: {got}"
+        );
+        assert!(
+            got.ends_with(" · fetched rows only, more not fetched"),
+            "{width}: {got}"
+        );
     }
 }
 
@@ -2447,6 +2471,60 @@ fn the_advisor_detail_strip_leads_with_what_to_do() {
     assert_eq!(rows[1], "  object: public.t.fk");
 }
 
+/// A lint finding's detail strip breaks between words at every width
+/// (it wrapped by characters: `referen` / `ces`), and its heading and
+/// object rows wrap rather than run past the strip.
+#[test]
+fn the_lint_detail_strip_never_breaks_inside_a_word() {
+    let theme = crate::theme::Theme::default();
+    let lint = crate::query::lint::fk_without_index_finding(
+        "public",
+        "accounts",
+        "accounts_customer_id_fkey",
+        "customer_id",
+    );
+    let words: std::collections::HashSet<String> = [
+        &lint.title,
+        &lint.object,
+        &lint.detail,
+        lint.suggestion.as_ref().unwrap(),
+    ]
+    .iter()
+    .flat_map(|s| s.split_whitespace().map(str::to_string))
+    .chain(["LINT101", "·", "object:", "suggest:"].map(String::from))
+    .collect();
+    for width in [50usize, 58, 66, 70, 120] {
+        let rows: Vec<String> = super::schema::lint_detail_lines(&lint, width, &theme)
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        for row in &rows {
+            assert!(display_width(row) <= width + 2, "{width}: {row:?}");
+            for word in row.split_whitespace() {
+                assert!(words.contains(word), "{width}: {word:?} cut from {row:?}");
+            }
+        }
+    }
+}
+
+/// The wizard list gives `title` room to say something: at 80 columns
+/// it was 3 wide (header `tit`), with `object` holding 48.
+#[test]
+fn lint_columns_shrinks_object_before_title() {
+    use super::schema::{lint_columns, LINT_TITLE_MIN};
+    // Wide: object gets its widest value, capped at 48.
+    assert_eq!(lint_columns(200, 30), (30, 200 - 20 - 30));
+    assert_eq!(lint_columns(200, 70), (48, 200 - 20 - 48));
+    // The 80x24 wizard's row (71 columns): title keeps its minimum.
+    let (object, title) = lint_columns(71, 49);
+    assert_eq!(title, LINT_TITLE_MIN);
+    assert_eq!(object + title + 20, 71);
+    // Short objects leave the rest to title.
+    assert_eq!(lint_columns(71, 17), (17, 71 - 20 - 17));
+    // Never narrower than the `object` header itself.
+    assert_eq!(lint_columns(30, 40).0, "object".len());
+}
+
 /// The whole screen at `w`×`h` as one string.
 fn screen_text(a: &mut App, w: u16, h: u16) -> String {
     a.splash_visible = false;
@@ -2616,4 +2694,43 @@ fn tap_views_keep_the_focused_row_on_screen_under_their_header() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------
+// The result diff's title: the key before the query text.
+// ---------------------------------------------------------------
+
+#[test]
+fn result_diff_title_is_whole_when_it_fits() {
+    let got = results::result_diff_title("key: id (primary key)", ("q1", 5), ("q2", 6), 200);
+    assert_eq!(
+        got,
+        "Result diff — key: id (primary key) · A: q1 (5 rows) vs B: q2 (6 rows) · r re-pin · c clear · q close"
+    );
+}
+
+#[test]
+fn result_diff_title_drops_the_hints_then_cuts_the_labels_never_the_key() {
+    let a = "SELECT name, id FROM ledger.accounts ORDER BY id";
+    let b = "SELECT name, id FROM ledger.accounts WHERE active";
+    for budget in [40usize, 64, 80, 100, 120] {
+        let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), budget);
+        assert!(display_width(&got) <= budget, "{budget}: {got}");
+        assert!(
+            got.starts_with("Result diff — key: id (primary key) · "),
+            "{budget}: {got}"
+        );
+        assert!(got.ends_with(" · …"), "{budget}: {got}");
+    }
+    // Room for both labels, cut: each ends on `…`, the counts stay.
+    let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), 100);
+    assert!(got.contains("A: SELECT"), "{got}");
+    assert!(got.contains("… (5 rows) vs B: SELECT"), "{got}");
+    assert!(got.contains("… (6 rows)"), "{got}");
+    // A short label keeps its whole text and leaves its room to the other.
+    let got = results::result_diff_title("key: id", ("q1", 5), (b, 6), 70);
+    assert!(got.contains("A: q1 (5 rows) vs B: SELECT name"), "{got}");
+    // Too narrow for labels: the key survives on its own.
+    let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), 50);
+    assert_eq!(got, "Result diff — key: id (primary key) · …");
 }

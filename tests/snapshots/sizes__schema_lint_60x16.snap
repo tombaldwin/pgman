@@ -7,14 +7,14 @@ expression: dump(&buf)
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh ·╮  │
-│ │  SEV    CODE     object                             │  │
-│ │  HIGH   LINT101  public.accounts.accounts_customer_i│  │
-╰─│  HIGH   LINT101  public.audit_log.audit_log_actor_us│──╯
-╭[│  HIGH   LINT101  public.credit_notes.credit_notes_in│──╮
-│n│  HIGH   LINT101  public.customers.customers_tax_rate│  │
-│I│  LINT101 · FK column not the leading column of any i│  │
+│ │  SEV    CODE     object             title           │  │
+│ │  HIGH   LINT101  public.accounts.…  FK column not t…│  │
+╰─│  HIGH   LINT101  public.audit_log…  FK column not t…│──╯
+╭[│  HIGH   LINT101  public.credit_no…  FK column not t…│──╮
+│n│  HIGH   LINT101  public.customers…  FK column not t…│  │
+│I│  LINT101 · FK column not the leading column of any  │  │
+│I│  index                                              │  │
 │I│  object: public.accounts.accounts_customer_id_fkey  │  │
-│I│  constraint `accounts_customer_id_fkey` on `public  │  │
 │I╰─────────────────────────────────────────────────────╯  │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯

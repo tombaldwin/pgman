@@ -12,16 +12,16 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────╮   │
-│  │  SEV    CODE     object                                            tit│   │
-│  │  HIGH   LINT101  public.accounts.accounts_customer_id_fkey         FK…│   │
-╰──│  HIGH   LINT101  public.audit_log.audit_log_actor_user_id_fkey     FK…│───╯
-╭[ │  HIGH   LINT101  public.credit_notes.credit_notes_invoice_id_fkey  FK…│───╮
-│nu│  HIGH   LINT101  public.customers.customers_tax_rate_id_fkey       FK…│   │
+│  │  SEV    CODE     object                               title           │   │
+│  │  HIGH   LINT101  public.accounts.accounts_customer_…  FK column not t…│   │
+╰──│  HIGH   LINT101  public.audit_log.audit_log_actor_u…  FK column not t…│───╯
+╭[ │  HIGH   LINT101  public.credit_notes.credit_notes_i…  FK column not t…│───╮
+│nu│  HIGH   LINT101  public.customers.customers_tax_rat…  FK column not t…│   │
 │IN│  LINT101 · FK column not the leading column of any index              │   │
 │IN│  object: public.accounts.accounts_customer_id_fkey                    │   │
-│IN│  constraint `accounts_customer_id_fkey` on `public.accounts` referen  │   │
-│IN│  ces column(s) (customer_id) — no index leads with the first FK colu  │   │
-│IN│  mn, so cascade / lookup queries will sequential-scan                 │   │
+│IN│  constraint `accounts_customer_id_fkey` on `public.accounts`          │   │
+│IN│  references column(s) (customer_id) — no index leads with the first   │   │
+│IN│  FK column, so cascade / lookup queries will sequential-scan          │   │
 │  │  suggest: CREATE INDEX ON public.accounts (customer_id);              │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │

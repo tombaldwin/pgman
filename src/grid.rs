@@ -67,11 +67,17 @@ pub fn partial_status_note(more: More) -> String {
     }
 }
 
+/// The words of [`fetched_only_note`]: one phrase, with no ` · ` in it,
+/// so the footer's fitter (which splits on ` · `) never cuts it in two.
+pub const FETCHED_ONLY: &str = "fetched rows only, more not fetched";
+
 /// What `Y` and `:fixture` add to their status for a partial result:
-/// they write the rows pgman holds, not the whole result. Pure.
+/// they write the rows pgman holds, not the whole result. A ` · `
+/// segment of its own, meant to go last: the footer never drops or cuts
+/// a status's last segment, and this is the caveat. Pure.
 pub fn fetched_only_note(partial: bool) -> &'static str {
     if partial {
-        " (fetched rows only · more not fetched)"
+        " · fetched rows only, more not fetched"
     } else {
         ""
     }
@@ -590,7 +596,8 @@ mod tests {
             );
         }
         assert_eq!(fetched_only_note(false), "");
-        assert!(fetched_only_note(true).contains("fetched rows only"));
+        assert_eq!(fetched_only_note(true), format!(" · {FETCHED_ONLY}"));
+        assert!(!FETCHED_ONLY.contains(" · "), "one footer segment");
     }
 
     #[test]

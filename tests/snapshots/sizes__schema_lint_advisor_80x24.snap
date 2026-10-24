@@ -12,11 +12,11 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────╮   │
-│  │  SEV    CODE     object                                            tit│   │
-│  │  HIGH   LINT101  public.subscriptions.subscriptions_coupon_id_fk…  FK…│   │
-╰──│  HIGH   LINT101  public.subscriptions.subscriptions_plan_id_fkey   FK…│───╯
-╭[ │  HIGH   LINT101  public.webhooks.webhooks_customer_id_fkey         FK…│───╮
-│nu│  MED    ADV002   ledger                                            qu…│   │
+│  │  SEV    CODE     object                               title           │   │
+│  │  HIGH   LINT101  public.subscriptions.subscriptions…  FK column not t…│   │
+╰──│  HIGH   LINT101  public.subscriptions.subscriptions…  FK column not t…│───╯
+╭[ │  HIGH   LINT101  public.webhooks.webhooks_customer_…  FK column not t…│───╮
+│nu│  MED    ADV002   ledger                               queries spill t…│   │
 │IN│  ADV002 · queries spill to temp files (187 GB so far)                 │   │
 │IN│  setting:  work_mem 4MB (this session) → 8MB (no restart)             │   │
 │IN│  suggest:  ALTER ROLE billing SET work_mem = '8MB';                   │   │

@@ -157,10 +157,16 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         } else {
             " · / esc clears"
         };
-        format!(" result · {visible}/{total} row(s) (filtered{way_out}){cap}{cols_note} ")
+        format!("result · {visible}/{total} row(s) (filtered){way_out}{cap}{cols_note}")
     } else {
-        format!(" result · {total} row(s){cap}{cols_note} ")
+        format!("result · {total} row(s){cap}{cols_note}")
     };
+    // Fitted to the border: with a filter on and five-digit counts an
+    // 80-column title ran into the corner mid-word. Whole ` · `
+    // segments go from the end, and a `…` says so.
+    let title_budget = (area.width.saturating_sub(2) as usize)
+        .saturating_sub(crate::ui::chrome::panel_title(theme, "x").width() - 1);
+    let title = crate::ui::fit_title(&title, title_budget);
     let table = Table::new(rows, constraints)
         .header(header)
         .column_spacing(SPACING)
@@ -168,7 +174,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .block(
             crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_idle))
-                .title(crate::ui::chrome::panel_title(theme, &title)),
+                .title(crate::ui::chrome::panel_title(theme, &format!(" {title} "))),
         );
     f.render_stateful_widget(table, area, &mut app.grid_state);
 }
@@ -501,6 +507,52 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
+/// The result-diff overlay's title for a border `budget` columns wide.
+/// The key leads: it is short and says how the rows were matched,
+/// while A and B are labelled by query text a narrow terminal cannot
+/// hold. Short of room, the key hints go first (a `· …` marks them),
+/// then the two labels are cut to share what is left, each ending on
+/// `…`; when not even that fits, [`fit_title`] keeps the key. Never
+/// wider than `budget`, never cut mid-word by the border. Pure.
+pub(super) fn result_diff_title(
+    key: &str,
+    (a, an): (&str, usize),
+    (b, bn): (&str, usize),
+    budget: usize,
+) -> String {
+    const HINTS: &str = " · r re-pin · c clear · q close";
+    const CUT: &str = " · …";
+    let head = format!("Result diff — {key} · ");
+    let sides = |a: &str, b: &str| format!("A: {a} ({an} rows) vs B: {b} ({bn} rows)");
+    let full = format!("{head}{}{HINTS}", sides(a, b));
+    if display_width(&full) <= budget {
+        return full;
+    }
+    // Whole hints dropped from the end, while A and B stay whole.
+    let whole_sides = sides(a, b);
+    let fitted = fit_title(&full, budget);
+    if fitted.contains(&whole_sides) {
+        return fitted;
+    }
+    // A label cut shorter than this says nothing; drop A and B instead.
+    const MIN_LABEL: usize = 6;
+    let fixed = display_width(&format!("{head}{}{CUT}", sides("", "")));
+    let room = budget.saturating_sub(fixed);
+    if room >= 2 * MIN_LABEL {
+        // An even split, with what the shorter label leaves unused
+        // going to the other.
+        let half = room / 2;
+        let (aw, bw) = match (display_width(a) <= half, display_width(b) <= half) {
+            (true, _) => (display_width(a), room - display_width(a)),
+            (_, true) => (room - display_width(b), display_width(b)),
+            _ => (half, room - half),
+        };
+        let cut = |s: &str, w: usize| crate::grid::truncate_cell(s, w);
+        return format!("{head}{}{CUT}", sides(&cut(a, aw), &cut(b, bw)));
+    }
+    fit_title(&full, budget)
+}
+
 /// Result-diff overlay (`Mode::ResultDiff`). Renders A-vs-B as a
 /// grouped list: removed rows, then changed rows (with per-cell
 /// old→new deltas), then added rows. Unchanged rows are only
@@ -528,17 +580,18 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
         }
         crate::query::row_diff::RowKey::FullRow => "key: full row".to_string(),
     };
-    let title = format!(
-        " Result diff — A: {a} ({an} rows) vs B: {b} ({bn} rows) · {key} · r re-pin · c clear · q close ",
-        a = state.a.label,
-        an = state.a.rows.len(),
-        b = state.b_label,
-        bn = state.b_rows.len(),
-        key = key_desc,
+    let title_budget = (popup.width.saturating_sub(2) as usize).saturating_sub(
+        crate::ui::chrome::panel_title_overhead(theme, "Result diff"),
+    );
+    let title = result_diff_title(
+        &key_desc,
+        (&state.a.label, state.a.rows.len()),
+        (&state.b_label, state.b_rows.len()),
+        title_budget,
     );
     let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(crate::ui::chrome::panel_title(theme, &title));
+        .title(crate::ui::chrome::panel_title(theme, &format!(" {title} ")));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 

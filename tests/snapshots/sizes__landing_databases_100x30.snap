@@ -23,10 +23,10 @@ expression: dump(&buf)
 │   e   write a query                                                 S   schema browser (26 tables│
 │   Q   saved queries (4)                                             T   slow queries             │
 │   W   schema wizard                                                 L   sessions & locks         │
-│   ctrl-l  logs → SQL (paste a Hibernate / Postgres log in the editor)   F4  JDBC tap             │
+│   ctrl-l  logs → SQL (paste a Hibernate / Postgres log in the editor)   :tap  JDBC tap (F4)      │
 │   ?   all keys                                                      ctrl-t  new tab              │
 │                                                                                                  │
-│   TAP below: your app's queries, over the JDBC tap · N+1 ×1: one query it runs once per row · F4 │
+│   TAP below: your app's queries over the JDBC tap · N+1 ×1: one query it runs once per row · :tap│
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

@@ -10,7 +10,7 @@ expression: dump(&buf)
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · 23 sections ◆ ]────────────────────────────────────────────────────────────────────────╮
-│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                        │
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)                     │
 │ ▸ grid                     the results: move, sort, filter, find, yank                           │
 │   editor                   write and run SQL · EXPLAIN · history · completion                    │
 │   confirm                  the y / n prompt before a guarded statement                           │
@@ -29,7 +29,7 @@ expression: dump(&buf)
 │   : commands               the : bar: about, help, readonly, redact, connect                     │
 │   tabs                     an editor and a result per tab · ] / [ switch                         │
 │   saved queries            named queries kept across sessions (Q)                                │
-│   notifications            LISTEN / NOTIFY arrivals (F3)                                         │
+│   notifications            LISTEN / NOTIFY arrivals (:notify / F3)                               │
 │   ↓ 4 more                                                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ? close help · j/k select · enter open · / filter

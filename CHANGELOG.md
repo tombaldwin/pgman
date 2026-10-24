@@ -6,6 +6,31 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- The start card and the help overlay name the JDBC tap and the NOTIFY
+  panel by `:tap` / `:notify` first, with `F4` / `F3` beside them: on a
+  Mac terminal the F-keys often never reach pgman.
+- The result diff's title names its key (`key: id (primary key)`) before
+  the A and B query text, so an 80-column terminal no longer cuts it
+  off; a title too long for its border ends on `…`.
+- `:fixture` and `Y` on a partial result end their status on "fetched
+  rows only, more not fetched", which the footer keeps whole; at 160
+  columns it was cut mid-note, along with the file name.
+- The schema wizard's detail pane wraps between words (it broke
+  `referen` / `ces` at 80x24), and its list sizes the object column to
+  leave the title room: at 80 columns the title column was three
+  letters wide and its header read `tit`.
+- The result title is fitted to its border: with a filter on and
+  five-digit counts, an 80-column title ran into the corner mid-word;
+  it now drops whole segments from the end and ends on `…`.
+- The JDBC tap's N+1 view cuts a long caller with `…` rather than at
+  the border, and shows its fingerprint only when there is room to
+  read one.
+- A start card too short for every key hint keeps its `?  all keys`
+  line and says how many it left off (`+3 more`); at 60x16 the hints
+  went with nothing to say so.
+
 ## [0.2.0] — 2026-10-23
 
 ### Highlights

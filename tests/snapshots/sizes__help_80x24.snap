@@ -10,7 +10,7 @@ expression: dump(&buf)
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · 23 sections ◆ ]────────────────────────────────────────────────────╮
-│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)    │
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3) │
 │ ▸ grid                     the results: move, sort, filter, find, yank       │
 │   editor                   write and run SQL · EXPLAIN · history · completi… │
 │   confirm                  the y / n prompt before a guarded statement       │

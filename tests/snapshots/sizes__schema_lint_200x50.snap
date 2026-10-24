@@ -41,8 +41,8 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │  LINT101 · FK column not the leading column of any index                                                                                                                             │       │
 │       │  object: public.accounts.accounts_customer_id_fkey                                                                                                                                   │       │
-│       │  constraint `accounts_customer_id_fkey` on `public.accounts` references column(s) (customer_id) — no index leads with the first FK column, so cascade / lookup queries will sequent  │       │
-│       │  ial-scan                                                                                                                                                                            │       │
+│       │  constraint `accounts_customer_id_fkey` on `public.accounts` references column(s) (customer_id) — no index leads with the first FK column, so cascade / lookup queries will          │       │
+│       │  sequential-scan                                                                                                                                                                     │       │
 │       │  suggest: CREATE INDEX ON public.accounts (customer_id);                                                                                                                             │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

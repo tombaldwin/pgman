@@ -14,7 +14,7 @@ expression: dump(&buf)
 │  FROM invoices                                                                                                                                                                                       │
 │  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER BY due_at;           ╭[ ◆ help · editor ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                             │
-│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
+│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)                                                             │                             │
 ╰─────────────────────────────│   grid                    │   editor                                                                                                     │─────────────────────────────╯
 ╭[ ◆ result · 5 row(s) ◆ ]────│ ▸ editor                  │     ↵             run the statement once it ends with ; (guarded)                                            │─────────────────────────────╮
 │number      customer_id  stat│   confirm                 │     alt-↵ / F5    run it regardless of the ; (ctrl-↵ / ctrl-j too)                                           │                             │

@@ -11,7 +11,7 @@ expression: dump(&buf)
  1 SELECT number, cu…                                 [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                     │
-│  F╭[ ◆ Result diff ◆ ] A: public.invoices (5 rows) vs B: public.invoices (5 rows) · key: numb╮   │
+│  F╭[ ◆ Result diff ◆ ] key: number · A: public.inv… (5 rows) vs B: public.invo… (5 rows) · … ╮   │
 │  W│+1 added   -1 removed   ~1 changed   =3 unchanged                                         │   │
 │  O│                                                                                          │   │
 │   │  - INV-004824 | 2104 | open | GBP | 768.00 | 2026-10-04 09:00:00+00                      │   │

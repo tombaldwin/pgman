@@ -14,7 +14,7 @@ expression: dump(&buf)
 │  FROM invoices                                                                                                                                                                                       │
 │  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER BY due_at;           ╭[ ◆ help · grid ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                             │
-│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
+│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)                                                             │                             │
 ╰─────────────────────────────│ ▸ grid                    │   grid                                                                                                       │─────────────────────────────╯
 ╭[ ◆ result · 5 row(s) ◆ ]────│   editor                  │     q             quit                                                                                       │─────────────────────────────╮
 │number      customer_id  stat│   confirm                 │     esc           back to the environments overview, when environments are configured                        │                             │
@@ -30,7 +30,7 @@ expression: dump(&buf)
 │                             │   environments            │     T             slow queries (pg_stat_statements top-N)                                                    │                             │
 │                             │   active sessions         │     L             active sessions + locks (pg_stat_activity)                                                 │                             │
 │                             │   psql backslash commands │     E             environments overview (no connection needed)                                               │                             │
-│                             │   : commands              │     F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)                                │                             │
+│                             │   : commands              │     :notify / F3  LISTEN/NOTIFY arrivals panel (also reachable from any mode)                                │                             │
 │                             │   tabs                    │     h / l  ← →    move column cursor                                                                         │                             │
 │                             │   saved queries           │     s             cycle sort on focused column (off → ASC → DESC)                                            │                             │
 │                             │   notifications           │     /             live row filter (HIDES non-matching rows)                                                  │                             │

@@ -2166,6 +2166,43 @@ fn dispatch_fixture_writes_parseable_dataset_to_explicit_path() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// A capture of a partial result says so, and the footer keeps the
+/// whole note at 160 columns: the note's own ` · ` made it two of the
+/// footer's segments, and the fitter cut the first mid-note.
+#[test]
+fn a_partial_fixture_status_keeps_its_whole_note_in_the_footer() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let ids: Vec<String> = (1..=1000).map(|i| i.to_string()).collect();
+    let rows: Vec<[&str; 2]> = ids.iter().map(|i| [i.as_str(), "open"]).collect();
+    let rows: Vec<&[&str]> = rows.iter().map(|r| &r[..]).collect();
+    a.grid = grid_of(&["id", "status"], &rows);
+    a.grid.truncated = true;
+    a.grid_view.source = Some(("public".into(), "invoices".into()));
+    let dir = std::env::temp_dir().join(format!(
+        "pgman-fixture-note-{}/a/directory/deep/enough/to/crowd/the/footer",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("public_invoices-fixture-20261024-101112.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(status.contains(crate::grid::FETCHED_ONLY), "{status}");
+
+    a.splash_visible = false;
+    a.splash_until = None;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 30)).unwrap();
+    term.draw(|f| crate::ui::draw(f, &mut a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let footer: String = (0..buf.area.width)
+        .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+        .collect();
+    assert!(footer.contains(crate::grid::FETCHED_ONLY), "{footer}");
+    assert!(footer.contains("1000 row(s)"), "{footer}");
+    let _ = std::fs::remove_dir_all(
+        std::env::temp_dir().join(format!("pgman-fixture-note-{}", std::process::id())),
+    );
+}
+
 #[test]
 fn dispatch_fixture_errors_without_source_table() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
