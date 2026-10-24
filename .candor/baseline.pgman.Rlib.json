@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 3641,
-    "digest": "38dd8ba8ba0ed370"
+    "count": 3659,
+    "digest": "0ab586ddf8e514f4"
   },
   "resolves": [
     "fs",
@@ -226,7 +226,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150ee6e85c4ce3d514b3",
+      "hash": "9ee8d83182a4150e4bd6608c752c2dfa",
       "invisible": [
         "serde_core"
       ]
@@ -250,7 +250,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e4bd6608c752c2dfa",
+      "hash": "9ee8d83182a4150ee6e85c4ce3d514b3",
       "invisible": [
         "serde_core"
       ]
@@ -3316,7 +3316,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::apply_backslash",
-      "loc": "src/app/cmd.rs:168:5: 168:89",
+      "loc": "src/app/cmd.rs:196:5: 196:89",
       "inferred": [
         "Clock",
         "Db",
@@ -3376,7 +3376,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_backslash",
-      "loc": "src/app/cmd.rs:145:5: 145:92",
+      "loc": "src/app/cmd.rs:173:5: 173:92",
       "inferred": [
         "Clock",
         "Db",
@@ -3431,7 +3431,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_command",
-      "loc": "src/app/cmd.rs:293:5: 293:58",
+      "loc": "src/app/cmd.rs:321:5: 321:58",
       "inferred": [
         "Clock",
         "Db",
@@ -3488,7 +3488,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_connect",
-      "loc": "src/app/cmd.rs:608:5: 608:59",
+      "loc": "src/app/cmd.rs:636:5: 636:59",
       "inferred": [
         "Clock",
         "Db",
@@ -3541,7 +3541,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_fixture",
-      "loc": "src/app/cmd.rs:756:5: 756:70",
+      "loc": "src/app/cmd.rs:788:5: 788:70",
       "inferred": [
         "Clock",
         "Env",
@@ -3573,7 +3573,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_include",
-      "loc": "src/app/cmd.rs:687:5: 687:59",
+      "loc": "src/app/cmd.rs:715:5: 715:59",
       "inferred": [
         "Fs",
         "Unknown"
@@ -3597,7 +3597,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_list_databases",
-      "loc": "src/app/cmd.rs:567:5: 567:42",
+      "loc": "src/app/cmd.rs:595:5: 595:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -3610,7 +3610,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_list_functions",
-      "loc": "src/app/cmd.rs:497:5: 497:67",
+      "loc": "src/app/cmd.rs:525:5: 525:67",
       "inferred": [
         "Clock",
         "Db",
@@ -3647,7 +3647,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_read_only",
-      "loc": "src/app/cmd.rs:424:5: 424:58",
+      "loc": "src/app/cmd.rs:452:5: 452:58",
       "inferred": [
         "Db",
         "Env",
@@ -3682,7 +3682,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_report",
-      "loc": "src/app/cmd.rs:718:5: 718:58",
+      "loc": "src/app/cmd.rs:746:5: 746:58",
       "inferred": [
         "Clock",
         "Env",
@@ -3715,7 +3715,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::open_command_bar",
-      "loc": "src/app/cmd.rs:252:5: 252:46",
+      "loc": "src/app/cmd.rs:280:5: 280:46",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -3727,7 +3727,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::preview_schema_browser_rows",
-      "loc": "src/app/cmd.rs:517:5: 517:57",
+      "loc": "src/app/cmd.rs:545:5: 545:57",
       "inferred": [
         "Clock",
         "Db",
@@ -3763,7 +3763,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::run_generated_select",
-      "loc": "src/app/cmd.rs:535:5: 535:71",
+      "loc": "src/app/cmd.rs:563:5: 563:71",
       "inferred": [
         "Clock",
         "Db",
@@ -3801,7 +3801,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::show_update_status",
-      "loc": "src/app/cmd.rs:347:5: 347:37",
+      "loc": "src/app/cmd.rs:375:5: 375:37",
       "inferred": [
         "Env",
         "Fs"
@@ -3825,7 +3825,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::write_export",
-      "loc": "src/app/cmd.rs:737:5: 737:97",
+      "loc": "src/app/cmd.rs:769:5: 769:97",
       "inferred": [
         "Clock",
         "Fs",
@@ -14148,7 +14148,7 @@
     },
     {
       "fn": "ui::bordered",
-      "loc": "src/ui.rs:3554:1: 3554:58",
+      "loc": "src/ui.rs:3548:1: 3548:58",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14375,7 +14375,7 @@
     },
     {
       "fn": "ui::draw_tab_bar",
-      "loc": "src/ui.rs:3247:1: 3247:54",
+      "loc": "src/ui.rs:3241:1: 3241:54",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14570,7 +14570,7 @@
     },
     {
       "fn": "ui::help_body",
-      "loc": "src/ui.rs:2400:1: 2405:2",
+      "loc": "src/ui.rs:2394:1: 2399:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14608,7 +14608,7 @@
     },
     {
       "fn": "ui::landing::header_line",
-      "loc": "src/ui/landing.rs:373:1: 373:77",
+      "loc": "src/ui/landing.rs:365:1: 365:77",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14632,7 +14632,7 @@
     },
     {
       "fn": "ui::landing::paired_line",
-      "loc": "src/ui/landing.rs:515:1: 521:19",
+      "loc": "src/ui/landing.rs:520:1: 526:19",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14644,7 +14644,7 @@
     },
     {
       "fn": "ui::landing::read_only_style",
-      "loc": "src/ui/landing.rs:404:1: 404:39",
+      "loc": "src/ui/landing.rs:396:1: 396:39",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14656,7 +14656,7 @@
     },
     {
       "fn": "ui::landing::single_line",
-      "loc": "src/ui/landing.rs:505:1: 505:82",
+      "loc": "src/ui/landing.rs:508:1: 508:82",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14825,7 +14825,7 @@
     },
     {
       "fn": "ui::panels::draw_error_detail",
-      "loc": "src/ui/panels.rs:3103:1: 3103:70",
+      "loc": "src/ui/panels.rs:3127:1: 3127:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14968,7 +14968,7 @@
     },
     {
       "fn": "ui::panels::push_kv",
-      "loc": "src/ui/panels.rs:3431:1: 3437:2",
+      "loc": "src/ui/panels.rs:3455:1: 3461:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14998,7 +14998,7 @@
     },
     {
       "fn": "ui::panels::wrap_help_lines",
-      "loc": "src/ui/panels.rs:3235:1: 3242:2",
+      "loc": "src/ui/panels.rs:3259:1: 3266:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15022,7 +15022,7 @@
     },
     {
       "fn": "ui::results::draw_cell_detail",
-      "loc": "src/ui/results.rs:363:1: 363:73",
+      "loc": "src/ui/results.rs:381:1: 381:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15050,7 +15050,7 @@
     },
     {
       "fn": "ui::results::draw_result_diff",
-      "loc": "src/ui/results.rs:560:1: 560:69",
+      "loc": "src/ui/results.rs:596:1: 596:69",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15064,7 +15064,7 @@
     },
     {
       "fn": "ui::results::draw_row_detail",
-      "loc": "src/ui/results.rs:186:1: 186:72",
+      "loc": "src/ui/results.rs:204:1: 204:72",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15130,7 +15130,7 @@
     },
     {
       "fn": "ui::tap::baseline_age_label",
-      "loc": "src/ui/tap.rs:843:1: 843:59",
+      "loc": "src/ui/tap.rs:854:1: 854:59",
       "inferred": [
         "Clock"
       ],
@@ -15146,7 +15146,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_event_detail",
-      "loc": "src/ui/tap.rs:472:1: 472:67",
+      "loc": "src/ui/tap.rs:473:1: 473:67",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15181,7 +15181,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_monitor_baseline",
-      "loc": "src/ui/tap.rs:691:1: 691:68",
+      "loc": "src/ui/tap.rs:696:1: 696:68",
       "inferred": [
         "Clock"
       ],
@@ -15201,7 +15201,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_monitor_callers",
-      "loc": "src/ui/tap.rs:616:1: 616:67",
+      "loc": "src/ui/tap.rs:621:1: 621:67",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15214,7 +15214,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_monitor_hotspots",
-      "loc": "src/ui/tap.rs:540:1: 540:68",
+      "loc": "src/ui/tap.rs:541:1: 541:68",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15240,7 +15240,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_monitor_nplus1",
-      "loc": "src/ui/tap.rs:1032:1: 1032:66",
+      "loc": "src/ui/tap.rs:1057:1: 1057:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15253,7 +15253,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_monitor_pools",
-      "loc": "src/ui/tap.rs:957:1: 957:65",
+      "loc": "src/ui/tap.rs:975:1: 975:65",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15266,7 +15266,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_monitor_txns",
-      "loc": "src/ui/tap.rs:867:1: 867:64",
+      "loc": "src/ui/tap.rs:878:1: 878:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15279,7 +15279,7 @@
     },
     {
       "fn": "ui::tap::draw_tap_params_detail",
-      "loc": "src/ui/tap.rs:205:1: 210:2",
+      "loc": "src/ui/tap.rs:206:1: 211:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15292,7 +15292,7 @@
     },
     {
       "fn": "ui::tap::params_detail_rule",
-      "loc": "src/ui/tap.rs:247:1: 247:68",
+      "loc": "src/ui/tap.rs:248:1: 248:68",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15304,7 +15304,7 @@
     },
     {
       "fn": "ui::tap_setup_hint_lines",
-      "loc": "src/ui.rs:3366:1: 3369:24",
+      "loc": "src/ui.rs:3360:1: 3363:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
