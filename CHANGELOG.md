@@ -45,7 +45,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   newline as `⏎` on its row.
 - The start card's two key columns line up: `:tap  JDBC tap (F4)`
   started four columns right of the `S` / `T` / `L` / `ctrl-t` above
-  and below it, as `ctrl-l`'s key is wider than the others.
+  and below it, as `ctrl-l`'s key is wider than the others. At 100
+  columns the card takes the short `ctrl-l` wording so
+  `S  schema browser (26 tables)` fits, and a right-hand hint too long
+  for a narrower card ends on `…` rather than at the border.
 - A start card too short for every key hint keeps its `?  all keys`
   line and says how many it left off (`+3 more`); at 60x16 the hints
   went with nothing to say so.

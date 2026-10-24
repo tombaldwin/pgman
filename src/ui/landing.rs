@@ -136,12 +136,14 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     let help = Hint::new("?", "all keys");
     let new_tab = Hint::new("ctrl-t", "new tab");
 
-    // F8's description is long; shorten it rather than truncate it if
-    // it (plus, in two-column mode, the tap's cell and the gap) wouldn't
-    // fit at the current width.
-    let f8_desc = pick_f8_desc(two_col, width);
-    let f8 = Hint::new(F8_KEY, f8_desc);
     let f4 = Hint::new(TAP_KEY, TAP_DESC);
+    // F8's description is long; shorten it rather than truncate it if
+    // it (plus, in two-column mode, the gap and the widest right cell,
+    // which every row's right column shares) wouldn't fit at the
+    // current width.
+    let right_w = cell_width(&[&s, &t, &l, &f4, &new_tab]);
+    let f8_desc = pick_f8_desc(two_col, width, right_w);
+    let f8 = Hint::new(F8_KEY, f8_desc);
 
     // --- height budget: decide what survives -------------------------
     let key_lines_floor = if two_col { 3 } else { 6 }; // core only
@@ -245,22 +247,19 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         if include_help && include_new_tab {
             left_hints.push(&help);
         }
-        let left_col_width = left_col_width(&left_hints);
+        let left_col_width = display_width(HINT_INDENT) + cell_width(&left_hints);
+        let pair = |left: &Hint, right: &Hint| {
+            paired_line(left, right, (key_style, desc_style), left_col_width, width)
+        };
 
-        lines.push(paired_line(&e, &s, key_style, desc_style, left_col_width));
-        lines.push(paired_line(&q, &t, key_style, desc_style, left_col_width));
-        lines.push(paired_line(&w, &l, key_style, desc_style, left_col_width));
+        lines.push(pair(&e, &s));
+        lines.push(pair(&q, &t));
+        lines.push(pair(&w, &l));
         if include_f8f4 {
-            lines.push(paired_line(&f8, &f4, key_style, desc_style, left_col_width));
+            lines.push(pair(&f8, &f4));
         }
         if include_help && include_new_tab {
-            lines.push(paired_line(
-                &help,
-                &new_tab,
-                key_style,
-                desc_style,
-                left_col_width,
-            ));
+            lines.push(pair(&help, &new_tab));
         } else if include_help {
             lines.push(single_line(&help, key_style, desc_style));
         }
@@ -336,18 +335,17 @@ fn recent_label(width: usize) -> &'static str {
 }
 
 /// Choose the F8 hint description: the long form if it (plus, in
-/// two-column mode, the tap cell and the gap between them) fits within
-/// `width`; the short form otherwise. Never truncates either form.
-/// Measures the key fields as [`key_field`] pads them, so a key wider
-/// than [`KEY_FIELD_WIDTH`] (`ctrl-l`, `:tap`) is counted at its width.
-fn pick_f8_desc(two_col: bool, width: usize) -> &'static str {
+/// two-column mode, the gap and `right_w`, the widest right-column
+/// cell, which every row's right column shares) fits within `width`;
+/// the short form otherwise. Never truncates either form. Measures the
+/// key fields as [`key_field`] pads them, so a key wider than
+/// [`KEY_FIELD_WIDTH`] (`ctrl-l`, `:tap`) is counted at its width.
+/// Counting the tap's cell alone kept the long form at 100 columns,
+/// and pushed `schema browser (26 tables)` over the border.
+fn pick_f8_desc(two_col: bool, width: usize, right_w: usize) -> &'static str {
     let f8_cell = display_width(&key_field(F8_KEY)) + display_width(F8_DESC_LONG);
     let needed = if two_col {
-        display_width(HINT_INDENT)
-            + f8_cell
-            + COL_GAP
-            + display_width(&key_field(TAP_KEY))
-            + display_width(TAP_DESC)
+        display_width(HINT_INDENT) + f8_cell + COL_GAP + right_w
     } else {
         display_width(HINT_INDENT) + f8_cell
     };
@@ -495,15 +493,13 @@ fn key_field(key: &str) -> String {
     format!("{key:<width$}")
 }
 
-/// The two-column layout's left column: the widest of `hints` as
-/// [`paired_line`] draws it (indent, key field, description), so the
-/// right column starts at one place on every row. Pure.
-fn left_col_width(hints: &[&Hint]) -> usize {
+/// The widest of `hints` as [`paired_line`] draws a cell (key field,
+/// description): with the indent, the two-column layout's left column,
+/// so the right column starts at one place on every row. Pure.
+fn cell_width(hints: &[&Hint]) -> usize {
     hints
         .iter()
-        .map(|h| {
-            display_width(HINT_INDENT) + display_width(&key_field(h.key)) + display_width(&h.desc)
-        })
+        .map(|h| display_width(&key_field(h.key)) + display_width(&h.desc))
         .max()
         .unwrap_or(0)
 }
@@ -518,13 +514,15 @@ fn single_line(hint: &Hint, key_style: Style, desc_style: Style) -> Line<'static
 }
 
 /// Render two key hints on one line: `left` indented and padded to
-/// `left_col_width`, then a gap, then `right`.
+/// `left_col_width`, then a gap, then `right`, its description cut with
+/// `…` where the line would pass `width` — the border cut it with no
+/// marker (`schema browser (26 tables│` at 100 columns).
 fn paired_line(
     left: &Hint,
     right: &Hint,
-    key_style: Style,
-    desc_style: Style,
+    (key_style, desc_style): (Style, Style),
     left_col_width: usize,
+    width: usize,
 ) -> Line<'static> {
     let left_key = key_field(left.key);
     let left_text_width =
@@ -536,7 +534,17 @@ fn paired_line(
         Span::styled(left.desc.clone(), desc_style),
         Span::raw(" ".repeat(pad + COL_GAP)),
         Span::styled(key_field(right.key), key_style),
-        Span::styled(right.desc.clone(), desc_style),
+        Span::styled(
+            crate::grid::truncate_cell(
+                &right.desc,
+                width.saturating_sub(
+                    left_col_width.max(left_text_width)
+                        + COL_GAP
+                        + display_width(&key_field(right.key)),
+                ),
+            ),
+            desc_style,
+        ),
     ])
 }
 
@@ -621,6 +629,32 @@ mod tests {
         }
     }
 
+    /// No two-column key row passes the card's width, and at 100
+    /// columns the schema browser's hint is whole: the long `ctrl-l`
+    /// description, chosen for the tap's cell alone, pushed
+    /// `schema browser (26 tables)` over the border with no `…`.
+    #[test]
+    fn two_column_key_rows_fit_the_card() {
+        let mut a = app();
+        a.schema_cache.tables = (0..26)
+            .map(|i| crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: format!("t{i}"),
+            })
+            .collect();
+        for w in TWO_COL_MIN_WIDTH..=200 {
+            for line in plain(&landing_lines(&a, w, 30)) {
+                assert!(display_width(&line) <= w as usize, "{w}: {line:?}");
+            }
+        }
+        let text = plain(&landing_lines(&a, 98, 30));
+        assert!(
+            text.iter()
+                .any(|l| l.contains("S   schema browser (26 tables)")),
+            "{text:?}"
+        );
+    }
+
     #[test]
     fn narrow_layout_uses_one_column() {
         let a = app();
@@ -668,8 +702,21 @@ mod tests {
     #[test]
     fn f8_desc_shortens_when_it_would_not_fit() {
         // Long form needs far more than 40 columns.
-        assert_eq!(pick_f8_desc(false, 40), F8_DESC_SHORT);
-        assert_eq!(pick_f8_desc(false, 200), F8_DESC_LONG);
+        assert_eq!(pick_f8_desc(false, 40, 0), F8_DESC_SHORT);
+        assert_eq!(pick_f8_desc(false, 200, 0), F8_DESC_LONG);
+        // Two columns: the widest right cell counts, not the tap's.
+        let long_left = display_width(HINT_INDENT)
+            + display_width(&key_field(F8_KEY))
+            + display_width(F8_DESC_LONG);
+        let right = display_width("S   schema browser (26 tables)");
+        assert_eq!(
+            pick_f8_desc(true, long_left + COL_GAP + right, right),
+            F8_DESC_LONG
+        );
+        assert_eq!(
+            pick_f8_desc(true, long_left + COL_GAP + right - 1, right),
+            F8_DESC_SHORT
+        );
     }
 
     #[test]
