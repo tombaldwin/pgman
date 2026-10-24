@@ -145,8 +145,10 @@ pub struct SchemaCache {
     /// Why the cache is missing parts, when it is: another session's
     /// `ACCESS EXCLUSIVE` lock kept a relation's size and indexes out
     /// (the fetch skips what such a lock covers rather than queue
-    /// behind it), or a catalog read waited past `lock_timeout`. One
-    /// line for the status bar; `None` when the fetch was whole.
+    /// behind it), a catalog read waited past `lock_timeout`, or one
+    /// failed otherwise (cancelled at `statement_timeout`, a permission
+    /// gap). One line for the status bar; `None` when the fetch was
+    /// whole.
     pub incomplete: Option<String>,
 }
 
@@ -163,11 +165,38 @@ pub struct LockedRelation {
     pub granted: bool,
 }
 
+/// Why one of the fetch's reads came back without its rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadFailure {
+    /// SQLSTATE `55P03`: it gave up at `lock_timeout`.
+    LockTimeout,
+    /// Anything else, by the server's message (`57014`'s "canceling
+    /// statement due to statement timeout", a permission error).
+    Other(String),
+}
+
+impl ReadFailure {
+    fn of(e: &tokio_postgres::Error) -> ReadFailure {
+        if is_lock_timeout(e) {
+            return ReadFailure::LockTimeout;
+        }
+        ReadFailure::Other(
+            e.as_db_error()
+                .map(|d| d.message().to_string())
+                .unwrap_or_else(|| e.to_string()),
+        )
+    }
+}
+
 /// [`SchemaCache::incomplete`]'s line from what the fetch skipped
-/// (`locked`, held locks first) and which catalog reads gave up at
-/// `lock_timeout` (`timed_out`, named by the parts they would have
-/// filled). Pure.
-pub fn incomplete_reason(locked: &[LockedRelation], timed_out: &[&str]) -> Option<String> {
+/// (`locked`, held locks first) and which catalog reads failed
+/// (`failed`, named by the parts they would have filled): those that
+/// gave up at `lock_timeout` together, the rest grouped by the server's
+/// message. Pure.
+pub fn incomplete_reason(
+    locked: &[LockedRelation],
+    failed: &[(&str, ReadFailure)],
+) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(first) = locked.first() {
         let rel = format!("{}.{}", first.schema, first.name);
@@ -181,8 +210,26 @@ pub fn incomplete_reason(locked: &[LockedRelation], timed_out: &[&str]) -> Optio
             first.pid
         ));
     }
+    let timed_out: Vec<&str> = failed
+        .iter()
+        .filter(|(_, f)| *f == ReadFailure::LockTimeout)
+        .map(|(what, _)| *what)
+        .collect();
     if !timed_out.is_empty() {
         parts.push(format!("{} gave up at lock_timeout", timed_out.join(", ")));
+    }
+    // The other failures by message, in the order they first appear.
+    let mut by_message: Vec<(&str, Vec<&str>)> = Vec::new();
+    for (what, f) in failed {
+        if let ReadFailure::Other(msg) = f {
+            match by_message.iter_mut().find(|(m, _)| *m == msg.as_str()) {
+                Some((_, whats)) => whats.push(what),
+                None => by_message.push((msg.as_str(), vec![what])),
+            }
+        }
+    }
+    for (msg, whats) in by_message {
+        parts.push(format!("{} failed: {msg}", whats.join(", ")));
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
@@ -515,6 +562,15 @@ fn is_lock_timeout(e: &tokio_postgres::Error) -> bool {
     e.code() == Some(&tokio_postgres::error::SqlState::LOCK_NOT_AVAILABLE)
 }
 
+/// [`fetch`] with the session's `lock_timeout` bounded the way the
+/// connect bounds its own reads (`conn::with_lock_bound`) — what a reload
+/// runs on the operator's session. The caller keeps other work off the
+/// session meanwhile (`paging::ExclusiveDb`). Inside a transaction the
+/// reads go unbounded, as the operator's own statements there do.
+pub async fn fetch_bounded(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
+    crate::conn::with_lock_bound(client, fetch(client)).await.0
+}
+
 /// Run the cache-building query on `client` and assemble a `SchemaCache`.
 /// Returns an empty cache (and logs a warning) if the query fails — the
 /// rest of pgman keeps working without completion.
@@ -534,7 +590,8 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         client.query(LOCKED_RELATIONS_SQL, &[]),
     );
     // What a lock kept out: the relations the sizes and indexes skipped,
-    // and any read that gave up at the connect's `lock_timeout`.
+    // and every read that failed.
+    let mut lookup_failed = None;
     let locked: Vec<LockedRelation> = match &locked_res {
         Ok(rows) => rows
             .iter()
@@ -549,10 +606,13 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
             .collect(),
         Err(e) => {
             tracing::warn!("lock lookup failed: {e}");
+            lookup_failed = Some(("lock lookup", ReadFailure::of(e)));
             Vec::new()
         }
     };
-    let timed_out: Vec<&str> = [
+    // Any read that failed leaves its part out, whatever the reason: a
+    // reload must not say "reloaded" over a read the server cancelled.
+    let read_failures = [
         ("columns", schema_res.as_ref().err()),
         ("constraints", constraint_res.as_ref().err()),
         ("table sizes", size_res.as_ref().err()),
@@ -562,10 +622,10 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         ("primary keys", pk_res.as_ref().err()),
     ]
     .into_iter()
-    .filter(|(_, e)| e.is_some_and(is_lock_timeout))
-    .map(|(what, _)| what)
-    .collect();
-    let incomplete = incomplete_reason(&locked, &timed_out);
+    .filter_map(|(what, e)| e.map(|e| (what, ReadFailure::of(e))));
+    // The lookup names what the others skipped, so it goes last.
+    let failed: Vec<(&str, ReadFailure)> = read_failures.chain(lookup_failed).collect();
+    let incomplete = incomplete_reason(&locked, &failed);
     if let Some(why) = &incomplete {
         tracing::warn!("schema cache incomplete: {why}");
     }
@@ -826,7 +886,10 @@ mod tests {
                 locked("b", 2, true),
                 locked("c", 3, false),
             ],
-            &["partitions", "indexes"],
+            &[
+                ("partitions", ReadFailure::LockTimeout),
+                ("indexes", ReadFailure::LockTimeout),
+            ],
         )
         .unwrap();
         assert_eq!(
@@ -835,8 +898,37 @@ mod tests {
              · partitions, indexes gave up at lock_timeout"
         );
         assert_eq!(
-            incomplete_reason(&[], &["columns"]).as_deref(),
+            incomplete_reason(&[], &[("columns", ReadFailure::LockTimeout)]).as_deref(),
             Some("columns gave up at lock_timeout")
+        );
+    }
+
+    /// A read the server cancelled (`statement_timeout`) or refused is a
+    /// part missing just as one that gave up at `lock_timeout` is: named,
+    /// grouped by the server's message.
+    #[test]
+    fn incomplete_reason_names_every_failed_read_by_its_message() {
+        let cancelled =
+            || ReadFailure::Other("canceling statement due to statement timeout".into());
+        assert_eq!(
+            incomplete_reason(
+                &[],
+                &[
+                    ("partitions", cancelled()),
+                    (
+                        "foreign keys",
+                        ReadFailure::Other("permission denied".into())
+                    ),
+                    ("indexes", cancelled()),
+                    ("columns", ReadFailure::LockTimeout),
+                ],
+            )
+            .as_deref(),
+            Some(
+                "columns gave up at lock_timeout \
+                 · partitions, indexes failed: canceling statement due to statement timeout \
+                 · foreign keys failed: permission denied"
+            )
         );
     }
 

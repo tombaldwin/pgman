@@ -2967,6 +2967,16 @@ fn a_standby_booted_writable_is_read_only_on_the_server() {
     }
 }
 
+/// Held by a test that takes an `ACCESS EXCLUSIVE` lock on a catalog: it
+/// stalls every catalog read on the server, so two such tests here must
+/// not overlap, and each must hold it only briefly. (A panic poisons
+/// it; the next test takes it all the same.)
+static CATALOG_LOCKS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn catalog_locks() -> std::sync::MutexGuard<'static, ()> {
+    CATALOG_LOCKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// `connect_and_bootstrap` with no statement_timeout, as a profile with
 /// `statement_timeout_ms = 0` connects: nothing but pgman's own bound
 /// stops a read that waits for a lock.
@@ -3005,6 +3015,7 @@ async fn bootstrap_unbounded() -> (pgman::conn::Booted, std::time::Duration) {
 /// One test, so the two locks never overlap.
 #[test]
 fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
+    let _catalog = catalog_locks();
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let (holder, _tunnel) = writable_client().await;
@@ -3095,6 +3106,123 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
             .await
             .unwrap();
     });
+}
+
+/// A reload (`S` then `r`, or the refresh after DDL) runs on the
+/// operator's session, where `lock_timeout` is theirs. It used to be
+/// unbounded there: behind an `ACCESS EXCLUSIVE` lock on a catalog it
+/// sat for `statement_timeout` (for good at 0), then said "reloaded"
+/// over the cancelled read. Now it gives up at the connect's bound, says
+/// which read did, and puts back the operator's own `SET lock_timeout`.
+///
+/// Inside the operator's transaction it is left unbounded (a `SET`
+/// there would outlive the reads, or be undone by a rollback): there a
+/// read the server cancels at `statement_timeout` is named as failed,
+/// not taken for a whole schema.
+#[test]
+fn a_reload_behind_a_catalog_lock_gives_up_and_says_why() {
+    let _catalog = catalog_locks();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (holder, _t1) = writable_client().await;
+        let (client, _t2) = writable_client().await;
+        let t = it_name("reloadlock");
+        client
+            .batch_execute(&format!(
+                "CREATE TABLE {t} (id int); SET statement_timeout = 0; SET lock_timeout = '1min'"
+            ))
+            .await
+            .unwrap();
+        let reload = || async {
+            let started = std::time::Instant::now();
+            let cache = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                pgman::query::schema::fetch_bounded(&client),
+            )
+            .await
+            .expect("the reload returns behind a catalog lock");
+            (cache, started.elapsed())
+        };
+        holder
+            .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_inherits IN ACCESS EXCLUSIVE MODE")
+            .await
+            .unwrap();
+        let (cache, took) = reload().await;
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        let why = cache.incomplete.as_deref().expect("says it is incomplete");
+        assert!(
+            why.contains("partitions") && why.contains("gave up at lock_timeout"),
+            "{why}"
+        );
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+        assert!(
+            cache
+                .columns_by_table
+                .contains_key(&("public".to_string(), t.clone())),
+            "the rest is there: {why}"
+        );
+        let shown: String = client
+            .query_one("SHOW lock_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "1min", "the operator's own lock_timeout is back");
+
+        // Inside a transaction: no bound — the read waits out the
+        // statement_timeout, longer than the bound — and the cancelled
+        // read is named.
+        client
+            .batch_execute("SET statement_timeout = '3s'; BEGIN")
+            .await
+            .unwrap();
+        holder
+            .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_inherits IN ACCESS EXCLUSIVE MODE")
+            .await
+            .unwrap();
+        let (cache, _) = reload().await;
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        client.batch_execute("ROLLBACK").await.unwrap();
+        let why = cache.incomplete.as_deref().expect("says it is incomplete");
+        assert!(
+            why.contains("failed: canceling statement due to statement timeout")
+                && !why.contains("gave up at lock_timeout"),
+            "{why}"
+        );
+        let shown: String = client
+            .query_one("SHOW lock_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "1min", "not bounded inside the transaction");
+        client
+            .batch_execute(&format!("DROP TABLE {t}"))
+            .await
+            .unwrap();
+    });
+}
+
+/// An [`pgman::query::paging::ExclusiveDb`] keeps every piece of work
+/// queued after it waiting until its guard drops — so nothing of the
+/// operator's runs under a reload's lock bound, or opens a transaction
+/// between the bound and its undoing.
+#[tokio::test]
+async fn an_exclusive_db_holds_later_work_until_its_guard_drops() {
+    use pgman::query::paging::{Db, ExclusiveDb, Pager};
+    let (client, _t) = lib_client().await;
+    let pager = Pager::spawn(client.clone());
+    let exclusive = ExclusiveDb::new(client.clone(), Some(&pager));
+    let later = Db::new(client.clone(), Some(&pager));
+    let (_, held) = tokio::time::timeout(std::time::Duration::from_secs(5), exclusive.ready())
+        .await
+        .expect("the exclusive work's turn comes");
+    let later = tokio::spawn(later.ready());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!later.is_finished(), "later work waits while held");
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(5), later)
+        .await
+        .expect("later work runs once the guard drops")
+        .unwrap();
 }
 
 /// The schema fetch learns each partition's parent from a real server,

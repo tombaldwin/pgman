@@ -1377,4 +1377,39 @@ mod live {
         assert!(matches!(a.conn_state, ConnState::Connected { .. }));
         assert_eq!(a.last_error, None, "the card's footer went with it");
     }
+
+    /// `S` then `r` behind another session's `ACCESS EXCLUSIVE` lock on a
+    /// catalog, on a session with no `statement_timeout`: the reload used
+    /// to wait for good. It gives up at the connect's bound, says it is
+    /// still incomplete and why, and the session's own `lock_timeout` is
+    /// back. (`tests/integration.rs` has the bound's other cases.)
+    #[tokio::test]
+    async fn a_reload_behind_a_catalog_lock_says_it_is_incomplete() {
+        let session = client().await;
+        let holder = client().await;
+        session
+            .batch_execute("SET statement_timeout = 0; SET lock_timeout = '1min'")
+            .await
+            .unwrap();
+        let mut a = app(&session).await;
+        holder
+            .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_inherits IN ACCESS EXCLUSIVE MODE")
+            .await
+            .unwrap();
+        a.reload_schema();
+        pump(&mut a).await;
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        let status = a.last_status.clone().unwrap_or_default();
+        assert!(
+            status.starts_with("schema reloaded, still incomplete")
+                && status.contains("partitions gave up at lock_timeout"),
+            "{status}"
+        );
+        assert_eq!(
+            scalar(&session, "current_setting('lock_timeout')")
+                .await
+                .as_deref(),
+            Some("1min")
+        );
+    }
 }

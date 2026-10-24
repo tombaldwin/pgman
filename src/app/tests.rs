@@ -14556,7 +14556,9 @@ fn ctrl_c_from_the_results_cancels_a_running_fetch() {
     assert_eq!(a.last_status.as_deref(), Some("ctrl-c again to quit"));
 }
 
-/// Every piece of database work reaches the client through `App::db`,
+/// Every piece of database work reaches the client through `App::db` (or
+/// `App::db_exclusive`, which also holds the queue for it — both by
+/// `App::work_client`),
 /// which queues it behind the pager so that it never runs inside the
 /// result cursor's transaction (docs/backlog/paging.md). A new
 /// `self.client.clone()` elsewhere would skip the queue: its statement

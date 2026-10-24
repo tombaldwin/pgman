@@ -44,7 +44,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   the lock covers, the connect's own catalog reads give up after a 2 s
   `lock_timeout` (the session's own setting is restored), and the status
   line says the schema is incomplete, names the lock and its pid, and
-  how to reload.
+  how to reload. A reload (`S` then `r`, or the refresh after DDL) is
+  bounded the same way, puts back your own `lock_timeout`, and no
+  longer says "schema reloaded" over a read the server cancelled: any
+  failed catalog read is named.
 - A session the server ends under a running statement
   (`pg_terminate_backend`, a crash shutdown) shows the server's reason
   on the connection-lost card, not "the connection to the server closed"
