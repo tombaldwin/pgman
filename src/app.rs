@@ -3918,6 +3918,14 @@ impl App {
 
     /// "not connected", plus the one thing the operator can do about
     /// it from where they are.
+    /// No session to work on: never connected, or the connection is gone
+    /// and the failure card is up (the dead client stays in `client`
+    /// until a reconnect replaces it). A statement refused here never
+    /// reaches the guard's prompt.
+    pub(super) fn no_session(&self) -> bool {
+        self.client.is_none() || matches!(self.conn_state, ConnState::Failed(_))
+    }
+
     pub fn not_connected_message(&self) -> String {
         if matches!(self.conn_state, ConnState::Failed(_)) {
             "not connected · r to retry · c to choose a connection".to_string()
@@ -4311,7 +4319,7 @@ impl App {
         // would be against a real database — see `spawn_run_demo`).
         // Only the final execution differs: demo answers from the
         // fixture schema instead of a Postgres connection.
-        if self.client.is_none() && !self.demo {
+        if self.no_session() && !self.demo {
             self.last_error = Some(self.not_connected_message());
             return;
         }
@@ -4940,7 +4948,7 @@ impl App {
     /// Re-read the catalog (`r` in the schema browser): picks up tables
     /// other sessions made since connect. The result is announced.
     pub(super) fn reload_schema(&mut self) {
-        if self.client.is_none() {
+        if self.no_session() {
             self.last_status = Some("not connected — nothing to reload".into());
             return;
         }

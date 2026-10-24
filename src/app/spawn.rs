@@ -474,7 +474,7 @@ impl App {
         decision: Decision,
         is_batch: bool,
     ) {
-        if self.client.is_none() || matches!(self.conn_state, ConnState::Failed(_)) {
+        if self.no_session() {
             self.last_error = Some(self.not_connected_message());
             return;
         }

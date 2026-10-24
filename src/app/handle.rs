@@ -110,6 +110,16 @@ impl App {
                     return;
                 }
                 self.conn_state = ConnState::Connected { server_version };
+                // A refusal from while there was no session (`not
+                // connected · r to retry …`) is untrue now.
+                if self
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("not connected"))
+                {
+                    self.last_error = None;
+                    self.last_error_detail = None;
+                }
                 self.note_server_role(in_recovery);
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
                 // without touching the Client. Replaced on every new

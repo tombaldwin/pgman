@@ -128,7 +128,7 @@ impl App {
     /// Why this session can't edit at all, whatever the cell: no
     /// connection, a transaction awaiting its prompt, read-only.
     fn cell_edit_session_refusal(&self) -> Option<String> {
-        if self.client.is_none() {
+        if self.no_session() {
             return Some(if self.demo {
                 "can't edit: --demo has no database to write to".into()
             } else {
@@ -1112,5 +1112,49 @@ mod live {
         pump(&mut a).await;
         assert_eq!(a.in_recovery, Some(false));
         assert!(!a.read_only && !a.replica_pin);
+    }
+
+    /// Behind the connection-failed card the dead client is still held,
+    /// but nothing offers to run on it: a write is refused before the
+    /// guard's prompt, and so is a cell edit. Once `r` reconnects, the
+    /// `not connected` footer goes with the card.
+    #[tokio::test]
+    async fn a_lost_session_prompts_for_nothing_and_its_footer_goes_on_reconnect() {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let mut a = App::new(Theme::default(), Dsn::parse(DSN).ok(), Vec::new(), cfg);
+        a.read_only = false;
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        assert!(a.client.is_some(), "{:?}", a.conn_state);
+        run(&mut a, "SELECT 1 AS x").await;
+        a.on_msg(AppMsg::ConnectionLost {
+            generation: a.generation,
+            reason: "connection lost · x".into(),
+        });
+        assert!(a.client.is_some(), "fixture: the dead client is still held");
+        let gone = a.not_connected_message();
+
+        a.editor.buffer = "INSERT INTO t VALUES (1)".into();
+        a.request_run(RunKind::Run);
+        assert!(
+            a.pending_run.is_none(),
+            "no prompt for a session that is gone"
+        );
+        assert_ne!(a.mode, Mode::Confirm);
+        assert_eq!(a.last_error.as_deref(), Some(gone.as_str()));
+
+        a.last_error = None;
+        u_at(&mut a, 0, 0);
+        assert!(a.cell_edit.is_none(), "no cell editor either");
+        assert_eq!(a.last_error.as_deref(), Some(gone.as_str()));
+
+        a.last_error = Some(gone.clone());
+        a.start_connect();
+        pump(&mut a).await;
+        assert!(matches!(a.conn_state, ConnState::Connected { .. }));
+        assert_eq!(a.last_error, None, "the card's footer went with it");
     }
 }

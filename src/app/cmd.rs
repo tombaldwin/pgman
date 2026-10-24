@@ -538,7 +538,7 @@ impl App {
             return false;
         }
         let demo_no_client = self.demo && self.client.is_none();
-        if self.client.is_none() && !demo_no_client {
+        if self.no_session() && !demo_no_client {
             self.last_error = Some(self.not_connected_message());
             return false;
         }
