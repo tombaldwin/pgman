@@ -220,6 +220,22 @@ batch.
 - **Possible flake**: `a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently`
   failed once in a full parallel integration run; not reproduced.
 
+### From the v0.2.1 polish (2026-10-24)
+- **`demo.gif` still shows 0.1.0's chrome.** `demo.tape` installs into
+  the real `~/.cargo/bin` and runs under the real HOME; make it use a
+  `target/` binary and scratch HOME / XDG dirs, then re-record.
+- **The start card's two-column mode assumes 4-wide keys**: the
+  `ctrl-l … :tap` row's right column doesn't line up with the S/T/L
+  column above it.
+- **The schema wizard's detail strip at 60x16** is clipped by height
+  with no "more" marker.
+- **The tap status still says "JAR backpressure"** (`src/app/types.rs`)
+  for a drop count only TCP / UDP senders report; docs/tap.md now
+  explains it, the UI string doesn't.
+- **`--demo`'s no-log decision is pinned only as a pure function**:
+  nothing fails if `main()` calls `init_logging()` unconditionally
+  again. A pty-driven subprocess test would pin the call site.
+
 ### Performance / DBA — follow-ups
 - **Paging: one unexplained cursor close while hand-driving.** After
   Esc and `M` arrived together (read as Alt-M), a later `M` said the
