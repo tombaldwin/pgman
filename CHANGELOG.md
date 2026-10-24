@@ -24,6 +24,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The result title is fitted to its border: with a filter on and
   five-digit counts, an 80-column title ran into the corner mid-word;
   it now drops whole segments from the end and ends on `…`.
+- The JDBC tap's N+1 view cuts a long caller with `…` rather than at
+  the border, and shows its fingerprint only when there is room to
+  read one.
 
 ## [0.2.0] — 2026-10-23
 
