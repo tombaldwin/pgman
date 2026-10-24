@@ -1514,6 +1514,72 @@ fn result_diff_d_with_empty_grid_is_a_status_not_an_error() {
     assert!(a.last_error.is_none(), "{:?}", a.last_error);
 }
 
+/// A read-only refusal (25006) that reaches the footer says why this
+/// session is read-only: a standby, `:readonly on`, or — under a
+/// writable profile — none of pgman's settings. Only the profile's own
+/// refusal names `safety.toml`.
+#[test]
+fn a_read_only_refusal_in_the_footer_names_the_sessions_own_reason() {
+    let refusal = |a: &mut App| {
+        a.generation = 1;
+        a.on_msg(AppMsg::QueryFailed {
+            generation: 1,
+            error: "cannot execute UPDATE in a read-only transaction".into(),
+            position: None,
+            detail: Some(crate::conn::QueryErrDetail {
+                code: Some("25006".into()),
+                ..Default::default()
+            }),
+        });
+        a.last_error.clone().unwrap_or_default()
+    };
+    let writable = || {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let dsn = Dsn::parse("postgres://u@db.example:5432/ledger").ok();
+        let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
+        a.read_only = false;
+        a
+    };
+    let hinted =
+        |hint: &str| format!("cannot execute UPDATE in a read-only transaction\nhint: {hint}");
+
+    let mut a = writable();
+    a.note_server_role(Some(true));
+    assert_eq!(refusal(&mut a), hinted(crate::conn::READ_ONLY_STANDBY_HINT));
+
+    let mut a = writable();
+    a.note_server_role(Some(false));
+    assert_eq!(
+        refusal(&mut a),
+        hinted(crate::conn::READ_ONLY_ELSEWHERE_HINT)
+    );
+    let detail = a.last_error_detail.and_then(|d| d.hint).unwrap_or_default();
+    assert!(
+        detail.contains("SHOW default_transaction_read_only"),
+        "{detail}"
+    );
+
+    let mut a = writable();
+    a.note_server_role(Some(false));
+    a.read_only_override = Some(true);
+    a.read_only = true;
+    assert_eq!(
+        refusal(&mut a),
+        hinted("read-only by :readonly on · :readonly off to write")
+    );
+
+    // The default profile: safety.toml (or how to get one), as before.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.note_server_role(Some(false));
+    let err = refusal(&mut a);
+    assert!(
+        err == hinted(crate::conn::READ_ONLY_FILE_HINT)
+            || err == hinted(crate::conn::READ_ONLY_DEFAULT_HINT),
+        "{err}"
+    );
+}
+
 #[test]
 fn a_client_side_refusal_after_a_server_error_drops_the_stale_sqlstate() {
     // A server error leaves its SQLSTATE for F2. A refusal pgman itself
@@ -8459,6 +8525,45 @@ fn the_editor_blocks_every_lift_of_the_read_only_floor_without_a_prompt() {
     }
 }
 
+/// A writable profile in a read-only session — `:readonly on`, a
+/// standby's pin — blocks the escape too, without a prompt, and says
+/// what holds the session read-only. Confirmed, the `SET` used to write
+/// while the header still said read-only. A writable session still
+/// gets the `other` guard's prompt.
+#[test]
+fn the_editor_blocks_the_escape_in_a_session_read_only_by_more_than_its_profile() {
+    let mut a = crate::demo::app(Theme::default());
+    a.safety_config.default.read_only = false;
+    a.safety_config.databases.clear();
+    for (replica, want) in [
+        (false, SESSION_READ_ONLY_ESCAPE_REFUSAL),
+        (true, super::cmd::REPLICA_READONLY_REFUSAL),
+    ] {
+        a.read_only = true;
+        a.replica_pin = replica;
+        for sql in [
+            "SET default_transaction_read_only = off",
+            "SELECT 1; SET default_transaction_read_only = off",
+        ] {
+            a.last_error = None;
+            a.pending_run = None;
+            a.mode = Mode::Editor;
+            run_in_demo(&mut a, sql);
+            assert_eq!(a.last_error.as_deref(), Some(want), "{sql}");
+            assert!(a.pending_run.is_none(), "{sql}: a block never prompts");
+        }
+    }
+    a.read_only = false;
+    a.replica_pin = false;
+    a.last_error = None;
+    a.mode = Mode::Editor;
+    run_in_demo(&mut a, "SET default_transaction_read_only = off");
+    assert!(
+        a.pending_run.is_some(),
+        "writable: the other guard's confirm"
+    );
+}
+
 #[test]
 fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
     // The default safety profile is read-only. The bar is inside the
@@ -9501,6 +9606,43 @@ fn readonly_off_refusal_names_the_entry_to_change() {
     assert_eq!(
         readonly_off_refusal(&cfg, "ledger", false),
         crate::conn::READ_ONLY_DEFAULT_HINT
+    );
+}
+
+/// A database read-only by the project's `.pgman/pgman.toml` is
+/// described as that file's block — not a `[databases.<db>]` the
+/// personal `safety.toml` doesn't have — and one read-only in both says
+/// both need changing.
+#[test]
+fn readonly_off_refusal_names_the_project_file_when_it_set_read_only() {
+    let ro = |read_only| crate::safety::SafetyProfile {
+        read_only,
+        ..Default::default()
+    };
+    let project = |db: &str| crate::project::ProjectSafety {
+        default: None,
+        databases: [(db.to_string(), ro(true))].into_iter().collect(),
+    };
+    let mut writable = SafetyConfig::default();
+    writable.default.read_only = false;
+    let cfg = crate::project::merge_safety(writable, Some(&project("ledger")));
+    for file in [true, false] {
+        assert_eq!(
+            readonly_off_refusal(&cfg, "ledger", file),
+            "ledger is read-only in this project's .pgman/pgman.toml ([safety.databases.ledger]) · set read_only = false there and restart pgman to write"
+        );
+    }
+    let mut personal = SafetyConfig::default();
+    personal.databases.insert("ledger".into(), ro(true));
+    let cfg = crate::project::merge_safety(personal, Some(&project("ledger")));
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", true),
+        "ledger is read-only in safety.toml ([databases.ledger]) and in this project's .pgman/pgman.toml ([safety.databases.ledger]) · both need read_only = false, then restart pgman"
+    );
+    let cfg = crate::project::merge_safety(SafetyConfig::default(), Some(&project("ledger")));
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", false),
+        "ledger is read-only by default (no safety.toml) and in this project's .pgman/pgman.toml ([safety.databases.ledger]) · both need read_only = false, then restart pgman"
     );
 }
 
@@ -11249,6 +11391,36 @@ async fn connecting_from_the_overview_clears_its_footer() {
     });
     assert_eq!(a.mode, Mode::Normal);
     assert_eq!(a.last_status, None);
+}
+
+/// A server in recovery pins the session read-only at connect, whatever
+/// the profile and however it was reached; a primary, or a server that
+/// didn't say, leaves the profile's answer alone.
+#[test]
+fn a_standby_is_pinned_read_only_however_it_was_reached() {
+    let writable = || {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let dsn = Dsn::parse("postgres://u@db.example:5432/ledger").ok();
+        let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
+        a.read_only = false;
+        a
+    };
+    let mut a = writable();
+    a.note_server_role(Some(true));
+    assert!(a.read_only && a.replica_pin);
+    assert_eq!(a.in_recovery, Some(true));
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(crate::app::cmd::REPLICA_READONLY_REFUSAL)
+    );
+    for role in [Some(false), None] {
+        let mut a = writable();
+        a.note_server_role(role);
+        assert!(!a.read_only && !a.replica_pin, "{role:?}");
+    }
 }
 
 #[tokio::test]
@@ -13698,6 +13870,7 @@ fn app_with_open_cursor() -> App {
             sql: "SELECT id FROM t ORDER BY id".into(),
             cursor: Some(cursor_limits()),
             in_transaction: false,
+            standby: false,
         }),
     });
     a.mode = Mode::Normal;
@@ -13756,6 +13929,7 @@ fn a_paged_result_names_m_and_how_it_continues() {
         sql: "SELECT 1".into(),
         ceiling: false,
         in_transaction: false,
+        standby: false,
     };
     assert_eq!(super::result_more(None, Some(7)), More::Unpaged);
     assert_eq!(super::result_more(Some(&p), Some(7)), More::CursorOpen);
@@ -13768,14 +13942,119 @@ fn a_paged_result_names_m_and_how_it_continues() {
     assert_eq!(super::result_more(Some(&ceiling), Some(7)), More::Ceiling);
     let in_tx = ResultPaging {
         in_transaction: true,
-        ..p
+        ..p.clone()
     };
     assert_eq!(super::result_more(Some(&in_tx), None), More::InTransaction);
+    let standby = ResultPaging { standby: true, ..p };
+    assert_eq!(super::result_more(Some(&standby), None), More::Standby);
 
     let a = app_with_open_cursor();
     assert_eq!(a.result_more(), More::CursorOpen);
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(status.ends_with("partial · M fetches more"), "{status}");
+}
+
+/// On a standby the pager holds no cursor (a recovery conflict would end
+/// the session): the first page lands with nothing open, the title says
+/// `M` re-runs, no close deadline is set, and a re-run there stays that way.
+#[test]
+fn a_standby_result_holds_no_cursor_and_m_re_runs() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: Some(RunPaging {
+            sql: "SELECT id FROM t".into(),
+            cursor: None,
+            in_transaction: false,
+            standby: true,
+        }),
+    });
+    assert_eq!(a.result_more(), crate::grid::More::Standby);
+    assert!(a.cursor.is_none());
+    assert_eq!(a.cursor_deadline(), None);
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.ends_with("partial · on a standby · M re-runs for more"),
+        "{status}"
+    );
+    let id = a.result_paging.as_ref().unwrap().id;
+    let opened = crate::query::paging::Opened {
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..2000),
+            truncated: true,
+        },
+        cursor: None,
+        standby: true,
+        in_transaction: false,
+        shadowed: false,
+        origins: Vec::new(),
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(opened)),
+    });
+    assert_eq!(a.grid.row_count(), 2000);
+    assert_eq!(a.result_more(), crate::grid::More::Standby);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("re-ran the query · 2000 row(s) · partial · on a standby · M re-runs for more")
+    );
+}
+
+/// `M` re-ran a closed cursor's query, and this time a schema has its
+/// own function by a built-in name it calls: the pager ran it unpaged,
+/// and it is no longer a result for `M` — each re-run may write again.
+#[test]
+fn a_rerun_that_came_back_shadowed_stops_offering_m() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["n".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: Some(RunPaging {
+            sql: "SELECT log(i) FROM t".into(),
+            cursor: None,
+            in_transaction: false,
+            standby: false,
+        }),
+    });
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+    let id = a.result_paging.as_ref().unwrap().id;
+    let opened = crate::query::paging::Opened {
+        grid: crate::grid::Grid {
+            columns: vec!["n".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        cursor: None,
+        standby: false,
+        in_transaction: false,
+        shadowed: true,
+        origins: Vec::new(),
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(opened)),
+    });
+    assert_eq!(a.result_more(), crate::grid::More::Unpaged);
+    assert!(a.result_paging.is_none());
 }
 
 #[test]
@@ -13852,7 +14131,7 @@ fn m_explains_itself_where_it_cannot_fetch() {
         a.last_status
             .as_deref()
             .unwrap_or("")
-            .starts_with("only a plain SELECT run from the editor pages"),
+            .starts_with("only a plain SELECT from the editor, calling no function but read-only built-ins, pages"),
         "{:?}",
         a.last_status
     );
@@ -13861,6 +14140,7 @@ fn m_explains_itself_where_it_cannot_fetch() {
         sql: "SELECT 1".into(),
         ceiling: false,
         in_transaction: true,
+        standby: false,
     });
     a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
     assert!(
@@ -14053,6 +14333,8 @@ fn a_re_run_replaces_the_rows_and_keeps_the_sort() {
         },
         cursor: Some(cursor_limits()),
         in_transaction: false,
+        standby: false,
+        shadowed: false,
         origins: Vec::new(),
     };
     a.on_msg(AppMsg::PageLoaded {
@@ -14343,4 +14625,113 @@ fn the_result_diff_keys_on_a_composite_key_and_only_when_both_sides_agree() {
         choose_diff_key(&cache, &a, &a.clone()),
         (RowKey::Columns(vec![0]), false)
     );
+}
+
+// --- A connection lost under the App ---------------------------------------
+
+/// The server's parting FATAL is the reason; without one, the close is.
+#[test]
+fn a_lost_connection_names_the_servers_reason() {
+    let fatal = crate::conn::NoticeMsg {
+        severity: "FATAL".into(),
+        message: "terminating connection due to conflict with recovery".into(),
+        detail: None,
+        hint: None,
+    };
+    assert!(fatal.ends_session());
+    assert_eq!(
+        super::msg::connection_lost_reason(Some(&fatal)),
+        "connection lost · terminating connection due to conflict with recovery"
+    );
+    assert_eq!(
+        super::msg::connection_lost_reason(None),
+        "connection lost · the connection to the server closed"
+    );
+    for severity in ["NOTICE", "WARNING", "INFO", "ERROR"] {
+        let n = crate::conn::NoticeMsg {
+            severity: severity.into(),
+            ..fatal.clone()
+        };
+        assert!(!n.ends_session(), "{severity}");
+    }
+    let panic = crate::conn::NoticeMsg {
+        severity: "PANIC".into(),
+        ..fatal
+    };
+    assert!(panic.ends_session());
+}
+
+/// A connected App whose connection closes shows the connection-failed
+/// card with the reason — `r` reconnects from there — and drops what
+/// belonged to the session; it stops saying "connected".
+#[test]
+fn a_lost_connection_leaves_connected_for_the_failure_card() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Connected {
+        server_version: "16.4".into(),
+    };
+    a.mode = Mode::Editor;
+    a.query_running = true;
+    a.tx_open = true;
+    a.last_status = Some("run ok · 1000 row(s) · partial · M fetches more".into());
+    a.last_error = Some("the table changed since pgman read it".into());
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · terminating connection due to administrator command".into(),
+    });
+    match &a.conn_state {
+        ConnState::Failed(reason) => assert_eq!(
+            reason,
+            "connection lost · terminating connection due to administrator command"
+        ),
+        other => panic!("still {other:?}"),
+    }
+    assert_eq!(
+        a.mode,
+        Mode::Normal,
+        "the card's r / p keys are Normal mode's"
+    );
+    assert!(!a.query_running);
+    assert_eq!(
+        a.last_status, None,
+        "the last run's status is the old session's"
+    );
+    assert_eq!(
+        a.last_error, None,
+        "the last error is the old session's too"
+    );
+    assert!(
+        !a.tx_open,
+        "the server ended the transaction with the session"
+    );
+    assert_eq!(
+        a.not_connected_message(),
+        "not connected · r to retry · c to choose a connection"
+    );
+}
+
+/// Only a connected App is lost: a failed connect keeps its own error, a
+/// connect in flight is not touched, and an old session's close (after a
+/// reconnect bumped the generation) is dropped.
+#[test]
+fn a_connection_lost_message_only_moves_a_connected_app() {
+    let lost = |a: &App| AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · x".into(),
+    };
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Failed("connection refused".into());
+    a.on_msg(lost(&a));
+    assert!(matches!(&a.conn_state, ConnState::Failed(e) if e == "connection refused"));
+    a.conn_state = ConnState::Connecting;
+    a.on_msg(lost(&a));
+    assert!(matches!(a.conn_state, ConnState::Connecting));
+    a.conn_state = ConnState::Connected {
+        server_version: "16.4".into(),
+    };
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation.wrapping_sub(1),
+        reason: "connection lost · x".into(),
+    });
+    assert!(matches!(a.conn_state, ConnState::Connected { .. }));
 }

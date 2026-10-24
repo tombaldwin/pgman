@@ -104,7 +104,10 @@ source = { kind = "static", connections = ["ledger-local", "ledgerlog-local"] }
 
 - **A replica** opens read-only, whatever `safety.toml` says, and stays
   that way for the session: `\c <db>` keeps it, and `:readonly off` is
-  refused. A write can only fail there.
+  refused. A write can only fail there. The same holds for any server
+  that says it is in recovery (`pg_is_in_recovery()`) at connect,
+  however it was reached: `--dsn`, `:connect`, or a connection whose
+  role doesn't say replica.
 - **A primary or a standalone instance** gets its database's safety
   profile, like any other connection.
 - **Credentials**: with a secret configured, the password (and user) is

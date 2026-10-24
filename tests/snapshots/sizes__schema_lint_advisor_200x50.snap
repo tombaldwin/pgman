@@ -32,9 +32,6 @@ expression: dump(&buf)
 │       │  MED    ADV005   server                                            32% of checkpoints forced by WAL volume                                                                           │       │
 │       │  MED    LINT102  public.audit_log.audit_log_entity_idx             index never scanned since last stats reset                                                                        │       │
 │       │  MED    LINT104  public.webhook_deliveries                         high dead-tuple ratio (table bloat)                                                                               │       │
-│       │  LOW    ADV001   ledger                                            buffer cache hit ratio 0.969 (below 0.99)                                                                         │       │
-│       │  LOW    ADV003   public.webhook_deliveries                         dead tuples 18% of live; its scale factor allows it                                                               │       │
-│       │                                                                                                                                                                                      │       │
 │       │  ADV002 · queries spill to temp files (187 GB so far)                                                                                                                                │       │
 │       │  setting:  work_mem 4MB (this session) → 8MB (no restart)                                                                                                                            │       │
 │       │  suggest:  ALTER ROLE billing SET work_mem = '8MB';                                                                                                                                  │       │
@@ -44,8 +41,11 @@ expression: dump(&buf)
 │       │    41 MB a call × 96 calls: SELECT * FROM webhook_deliveries WHERE status = $1 ORDER BY created_at                                                                                   │       │
 │       │  because:  the worst statement spills 41 MB a call, more than 4× work_mem: twice helps the smaller spills, but no safe work_mem covers that one — look at the statement (an index,   │       │
 │       │            or less data per sort)                                                                                                                                                    │       │
-│       │  RDS:      per role: ALTER ROLE works the same on RDS and Aurora · server-wide: parameter group key work_mem (dynamic: no reboot, in kB) · same on Aurora                            │       │
-│       │  why:      sorts and hashes bigger than work_mem (4MB) write temp files. work_mem is per sort node per connection, so raise it for the role that spills rather than server-wide      │       │
+│       │  RDS:      per role: ALTER ROLE works the same on RDS and Aurora · server-wide: parameter group key work_mem (dynamic: no reboot, in kB) · same on Aurora, where an instance's DB    │       │
+│       │            parameter group can override the cluster's value                                                                                                                          │       │
+│       │  why:      sorts and hashes bigger than work_mem (4MB) write temp files. work_mem is per sort node per connection, so raise it for the role that spills rather than server-wide.     │       │
+│       │            ALTER ROLE … SET reaches new sessions only: a connection pool keeps its connections until they are recycled (HikariCP's maxLifetime, 30 min by default) or the            │       │
+│       │            application restarts                                                                                                                                                      │       │
 │       ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

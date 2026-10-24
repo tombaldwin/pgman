@@ -45,20 +45,64 @@ pub const LIFETIME_CLOSE: Duration = Duration::from_secs(10 * 60);
 /// timeouts: the main loop's clock is no finer than this.
 const MIN_CLOSE: Duration = Duration::from_millis(500);
 
-/// `true` exactly when it runs as the first command of its transaction
-/// — which, sent on its own, means the session was not inside one.
-/// Postgres documents `statement_timestamp()` and
+/// Three answers in one row, read with the `prepare` the run already does.
+///
+/// The first is `true` exactly when it runs as the first command of its
+/// transaction — which, sent on its own, means the session was not
+/// inside one. Postgres documents `statement_timestamp()` and
 /// `transaction_timestamp()` as equal during the first command of a
 /// transaction.
-const IDLE_PROBE_SQL: &str = "SELECT statement_timestamp() = transaction_timestamp()";
+///
+/// The second, `pg_is_in_recovery()`, says the server is a standby,
+/// where an open cursor is not safe to hold: replaying the primary's
+/// DDL or VACUUM conflicts with it, and after
+/// `max_standby_streaming_delay` (30 s by default, less on an Aurora
+/// reader) the server terminates the whole session. There pgman fetches
+/// the page and commits, and `M` re-runs the query. Asked per run, not
+/// at connect, so a standby promoted since is a primary again.
+///
+/// Every call is qualified by `pg_catalog`: pgman's own safety check
+/// must not resolve through the operator's `search_path`, where a
+/// schema listed ahead of `pg_catalog` could answer `lower(…)` or
+/// `pg_is_in_recovery()` with a function of its own — one that writes,
+/// or says "not a standby".
+///
+/// The third, [`crate::safety::shadowing_sql`], says some schema has its
+/// own function by the name of a built-in the statement calls
+/// unqualified. The server resolves such a call by signature, so it may
+/// reach that function — which may write — and the statement runs
+/// unpaged.
+pub fn probe_sql(sql: &str) -> String {
+    let names = crate::safety::pageable_calls(sql).unwrap_or_default();
+    format!(
+        "SELECT pg_catalog.statement_timestamp() = pg_catalog.transaction_timestamp(), \
+         pg_catalog.pg_is_in_recovery(), {}",
+        crate::safety::shadowing_sql(&names)
+    )
+}
+
+/// What [`probe_sql`] said, from its three text columns: `(idle,
+/// standby, shadowed)`. No answer (the probe failed — an aborted
+/// transaction) is "not idle", which runs the statement unpaged; a
+/// shadowing answer that isn't `f` counts as shadowed. Pure.
+pub fn read_probe(row: Option<[Option<&str>; 3]>) -> (bool, bool, bool) {
+    match row {
+        Some([idle, standby, shadowed]) => (
+            idle == Some("t"),
+            standby == Some("t"),
+            shadowed != Some("f"),
+        ),
+        None => (false, false, true),
+    }
+}
 
 /// The two server settings that would end the session under an open
 /// cursor, in milliseconds (`pg_settings.setting` is in the GUC's base
 /// unit). `transaction_timeout` is new in Postgres 17; before that the
 /// subquery is NULL.
 const SETTINGS_SQL: &str = "SELECT \
-(SELECT setting FROM pg_settings WHERE name = 'idle_in_transaction_session_timeout'), \
-(SELECT setting FROM pg_settings WHERE name = 'transaction_timeout')";
+(SELECT setting FROM pg_catalog.pg_settings WHERE name = 'idle_in_transaction_session_timeout'), \
+(SELECT setting FROM pg_catalog.pg_settings WHERE name = 'transaction_timeout')";
 
 /// The statement indices of [`open_batch`]'s pieces, as counted by
 /// `CommandComplete`s: `BEGIN`, the settings read, `DECLARE`, `FETCH`.
@@ -154,13 +198,20 @@ pub struct Opened {
     /// The first page. `truncated` iff more rows exist.
     pub grid: Grid,
     /// `Some` while the cursor stays open for `M`; `None` when the
-    /// result was complete (or ran unpaged).
+    /// result was complete, ran unpaged, or ran on a standby.
     pub cursor: Option<Limits>,
+    /// The server is a standby, so no cursor was held past the first
+    /// page (see [`probe_sql`]): `M` re-runs the query.
+    pub standby: bool,
     /// The session was already inside a transaction (pgman's auto-tx,
     /// or a `BEGIN` the operator typed), so the statement ran the old
     /// way, unpaged: closing a cursor there would end *their*
     /// transaction.
     pub in_transaction: bool,
+    /// A built-in name it calls is some schema's own function too
+    /// ([`probe_sql`]), so it ran unpaged — and is not one for `M` to
+    /// re-run: each run may write again.
+    pub shadowed: bool,
     /// Where each column came from ([`crate::conn::column_origins`]),
     /// so a cell of a paged result can still be edited.
     pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
@@ -332,8 +383,9 @@ async fn open(
 ) -> Result<(Opened, Option<OpenCursor>), QueryErr> {
     // Pipelined: tokio-postgres sends both before awaiting either, so
     // the probe costs no round trip of its own.
+    let probe_sql = probe_sql(sql);
     let (stmt, probe) =
-        futures::future::join(client.prepare(sql), client.simple_query(IDLE_PROBE_SQL)).await;
+        futures::future::join(client.prepare(sql), client.simple_query(&probe_sql)).await;
     let stmt = stmt.map_err(QueryErr::from)?;
     let columns: Vec<String> = stmt
         .columns()
@@ -341,20 +393,27 @@ async fn open(
         .map(|c| c.name().to_string())
         .collect();
     let origins = crate::conn::column_origins(stmt.columns());
-    let idle = probe.ok().is_some_and(|msgs| {
-        msgs.iter().any(
-            |m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(r) if r.get(0) == Some("t")),
-        )
-    });
-    if !idle || columns.is_empty() {
+    let probe = probe.ok();
+    let (idle, standby, shadowed) = read_probe(probe.as_deref().and_then(|msgs| {
+        msgs.iter().find_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => {
+                Some([0, 1, 2].map(|i| r.try_get(i).ok().flatten()))
+            }
+            _ => None,
+        })
+    }));
+    if !idle || shadowed || columns.is_empty() {
         // Today's path. A zero-column `SELECT FROM t` reports its row
-        // count, which a cursor would not.
+        // count, which a cursor would not; a call that may reach a
+        // schema's own function must run for every row and commit.
         let grid = crate::conn::run_statement(client, sql).await?;
         return Ok((
             Opened {
                 grid,
                 cursor: None,
+                standby,
                 in_transaction: !idle,
+                shadowed: idle && shadowed,
                 origins,
             },
             None,
@@ -371,7 +430,9 @@ async fn open(
     };
     let (rows, lookahead) = split_page(None, rows, want);
     let more = lookahead.is_some();
-    if !more {
+    // On a standby the cursor is never held: the page is all there is.
+    let hold = more && !standby;
+    if !hold {
         end(client, "COMMIT").await;
     }
     let grid = Grid {
@@ -379,14 +440,16 @@ async fn open(
         rows,
         truncated: more,
     };
-    let open = more.then_some(OpenCursor {
+    let open = hold.then_some(OpenCursor {
         lookahead,
         n_columns: grid.columns.len(),
     });
     let opened = Opened {
         grid,
-        cursor: more.then(|| close_limits(settings.0, settings.1)),
+        cursor: hold.then(|| close_limits(settings.0, settings.1)),
+        standby,
         in_transaction: false,
+        shadowed: false,
         origins,
     };
     Ok((opened, open))
@@ -499,6 +562,32 @@ mod tests {
         assert_eq!(statement_position(Some(10), 10, 8), None, "in the wrapping");
         assert_eq!(statement_position(Some(3), 10, 8), None);
         assert_eq!(statement_position(None, 10, 8), None);
+    }
+
+    #[test]
+    fn the_probe_reads_idle_standby_and_shadowed_and_no_answer_is_unpaged() {
+        let f = Some("f");
+        let t = Some("t");
+        assert_eq!(read_probe(Some([t, f, f])), (true, false, false));
+        assert_eq!(read_probe(Some([t, t, f])), (true, true, false));
+        assert_eq!(read_probe(Some([f, t, f])), (false, true, false));
+        assert_eq!(read_probe(Some([t, f, t])), (true, false, true));
+        assert_eq!(read_probe(Some([None, None, None])), (false, false, true));
+        assert_eq!(read_probe(None), (false, false, true));
+    }
+
+    /// The probe asks about the built-ins the statement calls
+    /// unqualified, and asks nothing when it calls none.
+    #[test]
+    fn the_probe_asks_whether_a_called_built_in_is_shadowed() {
+        let q = probe_sql("SELECT log('x' || i) FROM generate_series(1, 3) i");
+        assert!(q.ends_with(")"), "{q}");
+        assert!(q.contains("IN ('generate_series', 'log')"), "{q}");
+        assert!(probe_sql("SELECT * FROM t").ends_with("pg_catalog.pg_is_in_recovery(), false"));
+        // pgman's own calls never resolve through the operator's path.
+        assert!(q.starts_with(
+            "SELECT pg_catalog.statement_timestamp() = pg_catalog.transaction_timestamp()"
+        ));
     }
 
     #[test]

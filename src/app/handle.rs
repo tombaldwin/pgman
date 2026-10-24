@@ -1,6 +1,64 @@
 use super::*;
 
 impl App {
+    /// What the connect learned about the server's role
+    /// (`pg_is_in_recovery()`). A standby is pinned read-only for the
+    /// session exactly as a replica opened from the environments
+    /// overview is (`replica_pin`), however it was reached — `--dsn`,
+    /// `:connect`, a static environment — and whatever the profile
+    /// says: the server refuses every write, so `u`, `:readonly off`
+    /// and the header must say so up front rather than let a write be
+    /// sent and blamed on `safety.toml`.
+    pub(super) fn note_server_role(&mut self, in_recovery: Option<bool>) {
+        self.in_recovery = in_recovery;
+        if in_recovery == Some(true) {
+            self.read_only = true;
+            self.replica_pin = true;
+        }
+    }
+
+    /// The footer line for a statement the guard refused
+    /// ([`super::blocked_by_safety_message`]), except that an escape from
+    /// a session read-only by more than its profile names that session's
+    /// reason — the replica's pin or `:readonly on` — not `safety.toml`,
+    /// which says the database is writable.
+    pub(super) fn blocked_message(&self, decision: &crate::safety::Decision, db: &str) -> String {
+        if decision.read_only_escape {
+            return self.read_only_escape_message(db);
+        }
+        super::blocked_by_safety_message(decision, db)
+    }
+
+    /// [`Self::blocked_message`]'s line for an escape.
+    pub(super) fn read_only_escape_message(&self, db: &str) -> String {
+        if self.safety_config.profile_for(db).read_only {
+            super::read_only_escape_refusal(super::safety_toml_exists())
+        } else if self.replica_pin {
+            super::cmd::REPLICA_READONLY_REFUSAL.to_string()
+        } else {
+            super::SESSION_READ_ONLY_ESCAPE_REFUSAL.to_string()
+        }
+    }
+
+    /// Why this session is read-only, for the hint a read-only refusal
+    /// (SQLSTATE `25006`) carries: what the server said at connect, the
+    /// replica pin, the database's profile, `:readonly on`.
+    pub(super) fn read_only_cause(&self) -> conn::ReadOnlyCause {
+        let db = self
+            .dsn
+            .as_ref()
+            .map(|d| d.dbname.as_str())
+            .unwrap_or("default");
+        conn::ReadOnlyCause::for_session(
+            &self.safety_config,
+            db,
+            crate::app::existing_safety_toml(),
+            self.in_recovery,
+            self.replica_pin,
+            self.read_only_override == Some(true),
+        )
+    }
+
     /// Apply a finished message from a spawned task. Messages from a
     /// superseded connection generation are dropped, except the kinds
     /// that don't belong to a connection (update check, environments,
@@ -40,8 +98,29 @@ impl App {
                 tunnel,
                 ..
             } => {
+                if client.is_closed() {
+                    // Closed between the bootstrap and now: its
+                    // `ConnectionLost` landed while this was still
+                    // connecting, and went unheeded. Its tunnel goes
+                    // off-thread, like the one a Booted replaces below.
+                    if let Some(dead) = tunnel {
+                        tokio::task::spawn_blocking(move || drop(dead));
+                    }
+                    self.conn_state = ConnState::Failed(super::msg::connection_lost_reason(None));
+                    return;
+                }
                 self.conn_state = ConnState::Connected { server_version };
-                self.in_recovery = in_recovery;
+                // A refusal from while there was no session (`not
+                // connected · r to retry …`) is untrue now.
+                if self
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("not connected"))
+                {
+                    self.last_error = None;
+                    self.last_error_detail = None;
+                }
+                self.note_server_role(in_recovery);
                 // Pre-build the cancel dispatcher so Ctrl-C can fire
                 // without touching the Client. Replaced on every new
                 // Booted so the dispatcher always matches the live
@@ -74,6 +153,7 @@ impl App {
             AppMsg::BootFailed { error, .. } => {
                 self.conn_state = ConnState::Failed(error);
             }
+            AppMsg::ConnectionLost { reason, .. } => self.on_connection_lost(reason),
             AppMsg::QueryOk {
                 grid,
                 origins,
@@ -115,6 +195,7 @@ impl App {
                     sql: p.sql,
                     ceiling: false,
                     in_transaction: p.in_transaction,
+                    standby: p.standby,
                 });
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-
@@ -219,6 +300,10 @@ impl App {
                     self.last_status = Some("cancelled".into());
                     return;
                 }
+                // A read-only refusal says why this session is
+                // read-only; the server's message doesn't.
+                let (error, detail) =
+                    conn::explain_read_only_refusal(error, detail, &self.read_only_cause());
                 self.last_error = Some(error);
                 self.last_error_detail = detail;
                 // Postgres flagged a syntax error at a specific

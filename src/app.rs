@@ -66,6 +66,13 @@ pub fn blocked_by_safety_message(decision: &Decision, db: &str) -> String {
 /// that does not exist sent the operator looking for it; say instead
 /// how to get one ([`crate::conn::READ_ONLY_DEFAULT_HINT`], the same
 /// line the server-side 25006 refusal carries). Pure / testable.
+/// The escape refused in a session that is read-only by more than its
+/// profile, which is writable: `:readonly on` turned it on, and
+/// `:readonly off` turns it off ([`crate::app::cmd`] names a replica's
+/// pin instead).
+pub const SESSION_READ_ONLY_ESCAPE_REFUSAL: &str =
+    "this session is read-only by :readonly on · :readonly off to write, not a SET";
+
 pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
     if safety_toml_exists {
         safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
@@ -75,15 +82,18 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
 }
 
 /// `:readonly off` refused by the profile: where the setting lives and
-/// what to change. `safety.toml` is read at start, so the next step
-/// ends in a restart. Pure.
+/// what to change — the personal `safety.toml` (or the built-in default
+/// without one), this project's `.pgman/pgman.toml`, or both, as the
+/// merge recorded (`SafetyConfig::read_only_origin`). Both files are
+/// read at start, so the next step ends in a restart. Pure.
 pub fn readonly_off_refusal(
     cfg: &safety::SafetyConfig,
     db: &str,
     safety_toml_exists: bool,
 ) -> String {
-    let own_entry = cfg.databases.contains_key(db);
-    match (safety_toml_exists, own_entry) {
+    let origin = cfg.read_only_origin(db);
+    let personal = || {
+        match (safety_toml_exists, origin.personal_own_entry) {
         (false, _) => crate::conn::READ_ONLY_DEFAULT_HINT.to_string(),
         (true, true) => format!(
             "{db} is read-only in safety.toml ([databases.{db}]) · set read_only = false there and restart pgman to write"
@@ -92,6 +102,23 @@ pub fn readonly_off_refusal(
             "read-only is safety.toml's [default] · add [databases.{db}] with read_only = false and restart pgman to write"
         ),
     }
+    };
+    let Some(block) = origin.project.as_deref() else {
+        return personal();
+    };
+    if !origin.personal {
+        return format!(
+            "{db} is read-only in this project's .pgman/pgman.toml ({block}) · set read_only = false there and restart pgman to write"
+        );
+    }
+    let mine = match (safety_toml_exists, origin.personal_own_entry) {
+        (false, _) => "by default (no safety.toml)".to_string(),
+        (true, true) => format!("in safety.toml ([databases.{db}])"),
+        (true, false) => "in safety.toml's [default]".to_string(),
+    };
+    format!(
+        "{db} is read-only {mine} and in this project's .pgman/pgman.toml ({block}) · both need read_only = false, then restart pgman"
+    )
 }
 
 /// The status line when the query Enter loaded from the log picker
@@ -197,7 +224,13 @@ fn is_panel(mode: Mode) -> bool {
 /// [`read_only_escape_refusal`] to show; checked at message time
 /// because the profile itself does not record where it came from.
 fn safety_toml_exists() -> bool {
-    crate::util::config_file("safety.toml").exists()
+    existing_safety_toml().is_some()
+}
+
+/// The personal `safety.toml`, when there is one.
+pub(crate) fn existing_safety_toml() -> Option<std::path::PathBuf> {
+    let path = crate::util::config_file("safety.toml");
+    path.exists().then_some(path)
 }
 
 /// Parse `BOOTSTRAP_SQL`'s result grid (`database`, `size` columns) into
@@ -842,7 +875,7 @@ pub fn choose_diff_key(
         };
         if let (Ok(ka), Ok(kb)) = (key(a), key(b)) {
             if ka == kb {
-                let cols = ka.pk.iter().map(|(idx, _)| *idx).collect();
+                let cols = ka.pk.iter().map(|(idx, ..)| *idx).collect();
                 return (RowKey::Columns(cols), true);
             }
         }
@@ -1751,9 +1784,10 @@ pub struct App {
     /// and `:readonly off` against such a profile is refused outright
     /// before it gets set (`dispatch_read_only`).
     pub read_only_override: Option<bool>,
-    /// The connected server is a replica opened from the environments
-    /// overview: read-only for the whole session, `\c <db>` included,
-    /// and `:readonly off` is refused.
+    /// The connected server is a replica — opened from the environments
+    /// overview as one, or a standby by `pg_is_in_recovery()` at
+    /// connect (`App::note_server_role`): read-only for the whole
+    /// session, `\c <db>` included, and `:readonly off` is refused.
     pub replica_pin: bool,
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
@@ -2079,7 +2113,7 @@ impl App {
                 .then(|| draft_save_at(self.draft_last_save, DRAFT_SAVE_GAP));
             // An open result cursor closes on its deadline even when
             // nothing else wakes the loop: an idle pgman must not leave
-            // the session idle in transaction.
+            // the session idle in transaction past it.
             let cursor_close_at = self.cursor_deadline();
             tokio::select! {
                 ev = events.recv() => {
@@ -3884,6 +3918,14 @@ impl App {
 
     /// "not connected", plus the one thing the operator can do about
     /// it from where they are.
+    /// No session to work on: never connected, or the connection is gone
+    /// and the failure card is up (the dead client stays in `client`
+    /// until a reconnect replaces it). A statement refused here never
+    /// reaches the guard's prompt.
+    pub(super) fn no_session(&self) -> bool {
+        self.client.is_none() || matches!(self.conn_state, ConnState::Failed(_))
+    }
+
     pub fn not_connected_message(&self) -> String {
         if matches!(self.conn_state, ConnState::Failed(_)) {
             "not connected · r to retry · c to choose a connection".to_string()
@@ -3909,6 +3951,13 @@ impl App {
         // The barrier closes the cursor (and with no client there is
         // none); the title follows.
         self.cursor = None;
+        if matches!(self.conn_state, ConnState::Failed(_)) {
+            // The connection-failed card is up: the session was lost
+            // (`App::on_connection_lost`), or a reconnect failed and the
+            // client still held is the session that was left. Neither is
+            // one to send work to; `r` reconnects.
+            return None;
+        }
         let client = self.client.clone()?;
         Some(crate::query::paging::Db::new(client, self.pager.as_ref()))
     }
@@ -3952,8 +4001,9 @@ impl App {
             .map(|c| c.deadline())
     }
 
-    /// Close a cursor that has outlived its limits — never leave a
-    /// production session idle in transaction — and say so.
+    /// Close a cursor that has outlived its limits — the session is idle
+    /// in transaction while it is open, holding its tables' locks — and
+    /// say so.
     pub(crate) fn tick_cursor_timeout(&mut self, now: Instant) {
         if self.query_running {
             return;
@@ -3997,7 +4047,7 @@ impl App {
         match self.result_more() {
             More::Unpaged => {
                 self.last_status = Some(
-                    "only a plain SELECT run from the editor pages · pgman query '…' --json returns every row"
+                    "only a plain SELECT from the editor, calling no function but read-only built-ins, pages · pgman query '…' --json returns every row"
                         .into(),
                 );
             }
@@ -4017,7 +4067,7 @@ impl App {
                 self.spawn_page_request(PageRequest::Fetch(want));
                 self.last_status = Some(format!("fetching rows {}–{}…", held + 1, held + want));
             }
-            More::CursorClosed => {
+            More::CursorClosed | More::Standby => {
                 // The statement passed `is_pageable_select` when it first
                 // ran — a plain SELECT, which every guard allows — and that
                 // classification is a pure function of the text.
@@ -4026,9 +4076,11 @@ impl App {
                 };
                 let want = (held + PAGE_ROWS).min(MAX_HELD_ROWS);
                 self.spawn_page_request(PageRequest::Rerun(sql, want));
-                self.last_status = Some(format!(
-                    "the cursor had closed · re-running for {want} rows…"
-                ));
+                self.last_status = Some(if self.result_more() == More::Standby {
+                    format!("on a standby · re-running for {want} rows…")
+                } else {
+                    format!("the cursor had closed · re-running for {want} rows…")
+                });
             }
         }
     }
@@ -4036,9 +4088,13 @@ impl App {
     /// Send a `M` request to the pager; the answer lands as
     /// `AppMsg::PageLoaded` for the active result.
     fn spawn_page_request(&mut self, req: PageRequest) {
-        let (Some(pager), Some(result_id)) = (
+        // Behind the connection-failed card the pager, if any, is the
+        // session a failed reconnect left: nothing to page on (as `db`).
+        let failed = matches!(self.conn_state, ConnState::Failed(_));
+        let (Some(pager), Some(result_id), false) = (
             self.pager.clone(),
             self.result_paging.as_ref().map(|p| p.id),
+            failed,
         ) else {
             self.last_error = Some(self.not_connected_message());
             return;
@@ -4129,9 +4185,17 @@ impl App {
             }
             Ok(PageOutcome::Rerun(opened)) => {
                 let in_transaction = opened.in_transaction;
+                let standby = opened.standby;
+                let shadowed = opened.shadowed;
                 self.replace_rows(opened.grid);
                 if let Some(p) = self.result_paging.as_mut() {
                     p.in_transaction = in_transaction;
+                    p.standby = standby;
+                }
+                if shadowed {
+                    // A schema has its own function by a name it calls
+                    // now: no more re-runs (see the pager route).
+                    self.result_paging = None;
                 }
                 let now = Instant::now();
                 self.cursor = opened.cursor.map(|limits| CursorMirror {
@@ -4261,7 +4325,7 @@ impl App {
         // would be against a real database — see `spawn_run_demo`).
         // Only the final execution differs: demo answers from the
         // fixture schema instead of a Postgres connection.
-        if self.client.is_none() && !self.demo {
+        if self.no_session() && !self.demo {
             self.last_error = Some(self.not_connected_message());
             return;
         }
@@ -4297,7 +4361,7 @@ impl App {
             return;
         };
 
-        let decision = safety::evaluate(&self.safety_config, db, &sql);
+        let decision = safety::evaluate_in_session(&self.safety_config, db, &sql, self.read_only);
 
         // EXPLAIN (without ANALYZE) never executes the inner statement — bypass
         // guards entirely.
@@ -4314,7 +4378,7 @@ impl App {
         // rollback transaction inside `spawn_run`).
         match decision.guard {
             Guard::Block => {
-                self.last_error = Some(blocked_by_safety_message(&decision, db));
+                self.last_error = Some(self.blocked_message(&decision, db));
             }
             Guard::Confirm => {
                 self.pending_run = Some(PendingRun {
@@ -4380,7 +4444,7 @@ impl App {
         let sql = safety::join_verified(&statements);
         let decisions: Vec<Decision> = statements
             .iter()
-            .map(|s| safety::evaluate(&self.safety_config, &db, s))
+            .map(|s| safety::evaluate_in_session(&self.safety_config, &db, s, self.read_only))
             .collect();
         let max_guard = decisions
             .iter()
@@ -4406,7 +4470,7 @@ impl App {
                 // A script that opens by turning read-only off gets told so:
                 // the per-kind summary would blame the wrong statement.
                 self.last_error = Some(if synthesized.read_only_escape {
-                    read_only_escape_refusal(safety_toml_exists())
+                    self.read_only_escape_message(&db)
                 } else if synthesized.server_control {
                     safety::SERVER_CONTROL_REFUSAL.to_string()
                 } else {
@@ -4890,7 +4954,7 @@ impl App {
     /// Re-read the catalog (`r` in the schema browser): picks up tables
     /// other sessions made since connect. The result is announced.
     pub(super) fn reload_schema(&mut self) {
-        if self.client.is_none() {
+        if self.no_session() {
             self.last_status = Some("not connected — nothing to reload".into());
             return;
         }
@@ -6574,6 +6638,7 @@ pub(crate) fn result_more(
         None => More::Unpaged,
         Some(p) if p.in_transaction => More::InTransaction,
         Some(p) if p.ceiling => More::Ceiling,
+        Some(p) if p.standby => More::Standby,
         Some(p) if cursor_result == Some(p.id) => More::CursorOpen,
         Some(_) => More::CursorClosed,
     }

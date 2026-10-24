@@ -1057,6 +1057,85 @@ fn batch_read_only_transaction_refusal_carries_the_configuration_hint() {
     );
 }
 
+/// A writable profile's write refused by the server — the compose
+/// standby, or a transaction the script itself made read-only — is not
+/// blamed on `safety.toml`: the hint says it isn't pgman's setting, and
+/// names a standby among the suspects, since `--batch` doesn't ask.
+#[test]
+fn batch_read_only_refusal_under_a_writable_profile_does_not_blame_safety_toml() {
+    let home = scratch_home("readonly-not-ours", WRITABLE_PROFILE);
+    let standby = batch_with_home_dsn(
+        &home,
+        STANDBY_DSN,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE pgman_it_ro_not_ours (id int)",
+        ],
+    );
+    let in_script = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "SET TRANSACTION READ ONLY; CREATE TABLE pgman_it_ro_not_ours (id int)",
+        ],
+    );
+    for (what, out) in [("standby", standby), ("SET TRANSACTION", in_script)] {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{what}: the write must be refused");
+        assert!(
+            stderr.contains("read-only transaction"),
+            "{what}: the server's message: {stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "hint: {}",
+                pgman::conn::READ_ONLY_ELSEWHERE_OR_STANDBY_HINT
+            )),
+            "{what}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("read-only by safety.toml"),
+            "{what}: {stderr}"
+        );
+    }
+}
+
+/// A database the project's `.pgman/pgman.toml` keeps read-only, under a
+/// writable personal profile: the refusal names the project's file and
+/// block, not a `safety.toml` section the operator's file doesn't have.
+#[test]
+fn batch_read_only_refusal_from_the_project_file_names_it() {
+    let home = scratch_home("readonly-project", WRITABLE_PROFILE);
+    std::fs::create_dir_all(home.join(".pgman")).unwrap();
+    std::fs::write(
+        home.join(".pgman/pgman.toml"),
+        "[safety.databases.pgman_test]\nread_only = true\n",
+    )
+    .unwrap();
+    let out = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["--batch", "--dsn", DSN, "--yes", "--sql"])
+        .arg("CREATE TABLE pgman_it_ro_project (id int)")
+        .output()
+        .expect("spawn pgman");
+    let _ = std::fs::remove_dir_all(home.join(".pgman"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the write must be refused: {stderr}");
+    assert!(
+        stderr.contains(
+            "hint: read-only by .pgman/pgman.toml ([safety.databases.pgman_test]) — see docs/configuration.md"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("safety.toml can't loosen it"), "{stderr}");
+}
+
 #[test]
 fn batch_read_only_transaction_refusal_without_a_profile_says_how_to_get_one() {
     // Same server-side 25006 refusal, but under the built-in default
@@ -2854,6 +2933,37 @@ fn connect_and_bootstrap_reports_whether_the_server_is_a_standby() {
         let booted = booted.unwrap_or_else(|e| panic!("{dsn}: {e}"));
         assert_eq!(booted.in_recovery, want, "{dsn}");
         assert_ne!(booted.server_version, "unknown", "{dsn}");
+    }
+}
+
+/// Booted writable, a standby's session is still made read-only on the
+/// server, before the operator can run anything: the pin the header
+/// shows is the server's too. A writable primary stays writable.
+#[test]
+fn a_standby_booted_writable_is_read_only_on_the_server() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for (dsn, want) in [(DSN, "off"), (STANDBY_DSN, "on")] {
+        let shown = rt.block_on(async {
+            let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+            let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+            let booted = pgman::conn::connect_and_bootstrap(
+                pgman::conn::Dsn::parse(dsn).unwrap(),
+                false,
+                5_000,
+                pgman::conn::BOOTSTRAP_SQL.to_string(),
+                notice_tx,
+                notification_tx,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{dsn}: {e}"));
+            booted
+                .client
+                .query_one("SHOW default_transaction_read_only", &[])
+                .await
+                .unwrap()
+                .get::<_, String>(0)
+        });
+        assert_eq!(shown, want, "{dsn}");
     }
 }
 
@@ -6244,6 +6354,13 @@ fn advisor_reports_a_lock_wait_and_its_blocking_chain() {
         let waiting = tokio::spawn(async move { waiter.simple_query(&q).await });
 
         let reader = advisor_client().await;
+        // An hour is not "as good as off" by itself (only over an hour
+        // is): the head's idle time, read from state_change, has to say
+        // it hasn't fired.
+        reader
+            .batch_execute("SET idle_in_transaction_session_timeout = '1h'")
+            .await
+            .unwrap();
         let th = pgman::query::advisor::Thresholds {
             min_lock_wait_secs: 0.5,
             ..advisor_thresholds()
@@ -6263,6 +6380,11 @@ fn advisor_reports_a_lock_wait_and_its_blocking_chain() {
             .find(|e| e.starts_with(&head))
             .unwrap();
         assert!(line.contains(&format!("{waiter_pid} (")), "{line}");
+        assert_eq!(
+            advice.change.as_ref().map(|c| c.name),
+            Some("idle_in_transaction_session_timeout"),
+            "a 1h timeout the head has been idle far less than: {advice:?}"
+        );
         assert!(
             advice.evidence_sql.contains("l.waitstart"),
             "PG16 reads waitstart"
@@ -6337,8 +6459,36 @@ fn advisor_runs_every_check_against_a_real_server() {
             } else {
                 "pg_stat_bgwriter"
             };
-            assert!(f.advice.as_deref().unwrap().evidence[0].starts_with(view));
+            let advice = f.advice.as_deref().unwrap();
+            assert!(advice.evidence[0].starts_with(view));
+            // PG14+: the WAL written decides whether max_wal_size is to blame.
+            assert!(
+                advice.evidence[1].starts_with("pg_stat_wal: "),
+                "{advice:?}"
+            );
+            assert!(advice.evidence_sql.contains("FROM pg_stat_wal"));
+            // The segment size is the server's (the 16 MB default here),
+            // read, not assumed.
+            assert!(
+                advice
+                    .evidence
+                    .iter()
+                    .any(|e| e.contains("in 16 MB segments, less one")),
+                "{advice:?}"
+            );
         }
+        let wal = reader
+            .query_one(pgman::query::advisor::WAL_SQL, &[])
+            .await
+            .unwrap();
+        assert!(wal.get::<_, i64>(0) > 0);
+        let shown: String = reader
+            .query_one("SHOW wal_segment_size", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "16MB");
+        assert_eq!(wal.get::<_, i64>(3), 16 * 1024 * 1024, "wal_segment_size");
     });
 }
 
@@ -6418,6 +6568,7 @@ async fn paging_reads_ten_thousand_rows_in_order_without_gaps() {
     assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
     assert!(opened.grid.truncated, "more than a page exists");
     assert!(opened.cursor.is_some(), "the cursor stays open");
+    assert!(!opened.standby, "the primary is no standby");
     assert!(!opened.in_transaction);
     assert_eq!(
         session_state(&writer, pid, "idle in transaction").await,
@@ -6451,6 +6602,204 @@ async fn paging_reads_ten_thousand_rows_in_order_without_gaps() {
     assert_eq!(pages, 10, "10 000 rows are ten pages of 1000");
     assert_eq!(ids, (1..=10_000).collect::<Vec<i64>>());
     assert_eq!(session_state(&writer, pid, "idle").await, "idle");
+}
+
+/// On a standby the pager never holds a cursor: replaying the primary's
+/// DDL or VACUUM would conflict with it, and after
+/// `max_standby_streaming_delay` the server ends the whole session. The
+/// first page lands, partial, and the session is idle at once; asked
+/// again for the rows held plus a page (what `M` does there), it re-runs
+/// and is idle again.
+#[tokio::test]
+async fn on_a_standby_the_pager_commits_after_the_first_page() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let observer = probe_client(STANDBY_DSN).await;
+    let client = probe_client(STANDBY_DSN).await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let sql = "SELECT g FROM generate_series(1, 2500) g".to_string();
+    for want in [PAGE_ROWS, 2 * PAGE_ROWS] {
+        let opened = pager
+            .open(sql.clone(), want)
+            .await
+            .expect("pager alive")
+            .expect("open runs on the standby");
+        assert_eq!(opened.grid.rows.len(), want);
+        assert!(opened.grid.truncated, "{want}: more rows exist");
+        assert!(opened.standby, "{want}: the server is in recovery");
+        assert!(opened.cursor.is_none(), "{want}: no cursor held");
+        assert_eq!(
+            session_state(&observer, pid, "idle").await,
+            "idle",
+            "{want}: committed, not idle in transaction"
+        );
+    }
+}
+
+/// A schema's own function by a built-in's name is what an unqualified
+/// call reaches when its signature fits better: here `log(text)`, which
+/// `pg_catalog.log` lacks, and which writes. Paged, it would run for
+/// the 1001 rows fetched and leave them uncommitted behind the cursor;
+/// pgman asks first and runs it unpaged, every row written and
+/// committed. Without the shadowing function the same query pages.
+#[tokio::test]
+async fn a_built_in_name_a_schema_shadows_runs_unpaged() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _t1) = writable_client().await;
+    let (client, _t2) = writable_client().await;
+    let pid = backend_pid(&client).await;
+    let schema = format!("pgman_it_shadow_{pid}");
+    let sql = "SELECT log(10, 1000) AS n, i FROM generate_series(1, 3000) i".to_string();
+    // A run that died before its DROP left its shadow behind, and any
+    // shadow anywhere keeps the built-in from paging below. (Only this
+    // test's and the lib's `appshadow` schemas match; the probe test's
+    // `probepath` schema runs alongside and is its own.)
+    observer
+        .batch_execute(
+            "DO $$ DECLARE s text; BEGIN \
+             FOR s IN SELECT nspname FROM pg_namespace WHERE nspname LIKE 'pgman\\_it\\_%shadow\\_%' LOOP \
+             EXECUTE format('DROP SCHEMA %I CASCADE', s); END LOOP; END $$",
+        )
+        .await
+        .expect("drop old shadows");
+
+    // Before the schema exists, the call is the built-in: it pages.
+    // (Asked about any schema, so another test's shadow would show here;
+    // the name is this backend's own.)
+    let pager = Pager::spawn(client.clone());
+    let before = pager
+        .open(sql.clone(), PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    let shadowed_elsewhere = before.cursor.is_none();
+    // Closes the cursor, so the SET below runs outside its transaction.
+    let _ = pager.barrier().await;
+
+    observer
+        .batch_execute(&format!(
+            "CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.notes (note text);
+             CREATE FUNCTION {schema}.log(note text) RETURNS text LANGUAGE plpgsql AS $$
+             BEGIN INSERT INTO {schema}.notes VALUES (note); RETURN note; END $$;"
+        ))
+        .await
+        .expect("create the shadowing function");
+    client
+        .batch_execute(&format!("SET search_path = {schema}, public"))
+        .await
+        .expect("put it on the path");
+    let writing = "SELECT log('row ' || i) FROM generate_series(1, 3000) i".to_string();
+    let opened = pager
+        .open(writing, PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    // The grid stops reading at 1000 rows; the server runs the rest and
+    // commits when the statement ends, so wait for that.
+    let state = session_state(&observer, pid, "idle").await;
+    let written: i64 = observer
+        .query_one(&format!("SELECT count(*) FROM {schema}.notes"), &[])
+        .await
+        .expect("count the notes")
+        .get(0);
+    // A cursor left open (the bug this pins) would hold the DROP.
+    let _ = pager.barrier().await;
+    observer
+        .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .expect("drop the schema");
+
+    assert!(
+        !shadowed_elsewhere,
+        "the built-in log paged before the shadow existed"
+    );
+    assert!(opened.cursor.is_none(), "no cursor behind a shadowed call");
+    assert_eq!(written, 3000, "every row's write ran and was committed");
+    assert_eq!(state, "idle", "not idle in transaction");
+}
+
+/// pgman's own probe never resolves through the operator's path: with a
+/// schema listed ahead of `pg_catalog` that has a writing `lower(text)`,
+/// a plain SELECT pages as usual and the probe's `lower` is the
+/// built-in — nothing is written.
+#[tokio::test]
+async fn the_paging_probe_ignores_a_schema_ahead_of_pg_catalog() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _t1) = writable_client().await;
+    let (client, _t2) = writable_client().await;
+    let pid = backend_pid(&client).await;
+    let schema = format!("pgman_it_probepath_{pid}");
+    observer
+        .batch_execute(&format!(
+            "CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.notes (note text);
+             CREATE FUNCTION {schema}.lower(note text) RETURNS text LANGUAGE plpgsql AS $$
+             BEGIN INSERT INTO {schema}.notes VALUES (note); RETURN note; END $$;"
+        ))
+        .await
+        .expect("create the shadowing lower");
+    client
+        .batch_execute(&format!("SET search_path = {schema}, public, pg_catalog"))
+        .await
+        .expect("put it ahead of pg_catalog");
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 2000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    let _ = pager.barrier().await;
+    let written: i64 = observer
+        .query_one(&format!("SELECT count(*) FROM {schema}.notes"), &[])
+        .await
+        .expect("count the notes")
+        .get(0);
+    observer
+        .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .expect("drop the schema");
+    assert_eq!(written, 0, "the probe ran the schema's lower");
+    assert!(!opened.in_transaction, "the probe answered");
+    assert!(opened.cursor.is_some(), "a plain SELECT still pages");
+}
+
+/// A session the server ends under pgman — `pg_terminate_backend` from
+/// another connection here; a recovery conflict or an idle timeout in the
+/// field — hands its parting FATAL to the notice channel, which then
+/// closes: the close is how the App learns the connection is gone, and
+/// the FATAL is the reason it shows. (Its `Display` is only "db error".)
+#[tokio::test]
+async fn a_terminated_session_hands_on_the_servers_reason_and_closes() {
+    let (notice_tx, mut notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    let (client, _t) = pgman::conn::connect_only(dsn, true, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect");
+    let pid = backend_pid(&client).await;
+    let killer = probe_client(DSN).await;
+    killer
+        .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+        .await
+        .expect("terminate the backend");
+    let fatal = tokio::time::timeout(std::time::Duration::from_secs(5), notices.recv())
+        .await
+        .expect("the driver reports before 5 s")
+        .expect("a parting message, not just the close");
+    assert!(fatal.ends_session(), "{fatal:?}");
+    assert_eq!(
+        fatal.message, "terminating connection due to administrator command",
+        "{fatal:?}"
+    );
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), notices.recv())
+        .await
+        .expect("the channel closes before 5 s");
+    assert!(closed.is_none(), "then the channel closes: {closed:?}");
+    assert!(client.is_closed());
 }
 
 /// A result that fits in a page never holds a transaction open.
@@ -6889,7 +7238,7 @@ async fn edit_cell(
         pgman::safety::StatementKind::Update { has_where: true },
         "{sql}"
     );
-    pgman::conn::run_single_row_update(client, &sql, keep_open)
+    pgman::conn::run_single_row_update(client, &sql, &edit, keep_open)
         .await
         .map_err(|e| e.msg)
 }
@@ -7141,6 +7490,7 @@ async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
     let none = pgman::conn::run_single_row_update(
         &client,
         &pgman::query::cell_edit::build_update_sql(&edit, Some("x")),
+        &edit,
         false,
     )
     .await
@@ -7177,6 +7527,155 @@ async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
     assert_eq!(mine.as_deref(), Some("mine"));
 }
 
+/// Plan the edit of cell (`row`, `col`) of `select` against `cache` —
+/// a schema cache read before the table changed, as pgman's is when a
+/// rename happens after connect — and run it under the one-row guard.
+async fn edit_cell_with_cache(
+    client: &tokio_postgres::Client,
+    cache: &pgman::query::schema::SchemaCache,
+    select: &str,
+    (row, col): (usize, usize),
+    new: &str,
+) -> Result<(String, pgman::conn::SingleRowUpdate), String> {
+    let (grid, origins) = pgman::conn::run_statement_with_origins(client, select)
+        .await
+        .map_err(|e| e.msg)?;
+    let edit = pgman::query::cell_edit::plan_cell_edit(
+        cache,
+        pgman::app::infer_single_source_table(select).as_ref(),
+        &grid.columns,
+        &origins,
+        &grid.rows[row],
+        row,
+        col,
+    )
+    .map_err(|r| r.to_string())?;
+    let sql = pgman::query::cell_edit::build_update_sql(&edit, Some(new));
+    pgman::conn::run_single_row_update(client, &sql, &edit, false)
+        .await
+        .map(|done| (sql, done))
+        .map_err(|e| e.msg)
+}
+
+/// A column renamed after pgman read the schema, and a new one added
+/// under its old name: the cache still calls the edited column (attnum
+/// 3) `b`, so the UPDATE says `SET b` — which the server now reads as
+/// the new column. The write checks the attnum's name inside its own
+/// transaction and rolls back instead; neither column changes. Inside
+/// the operator's REPEATABLE READ transaction too, whose snapshot
+/// predates the rename.
+#[tokio::test]
+async fn a_cell_edit_after_its_column_was_renamed_and_re_added_writes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let (ddl, _t2) = writable_client().await;
+    let t = it_name("ce_ren_col");
+    let setup = format!(
+        "DROP TABLE IF EXISTS {t}; CREATE TABLE {t} (id int PRIMARY KEY, a text, b text); \
+         INSERT INTO {t} VALUES (1, 'a1', 'b1')"
+    );
+    let rename = format!(
+        "ALTER TABLE {t} RENAME COLUMN b TO c; ALTER TABLE {t} ADD COLUMN b text DEFAULT 'new-b'"
+    );
+    let select = format!("SELECT id, c FROM {t}");
+    let both = format!("SELECT c || '/' || b FROM {t}");
+
+    client.batch_execute(&setup).await.expect("create");
+    let stale = pgman::query::schema::fetch(&client).await;
+    ddl.batch_execute(&rename).await.expect("rename");
+    let plain = edit_cell_with_cache(&client, &stale, &select, (0, 1), "X").await;
+    let plain_after = scalar(&client, &both).await;
+    let open_tx = scalar(&client, "SELECT now() = statement_timestamp()").await;
+
+    client.batch_execute(&setup).await.expect("recreate");
+    let stale = pgman::query::schema::fetch(&client).await;
+    client
+        .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
+        .await
+        .expect("begin");
+    // Take the snapshot without touching the table (a lock on it would
+    // hold the ALTER back until the transaction ends).
+    let _ = scalar(&client, "SELECT 'snapshot'").await;
+    ddl.batch_execute(&rename).await.expect("rename");
+    let in_rr = edit_cell_with_cache(&client, &stale, &select, (0, 1), "X").await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+    let rr_after = scalar(&client, &both).await;
+
+    // A fresh cache names the column right, and the edit goes through.
+    let fresh = pgman::query::schema::fetch(&client).await;
+    let ok = edit_cell_with_cache(&client, &fresh, &select, (0, 1), "X").await;
+    let ok_after = scalar(&client, &both).await;
+
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    let refused = |r: Result<(String, pgman::conn::SingleRowUpdate), String>| {
+        let msg = r.expect_err("stale column");
+        assert!(
+            msg.starts_with("the table changed since pgman read it ('b' is now 'c')"),
+            "{msg}"
+        );
+        assert!(msg.contains("rolled back, nothing changed"), "{msg}");
+    };
+    refused(plain);
+    assert_eq!(plain_after.as_deref(), Some("b1/new-b"));
+    assert_eq!(
+        open_tx.as_deref(),
+        Some("t"),
+        "the edit's transaction ended"
+    );
+    refused(in_rr);
+    assert_eq!(rr_after.as_deref(), Some("b1/new-b"));
+    let (sql, done) = ok.expect("fresh cache");
+    assert!(sql.contains("SET c = 'X'"), "{sql}");
+    assert_eq!(done.value.as_deref(), Some("X"));
+    assert_eq!(ok_after.as_deref(), Some("X/new-b"));
+}
+
+/// The key column renamed and a new one added under its name, holding
+/// the other row's key: the stale cache's `WHERE id = '2'` would match
+/// exactly one row — the wrong one — and pass the one-row guard. The
+/// key's attnum is checked like the edited column's, and nothing
+/// changes.
+#[tokio::test]
+async fn a_cell_edit_after_its_key_was_renamed_and_re_added_writes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_ren_key");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); \
+             INSERT INTO {t} VALUES (1, 'ann'), (2, 'bo')"
+        ))
+        .await
+        .expect("create");
+    let stale = pgman::query::schema::fetch(&client).await;
+    client
+        .batch_execute(&format!(
+            "ALTER TABLE {t} RENAME COLUMN id TO old_id; ALTER TABLE {t} ADD COLUMN id int; \
+             UPDATE {t} SET id = 3 - old_id"
+        ))
+        .await
+        .expect("rename");
+    // Row 1 is old_id 2 (`bo`), whose new `id` is 1; `ann` has id 2.
+    let refused = edit_cell_with_cache(
+        &client,
+        &stale,
+        &format!("SELECT old_id, name FROM {t} ORDER BY old_id"),
+        (1, 1),
+        "X",
+    )
+    .await;
+    let after = scalar(
+        &client,
+        &format!("SELECT string_agg(name, ',' ORDER BY old_id) FROM {t}"),
+    )
+    .await;
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    let msg = refused.expect_err("stale key");
+    assert!(
+        msg.starts_with("the table changed since pgman read it ('id' is now 'old_id')"),
+        "{msg}"
+    );
+    assert_eq!(after.as_deref(), Some("ann,bo"));
+}
+
 /// Inside the operator's open transaction a good edit stays theirs to
 /// commit or roll back; under `auto_tx` pgman's own transaction is left
 /// open for the prompt. Rolled back, neither changed anything.
@@ -7207,10 +7706,10 @@ async fn a_cell_edit_inside_an_open_transaction_is_not_committed() {
     assert_eq!(after_open.as_deref(), Some("ann"));
 }
 
-/// A read-only session's edit is refused by the server, with the hint
-/// every read-only refusal carries, and leaves no transaction behind.
+/// A read-only session's edit is refused by the server, and leaves no
+/// transaction behind.
 #[tokio::test]
-async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
+async fn a_cell_edit_on_a_read_only_session_is_refused_by_the_server() {
     let (writer, _w) = writable_client().await;
     let t = it_name("ce_ro");
     writer
@@ -7233,7 +7732,9 @@ async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
     let _ = writer.batch_execute(&format!("DROP TABLE {t}")).await;
     let msg = refused.expect_err("read-only");
     assert!(msg.contains("read-only transaction"), "{msg}");
-    assert!(msg.contains("hint: read-only"), "{msg}");
+    // The library doesn't guess why the session is read-only; the TUI
+    // adds the hint for its own session (`conn::ReadOnlyCause`).
+    assert!(!msg.contains("hint:"), "{msg}");
     assert_eq!(open_tx.as_deref(), Some("t"));
     assert_eq!(after.as_deref(), Some("ann"));
 }

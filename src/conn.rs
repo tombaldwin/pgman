@@ -63,6 +63,23 @@ pub struct NoticeMsg {
     pub hint: Option<String>,
 }
 
+/// A message's severity as the protocol's non-localized word (`FATAL`,
+/// `NOTICE`, …) when the server sent one (9.6+), else the localized
+/// field: under a non-English `lc_messages` the latter is a translation
+/// (`SCHWERWIEGEND`), which [`NoticeMsg::ends_session`] would not know.
+/// Pure.
+pub fn severity_word(parsed: Option<tokio_postgres::error::Severity>, localized: &str) -> String {
+    parsed.map_or_else(|| localized.to_string(), |s| s.to_string())
+}
+
+impl NoticeMsg {
+    /// A `FATAL` or `PANIC`: not a notice but the error the server ends
+    /// the session with, sent unasked as the connection closes. Pure.
+    pub fn ends_session(&self) -> bool {
+        matches!(self.severity.as_str(), "FATAL" | "PANIC")
+    }
+}
+
 /// One LISTEN/NOTIFY arrival: the channel the operator
 /// subscribed to with `LISTEN <chan>`, the publisher's backend
 /// pid, and the payload (often empty). Surfaced in
@@ -203,15 +220,10 @@ impl From<tokio_postgres::Error> for QueryErr {
         let msg = db
             .map(|d| d.message().to_string())
             .unwrap_or_else(|| e.to_string());
-        // A write bounced off `default_transaction_read_only = on`
-        // (SQLSTATE 25006) reads as a bare server refusal with no clue
-        // *why* the session is read-only — append the same hint both
-        // the TUI (`last_error` is this `.msg`) and `--batch` (which
-        // prints it to stderr) end up showing, so neither path has to
-        // ask separately.
-        let safety_toml = crate::util::config_file("safety.toml");
-        let safety_toml = safety_toml.exists().then_some(safety_toml.as_path());
-        let (msg, detail) = explain_read_only_refusal(msg, detail, safety_toml);
+        // A read-only refusal (SQLSTATE 25006) is explained by the
+        // caller, which knows why the session is read-only — the
+        // profile, a standby, `:readonly on`, or none of pgman's doing
+        // (`explain_read_only_refusal`).
         Self {
             msg,
             position,
@@ -241,41 +253,167 @@ struct ReadOnlyHint {
     detail: Option<String>,
 }
 
-/// Hint for a read-only-transaction refusal (SQLSTATE `25006`):
-/// `read_only = true` set `default_transaction_read_only = on` at
-/// connect, and Postgres itself — not a client-side guard — rejected the
-/// write. Says where the setting came from rather than leaving the
-/// operator to guess: `safety.toml` and its key when the file exists
-/// (its full path goes to the detail, not the one-row footer), and
+/// Why a session is read-only, as far as pgman knows — what a
+/// read-only refusal (SQLSTATE `25006`) is explained by. The server's
+/// message is the same whatever the reason, so the caller, which knows
+/// the session, says which ([`ReadOnlyCause::for_session`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadOnlyCause {
+    /// The server is a standby (`pg_is_in_recovery()`): it refuses
+    /// every write, whatever pgman's settings say.
+    Standby,
+    /// An environment lists the server as a replica, and pgman opened
+    /// the session read-only for it.
+    ReplicaPin,
+    /// pgman's safety profile for the database: `read_only = true` set
+    /// `default_transaction_read_only = on` at connect. `safety_toml`
+    /// is the personal file when it exists; without one the profile is
+    /// the built-in default.
+    Profile {
+        safety_toml: Option<std::path::PathBuf>,
+    },
+    /// [`Self::Profile`], where this project's `.pgman/pgman.toml`
+    /// turned `read_only` on in `block` (`[safety.databases.<db>]` or
+    /// `[safety.default]`) — and `personal` when the personal side has
+    /// it on as well.
+    Project {
+        safety_toml: Option<std::path::PathBuf>,
+        personal: bool,
+        block: String,
+    },
+    /// `:readonly on` in this session.
+    Toggle,
+    /// None of pgman's settings: a `SET`, `BEGIN READ ONLY`, or the
+    /// role's or database's `default_transaction_read_only` — or, when
+    /// `standby_unknown`, a standby pgman didn't ask about.
+    Elsewhere { standby_unknown: bool },
+}
+
+impl ReadOnlyCause {
+    /// The cause for a session on `db`: a standby first (nothing pgman
+    /// changes lifts it), then a replica pin, the profile, `:readonly
+    /// on`, and otherwise none of pgman's. `in_recovery` is `None` when
+    /// the server wasn't asked (`--batch`). Pure — the caller checks
+    /// whether `safety.toml` exists.
+    pub fn for_session(
+        cfg: &crate::safety::SafetyConfig,
+        db: &str,
+        safety_toml: Option<std::path::PathBuf>,
+        in_recovery: Option<bool>,
+        replica_pin: bool,
+        toggle_on: bool,
+    ) -> Self {
+        if in_recovery == Some(true) {
+            Self::Standby
+        } else if replica_pin {
+            Self::ReplicaPin
+        } else if cfg.profile_for(db).read_only {
+            let origin = cfg.read_only_origin(db);
+            match origin.project {
+                Some(block) => Self::Project {
+                    safety_toml,
+                    personal: origin.personal,
+                    block,
+                },
+                None => Self::Profile { safety_toml },
+            }
+        } else if toggle_on {
+            Self::Toggle
+        } else {
+            Self::Elsewhere {
+                standby_unknown: in_recovery.is_none(),
+            }
+        }
+    }
+}
+
+/// The footer's half of a read-only refusal on a standby.
+pub const READ_ONLY_STANDBY_HINT: &str =
+    "the server is a standby (in recovery) and refuses every write · connect to its primary to write";
+
+/// Hint for a read-only-transaction refusal (SQLSTATE `25006`): why the
+/// session is read-only, rather than leaving the operator to guess —
+/// and never `safety.toml` unless the profile is what made it so. For
+/// the profile: `safety.toml` and its key when the file exists (its
+/// full path goes to the detail, not the one-row footer), and
 /// [`READ_ONLY_DEFAULT_HINT`] when the profile is the built-in default
 /// — naming a file that is not there sent the operator looking for it.
 /// Pure — pattern-matched on the SQLSTATE code, falling back to the
 /// message text when the server didn't populate `detail` (e.g. a
-/// `simple_query` error path that skips it); `safety_toml` (the file,
-/// when it exists) is checked by the caller at message time because the
-/// profile does not record its origin.
+/// `simple_query` error path that skips it).
 fn read_only_refusal_hint(
     detail: Option<&QueryErrDetail>,
     msg: &str,
-    safety_toml: Option<&std::path::Path>,
+    cause: &ReadOnlyCause,
 ) -> Option<ReadOnlyHint> {
     let is_read_only_refusal = detail.and_then(|d| d.code.as_deref()) == Some("25006")
         || msg.to_ascii_lowercase().contains("read-only transaction");
     if !is_read_only_refusal {
         return None;
     }
-    let Some(path) = safety_toml else {
-        return Some(ReadOnlyHint {
-            footer: READ_ONLY_DEFAULT_HINT.to_string(),
-            detail: None,
-        });
+    let hint = |footer: &str, detail: Option<String>| ReadOnlyHint {
+        footer: footer.to_string(),
+        detail,
     };
-    Some(ReadOnlyHint {
-        footer: READ_ONLY_FILE_HINT.to_string(),
-        detail: Some(format!(
-            "read_only = true in {} · set read_only = false for this database there and restart pgman to write",
-            path.display()
-        )),
+    Some(match cause {
+        ReadOnlyCause::Standby => hint(READ_ONLY_STANDBY_HINT, None),
+        ReadOnlyCause::ReplicaPin => hint(
+            "read-only: the environment lists this server as a replica · connect to its primary to write",
+            None,
+        ),
+        ReadOnlyCause::Profile { safety_toml: None } => hint(READ_ONLY_DEFAULT_HINT, None),
+        ReadOnlyCause::Profile {
+            safety_toml: Some(path),
+        } => hint(
+            READ_ONLY_FILE_HINT,
+            Some(format!(
+                "read_only = true in {} · set read_only = false for this database there and restart pgman to write",
+                path.display()
+            )),
+        ),
+        ReadOnlyCause::Project {
+            safety_toml,
+            personal,
+            block,
+        } => {
+            // Who else holds it read-only: nobody, safety.toml, or the
+            // built-in default (no safety.toml yet).
+            let (also, personal_detail) = match (personal, safety_toml) {
+                (false, _) => (String::new(), String::new()),
+                (true, Some(path)) => (
+                    "safety.toml and ".to_string(),
+                    format!("\nread_only = true in {} too", path.display()),
+                ),
+                (true, None) => (
+                    "default and by ".to_string(),
+                    "\npgman --init-config writes safety.toml, where read_only = false is needed too"
+                        .to_string(),
+                ),
+            };
+            ReadOnlyHint {
+                footer: format!(
+                    "read-only by {also}.pgman/pgman.toml ({block}) — see docs/configuration.md"
+                ),
+                detail: Some(format!(
+                    "read_only = true in this project's .pgman/pgman.toml {block} · set read_only = false \
+                     there and restart pgman to write (safety.toml can't loosen it){personal_detail}"
+                )),
+            }
+        }
+        ReadOnlyCause::Toggle => hint("read-only by :readonly on · :readonly off to write", None),
+        ReadOnlyCause::Elsewhere { standby_unknown } => hint(
+            if *standby_unknown {
+                READ_ONLY_ELSEWHERE_OR_STANDBY_HINT
+            } else {
+                READ_ONLY_ELSEWHERE_HINT
+            },
+            Some(
+                "pgman's profile for this database is writable · SHOW default_transaction_read_only, \
+                 SELECT pg_is_in_recovery(), and the role's and database's settings \
+                 (ALTER ROLE / ALTER DATABASE … SET) say where it comes from"
+                    .to_string(),
+            ),
+        ),
     })
 }
 
@@ -284,16 +422,26 @@ fn read_only_refusal_hint(
 pub const READ_ONLY_FILE_HINT: &str =
     "read-only by safety.toml (read_only) — see docs/configuration.md";
 
+/// The footer's half of a read-only refusal that pgman's settings did
+/// not cause, on a server known not to be a standby.
+pub const READ_ONLY_ELSEWHERE_HINT: &str =
+    "read-only, but not by pgman's safety.toml: a SET, BEGIN READ ONLY, or a role or database default";
+
+/// [`READ_ONLY_ELSEWHERE_HINT`] where pgman didn't ask whether the
+/// server is a standby (`--batch`).
+pub const READ_ONLY_ELSEWHERE_OR_STANDBY_HINT: &str =
+    "read-only, but not by pgman's safety.toml: a standby, a SET, BEGIN READ ONLY, or a role or database default";
+
 /// `msg` and `detail` with a read-only refusal's explanation added: the
-/// short `hint:` line on the message, the full path in the detail's
+/// short `hint:` line on the message, the longer half in the detail's
 /// hint (see [`read_only_refusal_hint`]). Anything else passes through
-/// untouched. Pure — `safety_toml` is the file when it exists.
+/// untouched. Pure.
 pub fn explain_read_only_refusal(
     mut msg: String,
     mut detail: Option<QueryErrDetail>,
-    safety_toml: Option<&std::path::Path>,
+    cause: &ReadOnlyCause,
 ) -> (String, Option<QueryErrDetail>) {
-    if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg, safety_toml) {
+    if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg, cause) {
         msg.push('\n');
         msg.push_str("hint: ");
         msg.push_str(&hint.footer);
@@ -820,7 +968,10 @@ fn spawn_connection_driver<S, T>(
                     Poll::Ready(Some(Ok(msg))) => match msg {
                         tokio_postgres::AsyncMessage::Notice(notice) => {
                             let n = NoticeMsg {
-                                severity: notice.severity().to_string(),
+                                severity: severity_word(
+                                    notice.parsed_severity(),
+                                    notice.severity(),
+                                ),
                                 message: notice.message().to_string(),
                                 detail: notice.detail().map(|s| s.to_string()),
                                 hint: notice.hint().map(|s| s.to_string()),
@@ -843,7 +994,34 @@ fn spawn_connection_driver<S, T>(
                         _ => {}
                     },
                     Poll::Ready(Some(Err(e))) => {
-                        tracing::warn!("postgres connection error: {e}");
+                        // An error the server sent with no request
+                        // waiting for it: the FATAL a terminated backend
+                        // says goodbye with (`pg_terminate_backend`, a
+                        // recovery conflict, an idle timeout). Its
+                        // `Display` is only "db error"; the message is
+                        // the reason the session ended, so it is logged
+                        // and handed on — the notice channel's close
+                        // tells the App the connection is gone, and
+                        // this is what it says why.
+                        match e.as_db_error() {
+                            Some(db) => {
+                                tracing::warn!(
+                                    "postgres connection error: {} {}: {}",
+                                    db.severity(),
+                                    db.code().code(),
+                                    db.message()
+                                );
+                                let _ = notice_tx.send(NoticeMsg {
+                                    severity: severity_word(db.parsed_severity(), db.severity()),
+                                    message: db.message().to_string(),
+                                    detail: db.detail().map(str::to_string),
+                                    hint: db.hint().map(str::to_string),
+                                });
+                            }
+                            None => {
+                                tracing::warn!("postgres connection error: {}", chain_message(&e))
+                            }
+                        }
                         return Poll::Ready(());
                     }
                     Poll::Ready(None) => return Poll::Ready(()),
@@ -973,6 +1151,18 @@ pub async fn connect_and_bootstrap(
     let in_recovery = version_row
         .as_ref()
         .and_then(|row| row.try_get::<usize, bool>(1).ok());
+    // A standby is pinned read-only however it was reached
+    // (`App::note_server_role`); make the session say so too, as a
+    // read-only profile's does, before any statement of the operator's
+    // can run. Then a standby promoted under pgman, or a `SET … = off`
+    // that got past the guard, still writes nothing while the header
+    // says read-only. Recovery refuses writes anyway, so a failed SET
+    // is logged, not fatal.
+    if in_recovery == Some(true) && !read_only {
+        if let Err(e) = set_session_read_only(&client, true).await {
+            tracing::warn!("pinning the standby's session read-only failed: {e}");
+        }
+    }
     // The list only feeds the start card: a server that won't give it
     // up still gives the operator a connection.
     let grid = grid_res.unwrap_or_else(|e| {
@@ -1509,9 +1699,15 @@ const EDIT_SAVEPOINT: &str = "pgman_cell_edit";
 /// is released and the operator's transaction stays open; with
 /// `keep_open` (`auto_tx`) pgman's transaction is left for the commit /
 /// rollback prompt; otherwise it commits.
+///
+/// Before any of that, the table and columns `sql` names must still be
+/// the ones `edit`'s result was read from
+/// (`query::cell_edit::check_identity`); a schema cache older than a
+/// rename is rolled back, not written to the wrong column.
 pub async fn run_single_row_update(
     client: &tokio_postgres::Client,
     sql: &str,
+    edit: &crate::query::cell_edit::CellEdit,
     keep_open: bool,
 ) -> Result<SingleRowUpdate, QueryErr> {
     let nested = match client
@@ -1541,6 +1737,28 @@ pub async fn run_single_row_update(
             }
         }
         crate::query::cell_edit::check_one_row(rows).map_err(QueryErr::msg)?;
+        // The UPDATE named its table and columns from the schema cache,
+        // which may predate a rename. Now that it holds its lock (no
+        // ALTER TABLE can commit until this transaction ends), ask the
+        // server what the attnums the result was read from are called.
+        // `pg_identify_object_as_address` reads the catalog as of now,
+        // not as of the transaction's snapshot, so it sees what the
+        // UPDATE itself resolved even inside a REPEATABLE READ block.
+        let expected = crate::query::cell_edit::expected_identity(edit);
+        let attnums: Vec<i32> = expected.iter().map(|(n, _)| i32::from(*n)).collect();
+        let server = client
+            .query(
+                "SELECT n::int2, (pg_catalog.pg_identify_object_as_address('pg_catalog.pg_class'::pg_catalog.regclass, $1::oid, n)).object_names \
+                 FROM pg_catalog.unnest($2::int4[]) AS n",
+                &[&edit.table_oid, &attnums],
+            )
+            .await
+            .map_err(QueryErr::from)?
+            .iter()
+            .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+            .collect::<Result<Vec<crate::query::cell_edit::ServerName>, tokio_postgres::Error>>()
+            .map_err(QueryErr::from)?;
+        crate::query::cell_edit::check_identity(edit, &server).map_err(QueryErr::msg)?;
         Ok(value)
     }
     .await;
@@ -2137,6 +2355,26 @@ mod tests {
     }
 
     use super::*;
+
+    /// The parting FATAL is told by the protocol's own word, not the
+    /// translation a German server sends in the localized field.
+    #[test]
+    fn severity_is_the_protocols_word_when_the_server_sent_it() {
+        use tokio_postgres::error::Severity;
+        assert_eq!(
+            severity_word(Some(Severity::Fatal), "SCHWERWIEGEND"),
+            "FATAL"
+        );
+        assert_eq!(severity_word(Some(Severity::Notice), "HINWEIS"), "NOTICE");
+        assert_eq!(severity_word(None, "FATAL"), "FATAL");
+        let n = NoticeMsg {
+            severity: severity_word(Some(Severity::Fatal), "SCHWERWIEGEND"),
+            message: "Verbindung wird abgebrochen".into(),
+            detail: None,
+            hint: None,
+        };
+        assert!(n.ends_session());
+    }
 
     #[test]
     fn project_cells_pads_a_row_narrower_than_its_header() {
@@ -3264,7 +3502,7 @@ mod tests {
         let h = read_only_refusal_hint(
             Some(&detail),
             "cannot execute UPDATE in a read-only transaction",
-            Some(path),
+            &profile(Some(path)),
         )
         .expect("25006 should map to a hint");
         assert_eq!(h.footer, READ_ONLY_FILE_HINT);
@@ -3293,7 +3531,7 @@ mod tests {
         let h = read_only_refusal_hint(
             Some(&detail),
             "cannot execute UPDATE in a read-only transaction",
-            None,
+            &profile(None),
         )
         .expect("25006 should map to a hint");
         assert_eq!(h.footer, READ_ONLY_DEFAULT_HINT);
@@ -3309,10 +3547,10 @@ mod tests {
         // branches.
         let msg = "cannot execute INSERT in a read-only transaction";
         let path = std::path::Path::new("/x/safety.toml");
-        let h = read_only_refusal_hint(None, msg, Some(path))
+        let h = read_only_refusal_hint(None, msg, &profile(Some(path)))
             .expect("message text alone should map to a hint");
         assert_eq!(h.footer, READ_ONLY_FILE_HINT);
-        let h = read_only_refusal_hint(None, msg, None)
+        let h = read_only_refusal_hint(None, msg, &profile(None))
             .expect("message text alone should map to a hint");
         assert_eq!(h.footer, READ_ONLY_DEFAULT_HINT);
     }
@@ -3340,14 +3578,207 @@ mod tests {
             ..Default::default()
         };
         let path = std::path::Path::new("/x/safety.toml");
-        for file in [Some(path), None] {
+        for cause in [
+            profile(Some(path)),
+            profile(None),
+            ReadOnlyCause::Standby,
+            ReadOnlyCause::Elsewhere {
+                standby_unknown: true,
+            },
+        ] {
             assert!(read_only_refusal_hint(
                 Some(&detail),
                 "syntax error at or near \"FROM\"",
-                file
+                &cause
             )
             .is_none());
-            assert!(read_only_refusal_hint(None, "relation \"t\" does not exist", file).is_none());
+            assert!(
+                read_only_refusal_hint(None, "relation \"t\" does not exist", &cause).is_none()
+            );
         }
+    }
+
+    /// The profile as the cause, `safety_toml` the file when it exists.
+    fn profile(safety_toml: Option<&std::path::Path>) -> ReadOnlyCause {
+        ReadOnlyCause::Profile {
+            safety_toml: safety_toml.map(std::path::Path::to_path_buf),
+        }
+    }
+
+    /// A refusal pgman's profile didn't cause never names safety.toml as
+    /// the reason: a standby says so, `:readonly on` says how to undo
+    /// it, a replica pin names the replica, and anything else says it
+    /// isn't pgman's setting — with a standby among the suspects only
+    /// when nobody asked the server.
+    #[test]
+    fn read_only_refusal_hint_blames_safety_toml_only_for_the_profile() {
+        let detail = QueryErrDetail {
+            code: Some("25006".to_string()),
+            ..Default::default()
+        };
+        let msg = "cannot execute UPDATE in a read-only transaction";
+        let footer = |cause: ReadOnlyCause| {
+            read_only_refusal_hint(Some(&detail), msg, &cause)
+                .expect("25006 maps to a hint")
+                .footer
+        };
+        assert_eq!(footer(ReadOnlyCause::Standby), READ_ONLY_STANDBY_HINT);
+        assert_eq!(
+            footer(ReadOnlyCause::Toggle),
+            "read-only by :readonly on · :readonly off to write"
+        );
+        assert!(footer(ReadOnlyCause::ReplicaPin).contains("replica"));
+        assert_eq!(
+            footer(ReadOnlyCause::Elsewhere {
+                standby_unknown: false
+            }),
+            READ_ONLY_ELSEWHERE_HINT
+        );
+        assert_eq!(
+            footer(ReadOnlyCause::Elsewhere {
+                standby_unknown: true
+            }),
+            READ_ONLY_ELSEWHERE_OR_STANDBY_HINT
+        );
+        for cause in [
+            ReadOnlyCause::Standby,
+            ReadOnlyCause::Toggle,
+            ReadOnlyCause::ReplicaPin,
+        ] {
+            let f = footer(cause.clone());
+            assert!(!f.contains("safety.toml"), "{cause:?}: {f}");
+        }
+        assert!(!READ_ONLY_ELSEWHERE_HINT.contains("standby"));
+        assert!(READ_ONLY_ELSEWHERE_HINT.contains("not by pgman's safety.toml"));
+        let detail_hint = read_only_refusal_hint(
+            Some(&detail),
+            msg,
+            &ReadOnlyCause::Elsewhere {
+                standby_unknown: false,
+            },
+        )
+        .and_then(|h| h.detail)
+        .expect("says where to look");
+        assert!(detail_hint.contains("SHOW default_transaction_read_only"));
+    }
+
+    /// A profile the project's `.pgman/pgman.toml` made read-only: the
+    /// footer names that file and block, the detail says safety.toml
+    /// can't loosen it — and, when the personal side is read-only too,
+    /// that it needs changing as well.
+    #[test]
+    fn a_project_made_read_only_refusal_names_the_project_file() {
+        let detail = QueryErrDetail {
+            code: Some("25006".to_string()),
+            ..Default::default()
+        };
+        let msg = "cannot execute UPDATE in a read-only transaction";
+        let hint = |personal, safety_toml: Option<&str>| {
+            read_only_refusal_hint(
+                Some(&detail),
+                msg,
+                &ReadOnlyCause::Project {
+                    safety_toml: safety_toml.map(std::path::PathBuf::from),
+                    personal,
+                    block: "[safety.databases.ledger]".into(),
+                },
+            )
+            .expect("25006 maps to a hint")
+        };
+        let only = hint(false, Some("/x/safety.toml"));
+        assert_eq!(
+            only.footer,
+            "read-only by .pgman/pgman.toml ([safety.databases.ledger]) — see docs/configuration.md"
+        );
+        let d = only.detail.unwrap();
+        assert!(d.contains("safety.toml can't loosen it"), "{d}");
+        assert!(!d.contains("/x/safety.toml"), "{d}");
+        let both = hint(true, Some("/x/safety.toml"));
+        assert!(both
+            .footer
+            .starts_with("read-only by safety.toml and .pgman/pgman.toml"));
+        assert!(both
+            .detail
+            .unwrap()
+            .contains("read_only = true in /x/safety.toml too"));
+        let default_too = hint(true, None);
+        assert!(default_too
+            .footer
+            .starts_with("read-only by default and by .pgman/pgman.toml"));
+
+        // `for_session` picks it from the merge's record.
+        let mut writable = crate::safety::SafetyConfig::default();
+        writable.default.read_only = false;
+        let project = crate::project::ProjectSafety {
+            default: None,
+            databases: [(
+                "ledger".to_string(),
+                crate::safety::SafetyProfile::default(),
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let cfg = crate::project::merge_safety(writable, Some(&project));
+        assert_eq!(
+            ReadOnlyCause::for_session(&cfg, "ledger", None, Some(false), false, false),
+            ReadOnlyCause::Project {
+                safety_toml: None,
+                personal: false,
+                block: "[safety.databases.ledger]".into(),
+            }
+        );
+        assert_eq!(
+            ReadOnlyCause::for_session(&cfg, "other", None, Some(false), false, false),
+            ReadOnlyCause::Elsewhere {
+                standby_unknown: false
+            }
+        );
+    }
+
+    /// The order a session's cause is decided in: a standby whatever
+    /// else holds, then the replica pin, the profile, `:readonly on`.
+    #[test]
+    fn a_sessions_read_only_cause_is_the_strongest_reason_that_holds() {
+        let mut writable = crate::safety::SafetyConfig::default();
+        writable.default.read_only = false;
+        let read_only = crate::safety::SafetyConfig::default();
+        let file = Some(std::path::PathBuf::from("/x/safety.toml"));
+        let cause = |cfg: &crate::safety::SafetyConfig, rec, pin, toggle| {
+            ReadOnlyCause::for_session(cfg, "ledger", file.clone(), rec, pin, toggle)
+        };
+        assert_eq!(
+            cause(&read_only, Some(true), true, true),
+            ReadOnlyCause::Standby
+        );
+        assert_eq!(
+            cause(&writable, Some(true), false, false),
+            ReadOnlyCause::Standby
+        );
+        assert_eq!(
+            cause(&read_only, Some(false), true, true),
+            ReadOnlyCause::ReplicaPin
+        );
+        assert_eq!(
+            cause(&read_only, None, false, true),
+            ReadOnlyCause::Profile {
+                safety_toml: file.clone()
+            }
+        );
+        assert_eq!(
+            cause(&writable, Some(false), false, true),
+            ReadOnlyCause::Toggle
+        );
+        assert_eq!(
+            cause(&writable, Some(false), false, false),
+            ReadOnlyCause::Elsewhere {
+                standby_unknown: false
+            }
+        );
+        assert_eq!(
+            cause(&writable, None, false, false),
+            ReadOnlyCause::Elsewhere {
+                standby_unknown: true
+            }
+        );
     }
 }

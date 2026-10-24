@@ -9,9 +9,11 @@ pub const COMMAND_NAMES: &[&str] = &[
     "quit", "readonly", "redact", "report", "tap", "timing", "update", "x",
 ];
 
-/// `:readonly off` on a replica opened from the environments overview.
-/// The session is pinned read-only whatever `safety.toml` says, so the
-/// only way to write is to connect somewhere else.
+/// `:readonly off` on a replica: one opened from the environments
+/// overview, or any server that said it is in recovery at connect
+/// (`App::note_server_role`). The session is pinned read-only whatever
+/// `safety.toml` says, so the only way to write is to connect somewhere
+/// else.
 pub(crate) const REPLICA_READONLY_REFUSAL: &str = "this is a read replica: it stays read-only \
      whatever safety.toml says (the server refuses writes too) · connect to its primary to write";
 
@@ -536,7 +538,7 @@ impl App {
             return false;
         }
         let demo_no_client = self.demo && self.client.is_none();
-        if self.client.is_none() && !demo_no_client {
+        if self.no_session() && !demo_no_client {
             self.last_error = Some(self.not_connected_message());
             return false;
         }
@@ -545,9 +547,9 @@ impl App {
             .as_ref()
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
-        let decision = safety::evaluate(&self.safety_config, db, &sql);
+        let decision = safety::evaluate_in_session(&self.safety_config, db, &sql, self.read_only);
         if decision.guard != Guard::Allow {
-            self.last_error = Some(blocked_by_safety_message(&decision, db));
+            self.last_error = Some(self.blocked_message(&decision, db));
             return false;
         }
         if demo_no_client {

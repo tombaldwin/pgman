@@ -155,6 +155,29 @@ impl Default for SafetyProfile {
 pub struct SafetyConfig {
     pub default: SafetyProfile,
     pub databases: HashMap<String, SafetyProfile>,
+    /// Where `read_only` came from once a project's `[safety]` block
+    /// was merged in (`project::merge_safety`): per database the merge
+    /// touched, and for `[default]` when the project set one. Empty
+    /// without a project. Never read from or written to a file.
+    #[serde(skip)]
+    pub read_only_origins: HashMap<String, ReadOnlyOrigin>,
+    #[serde(skip)]
+    pub default_read_only_origin: Option<ReadOnlyOrigin>,
+}
+
+/// Which file made a database read-only, so a refusal names the file
+/// and section to change: the personal `safety.toml` (or the built-in
+/// default without one), the project's `.pgman/pgman.toml`, or both.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadOnlyOrigin {
+    /// The personal side has `read_only` on for the database.
+    pub personal: bool,
+    /// ... from the database's own `[databases.<db>]` entry, not
+    /// `[default]`.
+    pub personal_own_entry: bool,
+    /// The project block that has `read_only` on — `[safety.default]`
+    /// or `[safety.databases.<db>]` — when one does.
+    pub project: Option<String>,
 }
 
 impl SafetyConfig {
@@ -162,6 +185,34 @@ impl SafetyConfig {
     /// explicit entry.
     pub fn profile_for(&self, db: &str) -> &SafetyProfile {
         self.databases.get(db).unwrap_or(&self.default)
+    }
+
+    /// Where `db`'s `read_only` came from. Without a project merge
+    /// everything is the personal side's: its own entry when it has
+    /// one, else `[default]`. Pure.
+    pub fn read_only_origin(&self, db: &str) -> ReadOnlyOrigin {
+        if let Some(origin) = self.read_only_origins.get(db) {
+            return origin.clone();
+        }
+        if let Some(own) = self.databases.get(db) {
+            return ReadOnlyOrigin {
+                personal: own.read_only,
+                personal_own_entry: true,
+                project: None,
+            };
+        }
+        self.read_only_origin_of_default()
+    }
+
+    /// Where `[default]`'s `read_only` came from. Pure.
+    pub fn read_only_origin_of_default(&self) -> ReadOnlyOrigin {
+        self.default_read_only_origin
+            .clone()
+            .unwrap_or(ReadOnlyOrigin {
+                personal: self.default.read_only,
+                personal_own_entry: false,
+                project: None,
+            })
     }
 
     /// The operator's personal `safety.toml` under `util::config_dir()`.
@@ -647,8 +698,21 @@ pub fn is_transaction_control(sql: &str) -> bool {
 /// `EXPLAIN` — and that takes no row locks. A locking clause (`FOR
 /// UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR KEY SHARE`)
 /// anywhere in the code, a subquery's included, would hold its locks for
-/// as long as the cursor stays open. Over-matching only costs paging.
-/// Pure.
+/// as long as the cursor stays open.
+///
+/// And it calls no function outside [`PAGEABLE_FUNCTIONS`], a short list
+/// of built-ins that read and never write. Behind a cursor a function
+/// runs only for the rows fetched, and its writes stay uncommitted while
+/// the cursor is open: `SELECT log_visit(id) FROM t` over 3000 rows would
+/// run 1001 times, not 3000, and nobody else would see even those until
+/// the cursor closed. Any other call — a user function, `nextval`, a
+/// name qualified by any schema but `pg_catalog` — runs the old way,
+/// unpaged, every row computed and committed at once. A listed name a
+/// schema has its own function for is caught at run time, by
+/// `query::paging`'s probe ([`pageable_calls`], [`shadowing_sql`]). A
+/// function a *view* calls, a column-notation call (`t.f`) and a user
+/// operator are out of sight here (docs/backlog/paging.md says so).
+/// Over-matching only costs paging. Pure.
 pub fn is_pageable_select(sql: &str) -> bool {
     if !matches!(classify(sql), StatementKind::Select) {
         return false;
@@ -663,11 +727,222 @@ pub fn is_pageable_select(sql: &str) -> bool {
     !toks
         .windows(2)
         .any(|w| w[0] == "for" && matches!(w[1].as_str(), "update" | "share" | "no" | "key"))
+        && calls_only_pageable_functions(&strip_sql_comments(sql))
+}
+
+/// The functions a statement may call and still run behind the result
+/// cursor ([`is_pageable_select`]): built-ins Postgres marks immutable or
+/// stable, which read and never write, so running them for only the
+/// fetched rows changes nothing anyone can see. Deliberately short — a
+/// function missing here only costs paging. Not `nextval`, `setval`,
+/// `random`, `clock_timestamp`, `pg_sleep`, `gen_random_uuid`,
+/// `set_config` or any `pg_*` admin call: each is volatile.
+pub const PAGEABLE_FUNCTIONS: &str = concat!(
+    // aggregates
+    "count sum avg min max array_agg string_agg bool_and bool_or every json_agg jsonb_agg ",
+    "json_object_agg jsonb_object_agg stddev stddev_pop stddev_samp variance var_pop ",
+    "var_samp percentile_cont percentile_disc mode ",
+    // window functions
+    "row_number rank dense_rank percent_rank cume_dist ntile lag lead first_value ",
+    "last_value nth_value ",
+    // conditionals
+    "coalesce nullif greatest least ",
+    // strings
+    "lower upper initcap length char_length character_length octet_length substring ",
+    "substr position strpos trim btrim ltrim rtrim lpad rpad left right repeat replace ",
+    "reverse split_part concat concat_ws format starts_with translate regexp_replace ",
+    "regexp_match regexp_matches regexp_split_to_array regexp_split_to_table ",
+    "string_to_array array_to_string md5 encode decode to_hex chr ascii quote_ident ",
+    "quote_literal quote_nullable ",
+    // numbers
+    "abs ceil ceiling floor round trunc mod div power sqrt exp ln log sign width_bucket ",
+    // dates and times
+    "now statement_timestamp transaction_timestamp age date_trunc date_part date_bin ",
+    "extract make_date make_time make_timestamp make_timestamptz make_interval to_char ",
+    "to_date to_timestamp to_number justify_days justify_hours justify_interval isfinite ",
+    // arrays and set-returning
+    "array_length array_lower array_upper array_position array_positions array_append ",
+    "array_prepend array_cat array_remove array_replace cardinality unnest ",
+    "generate_series generate_subscripts ",
+    // json
+    "to_json to_jsonb row_to_json json_build_object jsonb_build_object json_build_array ",
+    "jsonb_build_array jsonb_pretty json_typeof jsonb_typeof json_array_length ",
+    "jsonb_array_length json_extract_path jsonb_extract_path json_extract_path_text ",
+    "jsonb_extract_path_text json_each jsonb_each json_each_text jsonb_each_text ",
+    "json_object_keys jsonb_object_keys json_array_elements jsonb_array_elements ",
+    "json_array_elements_text jsonb_array_elements_text jsonb_set jsonb_strip_nulls ",
+    // types
+    "pg_typeof format_type current_setting ",
+);
+
+/// Words a `(` follows that are not function calls: keywords that take a
+/// parenthesised list or subquery (`IN (`, `EXISTS (`, `OVER (`, `AS (`),
+/// and type names that take a modifier (`::numeric(10, 2)`).
+const NOT_A_CALL_BEFORE_PAREN: &str = concat!(
+    "select from where join lateral on using in exists any all some array row values as ",
+    "materialized and or not by over filter group partition having when then else case is ",
+    "like ilike similar between union intersect except distinct limit offset first next ",
+    "cast cube rollup sets with recursive returns window numeric decimal varchar char ",
+    "character varying bit time timestamp timestamptz timetz interval float ",
+);
+
+/// `true` if every function `sql` calls is one of [`PAGEABLE_FUNCTIONS`]
+/// — unqualified or qualified by `pg_catalog`.
+fn calls_only_pageable_functions(sql: &str) -> bool {
+    pageable_calls(sql).is_some()
+}
+
+/// The [`PAGEABLE_FUNCTIONS`] names `sql` calls unqualified, sorted and
+/// without repeats, or `None` if it calls anything else. A word before
+/// `(` is a call unless it is in [`NOT_A_CALL_BEFORE_PAREN`], follows
+/// `AS` (a column-alias list, `AS g(i)`), or names a CTE's columns
+/// (`x(a) AS (`).
+///
+/// The names matter because an unqualified call is resolved by the
+/// server, by signature, across `search_path`: a schema's own
+/// `log(text)` wins over `pg_catalog.log`, which has no text overload,
+/// and may write. `query::paging` asks the server whether any schema
+/// but `pg_catalog` has a function by one of these names before it
+/// pages ([`shadowing_sql`]). Pure.
+pub fn pageable_calls(sql: &str) -> Option<Vec<String>> {
+    let toks = call_tokens(sql);
+    let word = |i: usize| match toks.get(i) {
+        Some(CallTok::Word(w)) => Some(w.as_str()),
+        _ => None,
+    };
+    let mut unqualified = Vec::new();
+    for i in 0..toks.len() {
+        let Some(w) = word(i) else {
+            continue;
+        };
+        if toks.get(i + 1) != Some(&CallTok::Punct('(')) {
+            continue;
+        }
+        if i >= 1 && toks[i - 1] == CallTok::Dot {
+            if i >= 2 && word(i - 2) == Some("pg_catalog") && listed(PAGEABLE_FUNCTIONS, w) {
+                continue;
+            }
+            return None;
+        }
+        if listed(NOT_A_CALL_BEFORE_PAREN, w)
+            || (i >= 1 && word(i - 1) == Some("as"))
+            || names_cte_columns(&toks, i + 1)
+        {
+            continue;
+        }
+        if !listed(PAGEABLE_FUNCTIONS, w) {
+            return None;
+        }
+        unqualified.push(w.to_string());
+    }
+    unqualified.sort();
+    unqualified.dedup();
+    Some(unqualified)
+}
+
+/// A query answering whether any schema but `pg_catalog` has a function
+/// named one of `names` (compared lower-cased, so a quoted `"Log"`
+/// counts too): if one does, an unqualified call may reach it, and the
+/// statement runs unpaged. `false` for no names. Only names on
+/// [`PAGEABLE_FUNCTIONS`] are put in the query — plain lower-case words,
+/// nothing to quote. Its own calls are `pg_catalog`-qualified, for the
+/// reason `query::paging::probe_sql`'s are. Pure.
+pub fn shadowing_sql(names: &[String]) -> String {
+    let list: Vec<String> = names
+        .iter()
+        .filter(|n| listed(PAGEABLE_FUNCTIONS, n))
+        .map(|n| format!("'{n}'"))
+        .collect();
+    if list.is_empty() {
+        return "false".into();
+    }
+    format!(
+        "EXISTS (SELECT 1 FROM pg_catalog.pg_proc p \
+         WHERE pg_catalog.lower(p.proname) IN ({}) \
+         AND p.pronamespace <> 'pg_catalog'::regnamespace)",
+        list.join(", ")
+    )
+}
+
+/// Whether `word` is one of the space-separated words of `list`.
+fn listed(list: &str, word: &str) -> bool {
+    list.split_ascii_whitespace().any(|w| w == word)
+}
+
+/// Whether the `(` at `open` starts a CTE's column list: its `)` is
+/// followed by `AS (`, `AS MATERIALIZED` or `AS NOT MATERIALIZED`. A call
+/// can be followed by `AS` (an alias) but never by `AS (`.
+fn names_cte_columns(toks: &[CallTok], open: usize) -> bool {
+    let mut depth = 0usize;
+    for (j, t) in toks.iter().enumerate().skip(open) {
+        match t {
+            CallTok::Punct('(') => depth += 1,
+            CallTok::Punct(')') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let as_follows = matches!(toks.get(j + 1), Some(CallTok::Word(w)) if w == "as");
+                    let body_follows = match toks.get(j + 2) {
+                        Some(CallTok::Punct('(')) => true,
+                        Some(CallTok::Word(w)) => w == "materialized" || w == "not",
+                        _ => false,
+                    };
+                    return as_follows && body_follows;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 #[cfg(test)]
 mod pageable_tests {
-    use super::is_pageable_select;
+    use super::{is_pageable_select, pageable_calls, shadowing_sql};
+
+    /// The unqualified built-in names a statement calls are what the
+    /// server is asked about: a schema may have its own `log(text)`.
+    /// `pg_catalog.`-qualified calls are the built-in and aren't asked
+    /// about; a call off the list is `None`.
+    #[test]
+    fn pageable_calls_names_what_the_server_resolves() {
+        let v = |xs: &[&str]| Some(xs.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        assert_eq!(pageable_calls("SELECT * FROM t"), v(&[]));
+        assert_eq!(
+            pageable_calls("SELECT log('row ' || i), LOG(2, 8), count(*) FROM generate_series(1, 3) i GROUP BY 1"),
+            v(&["count", "generate_series", "log"])
+        );
+        assert_eq!(
+            pageable_calls("SELECT pg_catalog.lower(name) FROM t"),
+            v(&[])
+        );
+        assert_eq!(pageable_calls("SELECT \"Log\"(1)"), v(&["log"]));
+        assert_eq!(
+            pageable_calls("SELECT x FROM generate_series(1, 2) AS g(x)"),
+            v(&["generate_series"])
+        );
+        assert_eq!(pageable_calls("SELECT log_visit(1)"), None);
+        assert_eq!(pageable_calls("SELECT public.log('x')"), None);
+    }
+
+    /// The shadowing query lists the names lower-case, compares
+    /// lower-cased, skips pg_catalog, and is a bare `false` with nothing
+    /// to ask. A name off the list never reaches the SQL.
+    #[test]
+    fn shadowing_sql_asks_about_the_listed_names_only() {
+        let names = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(shadowing_sql(&[]), "false");
+        let q = shadowing_sql(&names(&["count", "log"]));
+        assert!(
+            q.contains("pg_catalog.lower(p.proname) IN ('count', 'log')"),
+            "{q}"
+        );
+        assert!(
+            q.contains("p.pronamespace <> 'pg_catalog'::regnamespace"),
+            "{q}"
+        );
+        assert_eq!(shadowing_sql(&names(&["x'); DROP TABLE t; --"])), "false");
+        assert_eq!(shadowing_sql(&names(&["log_visit"])), "false");
+    }
 
     #[test]
     fn plain_reads_page() {
@@ -680,8 +955,53 @@ mod pageable_tests {
             "-- a comment first\nSELECT 1",
             "SELECT substring(name FROM 1 FOR 3) FROM t",
             "SELECT 'for update' FROM t",
+            // Calls that only read.
+            "SELECT count(*), max(id), avg(n) FROM t",
+            "SELECT lower(name), coalesce(a, 0) FROM t WHERE upper(code) = 'A'",
+            "SELECT g FROM generate_series(1, 3000) g",
+            "SELECT x FROM generate_series(1, 3) AS g(x)",
+            "SELECT pg_catalog.lower(name) FROM t",
+            "SELECT id::numeric(10, 2), CAST(id AS varchar(10)) FROM t",
+            "SELECT * FROM t WHERE id IN (1, 2) AND EXISTS (SELECT 1) OR NOT (a)",
+            "SELECT row_number() OVER (PARTITION BY a ORDER BY b) FROM t",
+            "SELECT count(*) FILTER (WHERE a) FROM t",
+            "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY n) FROM t",
+            "WITH x(a) AS (SELECT 1) SELECT a FROM x",
+            "WITH x(a) AS MATERIALIZED (SELECT 1) SELECT a FROM x",
+            "SELECT t.id, now() FROM t",
+            "SELECT 'log_visit(1)', $$nextval('s')$$ FROM t",
+            "SELECT 1 -- log_visit(1)\nFROM t",
         ] {
             assert!(is_pageable_select(sql), "{sql}");
+        }
+    }
+
+    /// Behind a cursor a function runs only for the fetched rows and its
+    /// writes stay uncommitted while the cursor is open, so a call pgman
+    /// can't vouch for runs unpaged.
+    #[test]
+    fn a_call_that_may_write_does_not_page() {
+        for sql in [
+            "SELECT log_visit(i) FROM generate_series(1, 3000) i",
+            "SELECT id FROM t WHERE audit_row(t.id)",
+            "SELECT count(log_visit(id)) FROM t",
+            "SELECT * FROM log_rows(3)",
+            "SELECT x FROM t, LATERAL log_visit(t.id) x",
+            "SELECT \"log_visit\"(1)",
+            "SELECT log_visit(1) AS y FROM t",
+            "WITH x AS (SELECT log_visit(1)) SELECT * FROM x",
+            "SELECT * FROM t WHERE id IN (SELECT log_visit(id) FROM u)",
+            // Volatile built-ins.
+            "SELECT nextval('s') FROM t",
+            "SELECT random() FROM t",
+            "SELECT clock_timestamp() FROM t",
+            "SELECT pg_sleep(1)",
+            // A schema's own `lower` or `count` is not the built-in.
+            "SELECT public.lower(name) FROM t",
+            "SELECT app.count(*) FROM t",
+            "SELECT \"app\".\"count\"(*) FROM t",
+        ] {
+            assert!(!is_pageable_select(sql), "{sql}");
         }
     }
 
@@ -720,7 +1040,10 @@ enum CallTok {
     Literal(String),
     /// `(`, `)` or `,`.
     Punct(char),
-    /// Anything else: an operator, a `.`, a `::`, an `E'…'` string with
+    /// A `.`: what qualifies a name (`pg_catalog.lower`). In an
+    /// argument it is as unreadable as [`CallTok::Opaque`].
+    Dot,
+    /// Anything else: an operator, a `::`, an `E'…'` string with
     /// backslash escapes (`E'\164ransaction_read_only'` spells a GUC in
     /// octal, and this classifier has no unescaper), an unterminated
     /// dollar-quote. Its presence in an argument marks the argument as one
@@ -751,6 +1074,7 @@ fn call_tokens(sql: &str) -> Vec<CallTok> {
                     }
                     match b[i] {
                         b'(' | b')' | b',' => out.push(CallTok::Punct(b[i] as char)),
+                        b'.' => out.push(CallTok::Dot),
                         b';' => {}
                         c if c.is_ascii_whitespace() => {}
                         _ => out.push(CallTok::Opaque),
@@ -1040,10 +1364,26 @@ pub fn changes_schema(sql: &str) -> bool {
 
 /// Check a statement against the profile for `db`.
 pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
+    evaluate_in_session(config, db, sql, false)
+}
+
+/// [`evaluate`] for a session that may be read-only by more than its
+/// profile: `:readonly on`, or a standby's pin. Turning read-only off
+/// from inside such a session (`SET default_transaction_read_only =
+/// off`, `BEGIN READ WRITE`, …) is blocked as it is under a read-only
+/// profile — confirmed, it used to write while the header still said
+/// read-only. `:readonly off` is the way out the operator is offered.
+pub fn evaluate_in_session(
+    config: &SafetyConfig,
+    db: &str,
+    sql: &str,
+    session_read_only: bool,
+) -> Decision {
     let profile = config.profile_for(db);
     let kind = classify(sql);
-    let read_only_escape = profile.read_only && attempts_read_only_escape(sql);
-    let server_control = profile.read_only && calls_server_control(&strip_sql_comments(sql));
+    let pinned = profile.read_only || session_read_only;
+    let read_only_escape = pinned && attempts_read_only_escape(sql);
+    let server_control = pinned && calls_server_control(&strip_sql_comments(sql));
     Decision {
         kind,
         // The escape overrides the category guard: whatever `other` is set to,
@@ -2653,6 +2993,31 @@ mod tests {
         let d = evaluate(&cfg, "db", "SET default_transaction_read_only = off");
         assert!(!d.read_only_escape);
         assert_eq!(d.guard, Guard::Confirm, "the `other` guard, as before");
+    }
+
+    /// A writable profile in a read-only session (`:readonly on`, a
+    /// standby's pin) blocks the escape too, and the server-control
+    /// calls; a writable session under it doesn't.
+    #[test]
+    fn a_read_only_session_blocks_the_escape_whatever_the_profile() {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        for sql in [
+            "SET default_transaction_read_only = off",
+            "BEGIN READ WRITE",
+            "SELECT set_config('default_transaction_read_only', 'off', false)",
+        ] {
+            let d = evaluate_in_session(&cfg, "db", sql, true);
+            assert!(d.read_only_escape, "{sql}");
+            assert_eq!(d.guard, Guard::Block, "{sql}");
+            assert!(
+                !evaluate_in_session(&cfg, "db", sql, false).read_only_escape,
+                "{sql}"
+            );
+        }
+        let d = evaluate_in_session(&cfg, "db", "SELECT pg_stat_reset()", true);
+        assert!(d.server_control);
+        assert_eq!(d.guard, Guard::Block);
     }
 
     #[test]

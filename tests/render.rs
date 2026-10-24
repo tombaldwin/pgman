@@ -2934,6 +2934,9 @@ fn cell_edit_app(value: Option<&str>) -> App {
         old: value.map(str::to_string),
         row: 0,
         col: 1,
+        table_oid: 100,
+        attnum: 2,
+        key_attnums: vec![1],
     };
     a.cell_edit = Some(pgman::app::CellEditUi {
         input: tui_common::TextInput::with_text(value.unwrap_or_default()),

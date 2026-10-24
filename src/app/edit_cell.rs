@@ -128,7 +128,7 @@ impl App {
     /// Why this session can't edit at all, whatever the cell: no
     /// connection, a transaction awaiting its prompt, read-only.
     fn cell_edit_session_refusal(&self) -> Option<String> {
-        if self.client.is_none() {
+        if self.no_session() {
             return Some(if self.demo {
                 "can't edit: --demo has no database to write to".into()
             } else {
@@ -246,7 +246,7 @@ impl App {
             .as_ref()
             .map(|d| d.dbname.clone())
             .unwrap_or_else(|| "default".into());
-        let decision = safety::evaluate(&self.safety_config, &db, &sql);
+        let decision = safety::evaluate_in_session(&self.safety_config, &db, &sql, self.read_only);
         let summary = format!("edit {}", edit_target(&ui.edit));
         let pending = PendingCellEdit {
             edit: ui.edit,
@@ -255,7 +255,7 @@ impl App {
             return_to: ui.return_to,
         };
         match decision.guard {
-            Guard::Block => self.last_error = Some(blocked_by_safety_message(&decision, &db)),
+            Guard::Block => self.last_error = Some(self.blocked_message(&decision, &db)),
             Guard::Confirm => {
                 self.pending_run = Some(PendingRun {
                     sql,
@@ -297,7 +297,8 @@ impl App {
         self.last_status = Some("saving the edit…".into());
         tokio::spawn(async move {
             let client = db.ready().await;
-            let msg = match conn::run_single_row_update(&client, &sql, keep_open).await {
+            let result = conn::run_single_row_update(&client, &sql, &pending.edit, keep_open).await;
+            let msg = match result {
                 Ok(done) => AppMsg::CellUpdated {
                     generation,
                     pending,
@@ -422,6 +423,9 @@ mod tests {
             old: old.map(str::to_string),
             row: 1,
             col: 1,
+            table_oid: 100,
+            attnum: 2,
+            key_attnums: vec![1],
         };
         a.cell_edit = Some(CellEditUi {
             input: TextInput::with_text(old.unwrap_or_default()),
@@ -833,6 +837,36 @@ mod live {
             .get(0)
     }
 
+    /// Through the App's own pager route: with a schema holding its own
+    /// `log`, a SELECT calling `log` runs unpaged and is shown as an
+    /// unpaged result — `capped at 1000`, nothing for `M` to re-run.
+    #[tokio::test]
+    async fn a_shadowed_call_is_an_unpaged_result_with_nothing_for_m() {
+        let client = client().await;
+        let schema = name("appshadow");
+        client
+            .batch_execute(&format!(
+                "CREATE SCHEMA {schema}; \
+                 CREATE FUNCTION {schema}.log(note text) RETURNS text LANGUAGE sql AS 'SELECT note'"
+            ))
+            .await
+            .expect("create the shadow");
+        let mut a = app(&client).await;
+        a.editor.buffer = "SELECT log(10, i) FROM generate_series(1, 3000) i".into();
+        a.request_run(RunKind::Run);
+        pump(&mut a).await;
+        let more = a.result_more();
+        let paging = a.result_paging.clone();
+        client
+            .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+            .await
+            .expect("drop the shadow");
+        assert_eq!(a.last_error, None);
+        assert_eq!(a.grid.row_count(), 1000);
+        assert!(paging.is_none(), "{paging:?}");
+        assert_eq!(more, crate::grid::More::Unpaged);
+    }
+
     #[tokio::test]
     async fn u_edits_a_cell_through_the_confirm_and_the_grid_shows_the_servers_value() {
         let client = client().await;
@@ -1063,5 +1097,94 @@ mod live {
         assert_eq!(stored.as_deref(), Some("true"));
         assert_eq!(a.grid.rows[0][1], None);
         assert_eq!(a.mode, Mode::Normal);
+    }
+
+    /// The compose standby reached by a plain DSN, with a profile that
+    /// would let it write: the connect learns it is in recovery and pins
+    /// the session read-only, so `u` and `:readonly off` say it is a
+    /// replica instead of sending a write the server refuses. The
+    /// primary, the same way, stays writable.
+    #[tokio::test]
+    async fn a_standby_reached_by_dsn_is_pinned_read_only_at_connect() {
+        const STANDBY: &str =
+            "postgres://pgman_test:pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable";
+        let connect = |dsn: &str| {
+            let mut cfg = SafetyConfig::default();
+            cfg.default.read_only = false;
+            let mut a = App::new(Theme::default(), Dsn::parse(dsn).ok(), Vec::new(), cfg);
+            a.read_only = false;
+            a.splash_visible = false;
+            a.splash_until = None;
+            a.start_connect();
+            a
+        };
+        let mut a = connect(STANDBY);
+        pump(&mut a).await;
+        assert!(a.client.is_some(), "{:?}", a.conn_state);
+        assert_eq!(a.in_recovery, Some(true));
+        assert!(a.read_only && a.replica_pin);
+        run(&mut a, "SELECT 1 AS x").await;
+        u_at(&mut a, 0, 0);
+        assert_eq!(a.mode, Mode::Normal);
+        assert_eq!(
+            a.last_error.as_deref(),
+            Some(format!("can't edit: {}", cmd::REPLICA_READONLY_REFUSAL).as_str())
+        );
+        a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+        for c in "readonly off".chars() {
+            a.on_key(key(KeyCode::Char(c)));
+        }
+        a.on_key(key(KeyCode::Enter));
+        assert!(a.read_only);
+        assert_eq!(a.last_error.as_deref(), Some(cmd::REPLICA_READONLY_REFUSAL));
+
+        let mut a = connect(DSN);
+        pump(&mut a).await;
+        assert_eq!(a.in_recovery, Some(false));
+        assert!(!a.read_only && !a.replica_pin);
+    }
+
+    /// Behind the connection-failed card the dead client is still held,
+    /// but nothing offers to run on it: a write is refused before the
+    /// guard's prompt, and so is a cell edit. Once `r` reconnects, the
+    /// `not connected` footer goes with the card.
+    #[tokio::test]
+    async fn a_lost_session_prompts_for_nothing_and_its_footer_goes_on_reconnect() {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let mut a = App::new(Theme::default(), Dsn::parse(DSN).ok(), Vec::new(), cfg);
+        a.read_only = false;
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        assert!(a.client.is_some(), "{:?}", a.conn_state);
+        run(&mut a, "SELECT 1 AS x").await;
+        a.on_msg(AppMsg::ConnectionLost {
+            generation: a.generation,
+            reason: "connection lost · x".into(),
+        });
+        assert!(a.client.is_some(), "fixture: the dead client is still held");
+        let gone = a.not_connected_message();
+
+        a.editor.buffer = "INSERT INTO t VALUES (1)".into();
+        a.request_run(RunKind::Run);
+        assert!(
+            a.pending_run.is_none(),
+            "no prompt for a session that is gone"
+        );
+        assert_ne!(a.mode, Mode::Confirm);
+        assert_eq!(a.last_error.as_deref(), Some(gone.as_str()));
+
+        a.last_error = None;
+        u_at(&mut a, 0, 0);
+        assert!(a.cell_edit.is_none(), "no cell editor either");
+        assert_eq!(a.last_error.as_deref(), Some(gone.as_str()));
+
+        a.last_error = Some(gone.clone());
+        a.start_connect();
+        pump(&mut a).await;
+        assert!(matches!(a.conn_state, ConnState::Connected { .. }));
+        assert_eq!(a.last_error, None, "the card's footer went with it");
     }
 }

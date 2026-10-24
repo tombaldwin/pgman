@@ -388,6 +388,9 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
         }
     });
 
+    // Why this session is read-only, for a refusal's hint — worked out
+    // before `opts.dsn` moves into the connect.
+    let read_only = read_only_cause(&opts);
     let (client, _tunnel) = conn::connect_only(
         opts.dsn,
         opts.read_only,
@@ -417,7 +420,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 0
             }
             Err(e) => {
-                eprintln!("{}", terminal_safe(&error_text(&e)));
+                eprintln!("{}", terminal_safe(&error_text(&explained(e, &read_only))));
                 1
             }
         }
@@ -460,7 +463,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 }
             }
             Err(e) => {
-                eprintln!("{}", terminal_safe(&error_text(&e)));
+                eprintln!("{}", terminal_safe(&error_text(&explained(e, &read_only))));
                 1
             }
         }
@@ -582,6 +585,28 @@ fn is_renderable(c: char) -> bool {
 /// statement summary in a refusal. A `RAISE NOTICE` carrying
 /// `\x1b]0;pwned\x07` reached the terminal raw; it now goes through the
 /// same filter CSV / TSV cells do ([`is_renderable`]).
+/// Why a `--batch` session is read-only, for a refusal's hint: batch
+/// knows the database's profile, but not whether the server is a
+/// standby, so a refusal its profile didn't cause says it may be.
+fn read_only_cause(opts: &Opts) -> conn::ReadOnlyCause {
+    let safety_toml = crate::util::config_file("safety.toml");
+    conn::ReadOnlyCause::for_session(
+        &opts.safety,
+        &opts.db,
+        safety_toml.exists().then_some(safety_toml),
+        None,
+        false,
+        false,
+    )
+}
+
+/// `e` with a read-only refusal's hint added
+/// (`conn::explain_read_only_refusal`).
+fn explained(e: QueryErr, cause: &conn::ReadOnlyCause) -> QueryErr {
+    let (msg, detail) = conn::explain_read_only_refusal(e.msg, e.detail, cause);
+    QueryErr { msg, detail, ..e }
+}
+
 /// What stderr says for a failed statement: `error: ` and the message
 /// (pgman's own `hint:` line, when it added one, included), then the
 /// detail's hint — the server's, as psql shows it, and pgman's longer

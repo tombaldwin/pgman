@@ -40,6 +40,11 @@ Shown at startup when more than one data source was discovered, and via `c`
 
 On a failed connection (Normal mode, "connection failed" screen): `r` retries
 the same DSN; `p` re-opens the picker (shown when there are candidates to pick).
+A connection that drops while pgman is running — the server ended the
+session (`pg_terminate_backend`, a restart, a standby's recovery conflict,
+an idle timeout) or the network went — lands on the same screen, its error
+`connection lost · ` and the server's own message, and the same `r`
+reconnects.
 
 ## Start card / grid (Normal mode)
 
@@ -157,20 +162,50 @@ rows only` when there are more. A fetched page keeps the active sort
 and filter. `Ctrl-C` cancels a fetch that is taking too long, keeping
 the rows already there.
 
-The cursor holds a read transaction open on the server, so pgman closes
-it after 60 s without a fetch, or 10 min after the query ran (sooner
-when the server's `idle_in_transaction_session_timeout` or
-`transaction_timeout` is shorter), and as soon as anything else talks
-to the database: the next query, a panel such as `L` or `T`, a
-reconnect, closing the tab. The title then says `cursor closed · M
+While a partial result's cursor is open, the session is **idle in
+transaction**, holding an `ACCESS SHARE` lock on every table the query
+reads. Reads and writes go on around it, but DDL on those tables — a
+migration, `ALTER TABLE`, `TRUNCATE`, `VACUUM FULL`, `REINDEX` — waits
+for the lock, and every later statement on those tables queues behind
+that waiting DDL. The open transaction also holds back vacuum. So pgman
+closes the cursor after 60 s without a fetch, or 10 min after the query
+ran (sooner when the server's `idle_in_transaction_session_timeout` or
+`transaction_timeout` is shorter), when the last row is fetched, and as
+soon as anything else talks to the database: the next query, a panel
+such as `L` or `T`, a reconnect, closing the tab. On a standby no cursor
+is held at all (below). The title then says `cursor closed · M
 re-runs`, and `M` runs the query again for the rows already held plus
 1000 more, as a fresh snapshot.
+
+On a standby (the header's `replica` badge) pgman never holds the cursor
+open: a standby replaying the primary's DDL or `VACUUM` cancels a
+session that is in its way, and after `max_standby_streaming_delay` (30 s
+by default, less on an Aurora reader) it ends the whole connection. So
+there the first 1000 rows arrive and the transaction commits at once;
+the title says `partial · on a standby · M re-runs for more`, and each
+`M` runs the query again for the rows held plus 1000.
 
 Everything else stops at 1000 rows with `capped at 1000 · more rows not
 fetched` in the title: `EXPLAIN`, scripts of several statements,
 `\watch`, `SELECT … FOR UPDATE` / `FOR SHARE` (a cursor would hold the
-locks), and a `SELECT` run while a transaction is open (`in a
-transaction, so no paging`). For every row, run it outside the TUI with
+locks), a `SELECT` that calls a function pgman does not know to be
+read-only, and a `SELECT` run while a transaction is open (`in a
+transaction, so no paging`). The functions a paged `SELECT` may call are
+a short list of built-ins that never write — `count`, `sum`, `min`,
+`max`, `avg`, `coalesce`, `lower`, `upper`, `length`, `now`,
+`date_trunc`, `generate_series` and the like; anything else (your own
+function, `nextval`, `random`, a name in any schema but `pg_catalog`)
+runs the old way, every row computed and committed at once, because
+behind a cursor a function runs only for the rows fetched and its writes
+stay uncommitted until the cursor closes. A listed name is the
+built-in only if no schema has a function of its own by that name: the
+server picks a call's function by its arguments, so a schema's
+`log(text)` answers `log('…')`. Before paging pgman asks the server, and
+if any schema but `pg_catalog` has a function by a name the statement
+calls, it runs unpaged. pgman cannot see a function a view calls, a
+column-notation call (`SELECT t.f FROM t`), or a user operator or cast:
+a `SELECT` that reaches a writing function that way still pages. For
+every row, run it outside the TUI with
 `pgman query 'SQL' --json` (or `--batch --format json`), which isn't
 capped; see [commands](commands.md). How the cursor works is in
 [docs/backlog/paging.md](backlog/paging.md).
@@ -260,7 +295,12 @@ pasted in); write that UPDATE in the editor.
 
 The UPDATE changes **one row or nothing**: any other count (the row
 was deleted since the query ran; an inheritance child shares the key)
-is rolled back and the footer says so. Inside a transaction you opened
+is rolled back and the footer says so. So is an edit whose table,
+column or key the server no longer calls what pgman's schema cache
+does — a column renamed since pgman read the schema, with another
+added under its old name, would otherwise take the write: the footer
+says `the table changed since pgman read it`, and `S` then `r`
+reloads the schema. Inside a transaction you opened
 with `BEGIN`, only the edit is undone, under a savepoint. On success
 the cell shows the value as the server stored it (`1.5` into a
 `numeric(10,2)` reads `1.50`); with `auto_tx` on, the commit / rollback
@@ -317,9 +357,13 @@ server's statistics, read-only, and each carries the numbers that triggered it
 and how long they have accumulated (since `stats_reset`, or "at least since the
 server started"), the query that produced them, a conservative setting to change
 and why, and what that setting is called in an RDS / Aurora parameter group —
-static (applies at reboot) or dynamic, and how Aurora differs. On RDS and Aurora
-the suggestion is the `aws rds modify-db-(cluster-)parameter-group` command;
-self-hosted, `ALTER SYSTEM`. pgman never runs it.
+static (applies at reboot) or dynamic, and how Aurora differs (on Aurora, a
+parameter in both the cluster and the instance parameter group can be
+overridden by the instance's; one AWS's Aurora tables don't list, such as
+`lock_timeout`, says to set it per role or session and check your group). On
+RDS and Aurora a server setting's suggestion is the
+`aws rds modify-db-(cluster-)parameter-group` command; self-hosted,
+`ALTER SYSTEM`. pgman never runs it.
 
 | Code | Finding | Read from |
 |---|---|---|
@@ -327,8 +371,8 @@ self-hosted, `ALTER SYSTEM`. pgman never runs it.
 | ADV001 | Buffer cache hit ratio under 0.99 (MED under 0.95), with ≥ 100 000 block requests → `shared_buffers` | `pg_stat_database` |
 | ADV002 | ≥ 64 MiB spilled to temp files (MED from 256 MiB an hour) → `work_mem` for the spilling role, with the statements when `pg_stat_statements` is installed | `pg_stat_database`, `pg_stat_statements` |
 | ADV003 | Dead tuples ≥ 10 % of live on a table of ≥ 10 000 rows, blamed on autovacuum being off, behind, or its scale factor → `autovacuum_vacuum_scale_factor` on the table | `pg_stat_user_tables` |
-| ADV004 | Sessions waiting ≥ 5 s on a lock (HIGH from 60 s or 5 waiters), with the blocking chain → `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
-| ADV005 | Over 20 % of checkpoints requested rather than timed (not on Aurora) → `max_wal_size` | `pg_stat_bgwriter`, `pg_stat_checkpointer` from PG17 |
+| ADV004 | Sessions waiting ≥ 5 s on a lock (HIGH from 60 s or 5 waiters), with the blocking chain → `idle_in_transaction_session_timeout` when the head is idle in a transaction (a timeout over an hour, as AWS's 24 h default, counts as off); otherwise `log_lock_waits`, then `lock_timeout` for the migration / DDL session only — never per role for the application, whose every statement waiting longer would fail | `pg_stat_activity`, `pg_blocking_pids` |
+| ADV005 | Over 20 % of checkpoints requested rather than timed (not on Aurora). From PG14 the WAL written says whether they were forced by WAL volume (MED → `max_wal_size`) or asked for by something else — CREATE / DROP DATABASE, a base backup, a manual `CHECKPOINT`, a shutdown (LOW, no setting); before PG14 it hedges | `pg_stat_bgwriter`, `pg_stat_checkpointer` from PG17, `pg_stat_wal` |
 
 Thresholds and their reasoning: `docs/backlog/config-advisor.md`. Without
 `pg_read_all_stats` (in `pg_monitor`) other sessions' state and queries are

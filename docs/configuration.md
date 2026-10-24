@@ -63,6 +63,15 @@ instead. The footer names the file but not its path, which would not fit
 it; the error overlay (F2, or `!` outside the editor) and `--batch`
 stderr carry the full path on a second `hint` line.
 
+The hint names `safety.toml` only when the profile is what made the
+session read-only. On a standby it says `the server is a standby (in
+recovery) and refuses every write`; after `:readonly on`, how to turn it
+off; and under a writable profile — a `SET`, `BEGIN READ ONLY`, or a
+role's or database's `default_transaction_read_only` — `read-only, but
+not by pgman's safety.toml`, with where to look in the overlay.
+`--batch` doesn't ask whether the server is a standby, so it lists one
+among the possibilities.
+
 ```toml
 # [default] is the profile for any database with no entry of its own.
 [default]
@@ -146,7 +155,10 @@ Each field takes the stricter of the personal and project value:
 smaller non-zero value, guards take the stricter of allow < confirm <
 block. A `[safety]` block is a *complete* profile — any field it omits
 reverts to pgman's own strict default, not your personal one. `--batch`
-applies the same merge.
+applies the same merge. When this file is what keeps a database
+read-only, `:readonly off`, `u` and a refused write name it and its
+block (`.pgman/pgman.toml ([safety.databases.ledger])`), not a
+`safety.toml` section — and both files when both say so.
 
 `[patches]` is read only by the MCP server's `pending_patches` tool
 ([MCP server](mcp.md)). A patch's id is the value its own version-row
