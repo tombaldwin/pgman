@@ -503,8 +503,8 @@
         "/dev/tty"
       ],
       "tables": [
-        "pg_stat_activity",
-        "unnest"
+        "pg_catalog.unnest",
+        "pg_stat_activity"
       ],
       "calls": [
         "apply_pgpassword",

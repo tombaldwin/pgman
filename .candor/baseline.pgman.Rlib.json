@@ -226,7 +226,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150ee6e85c4ce3d514b3",
+      "hash": "9ee8d83182a4150e4ea2f0fa250076b9",
       "invisible": [
         "serde_core"
       ]
@@ -250,7 +250,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e4bd6608c752c2dfa",
+      "hash": "9ee8d83182a4150ee6e85c4ce3d514b3",
       "invisible": [
         "serde_core"
       ]
@@ -262,7 +262,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e4ea2f0fa250076b9",
+      "hash": "9ee8d83182a4150e4bd6608c752c2dfa",
       "invisible": [
         "serde_core"
       ]
@@ -274,7 +274,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e62d59e749f6832cd",
+      "hash": "9ee8d83182a4150e08ad1786dcd1ed95",
       "invisible": [
         "serde_core"
       ]
@@ -298,7 +298,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e056326d491747805",
+      "hash": "9ee8d83182a4150e62d59e749f6832cd",
       "invisible": [
         "serde_core"
       ]
@@ -310,7 +310,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e08ad1786dcd1ed95",
+      "hash": "9ee8d83182a4150e056326d491747805",
       "invisible": [
         "serde_core"
       ]
@@ -322,7 +322,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150ecb5cf27ce293990c",
+      "hash": "9ee8d83182a4150e3d05f0ea1b636ae9",
       "invisible": [
         "serde"
       ]
@@ -334,7 +334,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e3d05f0ea1b636ae9",
+      "hash": "9ee8d83182a4150ecb5cf27ce293990c",
       "invisible": [
         "serde"
       ]
@@ -1535,7 +1535,7 @@
         "ssh"
       ],
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "app::App::on_key_inner"
@@ -1602,7 +1602,7 @@
         "ssh"
       ],
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "app::App::cancel_running_query",
@@ -2298,7 +2298,7 @@
         "ssh"
       ],
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "app::App::run_with",
@@ -2421,7 +2421,7 @@
         "ssh"
       ],
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "<tui::Tui as tui::TuiHost>::draw",
@@ -3967,7 +3967,7 @@
         "read"
       ],
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "app::edit_cell::<impl app::App>::save_cell_edit"
@@ -4025,7 +4025,7 @@
         "read"
       ],
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "app::edit_cell::<impl app::App>::spawn_cell_update",
@@ -4062,7 +4062,7 @@
       "overdeclared": [],
       "hash": "9ee8d83182a4150ea64716bcbb7cbbd4",
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
@@ -4460,7 +4460,7 @@
         "ssh"
       ],
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "app::App::on_key"
@@ -4870,7 +4870,7 @@
       "overdeclared": [],
       "hash": "9ee8d83182a4150e2b806ae026031696",
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "calls": [
         "app::edit_cell::<impl app::App>::spawn_cell_update",
@@ -7454,7 +7454,7 @@
       "overdeclared": [],
       "hash": "9ee8d83182a4150eb101f91f568fb0c9",
       "tables": [
-        "unnest"
+        "pg_catalog.unnest"
       ],
       "invisible": [
         "tokio_postgres"
@@ -12427,7 +12427,7 @@
     },
     {
       "fn": "query::paging::Db::new",
-      "loc": "src/query/paging.rs:309:5: 309:81",
+      "loc": "src/query/paging.rs:316:5: 316:81",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12439,7 +12439,7 @@
     },
     {
       "fn": "query::paging::Db::ready",
-      "loc": "src/query/paging.rs:317:5: 317:60",
+      "loc": "src/query/paging.rs:324:5: 324:60",
       "inferred": [],
       "declared": [
         "Db"
@@ -12452,7 +12452,7 @@
     },
     {
       "fn": "query::paging::Pager::barrier",
-      "loc": "src/query/paging.rs:285:5: 285:51",
+      "loc": "src/query/paging.rs:292:5: 292:51",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12464,7 +12464,7 @@
     },
     {
       "fn": "query::paging::Pager::close",
-      "loc": "src/query/paging.rs:279:5: 279:24",
+      "loc": "src/query/paging.rs:286:5: 286:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12476,7 +12476,7 @@
     },
     {
       "fn": "query::paging::Pager::fetch",
-      "loc": "src/query/paging.rs:272:5: 272:82",
+      "loc": "src/query/paging.rs:279:5: 279:82",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12488,7 +12488,7 @@
     },
     {
       "fn": "query::paging::Pager::open",
-      "loc": "src/query/paging.rs:265:5: 265:96",
+      "loc": "src/query/paging.rs:272:5: 272:96",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12500,7 +12500,7 @@
     },
     {
       "fn": "query::paging::Pager::send",
-      "loc": "src/query/paging.rs:291:5: 291:29",
+      "loc": "src/query/paging.rs:298:5: 298:29",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12512,7 +12512,7 @@
     },
     {
       "fn": "query::paging::Pager::spawn",
-      "loc": "src/query/paging.rs:256:5: 256:63",
+      "loc": "src/query/paging.rs:263:5: 263:63",
       "inferred": [
         "Db",
         "Log"
@@ -12539,7 +12539,7 @@
     },
     {
       "fn": "query::paging::end",
-      "loc": "src/query/paging.rs:366:1: 366:58",
+      "loc": "src/query/paging.rs:373:1: 373:58",
       "inferred": [
         "Db",
         "Log"
@@ -12564,7 +12564,7 @@
     },
     {
       "fn": "query::paging::fetch",
-      "loc": "src/query/paging.rs:485:1: 489:50",
+      "loc": "src/query/paging.rs:492:1: 496:50",
       "inferred": [
         "Db",
         "Log"
@@ -12589,7 +12589,7 @@
     },
     {
       "fn": "query::paging::open",
-      "loc": "src/query/paging.rs:372:1: 376:52",
+      "loc": "src/query/paging.rs:379:1: 383:52",
       "inferred": [
         "Db",
         "Log"
@@ -12619,7 +12619,7 @@
     },
     {
       "fn": "query::paging::read_open_batch",
-      "loc": "src/query/paging.rs:453:1: 457:78",
+      "loc": "src/query/paging.rs:460:1: 464:78",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12631,7 +12631,7 @@
     },
     {
       "fn": "query::paging::run",
-      "loc": "src/query/paging.rs:327:1: 327:88",
+      "loc": "src/query/paging.rs:334:1: 334:88",
       "inferred": [
         "Db",
         "Log"
@@ -13048,7 +13048,7 @@
     },
     {
       "fn": "safety::code_tokens",
-      "loc": "src/safety.rs:2022:1: 2022:52",
+      "loc": "src/safety.rs:2026:1: 2026:52",
       "inferred": [
         "Unknown"
       ],
@@ -13066,7 +13066,7 @@
     },
     {
       "fn": "safety::word_present",
-      "loc": "src/safety.rs:1971:1: 1971:63",
+      "loc": "src/safety.rs:1975:1: 1975:63",
       "inferred": [
         "Unknown"
       ],
