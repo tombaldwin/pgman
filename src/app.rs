@@ -4186,10 +4186,16 @@ impl App {
             Ok(PageOutcome::Rerun(opened)) => {
                 let in_transaction = opened.in_transaction;
                 let standby = opened.standby;
+                let shadowed = opened.shadowed;
                 self.replace_rows(opened.grid);
                 if let Some(p) = self.result_paging.as_mut() {
                     p.in_transaction = in_transaction;
                     p.standby = standby;
+                }
+                if shadowed {
+                    // A schema has its own function by a name it calls
+                    // now: no more re-runs (see the pager route).
+                    self.result_paging = None;
                 }
                 let now = Instant::now();
                 self.cursor = opened.cursor.map(|limits| CursorMirror {

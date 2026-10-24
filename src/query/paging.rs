@@ -201,6 +201,10 @@ pub struct Opened {
     /// way, unpaged: closing a cursor there would end *their*
     /// transaction.
     pub in_transaction: bool,
+    /// A built-in name it calls is some schema's own function too
+    /// ([`probe_sql`]), so it ran unpaged — and is not one for `M` to
+    /// re-run: each run may write again.
+    pub shadowed: bool,
     /// Where each column came from ([`crate::conn::column_origins`]),
     /// so a cell of a paged result can still be edited.
     pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
@@ -402,6 +406,7 @@ async fn open(
                 cursor: None,
                 standby,
                 in_transaction: !idle,
+                shadowed: idle && shadowed,
                 origins,
             },
             None,
@@ -437,6 +442,7 @@ async fn open(
         cursor: hold.then(|| close_limits(settings.0, settings.1)),
         standby,
         in_transaction: false,
+        shadowed: false,
         origins,
     };
     Ok((opened, open))

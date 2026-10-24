@@ -6655,7 +6655,7 @@ async fn a_built_in_name_a_schema_shadows_runs_unpaged() {
     observer
         .batch_execute(
             "DO $$ DECLARE s text; BEGIN \
-             FOR s IN SELECT nspname FROM pg_namespace WHERE nspname LIKE 'pgman\\_it\\_shadow\\_%' LOOP \
+             FOR s IN SELECT nspname FROM pg_namespace WHERE nspname LIKE 'pgman\\_it\\_%shadow\\_%' LOOP \
              EXECUTE format('DROP SCHEMA %I CASCADE', s); END LOOP; END $$",
         )
         .await

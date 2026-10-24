@@ -531,9 +531,12 @@ impl App {
                     )
                 }
                 RunRoute::Pager(rx) => match rx.await {
+                    // A shadowed call ran unpaged and is no result for `M`
+                    // to re-run (each run may write): it is an unpaged
+                    // result, `capped at 1000` like the Db route's.
                     Ok(Ok(opened)) => (
                         Ok((opened.grid, opened.origins)),
-                        Some(RunPaging {
+                        (!opened.shadowed).then_some(RunPaging {
                             sql,
                             cursor: opened.cursor,
                             in_transaction: opened.in_transaction,

@@ -837,6 +837,36 @@ mod live {
             .get(0)
     }
 
+    /// Through the App's own pager route: with a schema holding its own
+    /// `log`, a SELECT calling `log` runs unpaged and is shown as an
+    /// unpaged result — `capped at 1000`, nothing for `M` to re-run.
+    #[tokio::test]
+    async fn a_shadowed_call_is_an_unpaged_result_with_nothing_for_m() {
+        let client = client().await;
+        let schema = name("appshadow");
+        client
+            .batch_execute(&format!(
+                "CREATE SCHEMA {schema}; \
+                 CREATE FUNCTION {schema}.log(note text) RETURNS text LANGUAGE sql AS 'SELECT note'"
+            ))
+            .await
+            .expect("create the shadow");
+        let mut a = app(&client).await;
+        a.editor.buffer = "SELECT log(10, i) FROM generate_series(1, 3000) i".into();
+        a.request_run(RunKind::Run);
+        pump(&mut a).await;
+        let more = a.result_more();
+        let paging = a.result_paging.clone();
+        client
+            .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+            .await
+            .expect("drop the shadow");
+        assert_eq!(a.last_error, None);
+        assert_eq!(a.grid.row_count(), 1000);
+        assert!(paging.is_none(), "{paging:?}");
+        assert_eq!(more, crate::grid::More::Unpaged);
+    }
+
     #[tokio::test]
     async fn u_edits_a_cell_through_the_confirm_and_the_grid_shows_the_servers_value() {
         let client = client().await;

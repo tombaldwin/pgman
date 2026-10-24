@@ -13995,6 +13995,7 @@ fn a_standby_result_holds_no_cursor_and_m_re_runs() {
         cursor: None,
         standby: true,
         in_transaction: false,
+        shadowed: false,
         origins: Vec::new(),
     };
     a.on_msg(AppMsg::PageLoaded {
@@ -14008,6 +14009,52 @@ fn a_standby_result_holds_no_cursor_and_m_re_runs() {
         a.last_status.as_deref(),
         Some("re-ran the query · 2000 row(s) · partial · on a standby · M re-runs for more")
     );
+}
+
+/// `M` re-ran a closed cursor's query, and this time a schema has its
+/// own function by a built-in name it calls: the pager ran it unpaged,
+/// and it is no longer a result for `M` — each re-run may write again.
+#[test]
+fn a_rerun_that_came_back_shadowed_stops_offering_m() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["n".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: Some(RunPaging {
+            sql: "SELECT log(i) FROM t".into(),
+            cursor: None,
+            in_transaction: false,
+            standby: false,
+        }),
+    });
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+    let id = a.result_paging.as_ref().unwrap().id;
+    let opened = crate::query::paging::Opened {
+        grid: crate::grid::Grid {
+            columns: vec!["n".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        cursor: None,
+        standby: false,
+        in_transaction: false,
+        shadowed: true,
+        origins: Vec::new(),
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(opened)),
+    });
+    assert_eq!(a.result_more(), crate::grid::More::Unpaged);
+    assert!(a.result_paging.is_none());
 }
 
 #[test]
@@ -14287,6 +14334,7 @@ fn a_re_run_replaces_the_rows_and_keeps_the_sort() {
         cursor: Some(cursor_limits()),
         in_transaction: false,
         standby: false,
+        shadowed: false,
         origins: Vec::new(),
     };
     a.on_msg(AppMsg::PageLoaded {
