@@ -2251,6 +2251,30 @@ fn demo_export_without_a_path_writes_nothing_and_says_so() {
     );
 }
 
+/// The refusal reads whole in the 80-column footer, badges and all:
+/// its first wording came out `--demo… disk · give a path …`.
+#[test]
+fn the_demo_export_refusal_fits_an_80_column_footer() {
+    let mut a = crate::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::Normal;
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.visible_rows = vec![0];
+    a.grid_view.source = Some(("public".into(), "customers".into()));
+    a.dispatch_fixture(None);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| crate::ui::draw(f, &mut a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let footer: String = (0..buf.area.width)
+        .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+        .collect();
+    assert!(
+        footer.contains(&super::cmd::demo_export_refusal("\\fixture")),
+        "{footer}"
+    );
+}
+
 /// A path the operator typed is asking for the file: `--demo` writes it.
 #[test]
 fn demo_export_to_a_typed_path_still_writes() {

@@ -121,7 +121,7 @@ pub(crate) fn export_path(
 
 /// The status for an export [`export_path`] refused under `--demo`.
 pub(crate) fn demo_export_refusal(cmd: &str) -> String {
-    format!("--demo writes nothing to disk · give a path to export: {cmd} <file>")
+    format!("--demo writes no files · to export, {cmd} <file>")
 }
 
 /// Candidate command names for `typed` — every entry of
