@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 3626,
-    "digest": "1b33cd902822e71f"
+    "count": 3641,
+    "digest": "38dd8ba8ba0ed370"
   },
   "resolves": [
     "fs",
@@ -238,18 +238,6 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e82f785d471812390",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:220:39: 220:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
       "hash": "9ee8d83182a4150e4ea2f0fa250076b9",
       "invisible": [
         "serde_core"
@@ -268,13 +256,13 @@
       ]
     },
     {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
       "loc": "src/inventory.rs:220:39: 220:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e62d59e749f6832cd",
+      "hash": "9ee8d83182a4150e82f785d471812390",
       "invisible": [
         "serde_core"
       ]
@@ -286,7 +274,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "9ee8d83182a4150e056326d491747805",
+      "hash": "9ee8d83182a4150e62d59e749f6832cd",
       "invisible": [
         "serde_core"
       ]
@@ -311,6 +299,18 @@
       "undeclared": [],
       "overdeclared": [],
       "hash": "9ee8d83182a4150e08ad1786dcd1ed95",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "loc": "src/inventory.rs:220:39: 220:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "9ee8d83182a4150e056326d491747805",
       "invisible": [
         "serde_core"
       ]
@@ -14148,7 +14148,7 @@
     },
     {
       "fn": "ui::bordered",
-      "loc": "src/ui.rs:3544:1: 3544:58",
+      "loc": "src/ui.rs:3554:1: 3554:58",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14299,7 +14299,7 @@
     },
     {
       "fn": "ui::draw_footer",
-      "loc": "src/ui.rs:1657:1: 1657:53",
+      "loc": "src/ui.rs:1667:1: 1667:53",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14375,7 +14375,7 @@
     },
     {
       "fn": "ui::draw_tab_bar",
-      "loc": "src/ui.rs:3237:1: 3237:54",
+      "loc": "src/ui.rs:3247:1: 3247:54",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14570,7 +14570,7 @@
     },
     {
       "fn": "ui::help_body",
-      "loc": "src/ui.rs:2390:1: 2395:2",
+      "loc": "src/ui.rs:2400:1: 2405:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14594,7 +14594,7 @@
     },
     {
       "fn": "ui::landing::draw_landing",
-      "loc": "src/ui/landing.rs:33:1: 33:65",
+      "loc": "src/ui/landing.rs:37:1: 37:65",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14608,7 +14608,7 @@
     },
     {
       "fn": "ui::landing::header_line",
-      "loc": "src/ui/landing.rs:332:1: 332:77",
+      "loc": "src/ui/landing.rs:373:1: 373:77",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14620,7 +14620,7 @@
     },
     {
       "fn": "ui::landing::landing_lines",
-      "loc": "src/ui/landing.rs:106:1: 106:98",
+      "loc": "src/ui/landing.rs:112:1: 112:98",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14632,7 +14632,7 @@
     },
     {
       "fn": "ui::landing::paired_line",
-      "loc": "src/ui/landing.rs:474:1: 480:19",
+      "loc": "src/ui/landing.rs:515:1: 521:19",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14644,7 +14644,7 @@
     },
     {
       "fn": "ui::landing::read_only_style",
-      "loc": "src/ui/landing.rs:363:1: 363:39",
+      "loc": "src/ui/landing.rs:404:1: 404:39",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14656,7 +14656,7 @@
     },
     {
       "fn": "ui::landing::single_line",
-      "loc": "src/ui/landing.rs:464:1: 464:82",
+      "loc": "src/ui/landing.rs:505:1: 505:82",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15010,7 +15010,7 @@
     },
     {
       "fn": "ui::render_json_tree",
-      "loc": "src/ui.rs:2071:1: 2071:78",
+      "loc": "src/ui.rs:2081:1: 2081:78",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15022,7 +15022,7 @@
     },
     {
       "fn": "ui::results::draw_cell_detail",
-      "loc": "src/ui/results.rs:357:1: 357:73",
+      "loc": "src/ui/results.rs:363:1: 363:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15050,7 +15050,7 @@
     },
     {
       "fn": "ui::results::draw_result_diff",
-      "loc": "src/ui/results.rs:508:1: 508:69",
+      "loc": "src/ui/results.rs:560:1: 560:69",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15064,7 +15064,7 @@
     },
     {
       "fn": "ui::results::draw_row_detail",
-      "loc": "src/ui/results.rs:180:1: 180:72",
+      "loc": "src/ui/results.rs:186:1: 186:72",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15118,7 +15118,7 @@
     },
     {
       "fn": "ui::schema::lint_detail_lines",
-      "loc": "src/ui/schema.rs:597:1: 601:24",
+      "loc": "src/ui/schema.rs:626:1: 630:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15304,7 +15304,7 @@
     },
     {
       "fn": "ui::tap_setup_hint_lines",
-      "loc": "src/ui.rs:3356:1: 3359:24",
+      "loc": "src/ui.rs:3366:1: 3369:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
