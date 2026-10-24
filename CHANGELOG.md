@@ -57,7 +57,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   connect-time probe went unanswered: when a paged run's probe finds the
   server in recovery, the session is pinned read-only there, in the
   header and on the server, as the connect would have pinned it; nor
-  after a `:readonly on` on a standby that failed to apply.
+  after a `:readonly on` on a standby that failed to apply, or a
+  `:readonly off` the server took just as the standby was pinned.
 - A primary is no longer pinned read-only as "a read replica" when a
   schema ahead of `pg_catalog` on the search path has a
   `pg_is_in_recovery()` of its own: the connect's probe, and MCP's,

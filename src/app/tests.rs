@@ -12526,6 +12526,26 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     assert!(a.read_only && a.replica_pin);
 }
 
+/// A `:readonly off` that the server took, landing after the session was
+/// pinned as a standby's (a paged run's probe found it in recovery while
+/// the SET was on its way): the header stays read-only, and the status
+/// says why rather than "read-only off".
+#[test]
+fn readonly_off_applied_after_a_standby_pin_keeps_the_session_read_only() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.read_only = false;
+    a.note_server_role(Some(true));
+    let generation = a.generation;
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: false,
+        result: Ok(()),
+    });
+    assert!(a.read_only && a.replica_pin);
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(status.contains("stays read-only"), "{status}");
+}
+
 /// `r` keeps the cursor on the database it was on when the listing moves
 /// under it (a new instance sorting above, say), so Enter connects where
 /// the operator was looking.
