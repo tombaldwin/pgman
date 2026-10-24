@@ -2967,6 +2967,136 @@ fn a_standby_booted_writable_is_read_only_on_the_server() {
     }
 }
 
+/// `connect_and_bootstrap` with no statement_timeout, as a profile with
+/// `statement_timeout_ms = 0` connects: nothing but pgman's own bound
+/// stops a read that waits for a lock.
+async fn bootstrap_unbounded() -> (pgman::conn::Booted, std::time::Duration) {
+    let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+    let started = std::time::Instant::now();
+    let booted = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        pgman::conn::connect_and_bootstrap(
+            pgman::conn::Dsn::parse(DSN).unwrap(),
+            true,
+            0,
+            pgman::conn::BOOTSTRAP_SQL.to_string(),
+            notice_tx,
+            notification_tx,
+        ),
+    )
+    .await
+    .expect("the bootstrap returns behind a lock")
+    .expect("and connects");
+    (booted, started.elapsed())
+}
+
+/// Another session's ACCESS EXCLUSIVE lock — a migration's ALTER, a
+/// TRUNCATE in an open transaction — used to hold the connect at
+/// "connecting…" for good: sizing the table and `pg_get_indexdef` on
+/// its index queue behind the lock. Now the fetch skips what the lock
+/// covers, at once, and says which lock and whose; the rest of the
+/// schema is there, and the session's `lock_timeout` is as it was.
+///
+/// Then a lock the fetch cannot see coming — on the catalog the
+/// partitions read uses (held only for the ~2 s the bootstrap waits,
+/// so other sessions reading it are delayed by no more) — gives up at
+/// the connect's `lock_timeout` instead of hanging, and says so.
+/// One test, so the two locks never overlap.
+#[test]
+fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (holder, _tunnel) = writable_client().await;
+        let t = it_name("lockwait");
+        holder
+            .batch_execute(&format!(
+                "CREATE TABLE {t} (id int PRIMARY KEY, v text); CREATE INDEX ON {t} (v)"
+            ))
+            .await
+            .unwrap();
+        let holder_pid: i32 = holder
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+
+        holder
+            .batch_execute(&format!("BEGIN; LOCK TABLE {t} IN ACCESS EXCLUSIVE MODE"))
+            .await
+            .unwrap();
+        let (booted, took) = bootstrap_unbounded().await;
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        let cache = &booted.schema_cache;
+        let key = ("public".to_string(), t.clone());
+        assert!(
+            took < std::time::Duration::from_secs(2),
+            "skipped, not waited for at lock_timeout: {took:?} · {:?}",
+            cache.incomplete
+        );
+        let why = cache.incomplete.as_deref().expect("says it is incomplete");
+        // Another test's DDL may hold a lock of its own at this moment,
+        // and be the one named; then ours is among the "more".
+        assert!(
+            why.contains(&format!(
+                "ACCESS EXCLUSIVE lock on public.{t} held by pid {holder_pid}"
+            )) || why.contains(" more) held by pid "),
+            "{why}"
+        );
+        assert!(cache.columns_by_table.contains_key(&key), "columns read");
+        assert!(!cache.table_sizes.contains_key(&key), "size skipped");
+        assert!(
+            !cache.indexes_by_table.contains_key(&key),
+            "indexes skipped"
+        );
+        let shown: String = booted
+            .client
+            .query_one("SHOW lock_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "0", "the session's own lock_timeout is back");
+
+        // Unlocked, the same connect is whole.
+        let (booted, _) = bootstrap_unbounded().await;
+        assert!(
+            booted.schema_cache.indexes_by_table.contains_key(&key),
+            "{:?}",
+            booted.schema_cache.incomplete
+        );
+
+        holder
+            .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_inherits IN ACCESS EXCLUSIVE MODE")
+            .await
+            .unwrap();
+        let (booted, took) = bootstrap_unbounded().await;
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        let why = booted
+            .schema_cache
+            .incomplete
+            .as_deref()
+            .expect("says it is incomplete");
+        assert!(
+            why.contains("partitions") && why.contains("gave up at lock_timeout"),
+            "{why}"
+        );
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+        assert!(!booted.schema_cache.tables.is_empty(), "the rest is there");
+        let shown: String = booted
+            .client
+            .query_one("SHOW lock_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(shown, "0");
+
+        holder
+            .batch_execute(&format!("DROP TABLE {t}"))
+            .await
+            .unwrap();
+    });
+}
+
 /// The schema fetch learns each partition's parent from a real server,
 /// sub-partitions included.
 #[test]

@@ -242,8 +242,16 @@ pub enum AppMsg {
 /// parting `FATAL`, if it sent one, else that the connection closed.
 /// Pure.
 pub fn connection_lost_reason(fatal: Option<&crate::conn::NoticeMsg>) -> String {
-    match fatal {
-        Some(n) => format!("connection lost · {}", n.message),
+    connection_lost_saying(fatal.map(|n| n.message.as_str()))
+}
+
+/// [`connection_lost_reason`] from the server's message alone — the
+/// `FATAL` a running statement got back instead of its result
+/// (`QueryFailed`) is the same parting word, delivered to the statement
+/// rather than the notice channel. Pure.
+pub fn connection_lost_saying(message: Option<&str>) -> String {
+    match message {
+        Some(m) => format!("connection lost · {m}"),
         None => "connection lost · the connection to the server closed".to_string(),
     }
 }

@@ -166,6 +166,9 @@ pub fn no_picks_hint(have_dsn: bool) -> &'static str {
 
 /// What a reload the operator asked for found. Pure / testable.
 pub fn schema_reloaded_status(cache: &crate::query::schema::SchemaCache) -> String {
+    if let Some(why) = &cache.incomplete {
+        return format!("schema reloaded, still incomplete · {why}");
+    }
     match cache.tables.len() {
         0 => "schema reloaded — still no tables this role can see".to_string(),
         n => format!(
@@ -173,6 +176,14 @@ pub fn schema_reloaded_status(cache: &crate::query::schema::SchemaCache) -> Stri
             cache.schemas.len()
         ),
     }
+}
+
+/// The status a connect lands with when its schema fetch came back
+/// incomplete ([`crate::query::schema::SchemaCache::incomplete`]):
+/// connected, what is missing and why, and the reload that fetches it
+/// again. Pure.
+pub fn schema_incomplete_status(why: &str) -> String {
+    format!("connected, schema incomplete · {why} · S then r reloads it")
 }
 
 /// The environments panel's status line. Pure / testable.
@@ -1401,6 +1412,11 @@ pub struct App {
     /// [`DemoTapFeed`]). `None` everywhere else.
     pub demo_tap_feed: Option<DemoTapFeed>,
     pub conn_state: ConnState,
+    /// The reason a `ConnectionLost` gave while this connect was still
+    /// in flight: unheeded then (there was no session to drop), it is
+    /// what the card says if the `Booted` that lands carries the closed
+    /// client. Cleared by each connect.
+    pub(crate) lost_while_connecting: Option<String>,
     pub dsn: Option<Dsn>,
     /// Where the current DSN came from — surfaced in the failure view to
     /// help the operator answer "wait, which connection did pgman just try?"
@@ -1881,6 +1897,7 @@ impl App {
             demo: false,
             demo_tap_feed: None,
             conn_state: ConnState::Disconnected,
+            lost_while_connecting: None,
             dsn,
             dsn_origin: None,
             grid: Grid::default(),
@@ -4191,6 +4208,9 @@ impl App {
                 if let Some(p) = self.result_paging.as_mut() {
                     p.in_transaction = in_transaction;
                     p.standby = standby;
+                }
+                if standby {
+                    self.note_standby_seen();
                 }
                 if shadowed {
                     // A schema has its own function by a name it calls

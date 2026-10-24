@@ -37,6 +37,22 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   config and data directories, as its "no disk writes" promised.
 - docs/tap.md says the monitor's "JAR backpressure" drop count comes
   from TCP and UDP senders only, and never appears with `--tap-otlp`.
+- A connect no longer hangs at "connecting…" behind another session's
+  `ACCESS EXCLUSIVE` lock: the schema fetch skips the sizes and indexes
+  the lock covers, the connect's own catalog reads give up after a 2 s
+  `lock_timeout` (the session's own setting is restored), and the status
+  line says the schema is incomplete, names the lock and its pid, and
+  how to reload.
+- A session the server ends under a running statement
+  (`pg_terminate_backend`, a crash shutdown) shows the server's reason
+  on the connection-lost card, not "the connection to the server closed"
+  with the reason in the footer; a session lost while still connecting
+  keeps its reason too.
+- The header no longer says `Session: writable` on a standby whose
+  connect-time probe went unanswered: when a paged run's probe finds the
+  server in recovery, the session is pinned read-only there, in the
+  header and on the server, as the connect would have pinned it; nor
+  after a `:readonly on` on a standby that failed to apply.
 
 ### Changed
 

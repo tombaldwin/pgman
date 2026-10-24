@@ -1144,6 +1144,196 @@ mod live {
         assert!(!a.read_only && !a.replica_pin);
     }
 
+    /// A connect behind another session's ACCESS EXCLUSIVE lock lands
+    /// connected, and the status says the schema is incomplete, which
+    /// lock and whose, and how to reload it.
+    #[tokio::test]
+    async fn a_connect_behind_a_lock_lands_connected_and_says_the_schema_is_incomplete() {
+        let holder = client().await;
+        let t = name("lockapp");
+        holder
+            .batch_execute(&format!("CREATE TABLE {t} (id int PRIMARY KEY)"))
+            .await
+            .unwrap();
+        holder
+            .batch_execute(&format!("BEGIN; LOCK TABLE {t} IN ACCESS EXCLUSIVE MODE"))
+            .await
+            .unwrap();
+        let mut a = App::new(
+            Theme::default(),
+            Dsn::parse(DSN).ok(),
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        let _ = holder.batch_execute("ROLLBACK").await;
+        let _ = holder.batch_execute(&format!("DROP TABLE {t}")).await;
+        assert!(
+            matches!(a.conn_state, ConnState::Connected { .. }),
+            "{:?}",
+            a.conn_state
+        );
+        let status = a.last_status.as_deref().unwrap_or_default();
+        assert!(
+            status.starts_with("connected, schema incomplete · ")
+                && status.contains("ACCESS EXCLUSIVE")
+                && status.ends_with("S then r reloads it"),
+            "{status}"
+        );
+        assert!(a.schema_cache.incomplete.is_some());
+    }
+
+    /// On the compose standby, as if the connect's probe had not
+    /// answered (`in_recovery` unknown, the writable profile kept, the
+    /// session writable on the server): the first paged SELECT's probe
+    /// finds recovery, and the App pins the session read-only, in the
+    /// header and on the server.
+    #[tokio::test]
+    async fn a_paged_run_on_a_standby_the_connect_missed_pins_it_read_only() {
+        const STANDBY: &str =
+            "postgres://pgman_test:pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable";
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let mut a = App::new(Theme::default(), Dsn::parse(STANDBY).ok(), Vec::new(), cfg);
+        a.read_only = false;
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        let client = a.client.clone().expect("connected to the standby");
+        // Undo what the connect learnt, here and on the server.
+        a.in_recovery = None;
+        a.read_only = false;
+        a.replica_pin = false;
+        conn::set_session_read_only(&client, false).await.unwrap();
+        let shown = |c: Arc<tokio_postgres::Client>| async move {
+            c.query_one("SHOW default_transaction_read_only", &[])
+                .await
+                .unwrap()
+                .get::<_, String>(0)
+        };
+        assert_eq!(shown(client.clone()).await, "off", "fixture");
+
+        run(&mut a, "SELECT g FROM generate_series(1, 1500) g").await;
+        assert!(a.result_paging.as_ref().is_some_and(|p| p.standby));
+        assert!(a.read_only && a.replica_pin);
+        assert_eq!(a.in_recovery, Some(true));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while shown(client.clone()).await != "on" {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the server's session stayed writable"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    /// A statement running when another session terminates its backend:
+    /// the card and the footer used to disagree — the card had the
+    /// notice channel's "the connection to the server closed", the
+    /// footer the statement's own FATAL. Now the card has the FATAL and
+    /// the footer is clear, whichever of the two lands first.
+    #[tokio::test]
+    async fn a_terminated_running_query_puts_the_servers_reason_on_the_card() {
+        let mut a = App::new(
+            Theme::default(),
+            Dsn::parse(DSN).ok(),
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        assert!(a.client.is_some(), "{:?}", a.conn_state);
+        let marker = name("lostrun");
+        a.editor.buffer = format!("SELECT pg_sleep(30) AS {marker}");
+        a.request_run(RunKind::Run);
+        assert!(a.query_running, "{:?}", a.last_error);
+        let killer = client().await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let killed = killer
+                .query(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+                     WHERE state = 'active' AND query LIKE $1 AND pid <> pg_backend_pid()",
+                    &[&format!("%{marker}%")],
+                )
+                .await
+                .unwrap();
+            if !killed.is_empty() {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "the run never showed");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        // The statement's FATAL and the notice channel's close, in
+        // whichever order they come.
+        pump(&mut a).await;
+        pump(&mut a).await;
+        match &a.conn_state {
+            ConnState::Failed(reason) => assert_eq!(
+                reason,
+                "connection lost · terminating connection due to administrator command"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(a.last_error, None);
+        assert!(!a.query_running);
+    }
+
+    /// A connect whose session the server ended before its `Booted`
+    /// landed: the close (with the FATAL) came while connecting and was
+    /// unheeded; the card says it, not just that the connection closed.
+    #[tokio::test]
+    async fn a_connect_whose_client_closed_says_why() {
+        let doomed = client().await;
+        let killer = client().await;
+        let pid: i32 = doomed
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        killer
+            .execute("SELECT pg_terminate_backend($1)", &[&pid])
+            .await
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !doomed.is_closed() {
+            assert!(std::time::Instant::now() < deadline, "never closed");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let mut a = App::new(
+            Theme::default(),
+            Dsn::parse(DSN).ok(),
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.conn_state = ConnState::Connecting;
+        let reason = "connection lost · terminating connection due to administrator command";
+        a.on_msg(AppMsg::ConnectionLost {
+            generation: a.generation,
+            reason: reason.into(),
+        });
+        a.on_msg(AppMsg::Booted {
+            generation: a.generation,
+            server_version: "16".into(),
+            in_recovery: Some(false),
+            grid: crate::grid::Grid::default(),
+            client: doomed,
+            schema_cache: Default::default(),
+            tunnel: None,
+        });
+        match &a.conn_state {
+            ConnState::Failed(r) => assert_eq!(r, reason),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(a.lost_while_connecting, None, "used up");
+    }
+
     /// Behind the connection-failed card the dead client is still held,
     /// but nothing offers to run on it: a write is refused before the
     /// guard's prompt, and so is a cell edit. Once `r` reconnects, the
