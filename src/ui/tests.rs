@@ -2794,3 +2794,43 @@ fn no_tap_view_row_is_cut_by_the_border_without_an_ellipsis() {
         }
     }
 }
+
+/// The help section list's teasers: whole at 80 columns, and at 60
+/// columns each keeps its lead (the key, as in `:tap / F4 · …`) whole.
+/// At 80x24 the tap's teaser ended `(:…`, cutting the `:tap / F4` it
+/// exists to show.
+#[test]
+fn help_teasers_fit_at_80_columns_and_keep_their_key_at_60() {
+    let screen = |w: u16, h: u16, section: usize| -> String {
+        let mut a = crate::demo::app(Theme::default());
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.mode = crate::app::Mode::Help;
+        a.help.section = section;
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        term.draw(|f| draw(f, &mut a)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for (i, (title, teaser)) in HELP_SECTIONS.iter().enumerate() {
+        let shown = screen(80, 24, i);
+        assert!(
+            shown.contains(teaser),
+            "{title}: teaser {teaser:?} cut at 80x24:\n{shown}"
+        );
+        if let Some((lead, _)) = teaser.split_once(" · ") {
+            let shown = screen(60, 16, i);
+            assert!(
+                shown.contains(&format!("{lead} · ")),
+                "{title}: lead {lead:?} cut at 60x16:\n{shown}"
+            );
+        }
+    }
+}

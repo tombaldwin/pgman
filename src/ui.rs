@@ -2327,30 +2327,27 @@ pub(crate) fn auto_scroll_to_field(
 /// are exactly these, in this order.
 pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
     ("grid", "the results: move, sort, filter, find, yank"),
-    (
-        "editor",
-        "write and run SQL · EXPLAIN · history · completion",
-    ),
+    ("editor", "run SQL · EXPLAIN · history · completion"),
     ("confirm", "the y / n prompt before a guarded statement"),
     ("tx open", "commit or roll back an open transaction"),
     ("log pick", "pick a query reconstructed from a log"),
     ("conn pick", "the connection picker"),
-    ("row detail", "one row, field by field (enter on the grid)"),
+    ("row detail", "enter · one row, field by field"),
     ("cell detail", "one value, as text or as a JSON tree"),
-    ("cell edit", "change one value of a table row (u)"),
+    ("cell edit", "u · change one value of a table row"),
     (
         "schema browser",
-        "schemas, tables, columns, constraints (S)",
+        "S · schemas, tables, columns, constraints",
     ),
     ("EXPLAIN tree", "the plan as a tree, hottest node in red"),
-    ("slow queries", "pg_stat_statements, slowest first (T)"),
+    ("slow queries", "T · pg_stat_statements, slowest first"),
     (
         "environments",
-        "every database you know · discovery · patches",
+        "E · every database you know · discovery · patches",
     ),
     (
         "active sessions",
-        "pg_stat_activity and locks · terminate (L)",
+        "L · pg_stat_activity and locks · terminate",
     ),
     (
         "psql backslash commands",
@@ -2360,15 +2357,12 @@ pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
         ": commands",
         "the : bar: about, help, readonly, redact, connect",
     ),
-    ("tabs", "an editor and a result per tab · ] / [ switch"),
-    ("saved queries", "named queries kept across sessions (Q)"),
-    ("notifications", "LISTEN / NOTIFY arrivals (:notify / F3)"),
-    (
-        "jdbc tap",
-        "your app's statements, live from the JDBC tap (:tap / F4)",
-    ),
-    ("result diff", "compare two results, A against B (D)"),
-    ("schema wizard", "schema lint and config advisor (W)"),
+    ("tabs", "] / [ switch · an editor and a result per tab"),
+    ("saved queries", "Q · named queries kept across sessions"),
+    ("notifications", ":notify / F3 · LISTEN / NOTIFY arrivals"),
+    ("jdbc tap", ":tap / F4 · your app's statements, live"),
+    ("result diff", "D · compare two results, A against B"),
+    ("schema wizard", "W · schema lint and config advisor"),
     ("help", "this overlay's own keys"),
 ];
 

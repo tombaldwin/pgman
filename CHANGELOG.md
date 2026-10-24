@@ -11,7 +11,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The help overlay names the JDBC tap and the NOTIFY panel by `:tap` /
   `:notify` first, with `F4` / `F3` beside them, and the start card
   does the same for the tap: on a Mac terminal the F-keys often never
-  reach pgman.
+  reach pgman. The section list's teasers lead with their key
+  (`:tap / F4 · your app's statements, live`, `S · schemas, …`), so it
+  survives at 60 columns, and each fits whole at 80; the tap's ended
+  `(:…` at 80x24.
 - The result diff's title names its key (`key: id (primary key)`) before
   the A and B query text, so an 80-column terminal no longer cuts it
   off; a title too long for its border ends on `…`.

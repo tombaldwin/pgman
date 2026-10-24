@@ -8,14 +8,14 @@ expression: dump(&buf)
 ╭[ ◆ help · 23 sections ◆ ]────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error d… │
 │ ▸ grid                     the results: move, sort, fil… │
-│   editor                   write and run SQL · EXPLAIN … │
+│   editor                   run SQL · EXPLAIN · history … │
 │   confirm                  the y / n prompt before a gu… │
 │   tx open                  commit or roll back an open … │
 │   log pick                 pick a query reconstructed f… │
 │   conn pick                the connection picker         │
-│   row detail               one row, field by field (ent… │
+│   row detail               enter · one row, field by fi… │
 │   cell detail              one value, as text or as a J… │
-│   cell edit                change one value of a table … │
+│   cell edit                u · change one value of a ta… │
 │   ↓ 14 more                                              │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ? close help · +3 more

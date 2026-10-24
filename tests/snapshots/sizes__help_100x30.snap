@@ -12,24 +12,24 @@ expression: dump(&buf)
 ╭[ ◆ help · 23 sections ◆ ]────────────────────────────────────────────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)                     │
 │ ▸ grid                     the results: move, sort, filter, find, yank                           │
-│   editor                   write and run SQL · EXPLAIN · history · completion                    │
+│   editor                   run SQL · EXPLAIN · history · completion                              │
 │   confirm                  the y / n prompt before a guarded statement                           │
 │   tx open                  commit or roll back an open transaction                               │
 │   log pick                 pick a query reconstructed from a log                                 │
 │   conn pick                the connection picker                                                 │
-│   row detail               one row, field by field (enter on the grid)                           │
+│   row detail               enter · one row, field by field                                       │
 │   cell detail              one value, as text or as a JSON tree                                  │
-│   cell edit                change one value of a table row (u)                                   │
-│   schema browser           schemas, tables, columns, constraints (S)                             │
+│   cell edit                u · change one value of a table row                                   │
+│   schema browser           S · schemas, tables, columns, constraints                             │
 │   EXPLAIN tree             the plan as a tree, hottest node in red                               │
-│   slow queries             pg_stat_statements, slowest first (T)                                 │
-│   environments             every database you know · discovery · patches                         │
-│   active sessions          pg_stat_activity and locks · terminate (L)                            │
+│   slow queries             T · pg_stat_statements, slowest first                                 │
+│   environments             E · every database you know · discovery · patches                     │
+│   active sessions          L · pg_stat_activity and locks · terminate                            │
 │   psql backslash commands  \d \dt \df \l \x \c \i and friends                                    │
 │   : commands               the : bar: about, help, readonly, redact, connect                     │
-│   tabs                     an editor and a result per tab · ] / [ switch                         │
-│   saved queries            named queries kept across sessions (Q)                                │
-│   notifications            LISTEN / NOTIFY arrivals (:notify / F3)                               │
+│   tabs                     ] / [ switch · an editor and a result per tab                         │
+│   saved queries            Q · named queries kept across sessions                                │
+│   notifications            :notify / F3 · LISTEN / NOTIFY arrivals                               │
 │   ↓ 4 more                                                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ? close help · j/k select · enter open · / filter
