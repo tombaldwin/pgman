@@ -3040,12 +3040,15 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
         holder.batch_execute("ROLLBACK").await.unwrap();
         let cache = &booted.schema_cache;
         let key = ("public".to_string(), t.clone());
-        assert!(
-            took < std::time::Duration::from_secs(2),
-            "skipped, not waited for at lock_timeout: {took:?} · {:?}",
-            cache.incomplete
-        );
         let why = cache.incomplete.as_deref().expect("says it is incomplete");
+        // Skipped, not waited for: no read gave up at the bound. Not a
+        // timing bound as tight as that 2 s — on a loaded runner a
+        // whole fetch can take that long without waiting on anything.
+        assert!(
+            !why.contains("gave up at lock_timeout"),
+            "skipped, not waited for at lock_timeout: {took:?} · {why}"
+        );
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
         // Another test's DDL may hold a lock of its own at this moment,
         // and be the one named; then ours is among the "more".
         assert!(
