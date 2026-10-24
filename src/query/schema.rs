@@ -545,8 +545,9 @@ ORDER BY 1, 2, 3"
 /// `pg_catalog`: a lock there is not skipped (it stalls every read, and
 /// the `lock_timeout` bound is what stops that), but its holder is who
 /// to name when a read gave up. `pg_locks` itself takes no lock, so
-/// this answers behind a catalog lock (one on `pg_class` or
-/// `pg_namespace` aside, which it joins).
+/// this answers behind a catalog lock (one on `pg_class`, `pg_namespace`
+/// or `pg_index` aside, which it joins). The last two columns are the
+/// table the lock keeps out: the relation, or the table its index is on.
 pub const LOCKED_RELATIONS_SQL: &str = "\
 SELECT n.nspname, c.relname, l.pid, l.granted, n.nspname = 'pg_catalog', \
        tn.nspname, t.relname \
