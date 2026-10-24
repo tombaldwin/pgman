@@ -1247,6 +1247,23 @@ pub async fn with_lock_bound<T>(
     (out, bound)
 }
 
+/// [`with_lock_bound`], but inside a transaction `reads` never run:
+/// `None`. There they would run in the operator's transaction, and one
+/// the server cancels (`statement_timeout`, a permission gap) aborts it,
+/// uncommitted work and all. What a reload of the schema runs.
+pub async fn outside_tx_with_lock_bound<T>(
+    client: &tokio_postgres::Client,
+    reads: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    let bound = bound_lock_timeout(client).await;
+    if bound == LockBound::InTransaction {
+        return None;
+    }
+    let out = reads.await;
+    restore_lock_timeout(client, &bound).await;
+    Some(out)
+}
+
 pub async fn connect_and_bootstrap(
     dsn: Dsn,
     read_only: bool,

@@ -602,10 +602,11 @@ fn is_lock_timeout(e: &tokio_postgres::Error) -> bool {
 /// [`fetch`] with the session's `lock_timeout` bounded the way the
 /// connect bounds its own reads (`conn::with_lock_bound`) — what a reload
 /// runs on the operator's session. The caller keeps other work off the
-/// session meanwhile (`paging::ExclusiveDb`). Inside a transaction the
-/// reads go unbounded, as the operator's own statements there do.
-pub async fn fetch_bounded(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
-    crate::conn::with_lock_bound(client, fetch(client)).await.0
+/// session meanwhile (`paging::ExclusiveDb`). `None`, having read
+/// nothing, inside the operator's transaction: a read the server
+/// cancelled there would abort it.
+pub async fn fetch_bounded(client: &Arc<tokio_postgres::Client>) -> Option<SchemaCache> {
+    crate::conn::outside_tx_with_lock_bound(client, fetch(client)).await
 }
 
 /// Run the cache-building query on `client` and assemble a `SchemaCache`.

@@ -3167,10 +3167,9 @@ async fn a_locked_index_marks_its_table_skipped() {
 /// over the cancelled read. Now it gives up at the connect's bound, says
 /// which read did, and puts back the operator's own `SET lock_timeout`.
 ///
-/// Inside the operator's transaction it is left unbounded (a `SET`
-/// there would outlive the reads, or be undone by a rollback): there a
-/// read the server cancels at `statement_timeout` is named as failed,
-/// not taken for a whole schema.
+/// Inside the operator's transaction it reads nothing (a `SET` there
+/// would outlive the reads, or be undone by a rollback, and a read the
+/// server cancelled would abort the transaction).
 #[test]
 fn a_reload_behind_a_catalog_lock_gives_up_and_says_why() {
     let _catalog = catalog_locks();
@@ -3201,6 +3200,7 @@ fn a_reload_behind_a_catalog_lock_gives_up_and_says_why() {
             .unwrap();
         let (cache, took) = reload().await;
         holder.batch_execute("ROLLBACK").await.unwrap();
+        let cache = cache.expect("outside a transaction the reload reads");
         let why = cache.incomplete.as_deref().expect("says it is incomplete");
         assert!(
             why.contains("partitions") && why.contains("gave up at lock_timeout"),
@@ -3220,9 +3220,9 @@ fn a_reload_behind_a_catalog_lock_gives_up_and_says_why() {
             .get(0);
         assert_eq!(shown, "1min", "the operator's own lock_timeout is back");
 
-        // Inside a transaction: no bound — the read waits out the
-        // statement_timeout, longer than the bound — and the cancelled
-        // read is named.
+        // Inside a transaction it reads nothing: a read the server
+        // cancelled there (at this statement_timeout, behind the lock)
+        // would abort the operator's transaction.
         client
             .batch_execute("SET statement_timeout = '3s'; BEGIN")
             .await
@@ -3233,13 +3233,12 @@ fn a_reload_behind_a_catalog_lock_gives_up_and_says_why() {
             .unwrap();
         let (cache, _) = reload().await;
         holder.batch_execute("ROLLBACK").await.unwrap();
+        assert!(cache.is_none(), "nothing read inside the transaction");
+        client
+            .batch_execute("SELECT 1")
+            .await
+            .expect("the operator's transaction is not aborted");
         client.batch_execute("ROLLBACK").await.unwrap();
-        let why = cache.incomplete.as_deref().expect("says it is incomplete");
-        assert!(
-            why.contains("failed: canceling statement due to statement timeout")
-                && !why.contains("gave up at lock_timeout"),
-            "{why}"
-        );
         let shown: String = client
             .query_one("SHOW lock_timeout", &[])
             .await

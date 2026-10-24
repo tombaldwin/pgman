@@ -210,7 +210,8 @@ pub enum AppMsg {
     /// can't clobber the new one.
     SchemaRefreshed {
         generation: u64,
-        schema_cache: SchemaCache,
+        /// `None`: not fetched, the session being inside a transaction.
+        schema_cache: Option<SchemaCache>,
     },
     /// The schema browser's DDL copy (`d`) read its table's pieces
     /// (or didn't). `table` is `schema.table`, for the status line.

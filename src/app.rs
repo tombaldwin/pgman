@@ -4991,6 +4991,16 @@ impl App {
     /// Re-read the catalog (`r` in the schema browser): picks up tables
     /// other sessions made since connect. The result is announced.
     pub(super) fn reload_schema(&mut self) {
+        if self.tx_open {
+            // The reads would run inside the operator's transaction, and
+            // one the server cancels (statement_timeout, a permission
+            // gap) aborts it, losing their uncommitted work.
+            self.last_error = Some(
+                "a transaction is open — commit (y) or roll back (n) first, then r to reload"
+                    .into(),
+            );
+            return;
+        }
         if self.no_session() {
             self.last_status = Some("not connected — nothing to reload".into());
             return;

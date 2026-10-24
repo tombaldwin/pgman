@@ -12979,13 +12979,13 @@ fn a_schema_reload_says_what_it_found() {
     a.last_status = None;
     a.on_msg(AppMsg::SchemaRefreshed {
         generation,
-        schema_cache: some.clone(),
+        schema_cache: Some(some.clone()),
     });
     assert!(a.last_status.is_none(), "post-DDL refresh stays quiet");
     a.schema_reload_announce = true;
     a.on_msg(AppMsg::SchemaRefreshed {
         generation,
-        schema_cache: some,
+        schema_cache: Some(some),
     });
     assert!(a
         .last_status
@@ -13006,6 +13006,57 @@ fn r_in_the_schema_browser_reloads_and_says_so_when_it_cant() {
     assert_eq!(
         a.last_status.as_deref(),
         Some("not connected — nothing to reload")
+    );
+    assert!(!a.schema_reload_announce);
+}
+
+/// A reload that read nothing — the session inside a transaction the
+/// operator began themselves — keeps the old cache and, when they asked
+/// for it, says why; the silent post-DDL refresh stays silent.
+#[test]
+fn a_reload_skipped_inside_a_transaction_keeps_the_cache_and_says_why() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    let generation = a.generation;
+    a.on_msg(AppMsg::SchemaRefreshed {
+        generation,
+        schema_cache: None,
+    });
+    assert_eq!(a.last_error, None, "post-DDL refresh stays quiet");
+    a.schema_reload_announce = true;
+    a.on_msg(AppMsg::SchemaRefreshed {
+        generation,
+        schema_cache: None,
+    });
+    assert!(
+        a.last_error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("a transaction is open")),
+        "{:?}",
+        a.last_error
+    );
+    assert!(!a.schema_reload_announce);
+    assert!(!a.schema_cache.is_empty(), "the old cache stands");
+}
+
+/// A reload inside the operator's open transaction is refused: its
+/// reads would run in that transaction, and one the server cancels
+/// aborts it, uncommitted work and all.
+#[test]
+fn r_in_the_schema_browser_refuses_inside_an_open_transaction() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Normal;
+    a.tx_open = true;
+    press(&mut a, KeyCode::Char('S'));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    press(&mut a, KeyCode::Char('r'));
+    assert!(
+        a.last_error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("a transaction is open")),
+        "{:?}",
+        a.last_error
     );
     assert!(!a.schema_reload_announce);
 }

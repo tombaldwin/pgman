@@ -551,7 +551,22 @@ impl App {
                     }
                 }
             }
-            AppMsg::SchemaRefreshed { schema_cache, .. } => {
+            AppMsg::SchemaRefreshed {
+                schema_cache: None, ..
+            } => {
+                // Inside the operator's own transaction (a `BEGIN` they
+                // typed): nothing was read, the old cache stands.
+                if std::mem::take(&mut self.schema_reload_announce) {
+                    self.last_error = Some(
+                        "a transaction is open — commit or roll back first, then r to reload"
+                            .into(),
+                    );
+                }
+            }
+            AppMsg::SchemaRefreshed {
+                schema_cache: Some(schema_cache),
+                ..
+            } => {
                 // Post-DDL re-fetch landed (generation already checked above) —
                 // swap in the fresh cache so completion / browser / lint /
                 // FK-nav see the new shape.
