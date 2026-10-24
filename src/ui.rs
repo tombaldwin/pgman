@@ -1400,7 +1400,8 @@ fn end_ellipsis(s: &str, width: usize) -> String {
 /// `loaded query`)? Its first word, and each `/ alt` alternative, must
 /// look like a key: at most two characters (`?`, `[`, `F2`), a slash pair
 /// of those (`J/K`), a named key, or a modifier chord — and not a bare
-/// count (`3 matches`, `1/3 match`). A key hint is
+/// count (`3 matches`, `1/3 match`) or a two-letter word (`in ~/dir`).
+/// A key hint is
 /// fitted whole or not at all — cut, it shows its label without its key.
 /// Pure.
 pub(crate) fn is_key_hint(segment: &str) -> bool {
@@ -1417,12 +1418,21 @@ pub(crate) fn is_key_hint(segment: &str) -> bool {
         "backspace",
         "shift-tab",
     ];
+    // Two-letter words that open prose, not keys: `in ~/Library/…`
+    // read as the key `in`, so the fitter would neither shrink nor drop
+    // it before it had cut everything else to `…`.
+    const WORDS: &[&str] = &[
+        "an", "as", "at", "by", "in", "is", "it", "no", "of", "on", "or", "to", "up",
+    ];
     let looks_like_key = |w: &str| {
         let lower = w.to_ascii_lowercase();
         // A count (`3 matches`, `1/3 match`) is prose, not a key.
         if w.chars().any(|c| c.is_ascii_digit())
             && w.chars().all(|c| c.is_ascii_digit() || c == '/')
         {
+            return false;
+        }
+        if WORDS.contains(&lower.as_str()) {
             return false;
         }
         w.chars().count() <= 2

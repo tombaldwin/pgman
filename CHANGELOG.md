@@ -14,6 +14,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The result diff's title names its key (`key: id (primary key)`) before
   the A and B query text, so an 80-column terminal no longer cuts it
   off; a title too long for its border ends on `…`.
+- `:fixture` and `Y` on a partial result end their status on "fetched
+  rows only, more not fetched", which the footer keeps whole; at 160
+  columns it was cut mid-note, along with the file name.
 
 ## [0.2.0] — 2026-10-23
 

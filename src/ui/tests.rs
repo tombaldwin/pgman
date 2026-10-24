@@ -1506,9 +1506,33 @@ fn is_key_hint_tells_keys_from_prose() {
         "1/3 match",
         "run (DELETE without WHERE)",
         "connecting…",
+        "in ~/Library/Caches/pgman",
+        "no rows",
         "",
     ] {
         assert!(!is_key_hint(prose), "{prose}");
+    }
+}
+
+/// `:fixture`'s status on a partial result: the path's `in <dir>` is
+/// prose to shrink, not a key hint to keep whole, so the file name and
+/// the row count survive alongside the note at the end.
+#[test]
+fn fit_status_shrinks_a_long_directory_before_the_file_name() {
+    let s = "wrote 1000 row(s) to public_invoices-fixture-20261024-101112.xml · in \
+             /var/folders/xy/abcdefghijklmnopqrstuvwxyz0000gn/T/pgman/a/directory/deep/enough \
+             · fetched rows only, more not fetched";
+    for width in [110usize, 130, 150] {
+        let got = fit_status(s, width);
+        assert!(display_width(&got) <= width, "{width}: {got}");
+        assert!(
+            got.starts_with("wrote 1000 row(s) to public_invoices-fixture-20261024-101112.xml · "),
+            "{width}: {got}"
+        );
+        assert!(
+            got.ends_with(" · fetched rows only, more not fetched"),
+            "{width}: {got}"
+        );
     }
 }
 
