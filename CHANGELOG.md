@@ -13,6 +13,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   crates.io too.
 - `--demo` no longer writes `pgman.log` or creates pgman's cache,
   config and data directories, as its "no disk writes" promised.
+- docs/tap.md says the monitor's "JAR backpressure" drop count comes
+  from TCP and UDP senders only, and never appears with `--tap-otlp`.
 
 ### Changed
 
