@@ -14,7 +14,7 @@ expression: dump(&buf)
 │  FROM invoices                                                                                                                                                                                       │
 │  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER BY due_at;           ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                             │
-│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
+│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)                                                             │                             │
 ╰─────────────────────────────│   grid                    │   9 rows in 6 sections match 'yank'                                                                          │─────────────────────────────╯
 ╭[ ◆ result · 5 row(s) ◆ ]────│   editor                  │                                                                                                              │─────────────────────────────╮
 │number      customer_id  stat│   confirm                 │   grid                                                                                                       │                             │

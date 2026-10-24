@@ -2352,10 +2352,10 @@ pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
     ),
     ("tabs", "an editor and a result per tab · ] / [ switch"),
     ("saved queries", "named queries kept across sessions (Q)"),
-    ("notifications", "LISTEN / NOTIFY arrivals (F3)"),
+    ("notifications", "LISTEN / NOTIFY arrivals (:notify / F3)"),
     (
         "jdbc tap",
-        "your app's statements, live from the JDBC tap (F4)",
+        "your app's statements, live from the JDBC tap (:tap / F4)",
     ),
     ("result diff", "compare two results, A against B (D)"),
     ("schema wizard", "schema lint and config advisor (W)"),
@@ -2412,7 +2412,7 @@ pub(crate) fn help_body(
 
     push(
         Line::from(Span::styled(
-            "pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)",
+            "pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)",
             Style::default()
                 .fg(theme.title)
                 .add_modifier(Modifier::BOLD),
@@ -2475,7 +2475,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
+        row("    :notify / F3  LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
         &mut lines,
     );
     push(row("    h / l  ← →    move column cursor"), &mut lines);
@@ -3082,7 +3082,7 @@ pub(crate) fn help_body(
 
     heading("notifications", &mut lines, &mut anchors);
     push(
-        row("    F3 / :notify  open the NOTIFY arrivals panel (works from any mode)"),
+        row("    :notify / F3  open the NOTIFY arrivals panel (works from any mode)"),
         &mut lines,
     );
     push(
@@ -3103,7 +3103,7 @@ pub(crate) fn help_body(
 
     heading("jdbc tap", &mut lines, &mut anchors);
     push(
-        row("    F4 / :tap     open the JDBC tap monitor (live stream, works from any mode)"),
+        row("    :tap / F4     open the JDBC tap monitor (live stream, works from any mode)"),
         &mut lines,
     );
     push(

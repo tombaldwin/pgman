@@ -10,7 +10,7 @@ expression: dump(&buf)
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────╮
-│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)    │
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3) │
 │   9 rows in 6 sections match 'yank'                                          │
 │                                                                              │
 │   grid                                                                       │

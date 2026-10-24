@@ -6,6 +6,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- The start card and the help overlay name the JDBC tap and the NOTIFY
+  panel by `:tap` / `:notify` first, with `F4` / `F3` beside them: on a
+  Mac terminal the F-keys often never reach pgman.
+
 ## [0.2.0] — 2026-10-23
 
 ### Highlights

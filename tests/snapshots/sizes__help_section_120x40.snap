@@ -10,7 +10,7 @@ expression: dump(&buf)
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT number, cu…                                                     [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · editor ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                            │
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)                                         │
 │   grid                    │   editor                                                                                 │
 │ ▸ editor                  │     ↵             run the statement once it ends with ; (guarded)                        │
 │   confirm                 │     alt-↵ / F5    run it regardless of the ; (ctrl-↵ / ctrl-j too)                       │

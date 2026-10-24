@@ -25,9 +25,13 @@ const KEY_FIELD_WIDTH: usize = 4;
 /// under the header / `recent` label, which get a single-space indent).
 const HINT_INDENT: &str = "   ";
 
+const F8_KEY: &str = "ctrl-l";
 const F8_DESC_LONG: &str = "logs → SQL (paste a Hibernate / Postgres log in the editor)";
 const F8_DESC_SHORT: &str = "logs → SQL (paste a log first)";
-const F4_DESC: &str = "JDBC tap";
+/// The JDBC tap's start-card hint: the `:tap` command is the key, as
+/// F-keys are not a primary binding on a Mac terminal; `F4` rides along.
+const TAP_KEY: &str = ":tap";
+const TAP_DESC: &str = "JDBC tap (F4)";
 
 /// Draw the landing / start card into `area`.
 pub(super) fn draw_landing(f: &mut Frame, area: Rect, app: &App) {
@@ -70,13 +74,13 @@ pub(crate) fn tap_badges_line(nplus1: usize, width: usize) -> String {
     };
     let wordings: Vec<String> = match &found {
         None => vec![
-            "TAP below: your app's queries are arriving over the JDBC tap · F4 to watch".into(),
-            "TAP below: your app's queries, over the JDBC tap · F4".into(),
+            "TAP below: your app's queries are arriving over the JDBC tap · :tap to watch".into(),
+            "TAP below: your app's queries, over the JDBC tap · :tap".into(),
         ],
         Some(found) => vec![
-            format!("TAP below: your app's queries are arriving over the JDBC tap · N+1 ×{n}: {found} · F4 to look"),
-            format!("TAP below: your app's queries, over the JDBC tap · N+1 ×{n}: {found} · F4"),
-            format!("TAP: your app's queries via the JDBC tap · N+1 ×{n}: repeated per row · F4"),
+            format!("TAP below: your app's queries arriving over the JDBC tap · N+1 ×{n}: {found} · :tap to look"),
+            format!("TAP below: your app's queries over the JDBC tap · N+1 ×{n}: {found} · :tap"),
+            format!("TAP: app queries via the JDBC tap · N+1 ×{n}: repeated per row · :tap"),
         ],
     };
     let last = wordings.last().cloned().unwrap_or_default();
@@ -134,8 +138,8 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     // it (plus, in two-column mode, F4's cell and the gap) wouldn't
     // fit at the current width.
     let f8_desc = pick_f8_desc(two_col, width);
-    let f8 = Hint::new("ctrl-l", f8_desc);
-    let f4 = Hint::new("F4", F4_DESC);
+    let f8 = Hint::new(F8_KEY, f8_desc);
+    let f4 = Hint::new(TAP_KEY, TAP_DESC);
 
     // --- height budget: decide what survives -------------------------
     let key_lines_floor = if two_col { 3 } else { 6 }; // core only
@@ -303,18 +307,20 @@ fn recent_label(width: usize) -> &'static str {
 }
 
 /// Choose the F8 hint description: the long form if it (plus, in
-/// two-column mode, the F4 cell and the gap between them) fits within
+/// two-column mode, the tap cell and the gap between them) fits within
 /// `width`; the short form otherwise. Never truncates either form.
+/// Measures the key fields as [`key_field`] pads them, so a key wider
+/// than [`KEY_FIELD_WIDTH`] (`ctrl-l`, `:tap`) is counted at its width.
 fn pick_f8_desc(two_col: bool, width: usize) -> &'static str {
+    let f8_cell = display_width(&key_field(F8_KEY)) + display_width(F8_DESC_LONG);
     let needed = if two_col {
         display_width(HINT_INDENT)
-            + KEY_FIELD_WIDTH
-            + display_width(F8_DESC_LONG)
+            + f8_cell
             + COL_GAP
-            + KEY_FIELD_WIDTH
-            + display_width(F4_DESC)
+            + display_width(&key_field(TAP_KEY))
+            + display_width(TAP_DESC)
     } else {
-        display_width(HINT_INDENT) + KEY_FIELD_WIDTH + display_width(F8_DESC_LONG)
+        display_width(HINT_INDENT) + f8_cell
     };
     if needed <= width {
         F8_DESC_LONG
@@ -569,10 +575,25 @@ mod tests {
             "expected an F8 row at 80 columns: {text:?}"
         );
         assert!(
-            text.iter()
-                .any(|l| l.contains("F4") && l.contains("JDBC tap")),
-            "expected an F4 row at 80 columns: {text:?}"
+            text.iter().any(|l| l.contains(":tap  JDBC tap (F4)")),
+            "expected a `:tap` row, F4 beside it, at 80 columns: {text:?}"
         );
+    }
+
+    #[test]
+    fn the_tap_is_never_hinted_by_f4_alone() {
+        // F4 is not a primary binding on a Mac terminal: every start
+        // card line that names F4 names `:tap` too, at every size and
+        // with or without the tap's badge line.
+        let mut a = app();
+        a.tap_health.query_count = 1;
+        for (w, h) in [(200u16, 40u16), (120, 30), (78, 20), (58, 14), (40, 30)] {
+            for line in plain(&landing_lines(&a, w, h)) {
+                if line.contains("F4") || line.contains("JDBC tap") {
+                    assert!(line.contains(":tap"), "{w}x{h}: {line:?}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -687,7 +708,7 @@ mod tests {
             let lines = landing_lines(&a, 58, h);
             let text = plain(&lines);
             let has_f8 = text.iter().any(|l| l.contains("ctrl-l"));
-            let has_f4 = text.iter().any(|l| l.contains("F4"));
+            let has_f4 = text.iter().any(|l| l.contains(":tap"));
             assert_eq!(
                 has_f8, has_f4,
                 "F8 shown without F4 at height {h}: {text:?}"
@@ -701,7 +722,7 @@ mod tests {
         // One row short of the pair, both go.
         let text = plain(&landing_lines(&a, 58, 9));
         assert!(!text.iter().any(|l| l.contains("ctrl-l")), "{text:?}");
-        assert!(!text.iter().any(|l| l.contains("F4")), "{text:?}");
+        assert!(!text.iter().any(|l| l.contains(":tap")), "{text:?}");
     }
 
     #[test]
@@ -1104,18 +1125,27 @@ mod tests {
     fn the_tap_badges_are_explained_once_the_tap_has_heard_from_the_app() {
         assert_eq!(
             tap_badges_line(0, 200),
-            "TAP below: your app's queries are arriving over the JDBC tap · F4 to watch"
+            "TAP below: your app's queries are arriving over the JDBC tap · :tap to watch"
         );
         assert!(tap_badges_line(1, 200).contains("N+1 ×1: one query it runs once per row"));
         assert!(tap_badges_line(3, 200).contains("N+1 ×3: 3 queries it runs once per row"));
-        // Narrower: a shorter whole wording, still ending on F4, never
+        // Narrower: a shorter whole wording, still ending on `:tap`, never
         // one cut mid-phrase.
         for width in [75, 95, 115] {
             let line = tap_badges_line(1, width);
             assert!(display_width(&line) <= width, "{width}: {line}");
             assert!(
-                line.contains("F4") && line.contains("N+1 ×1"),
+                line.contains(" · :tap") && line.contains("N+1 ×1"),
                 "{width}: {line}"
+            );
+        }
+        // The room a 100- and a 120-column card gives the line keeps
+        // the wording that says what N+1 means.
+        for width in [95, 115] {
+            assert!(
+                tap_badges_line(1, width).contains("one query it runs once per row"),
+                "{width}: {}",
+                tap_badges_line(1, width)
             );
         }
         assert!(display_width(&tap_badges_line(0, 60)) <= 60);
