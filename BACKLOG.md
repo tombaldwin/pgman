@@ -76,9 +76,6 @@ small-UX, correctness and environments findings landed on branch
 - **MCP, informational**: on a read-only session `pg_advisory_lock`,
   `pg_notify`, `pg_logical_emit_message` and `txid_current` still run
   (no data changes; transient). Left off the denylist deliberately.
-- **README vs CHANGELOG**: the CHANGELOG's [Unreleased] intro already
-  says `brew install`, which the README says doesn't exist yet. Release
-  day text — flip both together.
 
 ### From the release panel (2026-09-03) — post-release
 - **The tap listeners' channel is bounded by count, not bytes**
@@ -98,8 +95,6 @@ small-UX, correctness and environments findings landed on branch
   and `y` gets SQLSTATE 25006 with the same hint. Options: a typed,
   session-only `:readonly off` (with its own confirm), and skipping the
   popup when the session is read-only. A safety posture call — Tom's.
-- **The title's date reads as unexplained** (`pgman 0.1.0 · 2026-10-22`
-  on a later day). Say it is the release date, or drop it.
 - **Postgres-log parameters are all typed `text`**: `select $1 + $2`
   reconstructs as `'1' + '2'` (operator is not unique). JDBC binds are
   typed; leaving numeric-looking values bare would fix that case and
@@ -122,8 +117,10 @@ small-UX, correctness and environments findings landed on branch
   (documented trade-off of the connection cap). A per-connection idle
   timeout shorter than 30 s, or evicting the oldest idle connection.
 - **Require CI checks on `main`.** Branch protection blocks force-push
-  and deletion but requires no status checks, so a PR can merge red.
-  Require `ci.yml`'s jobs once the release is out.
+  and deletion but still requires no status checks (checked
+  2026-10-24), so a PR can merge red. Setting them is a permission
+  grant: Tom runs `gh api -X PUT …/branches/main/protection` with the
+  nine `ci.yml` job names.
 
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
@@ -141,17 +138,10 @@ buckets were folded in once their initial passes shipped).
   so a schema listed ahead of `pg_catalog` on the operator's path can
   answer them (psql qualifies for this reason). And a failed probe reads
   as `in a transaction, so no paging`; say the probe failed instead.
-- **Lost during a running query, card and footer disagree**: the card
-  says `the connection to the server closed` while the footer has the
-  query's `terminating connection due to administrator command`. Let a
-  57P01/57P02 `QueryFailed` behind the card refresh its reason; the
-  late-Booted closed-client path drops the forwarder's FATAL too.
 - **Untested by mutation**: the driver's use of `severity_word` (needs a
   server with a non-English `lc_messages`); the session read-only passed
   at `run_generated_select` and the cell edit (pgman's own SQL, which
   can't carry the escape).
-- **The header says `Session: writable` on a standby** in the paging
-  view's status; read the pinned read-only state there too.
 - **The cell-edit confirm shows a stale column name** (`SET b`) before
   the server-side identity check refuses it. Warn at plan time when an
   unaliased result column's name differs from the schema cache.
@@ -183,26 +173,11 @@ buckets were folded in once their initial passes shipped).
   renders SQL NULL and the string `'NULL'` the same.
 - **A pinned diff side drops `truncated`**, so the title never says a side
   is a partial paged result.
-- **`:fixture`'s status is elided mid-note** at 160 columns, eating
-  "(fetched rows only · more not fetched)".
 - **Cell edit compares the FROM table by name only**: a same-named view in
   an earlier search_path schema over the base table is bypassed (same
   row, but INSTEAD OF triggers / CHECK OPTION skipped).
 - **A row visible but not updatable (RLS / privilege)** reports "the UPDATE
   matched no row (deleted, or its key changed)"; say it may be policy.
-- **Schema wizard detail pane wraps mid-word** at 80x24 / 60x16, and its
-  header's last column reads `tit`.
-- **F-key-only hints**: start card `F4 JDBC tap` / `· F4 to look`, help
-  heading `F3 notify`; show `:tap` / `:notify` beside them.
-- **Result diff title at 80 cols** cuts off `key: id (primary key)`; put
-  the key before the query text.
-- **README's feature list** doesn't mention cell editing or paging; the
-  README `demo.gif` shows 0.1.0's chrome; crates.io's README has relative
-  `docs/` links that don't resolve there.
-- **Tap polish**: the N+1 row's caller is cut at the border without `…`;
-  the start card at 60x16 drops hint rows with no "more" marker;
-  docs/tap.md's "JAR backpressure" label puzzles an OTLP-only user.
-- **`--demo` writes `pgman.log`** although "no disk writes" is claimed.
 - **A static environment's primary row is never probed** in the overview
   (STATUS/SCHEMA/… stay `—`) while its replica row is; same in v0.1.0.
 - **Advisor**: ADV003's `ALTER TABLE … SET (autovacuum…)` queues behind a
@@ -253,13 +228,8 @@ batch.
 - **Filtering after scrolling down leaves the grid scrolled** so only
   the selected row shows, blank below (reproduces unpaged at 900 rows;
   paging hits it more, since a fetch jumps the selection to row 1001).
-- **The result title is cut by the border at 80 columns** when a filter
-  is active and the counts reach five digits.
 - **Paging's 60 s idle / 10 min open limits are constants**; they could
   be `pgman.toml` settings.
-- **Connect hangs behind an ACCESS EXCLUSIVE lock.** Bootstrap's catalog
-  reads (`pg_get_indexdef`) wait forever ("connecting…") with no
-  `lock_timeout`, and backends pile up behind it.
 - **The advisor and the live lint run on the editor's session**, so
   inside an open user transaction `pg_stat_*` reads are the
   transaction's cached snapshot and a refresh can be stale.
