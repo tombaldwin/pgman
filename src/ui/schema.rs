@@ -529,11 +529,22 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     // Rows under the header row.
     let visible_h = (top.height as usize).saturating_sub(1);
     let scroll = scroll_offset(app.schema_lint.cursor, visible_h);
+    let widest_object = app
+        .schema_lint
+        .findings
+        .iter()
+        .map(|f| display_width(&f.object))
+        .max()
+        .unwrap_or(0);
+    let (object_width, title_width) = lint_columns(top.width as usize, widest_object);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
-            "  {:<5}  {:<7}  {:<48}  {}",
-            "SEV", "CODE", "object", "title"
+            "  {:<5}  {:<7}  {:<object_width$}  {}",
+            "SEV",
+            "CODE",
+            "object",
+            crate::grid::truncate_cell("title", title_width)
         ),
         Style::default()
             .fg(theme.muted)
@@ -561,15 +572,11 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Style::default().fg(theme.text)
         };
-        // `object` is a fixed 48-column field; `title` takes whatever's
-        // left of the row. Both get cut with `…` (via the same
-        // truncator the grid uses) rather than a raw character clip —
-        // a cut with no marker reads as if the text just ends there.
-        let object = crate::grid::truncate_cell(&finding.object, 48);
-        // Fixed prefix width before `title` starts: "  " (2) + sev (5)
-        // + "  {code:<7}  " (11) + "{object:<48}  " (50).
-        const PREFIX_WIDTH: usize = 2 + 5 + 11 + 50;
-        let title_width = (top.width as usize).saturating_sub(PREFIX_WIDTH);
+        // `object` and `title` share the row as `lint_columns` splits
+        // it. Both get cut with `…` (via the same truncator the grid
+        // uses) rather than a raw character clip — a cut with no
+        // marker reads as if the text just ends there.
+        let object = crate::grid::truncate_cell(&finding.object, object_width);
         let title = crate::grid::truncate_cell(&finding.title, title_width);
         let spans = vec![
             Span::styled("  ", base_style),
@@ -578,7 +585,7 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
                 base_style.fg(sev_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(format!("  {:<7}  ", finding.code), base_style),
-            Span::styled(format!("{:<48}  ", object), base_style),
+            Span::styled(format!("{object:<object_width$}  "), base_style),
             Span::styled(title, base_style),
         ];
         lines.push(Line::from(spans));
@@ -587,6 +594,28 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
 
     f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
 }
+
+/// The wizard list's `object` and `title` widths for a row `width`
+/// columns wide, when the widest object is `widest_object`. `object`
+/// gets its widest value, up to 48 columns, while `title` keeps at
+/// least [`LINT_TITLE_MIN`]; a narrow terminal shrinks `object` (to no
+/// less than `object` itself) rather than leave `title` a stub — at 80
+/// columns it was 3 wide and its header read `tit`. Pure.
+pub(crate) fn lint_columns(width: usize, widest_object: usize) -> (usize, usize) {
+    const OBJECT_MAX: usize = 48;
+    // "  " + sev (5) + "  " + code (7) + "  " before `object`, and the
+    // "  " gap after it.
+    const FIXED: usize = 2 + 5 + 2 + 7 + 2 + 2;
+    let room = width.saturating_sub(FIXED);
+    let object = widest_object
+        .clamp("object".len(), OBJECT_MAX)
+        .min(room.saturating_sub(LINT_TITLE_MIN))
+        .max("object".len());
+    (object, room.saturating_sub(object))
+}
+
+/// The fewest columns [`lint_columns`] leaves the `title` column.
+pub(crate) const LINT_TITLE_MIN: usize = 16;
 
 /// The wizard's detail strip for `finding`, `width` columns of text.
 /// A lint finding: title, object, detail, suggestion. An advisor
@@ -604,24 +633,9 @@ pub(crate) fn lint_detail_lines(
     let text = Style::default().fg(theme.text);
     let muted = Style::default().fg(theme.muted);
     let accent = Style::default().fg(theme.accent);
-    out.push(styled(
-        format!("  {} · {}", finding.code, finding.title),
-        Style::default()
-            .fg(theme.title)
-            .add_modifier(Modifier::BOLD),
-    ));
-    let Some(advice) = finding.advice.as_deref() else {
-        out.push(styled(format!("  object: {}", finding.object), muted));
-        for chunk in wrap_value(&finding.detail, width) {
-            out.push(styled(format!("  {chunk}"), text));
-        }
-        if let Some(s) = &finding.suggestion {
-            out.push(styled(format!("  suggest: {s}"), accent));
-        }
-        return out;
-    };
     // Hanging indent: the first row carries the label, the rest line
-    // up under the text.
+    // up under the text. Rows break between words: the strip used to
+    // wrap a lint finding's prose by characters (`referen` / `ces`).
     let wrapped = |label: &str, body: &str, style: Style, out: &mut Vec<Line<'static>>| {
         let pad = " ".repeat(2 + label.chars().count());
         for (i, row) in wrap_words(body, width.saturating_sub(label.chars().count()))
@@ -635,6 +649,22 @@ pub(crate) fn lint_detail_lines(
             };
             out.push(styled(format!("{lead}{row}"), style));
         }
+    };
+    wrapped(
+        "",
+        &format!("{} · {}", finding.code, finding.title),
+        Style::default()
+            .fg(theme.title)
+            .add_modifier(Modifier::BOLD),
+        &mut out,
+    );
+    let Some(advice) = finding.advice.as_deref() else {
+        wrapped("object: ", &finding.object, muted, &mut out);
+        wrapped("", &finding.detail, text, &mut out);
+        if let Some(s) = &finding.suggestion {
+            wrapped("suggest: ", s, accent, &mut out);
+        }
+        return out;
     };
     if let Some(ch) = &advice.change {
         let restart = if ch.restart {

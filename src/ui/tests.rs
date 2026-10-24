@@ -2471,6 +2471,60 @@ fn the_advisor_detail_strip_leads_with_what_to_do() {
     assert_eq!(rows[1], "  object: public.t.fk");
 }
 
+/// A lint finding's detail strip breaks between words at every width
+/// (it wrapped by characters: `referen` / `ces`), and its heading and
+/// object rows wrap rather than run past the strip.
+#[test]
+fn the_lint_detail_strip_never_breaks_inside_a_word() {
+    let theme = crate::theme::Theme::default();
+    let lint = crate::query::lint::fk_without_index_finding(
+        "public",
+        "accounts",
+        "accounts_customer_id_fkey",
+        "customer_id",
+    );
+    let words: std::collections::HashSet<String> = [
+        &lint.title,
+        &lint.object,
+        &lint.detail,
+        lint.suggestion.as_ref().unwrap(),
+    ]
+    .iter()
+    .flat_map(|s| s.split_whitespace().map(str::to_string))
+    .chain(["LINT101", "·", "object:", "suggest:"].map(String::from))
+    .collect();
+    for width in [50usize, 58, 66, 70, 120] {
+        let rows: Vec<String> = super::schema::lint_detail_lines(&lint, width, &theme)
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        for row in &rows {
+            assert!(display_width(row) <= width + 2, "{width}: {row:?}");
+            for word in row.split_whitespace() {
+                assert!(words.contains(word), "{width}: {word:?} cut from {row:?}");
+            }
+        }
+    }
+}
+
+/// The wizard list gives `title` room to say something: at 80 columns
+/// it was 3 wide (header `tit`), with `object` holding 48.
+#[test]
+fn lint_columns_shrinks_object_before_title() {
+    use super::schema::{lint_columns, LINT_TITLE_MIN};
+    // Wide: object gets its widest value, capped at 48.
+    assert_eq!(lint_columns(200, 30), (30, 200 - 20 - 30));
+    assert_eq!(lint_columns(200, 70), (48, 200 - 20 - 48));
+    // The 80x24 wizard's row (71 columns): title keeps its minimum.
+    let (object, title) = lint_columns(71, 49);
+    assert_eq!(title, LINT_TITLE_MIN);
+    assert_eq!(object + title + 20, 71);
+    // Short objects leave the rest to title.
+    assert_eq!(lint_columns(71, 17), (17, 71 - 20 - 17));
+    // Never narrower than the `object` header itself.
+    assert_eq!(lint_columns(30, 40).0, "object".len());
+}
+
 /// The whole screen at `w`×`h` as one string.
 fn screen_text(a: &mut App, w: u16, h: u16) -> String {
     a.splash_visible = false;
