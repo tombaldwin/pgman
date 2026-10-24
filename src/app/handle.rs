@@ -530,8 +530,10 @@ impl App {
                         ));
                     }
                     Err(e) => {
-                        // The header must say what the server will do.
-                        self.read_only = !want;
+                        // The header must say what the server will do. A
+                        // standby stays pinned: recovery refuses writes
+                        // whatever this SET did.
+                        self.read_only = !want || self.replica_pin;
                         self.last_error = Some(format!(
                             "read-only {state} not applied to this session ({e}) · it applies at the next connect"
                         ));

@@ -12477,6 +12477,16 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     });
     assert!(!a.read_only, "not applied: the session is still writable");
     assert!(a.last_error.as_deref().unwrap().contains("not applied"));
+
+    // On a standby a failed `:readonly on` changes nothing: the session
+    // is pinned, and the header must not drop to `Session: writable`.
+    a.note_server_role(Some(true));
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Err("connection closed".into()),
+    });
+    assert!(a.read_only && a.replica_pin);
 }
 
 /// `r` keeps the cursor on the database it was on when the listing moves
