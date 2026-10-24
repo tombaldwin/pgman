@@ -3057,6 +3057,11 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
         assert!(cache.columns_by_table.contains_key(&key), "columns read");
         assert!(!cache.table_sizes.contains_key(&key), "size skipped");
         assert!(
+            cache.skipped.contains(&key),
+            "and said to be: {:?}",
+            cache.skipped
+        );
+        assert!(
             !cache.indexes_by_table.contains_key(&key),
             "indexes skipped"
         );
@@ -3109,6 +3114,47 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
             .await
             .unwrap();
     });
+}
+
+/// A lock on one of a table's indexes (here `ALTER INDEX … SET
+/// TABLESPACE`, which locks the index alone) keeps the table's size and
+/// that index out too; the cache files the skip under the table, which
+/// is what the schema browser shows as "not fetched".
+#[tokio::test]
+async fn a_locked_index_marks_its_table_skipped() {
+    let (holder, _t1) = writable_client().await;
+    let (client, _t2) = lib_client().await;
+    let t = it_name("idxlock");
+    let ix = format!("{t}_v");
+    holder
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int, v text); CREATE INDEX {ix} ON {t} (v)"
+        ))
+        .await
+        .unwrap();
+    let holder_pid = backend_pid(&holder).await;
+    holder
+        .batch_execute(&format!(
+            "BEGIN; ALTER INDEX {ix} SET TABLESPACE pg_default"
+        ))
+        .await
+        .unwrap();
+    let cache = pgman::query::schema::fetch(&client).await;
+    holder.batch_execute("ROLLBACK").await.unwrap();
+    holder
+        .batch_execute(&format!("DROP TABLE {t}"))
+        .await
+        .unwrap();
+    let key = ("public".to_string(), t.clone());
+    let why = cache.incomplete.as_deref().unwrap_or_default();
+    assert!(cache.skipped.contains(&key), "{:?} · {why}", cache.skipped);
+    assert!(!cache.table_sizes.contains_key(&key), "size skipped");
+    assert!(
+        why.contains(&format!(
+            "pid {holder_pid} holds ACCESS EXCLUSIVE on public.{ix}"
+        )) || why.contains(" more): no size or indexes"),
+        "{why}"
+    );
 }
 
 /// A reload (`S` then `r`, or the refresh after DDL) runs on the

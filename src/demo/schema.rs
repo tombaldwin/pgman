@@ -867,6 +867,7 @@ pub(super) fn schema_cache() -> SchemaCache {
         // relation up by OID.
         relations_by_oid: HashMap::new(),
         incomplete: None,
+        skipped: Default::default(),
     }
 }
 

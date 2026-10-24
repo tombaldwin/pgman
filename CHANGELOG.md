@@ -45,7 +45,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `lock_timeout` (the session's own setting is restored), and the status
   line says the schema is incomplete, names the holder's pid first (a
   narrow footer cut it off) then the lock — for a read that gave up
-  behind a lock on a catalog too — and how to reload. A reload (`S` then `r`, or the refresh after DDL) is
+  behind a lock on a catalog too — and how to reload. The schema
+  browser says `size: not fetched (locked)` and `indexes: not fetched`
+  for such a table, which read as a table with no indexes. A reload (`S` then `r`, or the refresh after DDL) is
   bounded the same way, puts back your own `lock_timeout`, and no
   longer says "schema reloaded" over a read the server cancelled: any
   failed catalog read is named.

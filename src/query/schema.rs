@@ -150,6 +150,12 @@ pub struct SchemaCache {
     /// gap). One line for the status bar; `None` when the fetch was
     /// whole.
     pub incomplete: Option<String>,
+    /// The tables whose size and indexes another session's `ACCESS
+    /// EXCLUSIVE` lock kept out — on the table or on one of its indexes —
+    /// keyed `(schema, table)`. The schema browser says "not fetched"
+    /// for these rather than show no size and no indexes, which reads as
+    /// a table that has none.
+    pub skipped: std::collections::HashSet<(String, String)>,
 }
 
 /// A relation another backend holds, or waits for, an `ACCESS
@@ -159,6 +165,9 @@ pub struct SchemaCache {
 pub struct LockedRelation {
     pub schema: String,
     pub name: String,
+    /// The table the lock keeps the size and indexes of out: the
+    /// relation itself, or the table an index is on.
+    pub table: (String, String),
     pub pid: i32,
     /// Held (`true`) or still waited for (`false`) — a waiting request
     /// blocks every later reader just the same.
@@ -539,10 +548,14 @@ ORDER BY 1, 2, 3"
 /// this answers behind a catalog lock (one on `pg_class` or
 /// `pg_namespace` aside, which it joins).
 pub const LOCKED_RELATIONS_SQL: &str = "\
-SELECT n.nspname, c.relname, l.pid, l.granted, n.nspname = 'pg_catalog' \
+SELECT n.nspname, c.relname, l.pid, l.granted, n.nspname = 'pg_catalog', \
+       tn.nspname, t.relname \
 FROM pg_catalog.pg_locks l \
 JOIN pg_catalog.pg_class c ON c.oid = l.relation \
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+LEFT JOIN pg_catalog.pg_index x ON x.indexrelid = c.oid \
+JOIN pg_catalog.pg_class t ON t.oid = COALESCE(x.indrelid, c.oid) \
+JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace \
 WHERE l.locktype = 'relation' AND l.mode = 'AccessExclusiveLock' \
   AND l.database = (SELECT oid FROM pg_catalog.pg_database \
                     WHERE datname = pg_catalog.current_database()) \
@@ -626,6 +639,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
                     let lock = LockedRelation {
                         schema: row.try_get(0).ok()?,
                         name: row.try_get(1).ok()?,
+                        table: (row.try_get(5).ok()?, row.try_get(6).ok()?),
                         pid: row.try_get(2).ok()?,
                         granted: row.try_get(3).ok()?,
                     };
@@ -674,6 +688,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     };
     let mut cache = SchemaCache {
         incomplete,
+        skipped: locked.iter().map(|l| l.table.clone()).collect(),
         ..SchemaCache::default()
     };
     let mut last_relation: Option<(String, String)> = None;
@@ -887,6 +902,7 @@ mod tests {
         LockedRelation {
             schema: "public".into(),
             name: name.into(),
+            table: ("public".into(), name.into()),
             pid,
             granted,
         }
