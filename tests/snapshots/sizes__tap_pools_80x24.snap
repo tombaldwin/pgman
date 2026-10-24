@@ -13,7 +13,7 @@ expression: dump(&buf)
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: pools · v cycle · … ╮   │
 │  │  CONNS   PEAK   CALLS    ERR        BUSY        P95  POOL · APP       │   │
-│  │      3      1      11      0       8.2ms      2.3ms  primary · billing│   │
+│  │      3      1      11      0       8.2ms      2.3ms  primary          │   │
 ╰──│                                                                       │───╯
 ╭[ │                                                                       │───╮
 │nu│                                                                       │   │

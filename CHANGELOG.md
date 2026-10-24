@@ -25,9 +25,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The result title is fitted to its border: with a filter on and
   five-digit counts, an 80-column title ran into the corner mid-word;
   it now drops whole segments from the end and ends on `…`.
-- The JDBC tap's N+1 view cuts a long caller with `…` rather than at
-  the border, and shows its fingerprint only when there is room to
-  read one.
+- The JDBC tap's views cut a long cell with `…` rather than at the
+  border: N+1 and callers keep the caller whole and add the fingerprint
+  only when there is room to read one, hotspots' `fingerprint · caller`
+  and transactions' `txn · last sql` fit their column (at 80x24 the
+  hotspots header read `FINGERPRINT · LAST CA` over `· InvoiceS`), and
+  any row or header too wide for the panel ends on `…`.
 - A start card too short for every key hint keeps its `?  all keys`
   line and says how many it left off (`+3 more`); at 60x16 the hints
   went with nothing to say so.

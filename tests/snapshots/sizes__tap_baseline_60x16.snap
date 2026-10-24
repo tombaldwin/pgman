@@ -7,10 +7,10 @@ expression: dump(&buf)
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │baseline captured 0s ago · 4 fingerprint(s) · 11 even│  │
-│ │current ring: 11 event(s) · 0 changed fingerprint(s) │  │
+│ │baseline captured 0s ago · 4 fingerprint(s) · 11 eve…│  │
+│ │current ring: 11 event(s) · 0 changed fingerprint(s)…│  │
 ╰─│                                                     │──╯
-╭[│no changes since baseline — nothing new, no regressio│──╮
+╭[│no changes since baseline — nothing new, no regressi…│──╮
 │n│                                                     │  │
 │I│                                                     │  │
 │I│                                                     │  │

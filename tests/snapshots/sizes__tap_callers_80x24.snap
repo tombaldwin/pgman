@@ -13,10 +13,10 @@ expression: dump(&buf)
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: callers · … ────────╮   │
 │  │   CALLS    ERR        P50        P95   FPS  CALLER · LAST FINGERPRINT │   │
-│  │       8      0      465µs      525µs     1  InvoiceServi… · select id,│   │
-╰──│       1      0      2.3ms      2.3ms     1  DunningJob.a… · update sub│───╯
-╭[ │       1      0      1.8ms      1.8ms     1  InvoiceContr… · select id,│───╮
-│nu│       1      0      290µs      290µs     1  CustomerRepo… · select id,│   │
+│  │       8      0      465µs      525µs     1  InvoiceService.loadLines:…│   │
+╰──│       1      0      2.3ms      2.3ms     1  DunningJob.advance:77     │───╯
+╭[ │       1      0      1.8ms      1.8ms     1  InvoiceController.list:58 │───╮
+│nu│       1      0      290µs      290µs     1  CustomerRepository.findBy…│   │
 │IN│                                                                       │   │
 │IN│                                                                       │   │
 │IN│                                                                       │   │

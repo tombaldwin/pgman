@@ -13,8 +13,8 @@ expression: dump(&buf)
 │> SELECT number, customer_id, status, currency, total, due_at                                     │
 │  F╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: transactions · v cycle · … ────────────╮   │
 │  W│  STATE        STMTS    FPS        SPAN     DB-TIME  POOL          TXN / CONN · LAST SQL  │   │
-│  O│  open             9      2     195.0ms       5.6ms  primary       conn-7#311 · select id,│   │
-│   │  open             1      1         0µs       290µs  primary       (autocommi… · select id│   │
+│  O│  open             9      2     195.0ms       5.6ms  primary       conn-7#311 · select id…│   │
+│   │  open             1      1         0µs       290µs  primary       (autocommi… · select i…│   │
 ╰───│  open             1      1         0µs       2.3ms  primary       conn-2#90 · update sub…│───╯
 ╭[ ◆│                                                                                          │───╮
 │num│                                                                                          │   │

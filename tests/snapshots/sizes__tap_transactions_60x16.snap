@@ -7,10 +7,10 @@ expression: dump(&buf)
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │  STATE        STMTS    FPS        SPAN     DB-TIME  │  │
-│ │  open             9      2     195.0ms       5.6ms  │  │
-╰─│  open             1      1         0µs       290µs  │──╯
-╭[│  open             1      1         0µs       2.3ms  │──╮
+│ │  STATE        STMTS    FPS        SPAN     DB-TIME …│  │
+│ │  open             9      2     195.0ms       5.6ms …│  │
+╰─│  open             1      1         0µs       290µs …│──╯
+╭[│  open             1      1         0µs       2.3ms …│──╮
 │n│                                                     │  │
 │I│                                                     │  │
 │I│                                                     │  │

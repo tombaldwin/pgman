@@ -127,7 +127,8 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             "  {:>10}  {:>9}  {:<TAP_APP_COL$}  {}",
             "duration", "rows", "app", "sql / kind"
         )
-        .to_uppercase(),
+        .to_uppercase()
+        .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -169,7 +170,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             // Heartbeats never land here (filtered upstream).
             crate::tap::TapKind::Heartbeat => "[heartbeat]".into(),
         };
-        let line = format!("  {dur:>10}  {rows:>9}  {app_name}  {body}");
+        let line = format!("  {dur:>10}  {rows:>9}  {app_name}  {body}").fit(inner.width);
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -563,17 +564,20 @@ fn draw_tap_monitor_hotspots(f: &mut Frame, inner: Rect, app: &App) {
     lines.push(Line::from(Span::styled(
         format!(
             "  {:>6}  {:>5}  {:>9}  {:>9}  {:>9}  {}",
-            "calls", "err", "p50", "p95", "p99", "fingerprint · last caller"
+            "calls",
+            "err",
+            "p50",
+            "p95",
+            "p99",
+            hotspots_header_body(hotspots_body_col(inner.width))
         )
-        .to_uppercase(),
+        .to_uppercase()
+        .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )));
-    let inner_w = inner.width as usize;
-    // 2 + 6 + 2 + 5 + 2 + 9*3 + 2*3 + 2 = 50 (give or take); rest is for the
-    // fingerprint + caller column.
-    let body_col = inner_w.saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 9 + 2);
+    let body_col = hotspots_body_col(inner.width);
     for (i, h) in hotspots.iter().enumerate().skip(scroll).take(visible_h) {
         let is_focus = i == cursor;
         let style = if is_focus {
@@ -587,10 +591,10 @@ fn draw_tap_monitor_hotspots(f: &mut Frame, inner: Rect, app: &App) {
             Style::default().fg(theme.text)
         };
         let body = match &h.last_caller {
-            Some(c) => format!(
-                "{} · {}",
-                short_fingerprint(&h.fingerprint, body_col / 2),
-                c
+            Some(c) => pair_cell(
+                &short_fingerprint(&h.fingerprint, lead_col(body_col)),
+                c,
+                body_col,
             ),
             None => short_fingerprint(&h.fingerprint, body_col),
         };
@@ -601,7 +605,8 @@ fn draw_tap_monitor_hotspots(f: &mut Frame, inner: Rect, app: &App) {
             p50 = format_duration(h.p50_micros),
             p95 = format_duration(h.p95_micros),
             p99 = format_duration(h.p99_micros),
-        );
+        )
+        .fit(inner.width);
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -638,15 +643,20 @@ fn draw_tap_monitor_callers(f: &mut Frame, inner: Rect, app: &App) {
     lines.push(Line::from(Span::styled(
         format!(
             "  {:>6}  {:>5}  {:>9}  {:>9}  {:>4}  {}",
-            "calls", "err", "p50", "p95", "fps", "caller · last fingerprint"
+            "calls",
+            "err",
+            "p50",
+            "p95",
+            "fps",
+            pair_cell("caller", "last fingerprint", callers_body_col(inner.width))
         )
-        .to_uppercase(),
+        .to_uppercase()
+        .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )));
-    let inner_w = inner.width as usize;
-    let body_col = inner_w.saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 4 + 2);
+    let body_col = callers_body_col(inner.width);
     for (i, g) in groups.iter().enumerate().skip(scroll).take(visible_h) {
         let is_focus = i == cursor;
         let style = if is_focus {
@@ -659,17 +669,11 @@ fn draw_tap_monitor_callers(f: &mut Frame, inner: Rect, app: &App) {
         } else {
             Style::default().fg(theme.text)
         };
-        let caller = short_fingerprint(&g.caller, body_col / 2);
-        let last_fp = g
-            .last_fingerprint
-            .as_deref()
-            .map(|fp| short_fingerprint(fp, body_col / 2))
-            .unwrap_or_default();
-        let body = if last_fp.is_empty() {
-            caller
-        } else {
-            format!("{caller} · {last_fp}")
-        };
+        let body = pair_cell(
+            &g.caller,
+            g.last_fingerprint.as_deref().unwrap_or(""),
+            body_col,
+        );
         let line = format!(
             "  {count:>6}  {err:>5}  {p50:>9}  {p95:>9}  {fps:>4}  {body}",
             count = g.count,
@@ -677,7 +681,8 @@ fn draw_tap_monitor_callers(f: &mut Frame, inner: Rect, app: &App) {
             p50 = format_duration(g.p50_micros),
             p95 = format_duration(g.p95_micros),
             fps = g.distinct_fingerprints,
-        );
+        )
+        .fit(inner.width);
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -736,7 +741,8 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
                 "baseline captured {captured_age} · {} fingerprint(s) · {} event(s) at capture",
                 baseline.hotspots.len(),
                 baseline.captured_event_count
-            ),
+            )
+            .fit(inner.width),
             Style::default().fg(theme.muted),
         )),
         Line::from(Span::styled(
@@ -744,7 +750,8 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
                 "current ring: {} event(s) · {} changed fingerprint(s) (Shift-B recaptures)",
                 app.tap_events.len(),
                 diffs.len()
-            ),
+            )
+            .fit(inner.width),
             Style::default().fg(theme.muted),
         )),
     ];
@@ -753,7 +760,8 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
             header_lines.push(Line::from(Span::styled(
                 format!(
                     "⚠ {delta} event(s) dropped at listener since capture — diff below is a subsample"
-                ),
+                )
+                .fit(inner.width),
                 Style::default().fg(theme.health_yellow),
             )));
         }
@@ -762,7 +770,8 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
     if diffs.is_empty() {
         let mut lines = header_lines;
         lines.push(Line::from(Span::styled(
-            "no changes since baseline — nothing new, no regressions, no disappearances.",
+            "no changes since baseline — nothing new, no regressions, no disappearances."
+                .fit(inner.width),
             Style::default().fg(theme.health_green),
         )));
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -779,7 +788,8 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
             "  {:<11}  {:>6}  {:>6}  {:>9}  {:>9}  {}",
             "change", "Δcalls", "calls", "Δp95", "p95", "fingerprint"
         )
-        .to_uppercase(),
+        .to_uppercase()
+        .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -821,7 +831,8 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
             dp95 = delta_p95,
             p95 = format_duration(d.current_p95_micros),
             body = short_fingerprint(&d.fingerprint, body_col),
-        );
+        )
+        .fit(inner.width);
         lines.push(Line::from(Span::styled(line, row_style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -893,15 +904,21 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
     lines.push(Line::from(Span::styled(
         format!(
             "  {:<10}  {:>6}  {:>5}  {:>10}  {:>10}  {:<12}  {}",
-            "state", "stmts", "fps", "span", "db-time", "pool", "txn / conn · last sql"
+            "state",
+            "stmts",
+            "fps",
+            "span",
+            "db-time",
+            "pool",
+            pair_cell("txn / conn", "last sql", txns_body_col(inner.width))
         )
-        .to_uppercase(),
+        .to_uppercase()
+        .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )));
-    let inner_w = inner.width as usize;
-    let body_col = inner_w.saturating_sub(2 + 10 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 10 + 2 + 12 + 2);
+    let body_col = txns_body_col(inner.width);
     for (i, t) in txns.iter().enumerate().skip(scroll).take(visible_h) {
         let is_focus = i == cursor;
         let state_label = match t.outcome {
@@ -926,10 +943,10 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
             None => format!("(autocommit · {})", t.conn.as_deref().unwrap_or("?")),
         };
         let last_fp = t.last_fingerprint.as_deref().unwrap_or("");
-        let body = format!(
-            "{} · {}",
-            short_fingerprint(&id_label, body_col / 2),
-            short_fingerprint(last_fp, body_col / 2)
+        let body = pair_cell(
+            &short_fingerprint(&id_label, lead_col(body_col)),
+            last_fp,
+            body_col,
         );
         let pool_label = short_fingerprint(t.pool.as_deref().unwrap_or("—"), 12);
         let line = format!(
@@ -940,7 +957,8 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
             pool = pool_label,
             span = format_duration(t.span_micros),
             dbt = format_duration(t.total_query_micros),
-        );
+        )
+        .fit(inner.width);
         lines.push(Line::from(Span::styled(line, row_style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -986,15 +1004,21 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
     lines.push(Line::from(Span::styled(
         format!(
             "  {:>5}  {:>5}  {:>6}  {:>5}  {:>10}  {:>9}  {}",
-            "conns", "peak", "calls", "err", "busy", "p95", "pool · app"
+            "conns",
+            "peak",
+            "calls",
+            "err",
+            "busy",
+            "p95",
+            pair_cell("pool", "app", pools_body_col(inner.width))
         )
-        .to_uppercase(),
+        .to_uppercase()
+        .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )));
-    let inner_w = inner.width as usize;
-    let body_col = inner_w.saturating_sub(2 + 5 + 2 + 5 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 9 + 2);
+    let body_col = pools_body_col(inner.width);
     for (i, p) in pools.iter().enumerate().skip(scroll).take(body_h) {
         let is_focus = i == cursor;
         let style = if is_focus {
@@ -1008,7 +1032,7 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
             Style::default().fg(theme.text)
         };
         let body = match &p.last_app {
-            Some(a) => format!("{} · {}", short_fingerprint(&p.pool, body_col / 2), a),
+            Some(a) => pair_cell(&p.pool, a, body_col),
             None => short_fingerprint(&p.pool, body_col),
         };
         let line = format!(
@@ -1019,7 +1043,8 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
             err = p.error_count,
             busy = format_duration(p.total_micros),
             p95 = format_duration(p.p95_micros),
-        );
+        )
+        .fit(inner.width);
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -1064,9 +1089,10 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
             "calls",
             "span",
             "txn / conn",
-            nplus1_body("caller", "fingerprint", body_col)
+            pair_cell("caller", "fingerprint", body_col)
         )
-        .to_uppercase(),
+        .to_uppercase()
+        .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -1090,35 +1116,92 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
             .or_else(|| fnd.conn.clone())
             .unwrap_or_else(|| "—".into());
         let caller = fnd.last_caller.as_deref().unwrap_or("?");
-        let body = nplus1_body(caller, &fnd.fingerprint, body_col);
+        let body = pair_cell(caller, &fnd.fingerprint, body_col);
         let line = format!(
             "  {count:>6}  {span:>10}  {group:<18}  {body}",
             count = fnd.count,
             span = format_duration(fnd.span_micros),
             group = short_fingerprint(&group, 18),
-        );
+        )
+        .fit(inner.width);
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
-/// An N+1 row's `caller · fingerprint` cell, `width` columns at most.
-/// The caller is what to go and fix, so it comes whole first; the
-/// fingerprint takes what is left, when that is enough to read. Short
-/// of room, the caller alone, cut with `…` — the border cut it with no
-/// marker, and at 80 columns left a dangling ` · `. Pure.
-pub(crate) fn nplus1_body(caller: &str, fingerprint: &str, width: usize) -> String {
-    const SEP: &str = " · ";
-    // A fingerprint cut shorter than this says nothing.
-    const MIN_FINGERPRINT: usize = 8;
-    let rest = width.saturating_sub(display_width(caller) + display_width(SEP));
-    if !fingerprint.is_empty() && rest >= MIN_FINGERPRINT.min(display_width(fingerprint)) {
-        format!(
-            "{caller}{SEP}{}",
-            crate::grid::truncate_cell(fingerprint, rest)
-        )
+/// A tap view's line cut to the panel's `width` columns with `…`, so
+/// the border never cuts one mid-word with no marker.
+trait FitTo {
+    fn fit(&self, width: u16) -> String;
+}
+
+impl FitTo for str {
+    fn fit(&self, width: u16) -> String {
+        crate::grid::truncate_cell(self, width as usize)
+    }
+}
+
+/// The hotspots view's `fingerprint · last caller` column: what is
+/// left of `inner_w` after count, errors and p50 / p95 / p99.
+fn hotspots_body_col(inner_w: u16) -> usize {
+    (inner_w as usize).saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 9 + 2)
+}
+
+/// The hotspots header over its `fingerprint · last caller` column:
+/// `fingerprint · caller` where the whole label doesn't fit, so the
+/// header still names both halves of an 80-column row. Pure.
+fn hotspots_header_body(body_col: usize) -> String {
+    const FULL: &str = "fingerprint · last caller";
+    if display_width(FULL) <= body_col {
+        FULL.to_string()
     } else {
-        crate::grid::truncate_cell(caller, width)
+        pair_cell("fingerprint", "caller", body_col)
+    }
+}
+
+/// The callers view's `caller · last fingerprint` column.
+fn callers_body_col(inner_w: u16) -> usize {
+    (inner_w as usize).saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 4 + 2)
+}
+
+/// The transactions view's `txn / conn · last sql` column.
+fn txns_body_col(inner_w: u16) -> usize {
+    (inner_w as usize).saturating_sub(2 + 10 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 10 + 2 + 12 + 2)
+}
+
+/// The pools view's `pool · app` column.
+fn pools_body_col(inner_w: u16) -> usize {
+    (inner_w as usize).saturating_sub(2 + 5 + 2 + 5 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 9 + 2)
+}
+
+/// How much of a `body_col`-wide [`pair_cell`] a long lead (a
+/// fingerprint, a txn id) may take: half, leaving the rest room to be
+/// read — unless the column is too narrow to show both, when the lead
+/// takes it all.
+fn lead_col(body_col: usize) -> usize {
+    if body_col >= 2 * PAIR_MIN_REST + 3 {
+        body_col / 2
+    } else {
+        body_col
+    }
+}
+
+/// A [`pair_cell`] rest cut shorter than this says nothing.
+const PAIR_MIN_REST: usize = 8;
+
+/// A tap view's `lead · rest` cell (N+1's `caller · fingerprint`,
+/// hotspots' `fingerprint · last caller`, …), `width` columns at most.
+/// The lead names the row, so it comes whole first; the rest takes
+/// what is left, when that is enough to read. Short of room, the lead
+/// alone, cut with `…` — the border cut it with no marker, and at 80
+/// columns left a dangling ` · `. Pure.
+pub(crate) fn pair_cell(lead: &str, rest: &str, width: usize) -> String {
+    const SEP: &str = " · ";
+    let room = width.saturating_sub(display_width(lead) + display_width(SEP));
+    if !rest.is_empty() && room >= PAIR_MIN_REST.min(display_width(rest)) {
+        format!("{lead}{SEP}{}", crate::grid::truncate_cell(rest, room))
+    } else {
+        crate::grid::truncate_cell(lead, width)
     }
 }
 
@@ -1140,11 +1223,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nplus1_body_keeps_the_caller_and_marks_every_cut() {
+    fn pair_cell_keeps_the_caller_and_marks_every_cut() {
         let caller = "InvoiceService.loadLines:112";
         let fp = "select id, description, quantity from invoice_lines where invoice_id = ?";
         // Room for both: the fingerprint takes the rest, cut with `…`.
-        let got = nplus1_body(caller, fp, 60);
+        let got = pair_cell(caller, fp, 60);
         assert!(
             got.starts_with("InvoiceService.loadLines:112 · select"),
             "{got}"
@@ -1153,15 +1236,37 @@ mod tests {
         assert_eq!(display_width(&got), 60);
         // The 80-column wizard's 29: no room for a fingerprint worth
         // reading, so no dangling ` · ` either.
-        assert_eq!(nplus1_body(caller, fp, 29), caller);
+        assert_eq!(pair_cell(caller, fp, 29), caller);
         // Narrower than the caller: cut, and marked.
-        let got = nplus1_body(caller, fp, 11);
+        let got = pair_cell(caller, fp, 11);
         assert_eq!(got, "InvoiceSer…");
         // Everything fits: nothing cut.
-        assert_eq!(nplus1_body("A.b:1", "select 1", 40), "A.b:1 · select 1");
+        assert_eq!(pair_cell("A.b:1", "select 1", 40), "A.b:1 · select 1");
         for w in 0..80 {
-            assert!(display_width(&nplus1_body(caller, fp, w)) <= w, "{w}");
+            assert!(display_width(&pair_cell(caller, fp, w)) <= w, "{w}");
         }
+    }
+
+    #[test]
+    fn hotspots_header_names_both_halves_or_the_fingerprint_alone() {
+        assert_eq!(hotspots_header_body(40), "fingerprint · last caller");
+        // 80 columns: the row shows both, so the header does too.
+        assert_eq!(hotspots_header_body(21), "fingerprint · caller");
+        assert_eq!(hotspots_header_body(12), "fingerprint");
+        assert_eq!(hotspots_header_body(3), "fi…");
+        for w in 0..40 {
+            assert!(display_width(&hotspots_header_body(w)) <= w, "{w}");
+        }
+    }
+
+    #[test]
+    fn lead_col_halves_only_a_column_wide_enough_for_both() {
+        assert_eq!(lead_col(21), 10);
+        assert_eq!(lead_col(2 * PAIR_MIN_REST + 3), PAIR_MIN_REST + 1);
+        // Too narrow for a lead and a readable rest: the lead takes it.
+        assert_eq!(lead_col(2 * PAIR_MIN_REST + 2), 2 * PAIR_MIN_REST + 2);
+        assert_eq!(lead_col(3), 3);
+        assert_eq!(lead_col(0), 0);
     }
 
     #[test]

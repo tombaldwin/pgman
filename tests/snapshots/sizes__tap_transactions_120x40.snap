@@ -14,9 +14,9 @@ expression: dump(&buf)
 │  FROM invoices                                                                                                       │
 │  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: transactions · v cycle · Shift-B baseline · s sort · … ──╮    │
 │  OR│  STATE        STMTS    FPS        SPAN     DB-TIME  POOL          TXN / CONN · LAST SQL                    │    │
-│    │  open             9      2     195.0ms       5.6ms  primary       conn-7#311 · select id, descript…        │    │
-╰────│  open             1      1         0µs       290µs  primary       (autocommit · conn-… · select id, name, b│────╯
-╭[ ◆ │  open             1      1         0µs       2.3ms  primary       conn-2#90 · update subscription…         │────╮
+│    │  open             9      2     195.0ms       5.6ms  primary       conn-7#311 · select id, description, qua…│    │
+╰────│  open             1      1         0µs       290µs  primary       (autocommit · conn-… · select id, name, …│────╯
+╭[ ◆ │  open             1      1         0µs       2.3ms  primary       conn-2#90 · update subscriptions set sta…│────╮
 │numb│                                                                                                            │    │
 │INV-│                                                                                                            │    │
 │INV-│                                                                                                            │    │

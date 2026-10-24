@@ -14,10 +14,10 @@ expression: dump(&buf)
 │  FROM invoices                                                                                                       │
 │  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: callers · sort: total time · v cycle · … ────────────────╮    │
 │  OR│   CALLS    ERR        P50        P95   FPS  CALLER · LAST FINGERPRINT                                      │    │
-│    │       8      0      465µs      525µs     1  InvoiceService.loadLines:112 · select id, description, quanti… │    │
-╰────│       1      0      2.3ms      2.3ms     1  DunningJob.advance:77 · update subscriptions set statu…        │────╯
-╭[ ◆ │       1      0      1.8ms      1.8ms     1  InvoiceController.list:58 · select id, number, status, tot…    │────╮
-│numb│       1      0      290µs      290µs     1  CustomerRepository.findById:41 · select id, name, billing_email│    │
+│    │       8      0      465µs      525µs     1  InvoiceService.loadLines:112 · select id, description, quantit…│    │
+╰────│       1      0      2.3ms      2.3ms     1  DunningJob.advance:77 · update subscriptions set status = ?, c…│────╯
+╭[ ◆ │       1      0      1.8ms      1.8ms     1  InvoiceController.list:58 · select id, number, status, total, …│────╮
+│numb│       1      0      290µs      290µs     1  CustomerRepository.findById:41 · select id, name, billing_emai…│    │
 │INV-│                                                                                                            │    │
 │INV-│                                                                                                            │    │
 │INV-│                                                                                                            │    │

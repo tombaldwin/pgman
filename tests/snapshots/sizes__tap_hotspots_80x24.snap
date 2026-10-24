@@ -12,11 +12,11 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · … ───────╮   │
-│  │   CALLS    ERR        P50        P95        P99  FINGERPRINT · LAST CA│   │
-│  │       8      0      465µs      525µs      525µs  select id… · InvoiceS│   │
-╰──│       1      0      2.3ms      2.3ms      2.3ms  update su… · DunningJ│───╯
-╭[ │       1      0      1.8ms      1.8ms      1.8ms  select id… · InvoiceC│───╮
-│nu│       1      0      290µs      290µs      290µs  select id… · Customer│   │
+│  │   CALLS    ERR        P50        P95        P99  FINGERPRINT · CALLER │   │
+│  │       8      0      465µs      525µs      525µs  select id… · Invoice…│   │
+╰──│       1      0      2.3ms      2.3ms      2.3ms  update su… · Dunning…│───╯
+╭[ │       1      0      1.8ms      1.8ms      1.8ms  select id… · Invoice…│───╮
+│nu│       1      0      290µs      290µs      290µs  select id… · Custome…│   │
 │IN│                                                                       │   │
 │IN│                                                                       │   │
 │IN│                                                                       │   │

@@ -15,9 +15,9 @@ expression: dump(&buf)
 │  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: callers · sort: total time · v cycle · Shift-B baseline · s sort · c clear · q close ──────────────────────────────────────────────╮       │
 │       │   CALLS    ERR        P50        P95   FPS  CALLER · LAST FINGERPRINT                                                                                                                │       │
-╰───────│       8      0      465µs      525µs     1  InvoiceService.loadLines:112 · select id, description, quantity, unit_amount, amount from invoice_…                                      │───────╯
-╭[ ◆ res│       1      0      2.3ms      2.3ms     1  DunningJob.advance:77 · update subscriptions set status = ?, current_period_end = ? where i…                                             │───────╮
-│number │       1      0      1.8ms      1.8ms     1  InvoiceController.list:58 · select id, number, status, total, due_at from invoices where custom…                                         │       │
+╰───────│       8      0      465µs      525µs     1  InvoiceService.loadLines:112 · select id, description, quantity, unit_amount, amount from invoice_lines where invoice_id = ?             │───────╯
+╭[ ◆ res│       1      0      2.3ms      2.3ms     1  DunningJob.advance:77 · update subscriptions set status = ?, current_period_end = ? where id = ?                                         │───────╮
+│number │       1      0      1.8ms      1.8ms     1  InvoiceController.list:58 · select id, number, status, total, due_at from invoices where customer_id = ? order by issued_at desc limit ? │       │
 │INV-004│       1      0      290µs      290µs     1  CustomerRepository.findById:41 · select id, name, billing_email, currency from customers where id = ?                                    │       │
 │INV-004│                                                                                                                                                                                      │       │
 │INV-004│                                                                                                                                                                                      │       │

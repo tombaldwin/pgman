@@ -7,11 +7,11 @@ expression: dump(&buf)
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │   CALLS    ERR        P50        P95   FPS  CALLER ·│  │
-│ │       8      0      465µs      525µs     1  Inv… · s│  │
-╰─│       1      0      2.3ms      2.3ms     1  Dun… · u│──╯
-╭[│       1      0      1.8ms      1.8ms     1  Inv… · s│──╮
-│n│       1      0      290µs      290µs     1  Cus… · s│  │
+│ │   CALLS    ERR        P50        P95   FPS  CALLER  │  │
+│ │       8      0      465µs      525µs     1  Invoice…│  │
+╰─│       1      0      2.3ms      2.3ms     1  Dunning…│──╯
+╭[│       1      0      1.8ms      1.8ms     1  Invoice…│──╮
+│n│       1      0      290µs      290µs     1  Custome…│  │
 │I│                                                     │  │
 │I│                                                     │  │
 │I│                                                     │  │

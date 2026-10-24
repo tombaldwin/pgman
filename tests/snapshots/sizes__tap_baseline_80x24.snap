@@ -13,9 +13,9 @@ expression: dump(&buf)
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: baseline · … ───────╮   │
 │  │baseline captured 0s ago · 4 fingerprint(s) · 11 event(s) at capture   │   │
-│  │current ring: 11 event(s) · 0 changed fingerprint(s) (Shift-B recapture│   │
+│  │current ring: 11 event(s) · 0 changed fingerprint(s) (Shift-B recaptur…│   │
 ╰──│                                                                       │───╯
-╭[ │no changes since baseline — nothing new, no regressions, no disappearan│───╮
+╭[ │no changes since baseline — nothing new, no regressions, no disappeara…│───╮
 │nu│                                                                       │   │
 │IN│                                                                       │   │
 │IN│                                                                       │   │

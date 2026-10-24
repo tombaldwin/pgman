@@ -7,11 +7,11 @@ expression: dump(&buf)
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │   CALLS    ERR        P50        P95        P99  FIN│  │
-│ │       8      0      465µs      525µs      525µs  … ·│  │
-╰─│       1      0      2.3ms      2.3ms      2.3ms  … ·│──╯
-╭[│       1      0      1.8ms      1.8ms      1.8ms  … ·│──╮
-│n│       1      0      290µs      290µs      290µs  … ·│  │
+│ │   CALLS    ERR        P50        P95        P99  FI…│  │
+│ │       8      0      465µs      525µs      525µs  se…│  │
+╰─│       1      0      2.3ms      2.3ms      2.3ms  up…│──╯
+╭[│       1      0      1.8ms      1.8ms      1.8ms  se…│──╮
+│n│       1      0      290µs      290µs      290µs  se…│  │
 │I│                                                     │  │
 │I│                                                     │  │
 │I│                                                     │  │

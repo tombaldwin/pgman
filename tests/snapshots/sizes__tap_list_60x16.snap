@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │    DURATION       ROWS  APP                   SQL / │  │
+│ │    DURATION       ROWS  APP                   SQL /…│  │
 │ │       290µs          1  billing-api           SELEC…│  │
 ╰─│       1.8ms          1  billing-api           SELEC…│──╯
 ╭[│       420µs          1  billing-api           SELEC…│──╮

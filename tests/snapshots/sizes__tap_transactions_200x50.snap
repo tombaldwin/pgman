@@ -15,9 +15,9 @@ expression: dump(&buf)
 │  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: transactions · v cycle · Shift-B baseline · s sort · c clear · q close ────────────────────────────────────────────────────────────╮       │
 │       │  STATE        STMTS    FPS        SPAN     DB-TIME  POOL          TXN / CONN · LAST SQL                                                                                              │       │
-╰───────│  open             9      2     195.0ms       5.6ms  primary       conn-7#311 · select id, description, quantity, unit_amount, amount fr…                                             │───────╯
-╭[ ◆ res│  open             1      1         0µs       290µs  primary       (autocommit · conn-3) · select id, name, billing_email, currency from customers …                                  │───────╮
-│number │  open             1      1         0µs       2.3ms  primary       conn-2#90 · update subscriptions set status = ?, current_period_end …                                              │       │
+╰───────│  open             9      2     195.0ms       5.6ms  primary       conn-7#311 · select id, description, quantity, unit_amount, amount from invoice_lines where invoice_id = ?         │───────╯
+╭[ ◆ res│  open             1      1         0µs       290µs  primary       (autocommit · conn-3) · select id, name, billing_email, currency from customers where id = ?                       │───────╮
+│number │  open             1      1         0µs       2.3ms  primary       conn-2#90 · update subscriptions set status = ?, current_period_end = ? where id = ?                               │       │
 │INV-004│                                                                                                                                                                                      │       │
 │INV-004│                                                                                                                                                                                      │       │
 │INV-004│                                                                                                                                                                                      │       │

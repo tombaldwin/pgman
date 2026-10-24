@@ -2734,3 +2734,63 @@ fn result_diff_title_drops_the_hints_then_cuts_the_labels_never_the_key() {
     let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), 50);
     assert_eq!(got, "Result diff — key: id (primary key) · …");
 }
+
+/// Every tap view, at every swept size, ends each row inside the
+/// panel on a space or on `…`: a row the panel's border cuts with no
+/// marker (hotspots' `· InvoiceS`, callers' SQL at 120 columns) fails.
+/// The demo's rows never fill a line exactly, so a letter in the last
+/// column can only be a cut.
+#[test]
+fn no_tap_view_row_is_cut_by_the_border_without_an_ellipsis() {
+    use crate::app::TapView;
+    let views = [
+        TapView::List,
+        TapView::Hotspots,
+        TapView::Callers,
+        TapView::Transactions,
+        TapView::Pools,
+        TapView::NplusOne,
+        TapView::Baseline,
+    ];
+    for view in views {
+        for (w, h) in [(60u16, 16u16), (80, 24), (100, 30), (120, 40), (200, 50)] {
+            let mut a = crate::demo::app(Theme::default());
+            a.splash_visible = false;
+            a.splash_until = None;
+            a.mode = crate::app::Mode::TapMonitor;
+            a.tap_nav.view = view;
+            if view == TapView::Baseline {
+                a.on_key(crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Char('B'),
+                    crossterm::event::KeyModifiers::SHIFT,
+                ));
+            }
+            let mut term =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            term.draw(|f| draw(f, &mut a)).unwrap();
+            let buf = term.backend().buffer().clone();
+            let row = |y: u16| -> Vec<String> {
+                (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()
+            };
+            let top = (0..h)
+                .find(|&y| row(y).concat().contains("JDBC tap ◆ ]"))
+                .unwrap_or_else(|| panic!("{view:?} {w}x{h}: no tap panel"));
+            let cells = row(top);
+            let title_x = cells.iter().position(|c| c == "[").unwrap();
+            let left = (0..title_x).rev().find(|&x| cells[x] == "╭").unwrap();
+            let right = (title_x..w as usize).find(|&x| cells[x] == "╮").unwrap();
+            for y in top + 1..h {
+                let cells = row(y);
+                if cells[left] == "╰" {
+                    break;
+                }
+                let last = &cells[right - 1];
+                assert!(
+                    last == " " || last == "…" || last == "─",
+                    "{view:?} at {w}x{h}: row {y} cut by the border: {:?}",
+                    cells[left..=right].concat()
+                );
+            }
+        }
+    }
+}
