@@ -61,6 +61,12 @@ const MIN_CLOSE: Duration = Duration::from_millis(500);
 /// the page and commits, and `M` re-runs the query. Asked per run, not
 /// at connect, so a standby promoted since is a primary again.
 ///
+/// Every call is qualified by `pg_catalog`: pgman's own safety check
+/// must not resolve through the operator's `search_path`, where a
+/// schema listed ahead of `pg_catalog` could answer `lower(…)` or
+/// `pg_is_in_recovery()` with a function of its own — one that writes,
+/// or says "not a standby".
+///
 /// The third, [`crate::safety::shadowing_sql`], says some schema has its
 /// own function by the name of a built-in the statement calls
 /// unqualified. The server resolves such a call by signature, so it may
@@ -69,7 +75,8 @@ const MIN_CLOSE: Duration = Duration::from_millis(500);
 pub fn probe_sql(sql: &str) -> String {
     let names = crate::safety::pageable_calls(sql).unwrap_or_default();
     format!(
-        "SELECT statement_timestamp() = transaction_timestamp(), pg_is_in_recovery(), {}",
+        "SELECT pg_catalog.statement_timestamp() = pg_catalog.transaction_timestamp(), \
+         pg_catalog.pg_is_in_recovery(), {}",
         crate::safety::shadowing_sql(&names)
     )
 }
@@ -94,8 +101,8 @@ pub fn read_probe(row: Option<[Option<&str>; 3]>) -> (bool, bool, bool) {
 /// unit). `transaction_timeout` is new in Postgres 17; before that the
 /// subquery is NULL.
 const SETTINGS_SQL: &str = "SELECT \
-(SELECT setting FROM pg_settings WHERE name = 'idle_in_transaction_session_timeout'), \
-(SELECT setting FROM pg_settings WHERE name = 'transaction_timeout')";
+(SELECT setting FROM pg_catalog.pg_settings WHERE name = 'idle_in_transaction_session_timeout'), \
+(SELECT setting FROM pg_catalog.pg_settings WHERE name = 'transaction_timeout')";
 
 /// The statement indices of [`open_batch`]'s pieces, as counted by
 /// `CommandComplete`s: `BEGIN`, the settings read, `DECLARE`, `FETCH`.
@@ -576,7 +583,11 @@ mod tests {
         let q = probe_sql("SELECT log('x' || i) FROM generate_series(1, 3) i");
         assert!(q.ends_with(")"), "{q}");
         assert!(q.contains("IN ('generate_series', 'log')"), "{q}");
-        assert!(probe_sql("SELECT * FROM t").ends_with("pg_is_in_recovery(), false"));
+        assert!(probe_sql("SELECT * FROM t").ends_with("pg_catalog.pg_is_in_recovery(), false"));
+        // pgman's own calls never resolve through the operator's path.
+        assert!(q.starts_with(
+            "SELECT pg_catalog.statement_timestamp() = pg_catalog.transaction_timestamp()"
+        ));
     }
 
     #[test]

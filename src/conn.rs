@@ -1748,8 +1748,8 @@ pub async fn run_single_row_update(
         let attnums: Vec<i32> = expected.iter().map(|(n, _)| i32::from(*n)).collect();
         let server = client
             .query(
-                "SELECT n::int2, (pg_identify_object_as_address('pg_class'::regclass, $1::oid, n)).object_names \
-                 FROM unnest($2::int4[]) AS n",
+                "SELECT n::int2, (pg_catalog.pg_identify_object_as_address('pg_catalog.pg_class'::pg_catalog.regclass, $1::oid, n)).object_names \
+                 FROM pg_catalog.unnest($2::int4[]) AS n",
                 &[&edit.table_oid, &attnums],
             )
             .await

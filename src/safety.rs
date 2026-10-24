@@ -845,7 +845,8 @@ pub fn pageable_calls(sql: &str) -> Option<Vec<String>> {
 /// counts too): if one does, an unqualified call may reach it, and the
 /// statement runs unpaged. `false` for no names. Only names on
 /// [`PAGEABLE_FUNCTIONS`] are put in the query — plain lower-case words,
-/// nothing to quote. Pure.
+/// nothing to quote. Its own calls are `pg_catalog`-qualified, for the
+/// reason `query::paging::probe_sql`'s are. Pure.
 pub fn shadowing_sql(names: &[String]) -> String {
     let list: Vec<String> = names
         .iter()
@@ -857,7 +858,7 @@ pub fn shadowing_sql(names: &[String]) -> String {
     }
     format!(
         "EXISTS (SELECT 1 FROM pg_catalog.pg_proc p \
-         WHERE lower(p.proname) IN ({}) \
+         WHERE pg_catalog.lower(p.proname) IN ({}) \
          AND p.pronamespace <> 'pg_catalog'::regnamespace)",
         list.join(", ")
     )
@@ -931,7 +932,10 @@ mod pageable_tests {
         let names = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         assert_eq!(shadowing_sql(&[]), "false");
         let q = shadowing_sql(&names(&["count", "log"]));
-        assert!(q.contains("lower(p.proname) IN ('count', 'log')"), "{q}");
+        assert!(
+            q.contains("pg_catalog.lower(p.proname) IN ('count', 'log')"),
+            "{q}"
+        );
         assert!(
             q.contains("p.pronamespace <> 'pg_catalog'::regnamespace"),
             "{q}"

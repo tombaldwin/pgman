@@ -6651,7 +6651,9 @@ async fn a_built_in_name_a_schema_shadows_runs_unpaged() {
     let schema = format!("pgman_it_shadow_{pid}");
     let sql = "SELECT log(10, 1000) AS n, i FROM generate_series(1, 3000) i".to_string();
     // A run that died before its DROP left its shadow behind, and any
-    // shadow anywhere keeps the built-in from paging below.
+    // shadow anywhere keeps the built-in from paging below. (Only this
+    // test's and the lib's `appshadow` schemas match; the probe test's
+    // `probepath` schema runs alongside and is its own.)
     observer
         .batch_execute(
             "DO $$ DECLARE s text; BEGIN \
@@ -6715,6 +6717,54 @@ async fn a_built_in_name_a_schema_shadows_runs_unpaged() {
     assert!(opened.cursor.is_none(), "no cursor behind a shadowed call");
     assert_eq!(written, 3000, "every row's write ran and was committed");
     assert_eq!(state, "idle", "not idle in transaction");
+}
+
+/// pgman's own probe never resolves through the operator's path: with a
+/// schema listed ahead of `pg_catalog` that has a writing `lower(text)`,
+/// a plain SELECT pages as usual and the probe's `lower` is the
+/// built-in — nothing is written.
+#[tokio::test]
+async fn the_paging_probe_ignores_a_schema_ahead_of_pg_catalog() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _t1) = writable_client().await;
+    let (client, _t2) = writable_client().await;
+    let pid = backend_pid(&client).await;
+    let schema = format!("pgman_it_probepath_{pid}");
+    observer
+        .batch_execute(&format!(
+            "CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.notes (note text);
+             CREATE FUNCTION {schema}.lower(note text) RETURNS text LANGUAGE plpgsql AS $$
+             BEGIN INSERT INTO {schema}.notes VALUES (note); RETURN note; END $$;"
+        ))
+        .await
+        .expect("create the shadowing lower");
+    client
+        .batch_execute(&format!("SET search_path = {schema}, public, pg_catalog"))
+        .await
+        .expect("put it ahead of pg_catalog");
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 2000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    let _ = pager.barrier().await;
+    let written: i64 = observer
+        .query_one(&format!("SELECT count(*) FROM {schema}.notes"), &[])
+        .await
+        .expect("count the notes")
+        .get(0);
+    observer
+        .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .expect("drop the schema");
+    assert_eq!(written, 0, "the probe ran the schema's lower");
+    assert!(!opened.in_transaction, "the probe answered");
+    assert!(opened.cursor.is_some(), "a plain SELECT still pages");
 }
 
 /// A session the server ends under pgman — `pg_terminate_backend` from
