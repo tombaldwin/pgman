@@ -58,7 +58,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
                 Some((col, false)) if col == i => " ▼",
                 _ => "",
             };
-            let text = format!("{c}{sort_marker}");
+            let text = grid_header_text(c, sort_marker, widths.get(i).copied().unwrap_or(0));
             // Bold and underlined, never re-cased: these are the query's
             // own column names, and case is part of a name in SQL.
             let mut style = Style::default()
@@ -177,6 +177,24 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
                 .title(crate::ui::chrome::panel_title(theme, &format!(" {title} "))),
         );
     f.render_stateful_widget(table, area, &mut app.grid_state);
+}
+
+/// A result column's header in its `width`-column cell: the name and
+/// its sort marker (` ▲` / ` ▼`) whole when they fit, else the name cut
+/// with `…` — the rule the column's cells follow — and the marker kept
+/// after it, so a sorted column still says so. The table cut the
+/// header at the column edge with no marker (`billing_` over cells
+/// reading `billing…`). Pure.
+pub(crate) fn grid_header_text(name: &str, sort_marker: &str, width: usize) -> String {
+    let whole = format!("{name}{sort_marker}");
+    if crate::ui::display_width(&whole) <= width {
+        return whole;
+    }
+    let room = width.saturating_sub(crate::ui::display_width(sort_marker));
+    if room == 0 {
+        return grid::truncate_cell(&whole, width);
+    }
+    format!("{}{sort_marker}", grid::truncate_cell(name, room))
 }
 
 /// Expanded view of the selected row — one labelled value per column, with

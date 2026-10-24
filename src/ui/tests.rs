@@ -2834,3 +2834,24 @@ fn help_teasers_fit_at_80_columns_and_keep_their_key_at_60() {
         }
     }
 }
+
+#[test]
+fn grid_header_text_cuts_the_name_and_keeps_the_sort_marker() {
+    use super::results::grid_header_text;
+    assert_eq!(grid_header_text("billing_email", "", 13), "billing_email");
+    assert_eq!(grid_header_text("billing_email", "", 8), "billing…");
+    assert_eq!(
+        grid_header_text("billing_email", " ▲", 15),
+        "billing_email ▲"
+    );
+    assert_eq!(grid_header_text("billing_email", " ▲", 10), "billing… ▲");
+    // No room for the marker and a name: the whole is cut.
+    assert_eq!(grid_header_text("id", " ▼", 2), "i…");
+    assert_eq!(grid_header_text("id", "", 0), "");
+    for w in 0..20 {
+        assert!(
+            display_width(&grid_header_text("billing_email", " ▲", w)) <= w,
+            "{w}"
+        );
+    }
+}

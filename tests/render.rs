@@ -1939,6 +1939,45 @@ fn result_headers_are_bold_and_underlined_and_keep_their_case() {
     );
 }
 
+/// A header squeezed with its column ends on `…` as the column's cells
+/// do: at 80x24 the demo's `billing_email` header read `billing_` over
+/// cells reading `billing…`.
+#[test]
+fn a_squeezed_result_header_ends_on_an_ellipsis_like_its_cells() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    let long = "a-rather-long-value-that-will-not-fit@example.com";
+    a.grid = Grid {
+        columns: vec![
+            "id".into(),
+            "name".into(),
+            "billing_email".into(),
+            "currency".into(),
+        ],
+        rows: vec![vec![
+            Some("1".into()),
+            Some(long.into()),
+            Some(long.into()),
+            Some(long.into()),
+        ]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_view.col_cursor = 0;
+    let buf = render(&mut a, 40, 18);
+    let (_, y) = find_cell(&buf, "id").expect("header row");
+    let header = row_text(&buf, y);
+    let (_, rest) = header
+        .split_once("billing")
+        .expect("billing_email header shown");
+    let shown: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
+    // Squeezed (the test needs it to be), and marked.
+    assert!(
+        shown.ends_with('…'),
+        "header cut with no marker: {header:?}"
+    );
+}
+
 /// An error too long for the footer row wraps onto up to two more,
 /// taken from the body, with the detail pointer ending the last; on a
 /// cramped terminal, and under the error overlay that already shows
