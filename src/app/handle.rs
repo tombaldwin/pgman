@@ -17,6 +17,33 @@ impl App {
         }
     }
 
+    /// A run's paging probe found the server in recovery
+    /// (`query::paging`'s `pg_is_in_recovery()`). The connect's own probe
+    /// usually said so first; when it didn't answer, the session kept a
+    /// writable profile and the header said `Session: writable` while the
+    /// status said "on a standby". Pin it as the connect would have —
+    /// the App ([`Self::note_server_role`]) and the server's session,
+    /// unless a transaction is open (its rollback would undo the `SET`;
+    /// recovery refuses writes either way).
+    pub(super) fn note_standby_seen(&mut self) {
+        let known = self.in_recovery == Some(true);
+        self.note_server_role(Some(true));
+        if known || self.tx_open {
+            return;
+        }
+        // On a standby no result cursor is held, so `db`'s barrier
+        // closes nothing.
+        let Some(db) = self.db() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let client = db.ready().await;
+            if let Err(e) = conn::set_session_read_only(&client, true).await {
+                tracing::warn!("pinning the standby's session read-only failed: {e}");
+            }
+        });
+    }
+
     /// The footer line for a statement the guard refused
     /// ([`super::blocked_by_safety_message`]), except that an escape from
     /// a session read-only by more than its profile names that session's
@@ -207,6 +234,9 @@ impl App {
                     in_transaction: p.in_transaction,
                     standby: p.standby,
                 });
+                if self.result_paging.as_ref().is_some_and(|p| p.standby) {
+                    self.note_standby_seen();
+                }
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-
                 // UPDATE / FK nav). Single-table SELECT only; anything

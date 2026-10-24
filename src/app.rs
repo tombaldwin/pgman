@@ -4209,6 +4209,9 @@ impl App {
                     p.in_transaction = in_transaction;
                     p.standby = standby;
                 }
+                if standby {
+                    self.note_standby_seen();
+                }
                 if shadowed {
                     // A schema has its own function by a name it calls
                     // now: no more re-runs (see the pager route).

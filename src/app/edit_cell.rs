@@ -1186,6 +1186,51 @@ mod live {
         assert!(a.schema_cache.incomplete.is_some());
     }
 
+    /// On the compose standby, as if the connect's probe had not
+    /// answered (`in_recovery` unknown, the writable profile kept, the
+    /// session writable on the server): the first paged SELECT's probe
+    /// finds recovery, and the App pins the session read-only, in the
+    /// header and on the server.
+    #[tokio::test]
+    async fn a_paged_run_on_a_standby_the_connect_missed_pins_it_read_only() {
+        const STANDBY: &str =
+            "postgres://pgman_test:pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable";
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let mut a = App::new(Theme::default(), Dsn::parse(STANDBY).ok(), Vec::new(), cfg);
+        a.read_only = false;
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        let client = a.client.clone().expect("connected to the standby");
+        // Undo what the connect learnt, here and on the server.
+        a.in_recovery = None;
+        a.read_only = false;
+        a.replica_pin = false;
+        conn::set_session_read_only(&client, false).await.unwrap();
+        let shown = |c: Arc<tokio_postgres::Client>| async move {
+            c.query_one("SHOW default_transaction_read_only", &[])
+                .await
+                .unwrap()
+                .get::<_, String>(0)
+        };
+        assert_eq!(shown(client.clone()).await, "off", "fixture");
+
+        run(&mut a, "SELECT g FROM generate_series(1, 1500) g").await;
+        assert!(a.result_paging.as_ref().is_some_and(|p| p.standby));
+        assert!(a.read_only && a.replica_pin);
+        assert_eq!(a.in_recovery, Some(true));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while shown(client.clone()).await != "on" {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the server's session stayed writable"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
     /// A statement running when another session terminates its backend:
     /// the card and the footer used to disagree — the card had the
     /// notice channel's "the connection to the server closed", the

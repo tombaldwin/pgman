@@ -13888,6 +13888,81 @@ fn app_with_open_cursor() -> App {
     a
 }
 
+/// The connect's probe didn't say the server is a standby (it failed:
+/// `in_recovery` is `None`), so a writable profile left the header at
+/// `Session: writable`; then a run's paging probe says it is one. The
+/// session is pinned read-only there, as the connect would have pinned
+/// it, and `:readonly off` gives the replica's reason. A primary's
+/// result changes nothing.
+#[test]
+fn a_standby_the_paging_probe_finds_pins_the_session_read_only() {
+    let landed = |standby: bool| {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let mut a = App::new(Theme::default(), None, Vec::new(), cfg);
+        a.read_only = false;
+        a.conn_state = ConnState::Connected {
+            server_version: "16".into(),
+        };
+        a.on_msg(AppMsg::QueryOk {
+            generation: a.generation,
+            grid: crate::grid::Grid {
+                columns: vec!["id".into()],
+                rows: id_rows(0..1000),
+                truncated: true,
+            },
+            origins: Vec::new(),
+            kind_label: "run".into(),
+            tx_open_after: false,
+            paging: Some(RunPaging {
+                sql: "SELECT id FROM t ORDER BY id".into(),
+                cursor: None,
+                in_transaction: false,
+                standby,
+            }),
+        });
+        a
+    };
+    let mut a = landed(true);
+    assert_eq!(a.in_recovery, Some(true));
+    assert!(a.read_only && a.replica_pin, "the header says read-only");
+    assert!(crate::ui::shows_replica_badge(&a));
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    for c in "readonly off".chars() {
+        a.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(a.read_only);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(super::cmd::REPLICA_READONLY_REFUSAL)
+    );
+    let mut a = landed(false);
+    assert_eq!(a.in_recovery, None);
+    assert!(!a.read_only && !a.replica_pin);
+    // `M`'s re-run probes too: a standby found there pins the same way.
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(crate::query::paging::Opened {
+            grid: crate::grid::Grid {
+                columns: vec!["id".into()],
+                rows: id_rows(0..2000),
+                truncated: true,
+            },
+            cursor: None,
+            standby: true,
+            in_transaction: false,
+            shadowed: false,
+            origins: Vec::new(),
+        })),
+    });
+    assert_eq!(a.grid.row_count(), 2000, "the re-run landed");
+    assert!(a.read_only && a.replica_pin);
+}
+
 fn page(rows: Vec<Vec<Cell>>, more: bool) -> PageOutcome {
     PageOutcome::More(crate::query::paging::Page { rows, more })
 }
