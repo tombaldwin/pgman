@@ -6,6 +6,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- A connect no longer hangs at "connecting…" behind another session's `ACCESS EXCLUSIVE` lock: the schema fetch skips the sizes and indexes the lock covers, the connect's own catalog reads give up after a 2 s `lock_timeout` (the session's own setting is restored), and the status line says the schema is incomplete, names the lock and its pid, and how to reload.
+
 ## [0.2.0] — 2026-10-23
 
 ### Highlights

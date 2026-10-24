@@ -866,6 +866,7 @@ pub(super) fn schema_cache() -> SchemaCache {
         // The demo's grids carry no column origins, so nothing looks a
         // relation up by OID.
         relations_by_oid: HashMap::new(),
+        incomplete: None,
     }
 }
 

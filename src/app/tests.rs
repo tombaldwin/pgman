@@ -12804,6 +12804,17 @@ fn a_schema_reload_says_what_it_found() {
         crate::app::schema_reloaded_status(&some),
         "schema reloaded · 2 table(s) in 2 schema(s)"
     );
+    // A reload a lock kept parts out of says so, not that all is well.
+    some.incomplete = Some("public.t is locked".into());
+    assert_eq!(
+        crate::app::schema_reloaded_status(&some),
+        "schema reloaded, still incomplete · public.t is locked"
+    );
+    assert_eq!(
+        crate::app::schema_incomplete_status("public.t is locked"),
+        "connected, schema incomplete · public.t is locked · S then r reloads it"
+    );
+    some.incomplete = None;
 
     // Only a reload the operator asked for is announced; the silent
     // post-DDL refresh isn't.

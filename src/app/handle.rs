@@ -143,6 +143,11 @@ impl App {
                 }
                 self.tunnel = tunnel;
                 self.apply_bootstrap_grid(grid);
+                // Connected without what a lock kept out: say what, and
+                // how to get it once the lock is gone.
+                if let Some(why) = &schema_cache.incomplete {
+                    self.last_status = Some(super::schema_incomplete_status(why));
+                }
                 self.schema_cache = schema_cache;
                 // Schema changed → editor highlight (keyed on buffer only)
                 // must be recomputed against the new cache.

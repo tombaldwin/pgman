@@ -1113,6 +1113,35 @@ pub async fn connect_via(
     Ok(Arc::new(client))
 }
 
+/// The longest one of the connect's own catalog reads waits for a lock
+/// (`lock_timeout`) before it gives up and the connect goes on without it.
+pub const BOOTSTRAP_LOCK_TIMEOUT: &str = "2s";
+
+/// Bound the session's `lock_timeout` to [`BOOTSTRAP_LOCK_TIMEOUT`] for
+/// the connect's own reads — unless it already waits no longer than
+/// that, in which case it is left alone. `true` when it was set, and the
+/// caller must `RESET` it: nothing has `SET` it yet on a fresh
+/// connection, so `RESET` is the value the session started with (the
+/// role's, the database's or the server's). Works on a standby and in a
+/// read-only session; a failure is logged and leaves it unbounded.
+async fn bound_lock_timeout(client: &tokio_postgres::Client) -> bool {
+    let sql = format!(
+        "SELECT pg_catalog.set_config('lock_timeout', '{BOOTSTRAP_LOCK_TIMEOUT}', false) \
+         WHERE pg_catalog.current_setting('lock_timeout')::interval \
+               NOT BETWEEN interval '1 ms' AND interval '{BOOTSTRAP_LOCK_TIMEOUT}'"
+    );
+    // Simple protocol: one round trip, no prepare.
+    match client.simple_query(&sql).await {
+        Ok(msgs) => msgs
+            .iter()
+            .any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))),
+        Err(e) => {
+            tracing::warn!("bounding lock_timeout for the bootstrap failed: {e}");
+            false
+        }
+    }
+}
+
 pub async fn connect_and_bootstrap(
     dsn: Dsn,
     read_only: bool,
@@ -1131,6 +1160,11 @@ pub async fn connect_and_bootstrap(
     )
     .await?;
     let client = Arc::new(client);
+    // The schema fetch skips relations under another session's ACCESS
+    // EXCLUSIVE lock; this bounds what it can't see coming (a lock taken
+    // between its look and its read, one on a catalog) so a connect never
+    // sits at "connecting…" behind a migration.
+    let bounded = bound_lock_timeout(&client).await;
     // The version probe, the bootstrap query, and the schema-cache fetch are
     // independent reads — run them concurrently (pipelined on the one
     // connection) instead of serially, cutting time-to-interactive on a
@@ -1143,6 +1177,13 @@ pub async fn connect_and_bootstrap(
         run_query(&client, &bootstrap_sql),
         crate::query::schema::fetch(&client),
     );
+    // Before anything of the operator's runs: their statements wait for
+    // locks as long as the session's own setting says.
+    if bounded {
+        if let Err(e) = client.batch_execute("RESET lock_timeout").await {
+            tracing::warn!("resetting lock_timeout after the bootstrap failed: {e}");
+        }
+    }
     let version_row = version_res.ok();
     let server_version = version_row
         .as_ref()

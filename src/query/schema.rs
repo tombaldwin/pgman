@@ -142,6 +142,58 @@ pub struct SchemaCache {
     /// column's origin names its table by OID, and this is how that
     /// becomes a name.
     pub relations_by_oid: HashMap<u32, (String, String)>,
+    /// Why the cache is missing parts, when it is: another session's
+    /// `ACCESS EXCLUSIVE` lock kept a relation's size and indexes out
+    /// (the fetch skips what such a lock covers rather than queue
+    /// behind it), or a catalog read waited past `lock_timeout`. One
+    /// line for the status bar; `None` when the fetch was whole.
+    pub incomplete: Option<String>,
+}
+
+/// A relation another backend holds, or waits for, an `ACCESS
+/// EXCLUSIVE` lock on: reading its size or index definitions would
+/// queue behind that lock ([`LOCKED_RELATIONS_SQL`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockedRelation {
+    pub schema: String,
+    pub name: String,
+    pub pid: i32,
+    /// Held (`true`) or still waited for (`false`) — a waiting request
+    /// blocks every later reader just the same.
+    pub granted: bool,
+}
+
+/// [`SchemaCache::incomplete`]'s line from what the fetch skipped
+/// (`locked`, held locks first) and which catalog reads gave up at
+/// `lock_timeout` (`timed_out`, named by the parts they would have
+/// filled). Pure.
+pub fn incomplete_reason(locked: &[LockedRelation], timed_out: &[&str]) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(first) = locked.first() {
+        let rel = format!("{}.{}", first.schema, first.name);
+        let more = match locked.len() - 1 {
+            0 => String::new(),
+            n => format!(" (and {n} more)"),
+        };
+        parts.push(if first.granted {
+            format!(
+                "{rel}{more} is locked ACCESS EXCLUSIVE by pid {}: sizes and indexes under the lock are left out",
+                first.pid
+            )
+        } else {
+            format!(
+                "pid {} waits for an ACCESS EXCLUSIVE lock on {rel}{more}: sizes and indexes under it are left out",
+                first.pid
+            )
+        });
+    }
+    if !timed_out.is_empty() {
+        parts.push(format!(
+            "{} waited past lock_timeout behind another session's lock and are missing",
+            timed_out.join(", ")
+        ));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// pgman's one size formatter — database sizes on the start card and in
@@ -360,21 +412,54 @@ WHERE c.contype = 'f' \
   AND nsp.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
 ORDER BY 1, 2, 3";
 
+/// `locked`: the relations in this database another backend holds or
+/// waits for an `ACCESS EXCLUSIVE` lock on (`IS DISTINCT FROM`: a
+/// prepared transaction's locks have no pid). A CTE, so `pg_locks` is
+/// read once per statement rather than once per row.
+macro_rules! locked_cte {
+    () => {
+        "WITH locked AS (\
+SELECT l.relation FROM pg_catalog.pg_locks l \
+WHERE l.locktype = 'relation' AND l.mode = 'AccessExclusiveLock' \
+  AND l.database = (SELECT oid FROM pg_catalog.pg_database \
+                    WHERE datname = pg_catalog.current_database()) \
+  AND l.pid IS DISTINCT FROM pg_catalog.pg_backend_pid()) "
+    };
+}
+
 /// Query that fetches per-table sizes (heap + total including
 /// indexes/toast). Run as a third pass so a permission gap on
 /// `pg_relation_size` doesn't kill the cache build.
-pub const TABLE_SIZES_SQL: &str = "\
+///
+/// Sizing a relation takes an `ACCESS SHARE` lock on it, its TOAST
+/// table and its indexes, and that queues behind another session's
+/// `ACCESS EXCLUSIVE` (held or waited for): a table under one is
+/// skipped (`locked` — see [`LOCKED_RELATIONS_SQL`]) rather than hang
+/// the connect, and every backend queued behind it.
+pub const TABLE_SIZES_SQL: &str = concat!(
+    locked_cte!(),
+    "\
 SELECT n.nspname, c.relname, \
-       pg_relation_size(c.oid)::bigint AS table_bytes, \
-       pg_total_relation_size(c.oid)::bigint AS total_bytes \
-FROM pg_class c \
-JOIN pg_namespace n ON n.oid = c.relnamespace \
+       pg_catalog.pg_relation_size(c.oid)::bigint AS table_bytes, \
+       pg_catalog.pg_total_relation_size(c.oid)::bigint AS total_bytes \
+FROM pg_catalog.pg_class c \
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
 WHERE c.relkind = 'r' \
-  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')";
+  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
+  AND c.oid NOT IN (SELECT relation FROM locked) \
+  AND c.reltoastrelid NOT IN (SELECT relation FROM locked) \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index ix \
+                  WHERE ix.indrelid = c.oid \
+                    AND ix.indexrelid IN (SELECT relation FROM locked))"
+);
 
 /// Every index with the table it's on (`pg_index.indrelid`), its
-/// definition, and whether it is unique / the primary key.
-pub const TABLE_INDEXES_SQL: &str = "\
+/// definition, and whether it is unique / the primary key. Like
+/// [`TABLE_SIZES_SQL`]'s, its `pg_get_indexdef` queues behind an
+/// `ACCESS EXCLUSIVE` lock, so an index or table under one is skipped.
+pub const TABLE_INDEXES_SQL: &str = concat!(
+    locked_cte!(),
+    "\
 SELECT n.nspname, t.relname, i.relname, \
        pg_catalog.pg_get_indexdef(x.indexrelid), x.indisunique, x.indisprimary \
 FROM pg_catalog.pg_index x \
@@ -382,7 +467,28 @@ JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid \
 JOIN pg_catalog.pg_class t ON t.oid = x.indrelid \
 JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
 WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
-ORDER BY 1, 2, 3";
+  AND x.indrelid NOT IN (SELECT relation FROM locked) \
+  AND x.indexrelid NOT IN (SELECT relation FROM locked) \
+ORDER BY 1, 2, 3"
+);
+
+/// The relations [`TABLE_SIZES_SQL`] and [`TABLE_INDEXES_SQL`] skip,
+/// and who holds (or waits for) the lock: what
+/// [`SchemaCache::incomplete`] names. Tables, matviews and indexes in
+/// the operator's schemas only — a lock on a catalog stalls every
+/// read, and the connect's `lock_timeout` is what bounds that.
+pub const LOCKED_RELATIONS_SQL: &str = "\
+SELECT n.nspname, c.relname, l.pid, l.granted \
+FROM pg_catalog.pg_locks l \
+JOIN pg_catalog.pg_class c ON c.oid = l.relation \
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+WHERE l.locktype = 'relation' AND l.mode = 'AccessExclusiveLock' \
+  AND l.database = (SELECT oid FROM pg_catalog.pg_database \
+                    WHERE datname = pg_catalog.current_database()) \
+  AND l.pid IS DISTINCT FROM pg_catalog.pg_backend_pid() \
+  AND c.relkind = ANY ('{r,p,m,i}') \
+  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
+ORDER BY l.granted DESC, 1, 2, 3";
 
 /// Every primary key's columns, one row per column in key order
 /// (`indkey` unnested with its ordinality). `pg_index.indisprimary`
@@ -412,6 +518,12 @@ WHERE c.contype = ANY ('{u,p}') \
   AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
 ORDER BY n.nspname, t.relname, c.conname";
 
+/// SQLSTATE `55P03` (`lock_not_available`): the statement gave up at
+/// `lock_timeout`.
+fn is_lock_timeout(e: &tokio_postgres::Error) -> bool {
+    e.code() == Some(&tokio_postgres::error::SqlState::LOCK_NOT_AVAILABLE)
+}
+
 /// Run the cache-building query on `client` and assemble a `SchemaCache`.
 /// Returns an empty cache (and logs a warning) if the query fails — the
 /// rest of pgman keeps working without completion.
@@ -420,7 +532,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // pipelines them on the single connection, collapsing four serial round
     // trips into roughly one. Each stays best-effort: a permission gap on one
     // (e.g. pg_constraint) degrades that feature without killing the cache.
-    let (schema_res, constraint_res, size_res, fk_res, part_res, index_res, pk_res) = tokio::join!(
+    let (schema_res, constraint_res, size_res, fk_res, part_res, index_res, pk_res, locked_res) = tokio::join!(
         client.query(SCHEMA_SQL, &[]),
         client.query(CONSTRAINTS_SQL, &[]),
         client.query(TABLE_SIZES_SQL, &[]),
@@ -428,15 +540,58 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         client.query(PARTITIONS_SQL, &[]),
         client.query(TABLE_INDEXES_SQL, &[]),
         client.query(PRIMARY_KEYS_SQL, &[]),
+        client.query(LOCKED_RELATIONS_SQL, &[]),
     );
+    // What a lock kept out: the relations the sizes and indexes skipped,
+    // and any read that gave up at the connect's `lock_timeout`.
+    let locked: Vec<LockedRelation> = match &locked_res {
+        Ok(rows) => rows
+            .iter()
+            .filter_map(|row| {
+                Some(LockedRelation {
+                    schema: row.try_get(0).ok()?,
+                    name: row.try_get(1).ok()?,
+                    pid: row.try_get(2).ok()?,
+                    granted: row.try_get(3).ok()?,
+                })
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("lock lookup failed: {e}");
+            Vec::new()
+        }
+    };
+    let timed_out: Vec<&str> = [
+        ("columns", schema_res.as_ref().err()),
+        ("constraints", constraint_res.as_ref().err()),
+        ("table sizes", size_res.as_ref().err()),
+        ("foreign keys", fk_res.as_ref().err()),
+        ("partitions", part_res.as_ref().err()),
+        ("indexes", index_res.as_ref().err()),
+        ("primary keys", pk_res.as_ref().err()),
+    ]
+    .into_iter()
+    .filter(|(_, e)| e.is_some_and(is_lock_timeout))
+    .map(|(what, _)| what)
+    .collect();
+    let incomplete = incomplete_reason(&locked, &timed_out);
+    if let Some(why) = &incomplete {
+        tracing::warn!("schema cache incomplete: {why}");
+    }
     let rows = match schema_res {
         Ok(rows) => rows,
         Err(e) => {
             tracing::warn!("schema cache fetch failed: {e}; completion disabled");
-            return SchemaCache::default();
+            return SchemaCache {
+                incomplete,
+                ..SchemaCache::default()
+            };
         }
     };
-    let mut cache = SchemaCache::default();
+    let mut cache = SchemaCache {
+        incomplete,
+        ..SchemaCache::default()
+    };
     let mut last_relation: Option<(String, String)> = None;
     let mut seen_schemas: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for row in &rows {
@@ -643,6 +798,89 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn locked(name: &str, pid: i32, granted: bool) -> LockedRelation {
+        LockedRelation {
+            schema: "public".into(),
+            name: name.into(),
+            pid,
+            granted,
+        }
+    }
+
+    #[test]
+    fn incomplete_reason_is_none_for_a_whole_fetch() {
+        assert_eq!(incomplete_reason(&[], &[]), None);
+    }
+
+    #[test]
+    fn incomplete_reason_names_the_lock_its_holder_and_what_is_missing() {
+        assert_eq!(
+            incomplete_reason(&[locked("orders", 4242, true)], &[]).as_deref(),
+            Some(
+                "public.orders is locked ACCESS EXCLUSIVE by pid 4242: \
+                 sizes and indexes under the lock are left out"
+            )
+        );
+        // A request still waiting blocks readers just the same; the
+        // message says it is waiting, not that it holds the lock.
+        assert_eq!(
+            incomplete_reason(&[locked("orders", 7, false)], &[]).as_deref(),
+            Some(
+                "pid 7 waits for an ACCESS EXCLUSIVE lock on public.orders: \
+                 sizes and indexes under it are left out"
+            )
+        );
+    }
+
+    #[test]
+    fn incomplete_reason_counts_the_other_locks_and_adds_timed_out_reads() {
+        let why = incomplete_reason(
+            &[
+                locked("a", 1, true),
+                locked("b", 2, true),
+                locked("c", 3, false),
+            ],
+            &["partitions", "indexes"],
+        )
+        .unwrap();
+        assert_eq!(
+            why,
+            "public.a (and 2 more) is locked ACCESS EXCLUSIVE by pid 1: sizes and indexes \
+             under the lock are left out · partitions, indexes waited past lock_timeout \
+             behind another session's lock and are missing"
+        );
+        assert_eq!(
+            incomplete_reason(&[], &["columns"]).as_deref(),
+            Some("columns waited past lock_timeout behind another session's lock and are missing")
+        );
+    }
+
+    /// The two reads that queue behind an ACCESS EXCLUSIVE lock skip
+    /// what the lock covers, and the lookup that names it reads the same
+    /// lock set (held or waited for, any backend but this one, this
+    /// database).
+    #[test]
+    fn the_lock_taking_reads_skip_locked_relations() {
+        for sql in [TABLE_SIZES_SQL, TABLE_INDEXES_SQL] {
+            assert!(sql.starts_with("WITH locked AS ("), "{sql}");
+            assert!(
+                sql.contains("NOT IN (SELECT relation FROM locked)"),
+                "{sql}"
+            );
+        }
+        for sql in [TABLE_SIZES_SQL, LOCKED_RELATIONS_SQL] {
+            assert!(sql.contains("l.mode = 'AccessExclusiveLock'"), "{sql}");
+            assert!(
+                sql.contains("l.pid IS DISTINCT FROM pg_catalog.pg_backend_pid()"),
+                "{sql}"
+            );
+            assert!(
+                !sql.contains("l.granted AND"),
+                "waiting requests count: {sql}"
+            );
+        }
+    }
 
     #[test]
     fn schema_cache_carries_column_meta_alongside_columns_by_table() {

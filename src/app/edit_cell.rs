@@ -1144,6 +1144,48 @@ mod live {
         assert!(!a.read_only && !a.replica_pin);
     }
 
+    /// A connect behind another session's ACCESS EXCLUSIVE lock lands
+    /// connected, and the status says the schema is incomplete, which
+    /// lock and whose, and how to reload it.
+    #[tokio::test]
+    async fn a_connect_behind_a_lock_lands_connected_and_says_the_schema_is_incomplete() {
+        let holder = client().await;
+        let t = name("lockapp");
+        holder
+            .batch_execute(&format!("CREATE TABLE {t} (id int PRIMARY KEY)"))
+            .await
+            .unwrap();
+        holder
+            .batch_execute(&format!("BEGIN; LOCK TABLE {t} IN ACCESS EXCLUSIVE MODE"))
+            .await
+            .unwrap();
+        let mut a = App::new(
+            Theme::default(),
+            Dsn::parse(DSN).ok(),
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        let _ = holder.batch_execute("ROLLBACK").await;
+        let _ = holder.batch_execute(&format!("DROP TABLE {t}")).await;
+        assert!(
+            matches!(a.conn_state, ConnState::Connected { .. }),
+            "{:?}",
+            a.conn_state
+        );
+        let status = a.last_status.as_deref().unwrap_or_default();
+        assert!(
+            status.starts_with("connected, schema incomplete · ")
+                && status.contains("ACCESS EXCLUSIVE")
+                && status.ends_with("S then r reloads it"),
+            "{status}"
+        );
+        assert!(a.schema_cache.incomplete.is_some());
+    }
+
     /// Behind the connection-failed card the dead client is still held,
     /// but nothing offers to run on it: a write is refused before the
     /// guard's prompt, and so is a cell edit. Once `r` reconnects, the
