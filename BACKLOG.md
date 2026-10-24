@@ -134,6 +134,13 @@ buckets were folded in once their initial passes shipped).
   user type, or an RLS policy's function still pages. (A schema's own
   function by a listed built-in's name is caught by the probe.) An xid
   check after the first FETCH would catch writes (not `nextval`).
+- **Qualify the rest of pgman's own SQL with `pg_catalog.`**: the paging
+  probe and the cell-edit check are; the schema fetch, the advisor's
+  queries, the sessions and slow-query panels and the backslash commands
+  still call `lower`, `unnest`, `format_type`, `pg_get_*`, … unqualified,
+  so a schema listed ahead of `pg_catalog` on the operator's path can
+  answer them (psql qualifies for this reason). And a failed probe reads
+  as `in a transaction, so no paging`; say the probe failed instead.
 - **Lost during a running query, card and footer disagree**: the card
   says `the connection to the server closed` while the footer has the
   query's `terminating connection due to administrator command`. Let a
