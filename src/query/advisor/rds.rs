@@ -147,7 +147,7 @@ pub const PARAMS: &[ParamMapping] = &[
         is_static: true,
         unit: GroupUnit::Pages8k,
         aurora: Aurora::Differs(
-            "Aurora's default is about two-thirds of instance memory (SUM(DBInstanceClassMemory/12038,-50003) pages) against RDS's 25% ({DBInstanceClassMemory/32768}), as it has no OS page cache to share with",
+            "Aurora's default is about two-thirds of instance memory (SUM({DBInstanceClassMemory/12038},-50003) pages) against RDS's 25% ({DBInstanceClassMemory/32768}), as it has no OS page cache to share with",
         ),
         aurora_instance_too: true,
     },
