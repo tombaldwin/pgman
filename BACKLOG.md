@@ -232,6 +232,15 @@ batch.
 - **`--demo`'s no-log decision is pinned only as a pure function**:
   nothing fails if `main()` calls `init_logging()` unconditionally
   again. A pty-driven subprocess test would pin the call site.
+- **The tap's transactions and pools views at 60 columns** leave their
+  text column no room: the fixed numeric columns fill the row, which
+  ends on a bare `…`. Drop a numeric column at that width instead.
+- **The tap's pools view at 80 columns** heads its column `POOL · APP`
+  but shows the pool only: the app name never gets the 8 columns
+  `pair_cell` needs.
+- **`\e` under `--demo`** still writes (and deletes) a temp file for the
+  external editor; decide whether that breaks the "no disk writes"
+  promise or is the operator asking for it.
 
 - **The schema reload has no `lock_timeout` backstop**: it skips
   relations under another session's ACCESS EXCLUSIVE lock as the connect
