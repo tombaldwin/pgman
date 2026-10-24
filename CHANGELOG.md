@@ -11,6 +11,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The README lists cell editing (`u`) and paging (`M`), and its links
   to `docs/` and the licence files are absolute, so they resolve on
   crates.io too.
+- `--demo` no longer writes `pgman.log` or creates pgman's cache,
+  config and data directories, as its "no disk writes" promised.
 
 ## [0.2.0] — 2026-10-23
 
