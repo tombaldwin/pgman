@@ -6,7 +6,7 @@ expression: dump(&buf)
  pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  ╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q c╮  │
+│  ╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · … ─╮  │
 │  │  CHANNEL                  PID  PAYLOAD             │  │
 │  │  orders_channel          4321  order:9001 shipped  │  │
 ╰──│  cache_invalidate        4322  users               │──╯

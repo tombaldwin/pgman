@@ -3039,11 +3039,22 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 90, 80);
     f.render_widget(Clear, popup);
+    // The hints fitted to the border, as the tap's title is: at 60
+    // columns it cut `q close` to `q c`.
+    let title_budget = (popup.width.saturating_sub(2) as usize).saturating_sub(
+        crate::ui::chrome::panel_title_overhead(theme, "NOTIFY arrivals"),
+    );
     let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
         .title(crate::ui::chrome::panel_title(
             theme,
-            " NOTIFY arrivals — j/k · y yank · c clear · q close ",
+            &format!(
+                " {} ",
+                fit_title(
+                    "NOTIFY arrivals — j/k · y yank · c clear · q close",
+                    title_budget
+                )
+            ),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -3066,9 +3077,10 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
 
     let visible_h = (inner.height as usize).saturating_sub(1); // under the header
     let scroll = scroll_offset(app.notifications.cursor, visible_h);
+    let inner_w = inner.width as usize;
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        format!("  {:<20}  {:>6}  {}", "channel", "pid", "payload").to_uppercase(),
+        notification_row("CHANNEL", "PID", "PAYLOAD", inner_w),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -3090,11 +3102,23 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Style::default().fg(theme.text)
         };
-        let payload: String = n.payload.chars().take(80).collect();
-        let line = format!("  {:<20}  {:>6}  {}", n.channel, n.pid, payload);
+        let line = notification_row(&n.channel, &n.pid.to_string(), &n.payload, inner_w);
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// One NOTIFY panel row, `width` columns at most: the channel cut and
+/// padded to its 20-column column, the pid, then the payload on one line
+/// (control characters shown, as in a grid cell) cut with `…` where the
+/// panel ends — the border cut it mid-token with no marker. The header
+/// is the same row with the column names. Pure.
+pub(crate) fn notification_row(channel: &str, pid: &str, payload: &str, width: usize) -> String {
+    const CHANNEL_COL: usize = 20;
+    let channel = crate::grid::truncate_cell(channel, CHANNEL_COL);
+    let pad = " ".repeat(CHANNEL_COL.saturating_sub(display_width(&channel)));
+    let payload = crate::grid::show_controls(payload, true);
+    crate::grid::truncate_cell(&format!("  {channel}{pad}  {pid:>6}  {payload}"), width)
 }
 
 /// Rich error overlay (F2 after a query failure). Renders the
@@ -3456,6 +3480,80 @@ fn push_kv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_notification_row_fits_its_width_and_marks_the_cut() {
+        let payload = r#"{"order_id":9001,"status":"shipped","carrier":"parcelforce"}"#;
+        let row = notification_row("orders_channel", "4321", payload, 70);
+        assert_eq!(display_width(&row), 70);
+        assert!(row.ends_with('…'), "{row}");
+        assert!(row.starts_with("  orders_channel          4321  {\"order_id\""));
+        // A channel past its column is cut there, so the pid stays put.
+        let row = notification_row("a_very_long_channel_name_indeed", "7", "x", 80);
+        assert_eq!(row, "  a_very_long_channel…       7  x");
+        // A payload's newline stays on the row, shown.
+        assert!(notification_row("c", "1", "a\nb", 80).ends_with("a⏎b"));
+        // What fits is untouched.
+        assert_eq!(
+            notification_row("c", "1", "users", 80),
+            "  c                          1  users"
+        );
+        for w in 0..90 {
+            assert!(
+                display_width(&notification_row("orders_channel", "4321", payload, w)) <= w,
+                "{w}"
+            );
+        }
+    }
+
+    /// The NOTIFY panel at 80x24 and 60x16 ends every row and its title
+    /// inside the border, on a space or `…`: a long payload ran to the
+    /// border and was cut there mid-token.
+    #[test]
+    fn the_notify_panel_cuts_a_long_payload_and_its_title_with_an_ellipsis() {
+        for (w, h) in [(60u16, 16u16), (80, 24)] {
+            let mut a = crate::demo::app(Theme::default());
+            a.splash_visible = false;
+            a.splash_until = None;
+            a.notifications.items = vec![crate::conn::NotificationMsg {
+                channel: "orders_channel".into(),
+                pid: 4321,
+                payload: r#"{"order_id":9001,"status":"shipped","carrier":"parcelforce","eta":"2026-10-30"}"#
+                    .into(),
+            }];
+            a.mode = crate::app::Mode::Notifications;
+            let mut term =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            term.draw(|f| crate::ui::draw(f, &mut a)).unwrap();
+            let buf = term.backend().buffer().clone();
+            let row = |y: u16| -> Vec<String> {
+                (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()
+            };
+            let top = (0..h)
+                .find(|&y| row(y).concat().contains("NOTIFY arrivals"))
+                .expect("panel");
+            let cells = row(top);
+            let right = cells.iter().rposition(|c| c == "╮").unwrap();
+            assert!(
+                matches!(cells[right - 1].as_str(), "─" | " " | "…"),
+                "{w}x{h} title cut: {:?}",
+                cells.concat()
+            );
+            assert!(cells.concat().contains("NOTIFY arrivals"), "{w}x{h}");
+            let payload_row = row(top + 2);
+            assert!(
+                payload_row.concat().contains("orders_channel"),
+                "{w}x{h}: {:?}",
+                payload_row.concat()
+            );
+            assert_eq!(
+                payload_row[right - 1],
+                "…",
+                "{w}x{h}: {:?}",
+                payload_row.concat()
+            );
+        }
+    }
 
     #[test]
     fn the_cell_edit_box_moves_away_from_the_edited_row() {

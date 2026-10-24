@@ -34,6 +34,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   and transactions' `txn · last sql` fit their column (at 80x24 the
   hotspots header read `FINGERPRINT · LAST CA` over `· InvoiceS`), and
   any row or header too wide for the panel ends on `…`.
+- The NOTIFY panel cuts a long payload, and its title's key hints, with
+  `…` at the border rather than mid-token, and shows a payload's
+  newline as `⏎` on its row.
 - A start card too short for every key hint keeps its `?  all keys`
   line and says how many it left off (`+3 more`); at 60x16 the hints
   went with nothing to say so.
