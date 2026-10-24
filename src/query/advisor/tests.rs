@@ -669,6 +669,7 @@ fn sess(pid: i32, state: &str, wait: Option<f64>, blockers: &[i32]) -> LockSessi
         user: "shop_app".into(),
         state: state.into(),
         xact_secs: Some(250.0),
+        idle_secs: state.starts_with("idle in transaction").then_some(240.0),
         wait_secs: wait,
         blockers: blockers.to_vec(),
         query: format!("UPDATE orders SET status = 'x' -- {pid}"),
@@ -900,7 +901,7 @@ fn ms(v: &str) -> Setting {
 }
 
 /// The timeout is as good as off when it is zero or unread, over an
-/// hour, or longer than the head's transaction has run.
+/// hour, or longer than the head has been idle.
 #[test]
 fn idle_timeout_is_effectively_off_when_too_long_to_have_helped() {
     assert!(idle_timeout_effectively_off(None, Some(10.0)));
@@ -934,6 +935,34 @@ fn idle_timeout_is_effectively_off_when_too_long_to_have_helped() {
 /// AWS's default parameter groups set the timeout to 24h: on RDS and
 /// Aurora that is the value a pile-up meets, and the advice must still
 /// come, saying what it is set to.
+/// The timeout counts from the head's last statement, not its
+/// transaction's start: a transaction half an hour old that ran a
+/// statement a minute ago has not met a 10-minute timeout, so the
+/// pile-up still gets the timeout advice; one idle 11 minutes has.
+#[test]
+fn the_idle_timeout_is_measured_against_idle_time_not_transaction_age() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let mut head = sess(10, "idle in transaction", None, &[]);
+    head.xact_secs = Some(1800.0);
+    head.idle_secs = Some(60.0);
+    let s = vec![head, sess(11, "active", Some(30.0), &[10])];
+    let ten = idle_timeout(&ms("600000"));
+    let f = lock_finding(&c, &s, &ten, &th).unwrap();
+    assert_eq!(
+        advice(&f).change.as_ref().unwrap().name,
+        "idle_in_transaction_session_timeout"
+    );
+    assert!(idle_timeout_effectively_off(
+        Some(&ms("600000")),
+        Some(60.0)
+    ));
+    assert!(!idle_timeout_effectively_off(
+        Some(&ms("600000")),
+        Some(660.0)
+    ));
+}
+
 #[test]
 fn a_day_long_idle_timeout_still_gets_the_idle_timeout_advice() {
     let th = Thresholds::default();
@@ -954,13 +983,14 @@ fn a_day_long_idle_timeout_still_gets_the_idle_timeout_advice() {
         "{}",
         ch.reasoning
     );
-    // Ten minutes against a head four minutes in: it hasn't fired yet.
+    // Ten minutes against a head four minutes idle: it hasn't fired yet.
     let f = lock_finding(&c, &s, &idle_timeout(&ms("600000")), &th).unwrap();
     let ch = advice(&f).change.clone().unwrap();
     assert_eq!(ch.name, "idle_in_transaction_session_timeout");
     assert!(
-        ch.reasoning
-            .contains("set, to 10min, but that is longer than the head's transaction has run"),
+        ch.reasoning.contains(
+            "set, to 10min, but that is longer than the head has been idle in its transaction"
+        ),
         "{}",
         ch.reasoning
     );

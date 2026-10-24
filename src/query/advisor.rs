@@ -362,12 +362,13 @@ pub fn locks_sql(version_num: i32) -> String {
         "s.query_start"
     };
     format!(
-        "{}WITH s AS (SELECT a.pid, a.usename, a.state, a.xact_start, a.query_start, a.query, \
+        "{}WITH s AS (SELECT a.pid, a.usename, a.state, a.xact_start, a.query_start, a.state_change, a.query, \
          pg_blocking_pids(a.pid) AS blockers FROM pg_stat_activity a WHERE a.pid <> pg_backend_pid()) \
          SELECT s.pid, COALESCE(quote_ident(s.usename::text), ''), COALESCE(s.state, ''), \
          EXTRACT(EPOCH FROM clock_timestamp() - s.xact_start)::float8, \
          CASE WHEN cardinality(s.blockers) > 0 THEN EXTRACT(EPOCH FROM clock_timestamp() - {wait_start})::float8 END, \
-         s.blockers, COALESCE(left(regexp_replace(s.query, '\\s+', ' ', 'g'), 200), '') \
+         s.blockers, COALESCE(left(regexp_replace(s.query, '\\s+', ' ', 'g'), 200), ''), \
+         CASE WHEN s.state LIKE 'idle in transaction%' THEN EXTRACT(EPOCH FROM clock_timestamp() - s.state_change)::float8 END \
          FROM s WHERE cardinality(s.blockers) > 0 OR s.pid IN (SELECT unnest(blockers) FROM s) \
          ORDER BY s.pid",
         tag!()
@@ -960,6 +961,10 @@ pub struct LockSession {
     pub user: String,
     pub state: String,
     pub xact_secs: Option<f64>,
+    /// How long it has been idle in its transaction (since
+    /// `state_change`), which is what `idle_in_transaction_session_timeout`
+    /// counts; `None` unless it is idle in one.
+    pub idle_secs: Option<f64>,
     /// How long it has waited; `None` when it isn't waiting.
     pub wait_secs: Option<f64>,
     pub blockers: Vec<i32>,
@@ -1034,11 +1039,13 @@ pub const IDLE_TX_TIMEOUT_MAX_MS: i64 = 3_600_000;
 
 /// Whether `idle_in_transaction_session_timeout` is, for a pile-up
 /// behind a session idle in a transaction, as good as off: zero or
-/// unread, over [`IDLE_TX_TIMEOUT_MAX_MS`], or longer than the head's
-/// transaction has run (so it hasn't ended it, and the waiters wait).
+/// unread, over [`IDLE_TX_TIMEOUT_MAX_MS`], or longer than the head has
+/// been idle (so it hasn't ended it, and the waiters wait). The timeout
+/// counts from the head's last statement (`state_change`), not from its
+/// transaction's start.
 pub fn idle_timeout_effectively_off(
     timeout: Option<&Setting>,
-    head_xact_secs: Option<f64>,
+    head_idle_secs: Option<f64>,
 ) -> bool {
     let Some(s) = timeout else {
         return true;
@@ -1047,7 +1054,7 @@ pub fn idle_timeout_effectively_off(
         Some(ms) => {
             ms <= 0
                 || ms > IDLE_TX_TIMEOUT_MAX_MS
-                || head_xact_secs.is_some_and(|x| ms as f64 / 1000.0 > x)
+                || head_idle_secs.is_some_and(|x| ms as f64 / 1000.0 > x)
         }
         None => s.setting == "0",
     }
@@ -1067,7 +1074,7 @@ fn idle_timeout_note(timeout: Option<&Setting>) -> String {
     let why = if ms > IDLE_TX_TIMEOUT_MAX_MS {
         "far longer than a pile-up can wait (AWS's default parameter groups set 24h)"
     } else {
-        "longer than the head's transaction has run, so it hasn't ended it"
+        "longer than the head has been idle in its transaction, so it hasn't ended it"
     };
     format!(
         ". It is set, to {}{hours}, but that is {why}",
@@ -1149,7 +1156,7 @@ pub fn lock_finding(
     let head = chains.first().and_then(|c| by_pid.get(&c.root)).copied();
     let idle_in_tx = head.is_some_and(|h| h.state.starts_with("idle in transaction"));
     let idle_tx_timeout = settings.get("idle_in_transaction_session_timeout");
-    let timeout_off = idle_timeout_effectively_off(idle_tx_timeout, head.and_then(|h| h.xact_secs));
+    let timeout_off = idle_timeout_effectively_off(idle_tx_timeout, head.and_then(|h| h.idle_secs));
     let (suggestion, change) = if idle_in_tx && timeout_off {
         let p = mapping("idle_in_transaction_session_timeout");
         let role = head.map(|h| h.user.as_str()).filter(|u| !u.is_empty());
@@ -1638,6 +1645,7 @@ async fn read_locks(
                 wait_secs: r.try_get(4).map_err(db_err)?,
                 blockers: r.try_get(5).map_err(db_err)?,
                 query: r.try_get(6).map_err(db_err)?,
+                idle_secs: r.try_get(7).map_err(db_err)?,
             })
         })
         .collect()

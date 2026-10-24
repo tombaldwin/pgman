@@ -6354,6 +6354,13 @@ fn advisor_reports_a_lock_wait_and_its_blocking_chain() {
         let waiting = tokio::spawn(async move { waiter.simple_query(&q).await });
 
         let reader = advisor_client().await;
+        // An hour is not "as good as off" by itself (only over an hour
+        // is): the head's idle time, read from state_change, has to say
+        // it hasn't fired.
+        reader
+            .batch_execute("SET idle_in_transaction_session_timeout = '1h'")
+            .await
+            .unwrap();
         let th = pgman::query::advisor::Thresholds {
             min_lock_wait_secs: 0.5,
             ..advisor_thresholds()
@@ -6373,6 +6380,11 @@ fn advisor_reports_a_lock_wait_and_its_blocking_chain() {
             .find(|e| e.starts_with(&head))
             .unwrap();
         assert!(line.contains(&format!("{waiter_pid} (")), "{line}");
+        assert_eq!(
+            advice.change.as_ref().map(|c| c.name),
+            Some("idle_in_transaction_session_timeout"),
+            "a 1h timeout the head has been idle far less than: {advice:?}"
+        );
         assert!(
             advice.evidence_sql.contains("l.waitstart"),
             "PG16 reads waitstart"

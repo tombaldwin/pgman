@@ -136,7 +136,8 @@ neither depends on the window, and they say "now" instead.
   `idle_in_transaction_session_timeout = '5min'` if it is off or as
   good as off: zero, over an hour (AWS's default parameter groups set
   it to 86400000 ms, 24 h, so on RDS / Aurora it is never `0`), or
-  longer than the head's transaction has run; the reasoning shows the
+  longer than the head has been idle in its transaction (`state_change`,
+  which the timeout counts from, not `xact_start`); the reasoning shows the
   value (`1d = 24h`);
   otherwise `log_lock_waits = on` if it is not (it logs each wait past
   `deadlock_timeout` with the holder, and changes no session's
