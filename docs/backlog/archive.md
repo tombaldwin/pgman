@@ -7,6 +7,50 @@ open items. Newest at the top within each section.
 
 Historical record. Newest at the top within each section.
 
+### 2026-10-24 v0.2.1 window *(done, PLAN.md)*
+
+#### 1. Housekeeping · mechanical · done on `housekeeping-0.2.1`
+
+This file rewritten; done phases archived; stale backlog items dropped.
+
+#### 2. First impressions · behaviour
+
+The rough edges a new user meets in the first minute, from the v0.2.0
+panel. One commit each; a snapshot pins each visible fix.
+
+- **F-key-only hints**: start card `F4 JDBC tap` / `· F4 to look`, help
+  heading `F3 notify`; show `:tap` / `:notify` beside them.
+- **README's feature list** doesn't mention cell editing or paging; the
+  README `demo.gif` shows 0.1.0's chrome; crates.io's README has relative
+  `docs/` links that don't resolve there.
+- **`--demo` writes `pgman.log`** although "no disk writes" is claimed.
+- **The title's date reads as unexplained** (`pgman 0.1.0 · 2026-10-22`
+  on a later day). Say it is the release date, or drop it.
+- **Result diff title at 80 cols** cuts off `key: id (primary key)`; put
+  the key before the query text.
+- **`:fixture`'s status is elided mid-note** at 160 columns, eating
+  "(fetched rows only · more not fetched)".
+- **Schema wizard detail pane wraps mid-word** at 80x24 / 60x16, and its
+  header's last column reads `tit`.
+- **The result title is cut by the border at 80 columns** when a filter
+  is active and the counts reach five digits.
+- **Tap polish**: the N+1 row's caller is cut at the border without `…`;
+  the start card at 60x16 drops hint rows with no "more" marker;
+  docs/tap.md's "JAR backpressure" label puzzles an OTLP-only user.
+
+#### 3. Correctness from the v0.2.0 panel · behaviour
+
+- **Connect hangs behind an ACCESS EXCLUSIVE lock.** Bootstrap's catalog
+  reads (`pg_get_indexdef`) wait forever ("connecting…") with no
+  `lock_timeout`, and backends pile up behind it.
+- **Lost during a running query, card and footer disagree**: the card
+  says `the connection to the server closed` while the footer has the
+  query's `terminating connection due to administrator command`. Let a
+  57P01/57P02 `QueryFailed` behind the card refresh its reason; the
+  late-Booted closed-client path drops the forwarder's FATAL too.
+- **The header says `Session: writable` on a standby** in the paging
+  view's status; read the pinned read-only state there too.
+
 ### 2026-10-22 NULL cells *(done, see docs/backlog/null-cells.md)*
 - NULL and the empty string look the same (release panel M1): grid
   cells are `Option<String>`; NULL draws as a dimmed `NULL`

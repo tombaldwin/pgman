@@ -236,6 +236,17 @@ batch.
   nothing fails if `main()` calls `init_logging()` unconditionally
   again. A pty-driven subprocess test would pin the call site.
 
+- **The schema reload has no `lock_timeout` backstop**: it skips
+  relations under another session's ACCESS EXCLUSIVE lock as the connect
+  does, but a lock on a catalog table can still stall it.
+- **A FATAL through `TxClosed`, `CellUpdated` or `PageLoaded`** (or one
+  the bootstrap's own queries swallow) doesn't reach the
+  connection-lost card yet; only `QueryFailed`'s does.
+- **A failed `:readonly on` under a read-only profile** drops the header
+  to `writable`; the error branch only keeps a replica pin.
+- **The FATAL-ends-the-session check under a non-English
+  `lc_messages`** is covered by `severity_word`'s pure test only.
+
 ### Performance / DBA — follow-ups
 - **Paging: one unexplained cursor close while hand-driving.** After
   Esc and `M` arrived together (read as Alt-M), a later `M` said the
