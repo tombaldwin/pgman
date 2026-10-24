@@ -3,10 +3,10 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
+ pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│ ╭[ ◆ Result diff ◆ ] A: public.invoices (5 rows) vs B:╮  │
+│ ╭[ ◆ Result diff ◆ ] key: number · … ─────────────────╮  │
 │ │+1 added   -1 removed   ~1 changed   =3 unchanged    │  │
 │ │                                                     │  │
 ╰─│  - INV-004824 | 2104 | open | GBP | 768.00 | 2026-1…│──╯

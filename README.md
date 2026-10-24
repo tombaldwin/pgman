@@ -34,7 +34,7 @@ At a glance:
   at that moment, through the bastion when there is one); opt-in probes add
   versions, migration level, pending patches, lag, sessions and size;
   `pgman env discover` proposes the whole file from an AWS account. See
-  [`docs/environments.md`](docs/environments.md).
+  [`docs/environments.md`](https://github.com/tombaldwin/pgman/blob/main/docs/environments.md).
 - **Applying patches** — `P` plans an environment's pending patches
   read-only, checks each against your guard rails, and after you confirm
   runs each in its own transaction; a dry run or a throwaway copy rehearses
@@ -43,7 +43,7 @@ At a glance:
   MCP client) read-only tools for queries, lock pre-flights, pending
   patches, schema lint and environments, plus `apply_patches`, the one
   that writes to a database, confirmed by you. See
-  [`docs/mcp.md`](docs/mcp.md).
+  [`docs/mcp.md`](https://github.com/tombaldwin/pgman/blob/main/docs/mcp.md).
 - **Connect fast** — auto-discovers datasources from Spring
   `application*.yml`/`.properties`, IntelliJ `.idea/dataSources.xml`, and a
   committed `.pgman/pgman.toml`.
@@ -52,6 +52,10 @@ At a glance:
   runnable SQL" below.
 - **Safe by default** — read-only connections, `statement_timeout`, and
   per-database guard rails on every statement.
+- **Edit and page results** — `u` on a result cell edits it in place: a
+  one-row `UPDATE` by primary key, shown in the same safety confirm as any
+  statement you run. `M` fetches the next 1000 rows of a `SELECT` through a
+  server-side cursor.
 - **Editor** — syntax highlighting, completion, formatting, history, saved
   queries (`:param` prompts, rename, search), DBUnit fixture apply + capture.
 - **DBA panels** — schema browser, EXPLAIN tree, slow queries, active
@@ -87,7 +91,7 @@ query — `Enter` loads it terminated with `;`, and a second `Enter` runs it; sk
 the paste and launch straight into the reconstructed queries with
 `pgman --log app.log`; or, with no log at all, paste a `?`-placeholder
 statement plus its typed parameter list. Walkthrough:
-[`docs/logs-to-sql.md`](docs/logs-to-sql.md).
+[`docs/logs-to-sql.md`](https://github.com/tombaldwin/pgman/blob/main/docs/logs-to-sql.md).
 
 Run it inside a Spring project and it picks up `spring.datasource.*` to connect.
 
@@ -141,14 +145,14 @@ Three things worth knowing:
   finds there connects without a keypress, `PGPASSWORD` is only used with
   `--dsn`, and a project's `[safety]` block can only *tighten* your own guard
   rails — never relax them. Full trust model in
-  [docs/safety-and-privacy.md](docs/safety-and-privacy.md#running-pgman-inside-a-checkout-you-did-not-write).
+  [docs/safety-and-privacy.md](https://github.com/tombaldwin/pgman/blob/main/docs/safety-and-privacy.md#running-pgman-inside-a-checkout-you-did-not-write).
 - **TLS:** `sslmode=require` / `prefer` encrypt the connection but do **not**
   verify the server certificate (matching libpq). Use `sslmode=verify-full` on
   untrusted networks. `sslmode=verify-ca` checks the chain but not the hostname,
   as libpq does.
 - **JDBC tap:** the `--tap-listen` / `--tap-otlp` / `--tap-udp` listeners are
   unauthenticated and bind to `127.0.0.1` by default. Only bind a non-loopback
-  address on a trusted/firewalled network. See [docs/tap.md](docs/tap.md).
+  address on a trusted/firewalled network. See [docs/tap.md](https://github.com/tombaldwin/pgman/blob/main/docs/tap.md).
 
 ## Install
 
@@ -157,6 +161,9 @@ Three things worth knowing:
 ```sh
 brew install tombaldwin/tap/pgman
 ```
+
+On Homebrew 6 or newer, run `brew trust tombaldwin/tap` first: Homebrew
+only loads formulae from taps you have trusted.
 
 **Cargo:**
 
@@ -206,21 +213,21 @@ degrades silently if there's no network.
 cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-See [`docs/development.md`](docs/development.md) for the integration suite,
+See [`docs/development.md`](https://github.com/tombaldwin/pgman/blob/main/docs/development.md) for the integration suite,
 coverage, fuzzing, and what CI runs on every push.
 
 ## Docs
 
-- [`docs/keys.md`](docs/keys.md) — every keybinding, by mode.
-- [`docs/commands.md`](docs/commands.md) — command reference.
-- [`docs/configuration.md`](docs/configuration.md) — config file locations and options.
-- [`docs/environments.md`](docs/environments.md) — the environments view, `environments.toml` and `pgman env discover`.
-- [`docs/mcp.md`](docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
-- [`docs/safety-and-privacy.md`](docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
-- [`docs/logs-to-sql.md`](docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.
-- [`docs/tap.md`](docs/tap.md) — the JDBC tap: OpenTelemetry, TCP and UDP ingest, the event format, limits, record and replay.
-- [`docs/development.md`](docs/development.md) — build / test / clippy + distribution notes.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — module map and the invariants the compiler doesn't enforce.
+- [`docs/keys.md`](https://github.com/tombaldwin/pgman/blob/main/docs/keys.md) — every keybinding, by mode.
+- [`docs/commands.md`](https://github.com/tombaldwin/pgman/blob/main/docs/commands.md) — command reference.
+- [`docs/configuration.md`](https://github.com/tombaldwin/pgman/blob/main/docs/configuration.md) — config file locations and options.
+- [`docs/environments.md`](https://github.com/tombaldwin/pgman/blob/main/docs/environments.md) — the environments view, `environments.toml` and `pgman env discover`.
+- [`docs/mcp.md`](https://github.com/tombaldwin/pgman/blob/main/docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
+- [`docs/safety-and-privacy.md`](https://github.com/tombaldwin/pgman/blob/main/docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
+- [`docs/logs-to-sql.md`](https://github.com/tombaldwin/pgman/blob/main/docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.
+- [`docs/tap.md`](https://github.com/tombaldwin/pgman/blob/main/docs/tap.md) — the JDBC tap: OpenTelemetry, TCP and UDP ingest, the event format, limits, record and replay.
+- [`docs/development.md`](https://github.com/tombaldwin/pgman/blob/main/docs/development.md) — build / test / clippy + distribution notes.
+- [`ARCHITECTURE.md`](https://github.com/tombaldwin/pgman/blob/main/ARCHITECTURE.md) — module map and the invariants the compiler doesn't enforce.
 
 ## Status
 
@@ -230,8 +237,8 @@ Beta. See `BACKLOG.md` for what's next.
 
 Dual-licensed under either of
 
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](https://github.com/tombaldwin/pgman/blob/main/LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/tombaldwin/pgman/blob/main/LICENSE-APACHE))
 
 at your option. Unless you explicitly state otherwise, any contribution you
 submit for inclusion shall be dual-licensed as above, without additional terms.

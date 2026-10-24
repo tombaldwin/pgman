@@ -3,7 +3,7 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ──────────────╮╭───────────────────────────╮
 │ Server: ledger-staging…  •  Database: ledger    ││         PostgreSQL   diff │
 │ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
@@ -11,7 +11,7 @@ expression: dump(&buf)
  1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
-│  ╭[ ◆ Result diff ◆ ] A: public.invoices (5 rows) vs B: public.invoices (╮   │
+│  ╭[ ◆ Result diff ◆ ] key: number · … ───────────────────────────────────╮   │
 │  │+1 added   -1 removed   ~1 changed   =3 unchanged                      │   │
 │  │                                                                       │   │
 ╰──│  - INV-004824 | 2104 | open | GBP | 768.00 | 2026-10-04 09:00:00+00   │───╯

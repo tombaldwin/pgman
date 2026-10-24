@@ -25,9 +25,13 @@ const KEY_FIELD_WIDTH: usize = 4;
 /// under the header / `recent` label, which get a single-space indent).
 const HINT_INDENT: &str = "   ";
 
+const F8_KEY: &str = "ctrl-l";
 const F8_DESC_LONG: &str = "logs → SQL (paste a Hibernate / Postgres log in the editor)";
 const F8_DESC_SHORT: &str = "logs → SQL (paste a log first)";
-const F4_DESC: &str = "JDBC tap";
+/// The JDBC tap's start-card hint: the `:tap` command is the key, as
+/// F-keys are not a primary binding on a Mac terminal; `F4` rides along.
+const TAP_KEY: &str = ":tap";
+const TAP_DESC: &str = "JDBC tap (F4)";
 
 /// Draw the landing / start card into `area`.
 pub(super) fn draw_landing(f: &mut Frame, area: Rect, app: &App) {
@@ -59,7 +63,7 @@ impl Hint {
 ///
 /// The start card's line about the footer's tap badges, for `nplus1`
 /// repeated-query findings, in the longest wording that fits `width`
-/// columns — whole wordings, never one cut mid-phrase, so the `F4` at
+/// columns — whole wordings, never one cut mid-phrase, so the `:tap` at
 /// the end always survives. Pure.
 pub(crate) fn tap_badges_line(nplus1: usize, width: usize) -> String {
     let n = nplus1;
@@ -70,13 +74,13 @@ pub(crate) fn tap_badges_line(nplus1: usize, width: usize) -> String {
     };
     let wordings: Vec<String> = match &found {
         None => vec![
-            "TAP below: your app's queries are arriving over the JDBC tap · F4 to watch".into(),
-            "TAP below: your app's queries, over the JDBC tap · F4".into(),
+            "TAP below: your app's queries are arriving over the JDBC tap · :tap to watch".into(),
+            "TAP below: your app's queries, over the JDBC tap · :tap".into(),
         ],
         Some(found) => vec![
-            format!("TAP below: your app's queries are arriving over the JDBC tap · N+1 ×{n}: {found} · F4 to look"),
-            format!("TAP below: your app's queries, over the JDBC tap · N+1 ×{n}: {found} · F4"),
-            format!("TAP: your app's queries via the JDBC tap · N+1 ×{n}: repeated per row · F4"),
+            format!("TAP below: your app's queries arriving over the JDBC tap · N+1 ×{n}: {found} · :tap to look"),
+            format!("TAP below: your app's queries over the JDBC tap · N+1 ×{n}: {found} · :tap"),
+            format!("TAP: app queries via the JDBC tap · N+1 ×{n}: repeated per row · :tap"),
         ],
     };
     let last = wordings.last().cloned().unwrap_or_default();
@@ -100,9 +104,11 @@ pub(crate) fn tap_badges_line(nplus1: usize, width: usize) -> String {
 ///
 /// Under height pressure, sections drop in this order: `recent` first,
 /// then the tap line,
-/// then the one-column `ctrl-t` line, then `databases`, then the `?`
-/// line, then the F8/F4 row — so the connection line and the six core
-/// keys always survive down to 8 rows.
+/// then the one-column `ctrl-t` line, then `databases`, then the F8/F4
+/// row — so the connection line and the six core keys always survive
+/// down to 8 rows. The `?` line outlasts the F8/F4 row by taking the
+/// blank under the connection line, and once any hint is dropped it
+/// says how many (`?  all keys · +3 more`).
 pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> Vec<Line<'static>> {
     let theme = &app.theme;
     let key_style = Style::default()
@@ -131,11 +137,11 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     let new_tab = Hint::new("ctrl-t", "new tab");
 
     // F8's description is long; shorten it rather than truncate it if
-    // it (plus, in two-column mode, F4's cell and the gap) wouldn't
+    // it (plus, in two-column mode, the tap's cell and the gap) wouldn't
     // fit at the current width.
     let f8_desc = pick_f8_desc(two_col, width);
-    let f8 = Hint::new("ctrl-l", f8_desc);
-    let f4 = Hint::new("F4", F4_DESC);
+    let f8 = Hint::new(F8_KEY, f8_desc);
+    let f4 = Hint::new(TAP_KEY, TAP_DESC);
 
     // --- height budget: decide what survives -------------------------
     let key_lines_floor = if two_col { 3 } else { 6 }; // core only
@@ -177,6 +183,24 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         } else {
             (false, false, false, false, false)
         };
+    // Rows dropped with nothing on the card saying so read as all
+    // there is. The `?` line is the way to the rest, so it outlasts the
+    // blank under the connection line, and counts what is not shown.
+    let key_rows = if include_f8f4 {
+        key_lines_with_f8f4
+    } else {
+        key_lines_floor
+    };
+    // The connection line, the keys, the `?` line.
+    let keep_help_for_blank = !include_help && key_rows + 2 <= h;
+    let include_help = include_help || keep_help_for_blank;
+    let include_blank = !keep_help_for_blank;
+    let hidden_hints = hidden_hint_count(include_f8f4, include_new_tab);
+    let help = if hidden_hints > 0 {
+        Hint::new("?", format!("all keys · +{hidden_hints} more"))
+    } else {
+        help
+    };
     let include_recent = include_recent && !app.history.is_empty();
     let include_databases = include_databases && has_databases;
     // Dropped before `recent` goes: it rides on the room left over.
@@ -192,7 +216,9 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
             lines.push(Line::from(Span::styled(text, muted_style)));
         }
     }
-    lines.push(Line::from(""));
+    if include_blank {
+        lines.push(Line::from(""));
+    }
 
     // The card is still up while the FIRST query is in flight (the
     // grid has no columns yet), and `e write a query` is not what to
@@ -290,6 +316,19 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     lines
 }
 
+/// How many key hints the start card leaves off: the F8 and tap pair,
+/// and `ctrl-t`. What the `?` line counts as `+N more`. Pure.
+fn hidden_hint_count(include_f8f4: bool, include_new_tab: bool) -> usize {
+    let mut n = 0;
+    if !include_f8f4 {
+        n += 2;
+    }
+    if !include_new_tab {
+        n += 1;
+    }
+    n
+}
+
 /// The `recent` section's label, with the keys that bring an entry back
 /// when they fit: the list itself isn't selectable, and nothing on the
 /// card said how to reuse one. Pure.
@@ -303,18 +342,20 @@ fn recent_label(width: usize) -> &'static str {
 }
 
 /// Choose the F8 hint description: the long form if it (plus, in
-/// two-column mode, the F4 cell and the gap between them) fits within
+/// two-column mode, the tap cell and the gap between them) fits within
 /// `width`; the short form otherwise. Never truncates either form.
+/// Measures the key fields as [`key_field`] pads them, so a key wider
+/// than [`KEY_FIELD_WIDTH`] (`ctrl-l`, `:tap`) is counted at its width.
 fn pick_f8_desc(two_col: bool, width: usize) -> &'static str {
+    let f8_cell = display_width(&key_field(F8_KEY)) + display_width(F8_DESC_LONG);
     let needed = if two_col {
         display_width(HINT_INDENT)
-            + KEY_FIELD_WIDTH
-            + display_width(F8_DESC_LONG)
+            + f8_cell
             + COL_GAP
-            + KEY_FIELD_WIDTH
-            + display_width(F4_DESC)
+            + display_width(&key_field(TAP_KEY))
+            + display_width(TAP_DESC)
     } else {
-        display_width(HINT_INDENT) + KEY_FIELD_WIDTH + display_width(F8_DESC_LONG)
+        display_width(HINT_INDENT) + f8_cell
     };
     if needed <= width {
         F8_DESC_LONG
@@ -569,10 +610,25 @@ mod tests {
             "expected an F8 row at 80 columns: {text:?}"
         );
         assert!(
-            text.iter()
-                .any(|l| l.contains("F4") && l.contains("JDBC tap")),
-            "expected an F4 row at 80 columns: {text:?}"
+            text.iter().any(|l| l.contains(":tap  JDBC tap (F4)")),
+            "expected a `:tap` row, F4 beside it, at 80 columns: {text:?}"
         );
+    }
+
+    #[test]
+    fn the_tap_is_never_hinted_by_f4_alone() {
+        // F4 is not a primary binding on a Mac terminal: every start
+        // card line that names F4 names `:tap` too, at every size and
+        // with or without the tap's badge line.
+        let mut a = app();
+        a.tap_health.query_count = 1;
+        for (w, h) in [(200u16, 40u16), (120, 30), (78, 20), (58, 14), (40, 30)] {
+            for line in plain(&landing_lines(&a, w, h)) {
+                if line.contains("F4") || line.contains("JDBC tap") {
+                    assert!(line.contains(":tap"), "{w}x{h}: {line:?}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -617,31 +673,43 @@ mod tests {
     }
 
     #[test]
-    fn height_degradation_drops_help_second() {
+    fn height_degradation_trades_the_blank_for_the_help_line() {
         let mut a = app();
         a.history = vec!["select 1".into()];
         // Two-col floor is 5 (header+blank+3 core rows), F8/F4 adds 1 (6),
-        // `?` adds 1 more (7). At height 6 we should have F8/F4 but not `?`.
+        // `?` adds 1 more (7). At height 6 the blank under the header
+        // goes, so F8/F4 and `?` both stay, and `?` counts the hidden
+        // `ctrl-t`.
         let lines = landing_lines(&a, 80, 6);
+        assert_eq!(lines.len(), 6, "{lines:?}");
         let text = plain(&lines);
         assert!(!text.iter().any(|l| l.contains("recent")));
+        assert!(!text[1].trim().is_empty(), "no blank row: {text:?}");
         assert!(
-            !text
-                .iter()
-                .any(|l| l.contains('?') && l.contains("all keys")),
-            "`?` line should be dropped before F8/F4: {text:?}"
+            text.iter().any(|l| l.contains("?   all keys · +1 more")),
+            "`?` says a hint is hidden: {text:?}"
         );
         assert!(
             text.iter().any(|l| l.contains("ctrl-l")),
             "F8/F4 row should still be present at height 6: {text:?}"
         );
+        // With room for everything, no count and the blank stays.
+        let text = plain(&landing_lines(&a, 80, 30));
+        assert!(text[1].trim().is_empty(), "{text:?}");
+        assert!(
+            text.iter().any(|l| l.contains("?   all keys   ")),
+            "{text:?}"
+        );
+        assert!(!text.iter().any(|l| l.contains("more")), "{text:?}");
     }
 
     #[test]
     fn height_degradation_drops_f8f4_third_and_six_core_keys_survive_to_8_rows() {
         let mut a = app();
         a.history = vec!["select 1".into()];
-        // Single-column floor: header + blank + six core keys = 8 lines.
+        // Single-column floor: header + six core keys + `?`, the blank
+        // given up for the `?` line = 8 lines. (The 60x16 card: it
+        // dropped F8, the tap and `ctrl-t` with nothing saying so.)
         let lines = landing_lines(&a, 40, 8);
         assert_eq!(
             lines.len(),
@@ -650,9 +718,7 @@ mod tests {
         );
         let text = plain(&lines);
         assert!(!text.iter().any(|l| l.contains("recent")));
-        assert!(!text
-            .iter()
-            .any(|l| l.contains('?') && l.contains("all keys")));
+        assert_eq!(text[7], "   ?   all keys · +3 more", "{text:?}");
         assert!(
             !text
                 .iter()
@@ -687,7 +753,7 @@ mod tests {
             let lines = landing_lines(&a, 58, h);
             let text = plain(&lines);
             let has_f8 = text.iter().any(|l| l.contains("ctrl-l"));
-            let has_f4 = text.iter().any(|l| l.contains("F4"));
+            let has_f4 = text.iter().any(|l| l.contains(":tap"));
             assert_eq!(
                 has_f8, has_f4,
                 "F8 shown without F4 at height {h}: {text:?}"
@@ -701,7 +767,7 @@ mod tests {
         // One row short of the pair, both go.
         let text = plain(&landing_lines(&a, 58, 9));
         assert!(!text.iter().any(|l| l.contains("ctrl-l")), "{text:?}");
-        assert!(!text.iter().any(|l| l.contains("F4")), "{text:?}");
+        assert!(!text.iter().any(|l| l.contains(":tap")), "{text:?}");
     }
 
     #[test]
@@ -1104,18 +1170,27 @@ mod tests {
     fn the_tap_badges_are_explained_once_the_tap_has_heard_from_the_app() {
         assert_eq!(
             tap_badges_line(0, 200),
-            "TAP below: your app's queries are arriving over the JDBC tap · F4 to watch"
+            "TAP below: your app's queries are arriving over the JDBC tap · :tap to watch"
         );
         assert!(tap_badges_line(1, 200).contains("N+1 ×1: one query it runs once per row"));
         assert!(tap_badges_line(3, 200).contains("N+1 ×3: 3 queries it runs once per row"));
-        // Narrower: a shorter whole wording, still ending on F4, never
+        // Narrower: a shorter whole wording, still ending on `:tap`, never
         // one cut mid-phrase.
         for width in [75, 95, 115] {
             let line = tap_badges_line(1, width);
             assert!(display_width(&line) <= width, "{width}: {line}");
             assert!(
-                line.contains("F4") && line.contains("N+1 ×1"),
+                line.contains(" · :tap") && line.contains("N+1 ×1"),
                 "{width}: {line}"
+            );
+        }
+        // The room a 100- and a 120-column card gives the line keeps
+        // the wording that says what N+1 means.
+        for width in [95, 115] {
+            assert!(
+                tap_badges_line(1, width).contains("one query it runs once per row"),
+                "{width}: {}",
+                tap_badges_line(1, width)
             );
         }
         assert!(display_width(&tap_badges_line(0, 60)) <= 60);

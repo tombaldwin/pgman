@@ -6,6 +6,60 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- The start card and the help overlay name the JDBC tap and the NOTIFY
+  panel by `:tap` / `:notify` first, with `F4` / `F3` beside them: on a
+  Mac terminal the F-keys often never reach pgman.
+- The result diff's title names its key (`key: id (primary key)`) before
+  the A and B query text, so an 80-column terminal no longer cuts it
+  off; a title too long for its border ends on `…`.
+- `:fixture` and `Y` on a partial result end their status on "fetched
+  rows only, more not fetched", which the footer keeps whole; at 160
+  columns it was cut mid-note, along with the file name.
+- The schema wizard's detail pane wraps between words (it broke
+  `referen` / `ces` at 80x24), and its list sizes the object column to
+  leave the title room: at 80 columns the title column was three
+  letters wide and its header read `tit`.
+- The result title is fitted to its border: with a filter on and
+  five-digit counts, an 80-column title ran into the corner mid-word;
+  it now drops whole segments from the end and ends on `…`.
+- The JDBC tap's N+1 view cuts a long caller with `…` rather than at
+  the border, and shows its fingerprint only when there is room to
+  read one.
+- A start card too short for every key hint keeps its `?  all keys`
+  line and says how many it left off (`+3 more`); at 60x16 the hints
+  went with nothing to say so.
+- The README lists cell editing (`u`) and paging (`M`), and its links
+  to `docs/` and the licence files are absolute, so they resolve on
+  crates.io too.
+- `--demo` no longer writes `pgman.log` or creates pgman's cache,
+  config and data directories, as its "no disk writes" promised.
+- docs/tap.md says the monitor's "JAR backpressure" drop count comes
+  from TCP and UDP senders only, and never appears with `--tap-otlp`.
+- A connect no longer hangs at "connecting…" behind another session's
+  `ACCESS EXCLUSIVE` lock: the schema fetch skips the sizes and indexes
+  the lock covers, the connect's own catalog reads give up after a 2 s
+  `lock_timeout` (the session's own setting is restored), and the status
+  line says the schema is incomplete, names the lock and its pid, and
+  how to reload.
+- A session the server ends under a running statement
+  (`pg_terminate_backend`, a crash shutdown) shows the server's reason
+  on the connection-lost card, not "the connection to the server closed"
+  with the reason in the footer; a session lost while still connecting
+  keeps its reason too.
+- The header no longer says `Session: writable` on a standby whose
+  connect-time probe went unanswered: when a paged run's probe finds the
+  server in recovery, the session is pinned read-only there, in the
+  header and on the server, as the connect would have pinned it; nor
+  after a `:readonly on` on a standby that failed to apply.
+
+### Changed
+
+- The header and About box say the date beside the version is the
+  release date: `pgman 0.2.0 · released 2026-10-23`. At 60
+  columns the header now shows the version alone.
+
 ## [0.2.0] — 2026-10-23
 
 ### Highlights

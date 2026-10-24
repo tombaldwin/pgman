@@ -3,14 +3,14 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
+ pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │  FROM invoices                                           │
 │  WHERE status = 'open'                                   │
 │  ORDER BY due_at;                                        │
 ╰──────────────────────────────────────────────────────────╯
-╭[ ◆ result · 3/5 row(s) (filtered · / esc clears) · cols 1╮
+╭[ ◆ result · 3/5 row(s) (filtered) · / esc clears · … ◆ ]─╮
 │number      customer_id  status  currency  total          │
 │INV-004824  2104         open    GBP       768.00         │
 │INV-004827  2107         open    GBP       22140.00       │

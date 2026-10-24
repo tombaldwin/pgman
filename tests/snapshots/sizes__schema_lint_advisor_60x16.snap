@@ -3,18 +3,18 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
+ pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh ·╮  │
-│ │  SEV    CODE     object                             │  │
-│ │  HIGH   LINT101  public.subscriptions.subscriptions_│  │
-╰─│  HIGH   LINT101  public.subscriptions.subscriptions_│──╯
-╭[│  HIGH   LINT101  public.webhooks.webhooks_customer_i│──╮
-│n│  MED    ADV002   ledger                             │  │
-│I│  ADV002 · queries spill to temp files (187 GB so far│  │
+│ │  SEV    CODE     object             title           │  │
+│ │  HIGH   LINT101  public.subscript…  FK column not t…│  │
+╰─│  HIGH   LINT101  public.subscript…  FK column not t…│──╯
+╭[│  HIGH   LINT101  public.webhooks.…  FK column not t…│──╮
+│n│  MED    ADV002   ledger             queries spill t…│  │
+│I│  ADV002 · queries spill to temp files (187 GB so    │  │
+│I│  far)                                               │  │
 │I│  setting:  work_mem 4MB (this session) → 8MB (no    │  │
-│I│            restart)                                 │  │
 │I╰─────────────────────────────────────────────────────╯  │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯

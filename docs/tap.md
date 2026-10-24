@@ -185,9 +185,12 @@ Two different counts, shown in two places:
   but couldn't hand on, because pgman was behind (its queue holds
   4 096). Counted across every live transport for the session.
 - **`· N dropped`** in the monitor's title (and `N dropped (JAR
-  backpressure)` in its status): the sender's own
-  `dropped_events_total`, from its latest heartbeat — events that never
-  left the application.
+  backpressure)` in its status): TCP and UDP only (`--tap-listen`,
+  `--tap-udp`). It is the sender's own `dropped_events_total`, from its
+  latest `heartbeat` frame — events that never left the application.
+  "JAR" is that sender, the in-process library writing v1 frames. OTLP
+  carries no heartbeats, so with `--tap-otlp` alone this count never
+  appears.
 
 ## Recording and replay
 

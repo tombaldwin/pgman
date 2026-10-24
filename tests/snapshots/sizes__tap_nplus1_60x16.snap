@@ -3,12 +3,12 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
+ pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │   CALLS        SPAN  TXN / CONN          CALLER · FI│  │
-│ │       8     175.0ms  conn-7#311          InvoiceServ│  │
+│ │   CALLS        SPAN  TXN / CONN          CALLER     │  │
+│ │       8     175.0ms  conn-7#311          InvoiceSer…│  │
 ╰─│                                                     │──╯
 ╭[│                                                     │──╮
 │n│                                                     │  │

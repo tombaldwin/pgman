@@ -458,6 +458,44 @@ fn result_diff_title_names_a_primary_key() {
 }
 
 #[test]
+fn result_diff_title_keeps_the_key_at_80_columns() {
+    // A and B are labelled by their query text, which an 80-column
+    // overlay cannot hold: the key comes first so it survives, and the
+    // cut ends on `…` rather than at the border mid-word.
+    let mut a = settle_app();
+    let cols = vec!["name".to_string(), "id".to_string()];
+    let rows = vec![vec![Some("ann".to_string()), Some("1".to_string())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![1]);
+    let diff = pgman::query::row_diff::diff_rows(&rows, &rows, &key);
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: rows.clone(),
+        label: "SELECT name, id FROM ledger.accounts ORDER BY id".into(),
+        source: None,
+        origins: Vec::new(),
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned,
+        b_columns: cols,
+        b_rows: rows,
+        b_label: "SELECT name, id FROM ledger.accounts WHERE active".into(),
+        b_source: None,
+        b_origins: Vec::new(),
+        key,
+        key_is_pk: true,
+        diff,
+    });
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 80, 24));
+    let title = rendered
+        .lines()
+        .find(|l| l.contains("Result diff"))
+        .unwrap_or_else(|| panic!("no title row:\n{rendered}"));
+    assert!(title.contains("key: id (primary key)"), "{title}");
+    assert!(title.contains(" · … "), "the cut is marked: {title}");
+}
+
+#[test]
 fn saved_queries_panel_filters_live_and_shows_count() {
     let mut a = settle_app();
     for (n, b) in [
@@ -810,8 +848,44 @@ fn grid_render_shows_filtered_count_in_title() {
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
-        rendered.contains("2/3 row(s) (filtered · / esc clears)"),
-        "expected `2/3 row(s) (filtered · / esc clears)` in title; full render:\n{rendered}"
+        rendered.contains("2/3 row(s) (filtered) · / esc clears"),
+        "expected `2/3 row(s) (filtered) · / esc clears` in title; full render:\n{rendered}"
+    );
+}
+
+/// With a filter on, a partial result and five-digit counts, the
+/// result title at 80 columns is fitted to its border: whole segments
+/// dropped from the end with a `…`, never a word run into the corner.
+#[test]
+fn grid_title_with_a_filter_and_five_digit_counts_fits_80_columns() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    let names = ["alice", "bob", "carol", "dave"];
+    a.grid = Grid {
+        columns: vec!["name".into(), "id".into()],
+        rows: (0..12_000)
+            .map(|i| vec![Some(names[i % 4].to_string()), Some(i.to_string())])
+            .collect(),
+        truncated: true,
+    };
+    a.grid_view.filter = Some("a".into());
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
+    a.grid_state.select(Some(0));
+    let buf = render(&mut a, 80, 24);
+    let rendered = dump(&buf);
+    let title = rendered
+        .lines()
+        .find(|l| l.contains("result ·"))
+        .unwrap_or_else(|| panic!("no result title:\n{rendered}"));
+    assert!(
+        title.contains("result · 9000/12000 row(s) (filtered) · / esc clears"),
+        "{title}"
+    );
+    // The title ends on a whole segment and `…`, then the border.
+    let border_from = title.find(" ◆ ]").expect("decorated title");
+    assert!(
+        title[..border_from].ends_with(" · …"),
+        "the cut is marked: {title}"
     );
 }
 

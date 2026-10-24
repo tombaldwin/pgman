@@ -3,7 +3,7 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ───────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
 │ Server: ledger-staging.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com:5432  •  Database: ledger  •  User: billing                  ││                                                    PostgreSQL   help │
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-staging/ledger (direct)                                             ││                                               <E> envs  <ctrl-t> tab │
@@ -14,7 +14,7 @@ expression: dump(&buf)
 │  FROM invoices                                                                                                                                                                                       │
 │  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER BY due_at;           ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                             │
-│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
+│                             │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)                                                             │                             │
 ╰─────────────────────────────│   grid                    │   9 rows in 6 sections match 'yank'                                                                          │─────────────────────────────╯
 ╭[ ◆ result · 5 row(s) ◆ ]────│   editor                  │                                                                                                              │─────────────────────────────╮
 │number      customer_id  stat│   confirm                 │   grid                                                                                                       │                             │

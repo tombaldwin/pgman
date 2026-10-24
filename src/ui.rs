@@ -409,7 +409,7 @@ pub(crate) fn shows_replica_badge(app: &App) -> bool {
     matches!(app.conn_state, ConnState::Connected { .. }) && app.in_recovery == Some(true)
 }
 
-/// What follows "pgman" in the header: ` 0.1.0 · 2026-10-19`, or without
+/// What follows "pgman" in the header: ` 0.1.0 · released 2026-10-19`, or without
 /// the date, or nothing, whichever is the widest that leaves the rest of
 /// the header (`rest` columns) whole in `width`. The date goes first and
 /// then the version, as in ebman — a half-cut date reads worse than none.
@@ -419,7 +419,7 @@ pub(crate) fn header_build(width: usize, rest: usize) -> String {
     let full = if crate::RELEASE_DATE.is_empty() {
         version.clone()
     } else {
-        format!("{version} · {}", crate::RELEASE_DATE)
+        format!("{version} · released {}", crate::RELEASE_DATE)
     };
     // " pgman" plus the space after the build.
     let fixed = display_width(" pgman") + 1 + rest;
@@ -1400,7 +1400,8 @@ fn end_ellipsis(s: &str, width: usize) -> String {
 /// `loaded query`)? Its first word, and each `/ alt` alternative, must
 /// look like a key: at most two characters (`?`, `[`, `F2`), a slash pair
 /// of those (`J/K`), a named key, or a modifier chord — and not a bare
-/// count (`3 matches`, `1/3 match`). A key hint is
+/// count (`3 matches`, `1/3 match`) or a two-letter word (`in ~/dir`).
+/// A key hint is
 /// fitted whole or not at all — cut, it shows its label without its key.
 /// Pure.
 pub(crate) fn is_key_hint(segment: &str) -> bool {
@@ -1417,12 +1418,21 @@ pub(crate) fn is_key_hint(segment: &str) -> bool {
         "backspace",
         "shift-tab",
     ];
+    // Two-letter words that open prose, not keys: `in ~/Library/…`
+    // read as the key `in`, so the fitter would neither shrink nor drop
+    // it before it had cut everything else to `…`.
+    const WORDS: &[&str] = &[
+        "an", "as", "at", "by", "in", "is", "it", "no", "of", "on", "or", "to", "up",
+    ];
     let looks_like_key = |w: &str| {
         let lower = w.to_ascii_lowercase();
         // A count (`3 matches`, `1/3 match`) is prose, not a key.
         if w.chars().any(|c| c.is_ascii_digit())
             && w.chars().all(|c| c.is_ascii_digit() || c == '/')
         {
+            return false;
+        }
+        if WORDS.contains(&lower.as_str()) {
             return false;
         }
         w.chars().count() <= 2
@@ -2352,10 +2362,10 @@ pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
     ),
     ("tabs", "an editor and a result per tab · ] / [ switch"),
     ("saved queries", "named queries kept across sessions (Q)"),
-    ("notifications", "LISTEN / NOTIFY arrivals (F3)"),
+    ("notifications", "LISTEN / NOTIFY arrivals (:notify / F3)"),
     (
         "jdbc tap",
-        "your app's statements, live from the JDBC tap (F4)",
+        "your app's statements, live from the JDBC tap (:tap / F4)",
     ),
     ("result diff", "compare two results, A against B (D)"),
     ("schema wizard", "schema lint and config advisor (W)"),
@@ -2412,7 +2422,7 @@ pub(crate) fn help_body(
 
     push(
         Line::from(Span::styled(
-            "pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)",
+            "pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3)",
             Style::default()
                 .fg(theme.title)
                 .add_modifier(Modifier::BOLD),
@@ -2475,7 +2485,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
+        row("    :notify / F3  LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
         &mut lines,
     );
     push(row("    h / l  ← →    move column cursor"), &mut lines);
@@ -3082,7 +3092,7 @@ pub(crate) fn help_body(
 
     heading("notifications", &mut lines, &mut anchors);
     push(
-        row("    F3 / :notify  open the NOTIFY arrivals panel (works from any mode)"),
+        row("    :notify / F3  open the NOTIFY arrivals panel (works from any mode)"),
         &mut lines,
     );
     push(
@@ -3103,7 +3113,7 @@ pub(crate) fn help_body(
 
     heading("jdbc tap", &mut lines, &mut anchors);
     push(
-        row("    F4 / :tap     open the JDBC tap monitor (live stream, works from any mode)"),
+        row("    :tap / F4     open the JDBC tap monitor (live stream, works from any mode)"),
         &mut lines,
     );
     push(

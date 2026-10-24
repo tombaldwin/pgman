@@ -17,6 +17,33 @@ impl App {
         }
     }
 
+    /// A run's paging probe found the server in recovery
+    /// (`query::paging`'s `pg_is_in_recovery()`). The connect's own probe
+    /// usually said so first; when it didn't answer, the session kept a
+    /// writable profile and the header said `Session: writable` while the
+    /// status said "on a standby". Pin it as the connect would have —
+    /// the App ([`Self::note_server_role`]) and the server's session,
+    /// unless a transaction is open (its rollback would undo the `SET`;
+    /// recovery refuses writes either way).
+    pub(super) fn note_standby_seen(&mut self) {
+        let known = self.in_recovery == Some(true);
+        self.note_server_role(Some(true));
+        if known || self.tx_open {
+            return;
+        }
+        // On a standby no result cursor is held, so `db`'s barrier
+        // closes nothing.
+        let Some(db) = self.db() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let client = db.ready().await;
+            if let Err(e) = conn::set_session_read_only(&client, true).await {
+                tracing::warn!("pinning the standby's session read-only failed: {e}");
+            }
+        });
+    }
+
     /// The footer line for a statement the guard refused
     /// ([`super::blocked_by_safety_message`]), except that an escape from
     /// a session read-only by more than its profile names that session's
@@ -106,10 +133,15 @@ impl App {
                     if let Some(dead) = tunnel {
                         tokio::task::spawn_blocking(move || drop(dead));
                     }
-                    self.conn_state = ConnState::Failed(super::msg::connection_lost_reason(None));
+                    let reason = self
+                        .lost_while_connecting
+                        .take()
+                        .unwrap_or_else(|| super::msg::connection_lost_reason(None));
+                    self.conn_state = ConnState::Failed(reason);
                     return;
                 }
                 self.conn_state = ConnState::Connected { server_version };
+                self.lost_while_connecting = None;
                 // A refusal from while there was no session (`not
                 // connected · r to retry …`) is untrue now.
                 if self
@@ -143,6 +175,11 @@ impl App {
                 }
                 self.tunnel = tunnel;
                 self.apply_bootstrap_grid(grid);
+                // Connected without what a lock kept out: say what, and
+                // how to get it once the lock is gone.
+                if let Some(why) = &schema_cache.incomplete {
+                    self.last_status = Some(super::schema_incomplete_status(why));
+                }
                 self.schema_cache = schema_cache;
                 // Schema changed → editor highlight (keyed on buffer only)
                 // must be recomputed against the new cache.
@@ -197,6 +234,9 @@ impl App {
                     in_transaction: p.in_transaction,
                     standby: p.standby,
                 });
+                if self.result_paging.as_ref().is_some_and(|p| p.standby) {
+                    self.note_standby_seen();
+                }
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-
                 // UPDATE / FK nav). Single-table SELECT only; anything
@@ -294,6 +334,29 @@ impl App {
                 // A statement timeout is the same SQLSTATE without the
                 // request, and stays an error.
                 let asked = std::mem::take(&mut self.cancel_requested);
+                // A FATAL in place of the result is the server ending the
+                // session: it is the connection-lost card's reason, not a
+                // query error under it. The notice channel's close says
+                // only that the connection closed — before this or after.
+                if detail
+                    .as_ref()
+                    .is_some_and(conn::QueryErrDetail::ends_session)
+                {
+                    let reason = super::msg::connection_lost_saying(Some(&error));
+                    match self.conn_state {
+                        ConnState::Connected { .. } => {
+                            self.on_connection_lost(reason);
+                            return;
+                        }
+                        ConnState::Failed(_) => {
+                            self.conn_state = ConnState::Failed(reason);
+                            self.last_error = None;
+                            self.last_error_detail = None;
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
                 if asked && detail.as_ref().and_then(|d| d.code.as_deref()) == Some("57014") {
                     self.last_error = None;
                     self.last_error_detail = None;
@@ -467,8 +530,10 @@ impl App {
                         ));
                     }
                     Err(e) => {
-                        // The header must say what the server will do.
-                        self.read_only = !want;
+                        // The header must say what the server will do. A
+                        // standby stays pinned: recovery refuses writes
+                        // whatever this SET did.
+                        self.read_only = !want || self.replica_pin;
                         self.last_error = Some(format!(
                             "read-only {state} not applied to this session ({e}) · it applies at the next connect"
                         ));

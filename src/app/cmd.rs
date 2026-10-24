@@ -804,11 +804,13 @@ impl App {
         } else {
             format!("{} row(s)", fixture.rows.len())
         };
-        let what = format!(
-            "{what}{}",
+        // The partial-result note goes last, after the path: the
+        // footer keeps a status's last segment whole.
+        let ok = format!(
+            "{}{}",
+            wrote_status(&what, &path, std::env::var_os("HOME").as_deref()),
             crate::grid::fetched_only_note(self.grid.truncated)
         );
-        let ok = wrote_status(&what, &path, std::env::var_os("HOME").as_deref());
         self.write_export(&path, &xml, "\\fixture", ok);
     }
 }

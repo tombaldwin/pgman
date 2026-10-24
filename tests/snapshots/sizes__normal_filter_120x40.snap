@@ -3,7 +3,7 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ─────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ────────────────────────────────────────╮╭─────────────────────────────────────────╮
 │ Server: ledger-staging…:5432  •  Database: ledger  •  User: billing       ││                    PostgreSQL   results │
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-staging/ledger … ││                  <E> envs  <ctrl-t> tab │
@@ -16,7 +16,7 @@ expression: dump(&buf)
 │  ORDER BY due_at;                                                                                                    │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭[ ◆ result · 3/5 row(s) (filtered · / esc clears) ◆ ]─────────────────────────────────────────────────────────────────╮
+╭[ ◆ result · 3/5 row(s) (filtered) · / esc clears ◆ ]─────────────────────────────────────────────────────────────────╮
 │number      customer_id  status  currency  total     due_at                                                           │
 │INV-004824  2104         open    GBP       768.00    2026-10-04 09:00:00+00                                           │
 │INV-004827  2107         open    GBP       22140.00  2026-10-08 09:00:00+00                                           │

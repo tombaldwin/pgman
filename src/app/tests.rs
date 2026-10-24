@@ -2166,6 +2166,43 @@ fn dispatch_fixture_writes_parseable_dataset_to_explicit_path() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// A capture of a partial result says so, and the footer keeps the
+/// whole note at 160 columns: the note's own ` · ` made it two of the
+/// footer's segments, and the fitter cut the first mid-note.
+#[test]
+fn a_partial_fixture_status_keeps_its_whole_note_in_the_footer() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let ids: Vec<String> = (1..=1000).map(|i| i.to_string()).collect();
+    let rows: Vec<[&str; 2]> = ids.iter().map(|i| [i.as_str(), "open"]).collect();
+    let rows: Vec<&[&str]> = rows.iter().map(|r| &r[..]).collect();
+    a.grid = grid_of(&["id", "status"], &rows);
+    a.grid.truncated = true;
+    a.grid_view.source = Some(("public".into(), "invoices".into()));
+    let dir = std::env::temp_dir().join(format!(
+        "pgman-fixture-note-{}/a/directory/deep/enough/to/crowd/the/footer",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("public_invoices-fixture-20261024-101112.xml");
+    a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(status.contains(crate::grid::FETCHED_ONLY), "{status}");
+
+    a.splash_visible = false;
+    a.splash_until = None;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 30)).unwrap();
+    term.draw(|f| crate::ui::draw(f, &mut a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let footer: String = (0..buf.area.width)
+        .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+        .collect();
+    assert!(footer.contains(crate::grid::FETCHED_ONLY), "{footer}");
+    assert!(footer.contains("1000 row(s)"), "{footer}");
+    let _ = std::fs::remove_dir_all(
+        std::env::temp_dir().join(format!("pgman-fixture-note-{}", std::process::id())),
+    );
+}
+
 #[test]
 fn dispatch_fixture_errors_without_source_table() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -12477,6 +12514,16 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     });
     assert!(!a.read_only, "not applied: the session is still writable");
     assert!(a.last_error.as_deref().unwrap().contains("not applied"));
+
+    // On a standby a failed `:readonly on` changes nothing: the session
+    // is pinned, and the header must not drop to `Session: writable`.
+    a.note_server_role(Some(true));
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Err("connection closed".into()),
+    });
+    assert!(a.read_only && a.replica_pin);
 }
 
 /// `r` keeps the cursor on the database it was on when the listing moves
@@ -12804,6 +12851,17 @@ fn a_schema_reload_says_what_it_found() {
         crate::app::schema_reloaded_status(&some),
         "schema reloaded · 2 table(s) in 2 schema(s)"
     );
+    // A reload a lock kept parts out of says so, not that all is well.
+    some.incomplete = Some("public.t is locked".into());
+    assert_eq!(
+        crate::app::schema_reloaded_status(&some),
+        "schema reloaded, still incomplete · public.t is locked"
+    );
+    assert_eq!(
+        crate::app::schema_incomplete_status("public.t is locked"),
+        "connected, schema incomplete · public.t is locked · S then r reloads it"
+    );
+    some.incomplete = None;
 
     // Only a reload the operator asked for is announced; the silent
     // post-DDL refresh isn't.
@@ -13877,6 +13935,81 @@ fn app_with_open_cursor() -> App {
     a
 }
 
+/// The connect's probe didn't say the server is a standby (it failed:
+/// `in_recovery` is `None`), so a writable profile left the header at
+/// `Session: writable`; then a run's paging probe says it is one. The
+/// session is pinned read-only there, as the connect would have pinned
+/// it, and `:readonly off` gives the replica's reason. A primary's
+/// result changes nothing.
+#[test]
+fn a_standby_the_paging_probe_finds_pins_the_session_read_only() {
+    let landed = |standby: bool| {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let mut a = App::new(Theme::default(), None, Vec::new(), cfg);
+        a.read_only = false;
+        a.conn_state = ConnState::Connected {
+            server_version: "16".into(),
+        };
+        a.on_msg(AppMsg::QueryOk {
+            generation: a.generation,
+            grid: crate::grid::Grid {
+                columns: vec!["id".into()],
+                rows: id_rows(0..1000),
+                truncated: true,
+            },
+            origins: Vec::new(),
+            kind_label: "run".into(),
+            tx_open_after: false,
+            paging: Some(RunPaging {
+                sql: "SELECT id FROM t ORDER BY id".into(),
+                cursor: None,
+                in_transaction: false,
+                standby,
+            }),
+        });
+        a
+    };
+    let mut a = landed(true);
+    assert_eq!(a.in_recovery, Some(true));
+    assert!(a.read_only && a.replica_pin, "the header says read-only");
+    assert!(crate::ui::shows_replica_badge(&a));
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    for c in "readonly off".chars() {
+        a.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(a.read_only);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(super::cmd::REPLICA_READONLY_REFUSAL)
+    );
+    let mut a = landed(false);
+    assert_eq!(a.in_recovery, None);
+    assert!(!a.read_only && !a.replica_pin);
+    // `M`'s re-run probes too: a standby found there pins the same way.
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(crate::query::paging::Opened {
+            grid: crate::grid::Grid {
+                columns: vec!["id".into()],
+                rows: id_rows(0..2000),
+                truncated: true,
+            },
+            cursor: None,
+            standby: true,
+            in_transaction: false,
+            shadowed: false,
+            origins: Vec::new(),
+        })),
+    });
+    assert_eq!(a.grid.row_count(), 2000, "the re-run landed");
+    assert!(a.read_only && a.replica_pin);
+}
+
 fn page(rows: Vec<Vec<Cell>>, more: bool) -> PageOutcome {
     PageOutcome::More(crate::query::paging::Page { rows, more })
 }
@@ -14708,6 +14841,130 @@ fn a_lost_connection_leaves_connected_for_the_failure_card() {
         a.not_connected_message(),
         "not connected · r to retry · c to choose a connection"
     );
+}
+
+/// `QueryFailed` for a statement the server answered with a FATAL —
+/// `pg_terminate_backend` mid-query.
+fn fatal_query_failed(a: &App, severity: &str) -> AppMsg {
+    AppMsg::QueryFailed {
+        generation: a.generation,
+        error: "terminating connection due to administrator command".into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some("57P01".into()),
+            severity: Some(severity.into()),
+            ..Default::default()
+        }),
+    }
+}
+
+/// A running statement terminated by the server gets the FATAL back in
+/// place of its result, while the notice channel's close says only that
+/// the connection closed. Whichever lands first, the card ends up with
+/// the server's reason and the footer doesn't carry a second copy.
+#[test]
+fn a_fatal_query_failure_is_the_lost_cards_reason_whichever_lands_first() {
+    let lost = "connection lost · terminating connection due to administrator command";
+    let connected = || {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.conn_state = ConnState::Connected {
+            server_version: "16.4".into(),
+        };
+        a.query_running = true;
+        a
+    };
+    // The statement's FATAL first: that is the loss, and the close
+    // after it changes nothing.
+    let mut a = connected();
+    a.on_msg(fatal_query_failed(&a, "FATAL"));
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if r == lost),
+        "{:?}",
+        a.conn_state
+    );
+    assert_eq!(a.last_error, None);
+    assert!(!a.query_running);
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: super::msg::connection_lost_reason(None),
+    });
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if r == lost),
+        "{:?}",
+        a.conn_state
+    );
+
+    // The close first: the card is up with no reason but the close, and
+    // the statement's FATAL behind it refreshes the card.
+    let mut a = connected();
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: super::msg::connection_lost_reason(None),
+    });
+    a.on_msg(fatal_query_failed(&a, "FATAL"));
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if r == lost),
+        "{:?}",
+        a.conn_state
+    );
+    assert_eq!(a.last_error, None, "the card says it; the footer doesn't");
+
+    // An ERROR is an error: the session goes on.
+    let mut a = connected();
+    a.on_msg(fatal_query_failed(&a, "ERROR"));
+    assert!(matches!(a.conn_state, ConnState::Connected { .. }));
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("terminating connection due to administrator command")
+    );
+}
+
+#[test]
+fn a_query_error_ends_the_session_only_when_fatal_or_panic() {
+    let detail = |s: &str| crate::conn::QueryErrDetail {
+        severity: Some(s.into()),
+        ..Default::default()
+    };
+    assert!(detail("FATAL").ends_session());
+    assert!(detail("PANIC").ends_session());
+    for s in ["ERROR", "WARNING", "NOTICE"] {
+        assert!(!detail(s).ends_session(), "{s}");
+    }
+    assert!(!crate::conn::QueryErrDetail::default().ends_session());
+    assert_eq!(
+        super::msg::connection_lost_saying(Some("x")),
+        "connection lost · x"
+    );
+}
+
+/// A close that lands while the connect is still in flight is what the
+/// card says when the `Booted` behind it carries the closed client
+/// (the live half is `a_connect_whose_client_closed_says_why` in
+/// `edit_cell.rs`); a new connect forgets it.
+#[test]
+fn a_close_during_the_connect_is_kept_for_the_card() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Connecting;
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · terminating connection due to administrator command".into(),
+    });
+    assert!(
+        matches!(a.conn_state, ConnState::Connecting),
+        "nothing to drop yet"
+    );
+    assert_eq!(
+        a.lost_while_connecting.as_deref(),
+        Some("connection lost · terminating connection due to administrator command")
+    );
+    // Failed or disconnected, there is no connect for it to belong to.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Failed("x".into());
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · y".into(),
+    });
+    assert_eq!(a.lost_while_connecting, None);
 }
 
 /// Only a connected App is lost: a failed connect keeps its own error, a

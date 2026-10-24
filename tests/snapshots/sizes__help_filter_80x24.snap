@@ -3,14 +3,14 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ──────────────╮╭───────────────────────────╮
 │ Server: ledger-staging…  •  Database: ledger    ││         PostgreSQL   help │
 │ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────╮
-│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)    │
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · :notify / F3) │
 │   9 rows in 6 sections match 'yank'                                          │
 │                                                                              │
 │   grid                                                                       │

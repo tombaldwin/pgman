@@ -520,6 +520,28 @@ mod tests {
     }
 
     #[test]
+    fn f3_and_f4_are_never_shown_without_their_commands() {
+        // F-keys are not a primary binding on a Mac terminal (iTerm
+        // eats them unless configured): wherever help names F3 or F4,
+        // the `:notify` / `:tap` command that works everywhere is
+        // beside it.
+        let theme = Theme::default();
+        let (raw, _) = help_body(&theme);
+        let rows = raw
+            .iter()
+            .map(plain)
+            .chain(HELP_SECTIONS.iter().map(|(_, teaser)| teaser.to_string()));
+        for row in rows {
+            if row.contains("F3") {
+                assert!(row.contains(":notify"), "F3 alone: {row:?}");
+            }
+            if row.contains("F4") {
+                assert!(row.contains(":tap"), "F4 alone: {row:?}");
+            }
+        }
+    }
+
+    #[test]
     fn help_body_headings_are_help_sections_in_order() {
         let theme = Theme::default();
         let (raw, anchors) = help_body(&theme);

@@ -3,7 +3,7 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
-╭ pgman X.X.X · YYYY-MM-DD ────────────────────────────────────╮╭──────────────────────────────────╮
+╭ pgman X.X.X · released YYYY-MM-DD ───────────────────────────╮╭──────────────────────────────────╮
 │ Server: ledger-staging…  •  Database: ledger                 ││         PostgreSQL   schema lint │
 │ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │
@@ -23,9 +23,9 @@ expression: dump(&buf)
 │INV│  HIGH   LINT101  public.subscription_items.subscription_items_pl…  FK column not the lea…│   │
 │INV│  LINT101 · FK column not the leading column of any index                                 │   │
 │INV│  object: public.accounts.accounts_customer_id_fkey                                       │   │
-│   │  constraint `accounts_customer_id_fkey` on `public.accounts` references column(s) (cust  │   │
-│   │  omer_id) — no index leads with the first FK column, so cascade / lookup queries will s  │   │
-│   │  equential-scan                                                                          │   │
+│   │  constraint `accounts_customer_id_fkey` on `public.accounts` references column(s)        │   │
+│   │  (customer_id) — no index leads with the first FK column, so cascade / lookup queries    │   │
+│   │  will sequential-scan                                                                    │   │
 │   │  suggest: CREATE INDEX ON public.accounts (customer_id);                                 │   │
 │   │                                                                                          │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │

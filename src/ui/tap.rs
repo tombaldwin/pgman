@@ -1055,19 +1055,22 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
     let visible_h = (inner.height as usize).saturating_sub(1); // under the header
     let cursor = app.tap_nav.nplus1_cursor.min(findings.len() - 1);
     let scroll = scroll_offset(cursor, visible_h);
+    let inner_w = inner.width as usize;
+    let body_col = inner_w.saturating_sub(2 + 6 + 2 + 10 + 2 + 18 + 2);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
             "  {:>6}  {:>10}  {:<18}  {}",
-            "calls", "span", "txn / conn", "caller · fingerprint"
+            "calls",
+            "span",
+            "txn / conn",
+            nplus1_body("caller", "fingerprint", body_col)
         )
         .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )));
-    let inner_w = inner.width as usize;
-    let body_col = inner_w.saturating_sub(2 + 6 + 2 + 10 + 2 + 18 + 2);
     for (i, fnd) in findings.iter().enumerate().skip(scroll).take(visible_h) {
         let is_focus = i == cursor;
         let style = if is_focus {
@@ -1087,14 +1090,7 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
             .or_else(|| fnd.conn.clone())
             .unwrap_or_else(|| "—".into());
         let caller = fnd.last_caller.as_deref().unwrap_or("?");
-        let body = format!(
-            "{} · {}",
-            caller,
-            short_fingerprint(
-                &fnd.fingerprint,
-                body_col.saturating_sub(caller.chars().count() + 3)
-            )
-        );
+        let body = nplus1_body(caller, &fnd.fingerprint, body_col);
         let line = format!(
             "  {count:>6}  {span:>10}  {group:<18}  {body}",
             count = fnd.count,
@@ -1104,6 +1100,26 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// An N+1 row's `caller · fingerprint` cell, `width` columns at most.
+/// The caller is what to go and fix, so it comes whole first; the
+/// fingerprint takes what is left, when that is enough to read. Short
+/// of room, the caller alone, cut with `…` — the border cut it with no
+/// marker, and at 80 columns left a dangling ` · `. Pure.
+pub(crate) fn nplus1_body(caller: &str, fingerprint: &str, width: usize) -> String {
+    const SEP: &str = " · ";
+    // A fingerprint cut shorter than this says nothing.
+    const MIN_FINGERPRINT: usize = 8;
+    let rest = width.saturating_sub(display_width(caller) + display_width(SEP));
+    if !fingerprint.is_empty() && rest >= MIN_FINGERPRINT.min(display_width(fingerprint)) {
+        format!(
+            "{caller}{SEP}{}",
+            crate::grid::truncate_cell(fingerprint, rest)
+        )
+    } else {
+        crate::grid::truncate_cell(caller, width)
+    }
 }
 
 /// Collapse + truncate a SQL fingerprint for one-line render.
@@ -1122,6 +1138,31 @@ fn short_fingerprint(fp: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nplus1_body_keeps_the_caller_and_marks_every_cut() {
+        let caller = "InvoiceService.loadLines:112";
+        let fp = "select id, description, quantity from invoice_lines where invoice_id = ?";
+        // Room for both: the fingerprint takes the rest, cut with `…`.
+        let got = nplus1_body(caller, fp, 60);
+        assert!(
+            got.starts_with("InvoiceService.loadLines:112 · select"),
+            "{got}"
+        );
+        assert!(got.ends_with('…'), "{got}");
+        assert_eq!(display_width(&got), 60);
+        // The 80-column wizard's 29: no room for a fingerprint worth
+        // reading, so no dangling ` · ` either.
+        assert_eq!(nplus1_body(caller, fp, 29), caller);
+        // Narrower than the caller: cut, and marked.
+        let got = nplus1_body(caller, fp, 11);
+        assert_eq!(got, "InvoiceSer…");
+        // Everything fits: nothing cut.
+        assert_eq!(nplus1_body("A.b:1", "select 1", 40), "A.b:1 · select 1");
+        for w in 0..80 {
+            assert!(display_width(&nplus1_body(caller, fp, w)) <= w, "{w}");
+        }
+    }
 
     #[test]
     fn params_detail_split_keeps_a_short_body_on_one_line() {
