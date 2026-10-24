@@ -342,7 +342,10 @@ impl App {
                     .as_ref()
                     .is_some_and(conn::QueryErrDetail::ends_session)
                 {
-                    let reason = super::msg::connection_lost_saying(Some(&error));
+                    let reason = super::msg::connection_lost_saying(
+                        Some(&error),
+                        detail.as_ref().and_then(|d| d.hint.as_deref()),
+                    );
                     match self.conn_state {
                         ConnState::Connected { .. } => {
                             self.on_connection_lost(reason);

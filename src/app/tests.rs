@@ -14784,6 +14784,10 @@ fn the_result_diff_keys_on_a_composite_key_and_only_when_both_sides_agree() {
 
 // --- A connection lost under the App ---------------------------------------
 
+/// The `HINT` Postgres sends with a hot-standby conflict's `FATAL`.
+const RECOVERY_CONFLICT_HINT: &str =
+    "In a moment you should be able to reconnect to the database and repeat your command.";
+
 /// The server's parting FATAL is the reason; without one, the close is.
 #[test]
 fn a_lost_connection_names_the_servers_reason() {
@@ -14797,6 +14801,21 @@ fn a_lost_connection_names_the_servers_reason() {
     assert_eq!(
         super::msg::connection_lost_reason(Some(&fatal)),
         "connection lost · terminating connection due to conflict with recovery"
+    );
+    // A hot-standby conflict's FATAL says what to do: the card says it
+    // too. Its DETAIL (why) stays in the log.
+    let conflict = crate::conn::NoticeMsg {
+        detail: Some(
+            "User query might have needed to see row versions that must be removed.".into(),
+        ),
+        hint: Some(RECOVERY_CONFLICT_HINT.into()),
+        ..fatal.clone()
+    };
+    assert_eq!(
+        super::msg::connection_lost_reason(Some(&conflict)),
+        format!(
+            "connection lost · terminating connection due to conflict with recovery · {RECOVERY_CONFLICT_HINT}"
+        )
     );
     assert_eq!(
         super::msg::connection_lost_reason(None),
@@ -14931,6 +14950,20 @@ fn a_fatal_query_failure_is_the_lost_cards_reason_whichever_lands_first() {
     );
     assert_eq!(a.last_error, None, "the card says it; the footer doesn't");
 
+    // A FATAL with a hint — a hot-standby conflict's — carries it to the
+    // card.
+    let mut a = connected();
+    let mut msg = fatal_query_failed(&a, "FATAL");
+    if let AppMsg::QueryFailed { detail, .. } = &mut msg {
+        detail.as_mut().unwrap().hint = Some(RECOVERY_CONFLICT_HINT.into());
+    }
+    a.on_msg(msg);
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if *r == format!("{lost} · {RECOVERY_CONFLICT_HINT}")),
+        "{:?}",
+        a.conn_state
+    );
+
     // An ERROR is an error: the session goes on.
     let mut a = connected();
     a.on_msg(fatal_query_failed(&a, "ERROR"));
@@ -14954,8 +14987,17 @@ fn a_query_error_ends_the_session_only_when_fatal_or_panic() {
     }
     assert!(!crate::conn::QueryErrDetail::default().ends_session());
     assert_eq!(
-        super::msg::connection_lost_saying(Some("x")),
+        super::msg::connection_lost_saying(Some("x"), None),
         "connection lost · x"
+    );
+    assert_eq!(
+        super::msg::connection_lost_saying(Some("x"), Some("reconnect")),
+        "connection lost · x · reconnect"
+    );
+    assert_eq!(
+        super::msg::connection_lost_saying(Some("x"), Some(" ")),
+        "connection lost · x",
+        "a blank hint adds nothing"
     );
 }
 

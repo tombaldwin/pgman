@@ -239,20 +239,26 @@ pub enum AppMsg {
 }
 
 /// What the App says when the connection closed under it: the server's
-/// parting `FATAL`, if it sent one, else that the connection closed.
-/// Pure.
+/// parting `FATAL`, if it sent one, and its `HINT` — a hot-standby
+/// conflict's says to reconnect and repeat the command — else that the
+/// connection closed. Pure.
 pub fn connection_lost_reason(fatal: Option<&crate::conn::NoticeMsg>) -> String {
-    connection_lost_saying(fatal.map(|n| n.message.as_str()))
+    connection_lost_saying(
+        fatal.map(|n| n.message.as_str()),
+        fatal.and_then(|n| n.hint.as_deref()),
+    )
 }
 
-/// [`connection_lost_reason`] from the server's message alone — the
-/// `FATAL` a running statement got back instead of its result
+/// [`connection_lost_reason`] from the server's message and hint alone —
+/// the `FATAL` a running statement got back instead of its result
 /// (`QueryFailed`) is the same parting word, delivered to the statement
-/// rather than the notice channel. Pure.
-pub fn connection_lost_saying(message: Option<&str>) -> String {
-    match message {
-        Some(m) => format!("connection lost · {m}"),
-        None => "connection lost · the connection to the server closed".to_string(),
+/// rather than the notice channel. The `DETAIL` is left out: the card
+/// is the place for what to do, not why. Pure.
+pub fn connection_lost_saying(message: Option<&str>, hint: Option<&str>) -> String {
+    match (message, hint.map(str::trim).filter(|h| !h.is_empty())) {
+        (Some(m), Some(h)) => format!("connection lost · {m} · {h}"),
+        (Some(m), None) => format!("connection lost · {m}"),
+        (None, _) => "connection lost · the connection to the server closed".to_string(),
     }
 }
 

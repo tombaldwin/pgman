@@ -2734,3 +2734,29 @@ fn result_diff_title_drops_the_hints_then_cuts_the_labels_never_the_key() {
     let got = results::result_diff_title("key: id (primary key)", (a, 5), (b, 6), 50);
     assert_eq!(got, "Result diff — key: id (primary key) · …");
 }
+
+/// The connection-lost card with a hot-standby conflict's reason and
+/// hint, at 80x24 as the panel saw it: the hint is there whole, wrapped
+/// on words, and the log path and the `r retry` line still fit under it.
+#[test]
+fn the_lost_card_keeps_the_servers_hint_and_its_keys_at_80_columns() {
+    let mut a = settled_app(false, false);
+    a.dsn = crate::conn::Dsn::parse("postgres://app@replica-db:5432/shop").ok();
+    a.conn_state = crate::app::ConnState::Failed(
+        "connection lost · terminating connection due to conflict with recovery · \
+         In a moment you should be able to reconnect to the database and repeat your command."
+            .into(),
+    );
+    let screen = screen_text(&mut a, 80, 24);
+    let words: String = screen
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        words.contains("reconnect to the database and repeat your command."),
+        "{screen}"
+    );
+    assert!(screen.contains("r retry"), "{screen}");
+    assert!(screen.contains("logs"), "{screen}");
+}

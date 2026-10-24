@@ -52,7 +52,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   (`pg_terminate_backend`, a crash shutdown) shows the server's reason
   on the connection-lost card, not "the connection to the server closed"
   with the reason in the footer; a session lost while still connecting
-  keeps its reason too.
+  keeps its reason too. The server's hint comes with it: a hot-standby
+  conflict's says to reconnect and repeat the command.
 - The header no longer says `Session: writable` on a standby whose
   connect-time probe went unanswered: when a paged run's probe finds the
   server in recovery, the session is pinned read-only there, in the
