@@ -14721,6 +14721,130 @@ fn a_lost_connection_leaves_connected_for_the_failure_card() {
     );
 }
 
+/// `QueryFailed` for a statement the server answered with a FATAL —
+/// `pg_terminate_backend` mid-query.
+fn fatal_query_failed(a: &App, severity: &str) -> AppMsg {
+    AppMsg::QueryFailed {
+        generation: a.generation,
+        error: "terminating connection due to administrator command".into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some("57P01".into()),
+            severity: Some(severity.into()),
+            ..Default::default()
+        }),
+    }
+}
+
+/// A running statement terminated by the server gets the FATAL back in
+/// place of its result, while the notice channel's close says only that
+/// the connection closed. Whichever lands first, the card ends up with
+/// the server's reason and the footer doesn't carry a second copy.
+#[test]
+fn a_fatal_query_failure_is_the_lost_cards_reason_whichever_lands_first() {
+    let lost = "connection lost · terminating connection due to administrator command";
+    let connected = || {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.conn_state = ConnState::Connected {
+            server_version: "16.4".into(),
+        };
+        a.query_running = true;
+        a
+    };
+    // The statement's FATAL first: that is the loss, and the close
+    // after it changes nothing.
+    let mut a = connected();
+    a.on_msg(fatal_query_failed(&a, "FATAL"));
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if r == lost),
+        "{:?}",
+        a.conn_state
+    );
+    assert_eq!(a.last_error, None);
+    assert!(!a.query_running);
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: super::msg::connection_lost_reason(None),
+    });
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if r == lost),
+        "{:?}",
+        a.conn_state
+    );
+
+    // The close first: the card is up with no reason but the close, and
+    // the statement's FATAL behind it refreshes the card.
+    let mut a = connected();
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: super::msg::connection_lost_reason(None),
+    });
+    a.on_msg(fatal_query_failed(&a, "FATAL"));
+    assert!(
+        matches!(&a.conn_state, ConnState::Failed(r) if r == lost),
+        "{:?}",
+        a.conn_state
+    );
+    assert_eq!(a.last_error, None, "the card says it; the footer doesn't");
+
+    // An ERROR is an error: the session goes on.
+    let mut a = connected();
+    a.on_msg(fatal_query_failed(&a, "ERROR"));
+    assert!(matches!(a.conn_state, ConnState::Connected { .. }));
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("terminating connection due to administrator command")
+    );
+}
+
+#[test]
+fn a_query_error_ends_the_session_only_when_fatal_or_panic() {
+    let detail = |s: &str| crate::conn::QueryErrDetail {
+        severity: Some(s.into()),
+        ..Default::default()
+    };
+    assert!(detail("FATAL").ends_session());
+    assert!(detail("PANIC").ends_session());
+    for s in ["ERROR", "WARNING", "NOTICE"] {
+        assert!(!detail(s).ends_session(), "{s}");
+    }
+    assert!(!crate::conn::QueryErrDetail::default().ends_session());
+    assert_eq!(
+        super::msg::connection_lost_saying(Some("x")),
+        "connection lost · x"
+    );
+}
+
+/// A close that lands while the connect is still in flight is what the
+/// card says when the `Booted` behind it carries the closed client
+/// (the live half is `a_connect_whose_client_closed_says_why` in
+/// `edit_cell.rs`); a new connect forgets it.
+#[test]
+fn a_close_during_the_connect_is_kept_for_the_card() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Connecting;
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · terminating connection due to administrator command".into(),
+    });
+    assert!(
+        matches!(a.conn_state, ConnState::Connecting),
+        "nothing to drop yet"
+    );
+    assert_eq!(
+        a.lost_while_connecting.as_deref(),
+        Some("connection lost · terminating connection due to administrator command")
+    );
+    // Failed or disconnected, there is no connect for it to belong to.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Failed("x".into());
+    a.on_msg(AppMsg::ConnectionLost {
+        generation: a.generation,
+        reason: "connection lost · y".into(),
+    });
+    assert_eq!(a.lost_while_connecting, None);
+}
+
 /// Only a connected App is lost: a failed connect keeps its own error, a
 /// connect in flight is not touched, and an old session's close (after a
 /// reconnect bumped the generation) is dropped.

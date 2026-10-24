@@ -65,7 +65,11 @@ impl App {
     pub(super) fn on_connection_lost(&mut self, reason: String) {
         if !matches!(self.conn_state, ConnState::Connected { .. }) {
             // A connect that failed says so itself (`BootFailed`); one
-            // still in flight checks its client when it lands.
+            // still in flight checks its client when it lands, and says
+            // what this one said if it is closed.
+            if matches!(self.conn_state, ConnState::Connecting) {
+                self.lost_while_connecting = Some(reason);
+            }
             return;
         }
         tracing::warn!("{reason}");
@@ -117,6 +121,7 @@ impl App {
         self.close_cursor();
         self.abandon_session_state();
         self.conn_state = ConnState::Connecting;
+        self.lost_while_connecting = None;
         self.in_recovery = None;
         let tx = self.msg_tx.clone();
         let generation = self.generation;

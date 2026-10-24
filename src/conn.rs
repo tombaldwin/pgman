@@ -183,6 +183,16 @@ pub struct QueryErrDetail {
     pub constraint: Option<String>,
 }
 
+impl QueryErrDetail {
+    /// A `FATAL` or `PANIC` the statement got back instead of a result
+    /// (`pg_terminate_backend` is 57P01 `terminating connection due to
+    /// administrator command`): the server ended the session with it, as
+    /// [`NoticeMsg::ends_session`] says of one that arrives unasked. Pure.
+    pub fn ends_session(&self) -> bool {
+        matches!(self.severity.as_deref(), Some("FATAL" | "PANIC"))
+    }
+}
+
 impl QueryErr {
     /// Build a position-less error — for non-Postgres failures (TLS,
     /// IO, our own validation).
@@ -204,7 +214,9 @@ impl From<tokio_postgres::Error> for QueryErr {
         });
         let detail = db.map(|d| QueryErrDetail {
             code: Some(d.code().code().to_string()),
-            severity: Some(d.severity().to_string()),
+            // The English word whatever `lc_messages` says, so
+            // `ends_session` reads it.
+            severity: Some(severity_word(d.parsed_severity(), d.severity())),
             detail: d.detail().map(str::to_string),
             hint: d.hint().map(str::to_string),
             r#where: d.where_().map(str::to_string),

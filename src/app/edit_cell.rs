@@ -1186,6 +1186,109 @@ mod live {
         assert!(a.schema_cache.incomplete.is_some());
     }
 
+    /// A statement running when another session terminates its backend:
+    /// the card and the footer used to disagree — the card had the
+    /// notice channel's "the connection to the server closed", the
+    /// footer the statement's own FATAL. Now the card has the FATAL and
+    /// the footer is clear, whichever of the two lands first.
+    #[tokio::test]
+    async fn a_terminated_running_query_puts_the_servers_reason_on_the_card() {
+        let mut a = App::new(
+            Theme::default(),
+            Dsn::parse(DSN).ok(),
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.splash_visible = false;
+        a.splash_until = None;
+        a.start_connect();
+        pump(&mut a).await;
+        assert!(a.client.is_some(), "{:?}", a.conn_state);
+        let marker = name("lostrun");
+        a.editor.buffer = format!("SELECT pg_sleep(30) AS {marker}");
+        a.request_run(RunKind::Run);
+        assert!(a.query_running, "{:?}", a.last_error);
+        let killer = client().await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let killed = killer
+                .query(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+                     WHERE state = 'active' AND query LIKE $1 AND pid <> pg_backend_pid()",
+                    &[&format!("%{marker}%")],
+                )
+                .await
+                .unwrap();
+            if !killed.is_empty() {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "the run never showed");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        // The statement's FATAL and the notice channel's close, in
+        // whichever order they come.
+        pump(&mut a).await;
+        pump(&mut a).await;
+        match &a.conn_state {
+            ConnState::Failed(reason) => assert_eq!(
+                reason,
+                "connection lost · terminating connection due to administrator command"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(a.last_error, None);
+        assert!(!a.query_running);
+    }
+
+    /// A connect whose session the server ended before its `Booted`
+    /// landed: the close (with the FATAL) came while connecting and was
+    /// unheeded; the card says it, not just that the connection closed.
+    #[tokio::test]
+    async fn a_connect_whose_client_closed_says_why() {
+        let doomed = client().await;
+        let killer = client().await;
+        let pid: i32 = doomed
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        killer
+            .execute("SELECT pg_terminate_backend($1)", &[&pid])
+            .await
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !doomed.is_closed() {
+            assert!(std::time::Instant::now() < deadline, "never closed");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let mut a = App::new(
+            Theme::default(),
+            Dsn::parse(DSN).ok(),
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.conn_state = ConnState::Connecting;
+        let reason = "connection lost · terminating connection due to administrator command";
+        a.on_msg(AppMsg::ConnectionLost {
+            generation: a.generation,
+            reason: reason.into(),
+        });
+        a.on_msg(AppMsg::Booted {
+            generation: a.generation,
+            server_version: "16".into(),
+            in_recovery: Some(false),
+            grid: crate::grid::Grid::default(),
+            client: doomed,
+            schema_cache: Default::default(),
+            tunnel: None,
+        });
+        match &a.conn_state {
+            ConnState::Failed(r) => assert_eq!(r, reason),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(a.lost_while_connecting, None, "used up");
+    }
+
     /// Behind the connection-failed card the dead client is still held,
     /// but nothing offers to run on it: a write is refused before the
     /// guard's prompt, and so is a cell edit. Once `r` reconnects, the

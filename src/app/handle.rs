@@ -106,10 +106,15 @@ impl App {
                     if let Some(dead) = tunnel {
                         tokio::task::spawn_blocking(move || drop(dead));
                     }
-                    self.conn_state = ConnState::Failed(super::msg::connection_lost_reason(None));
+                    let reason = self
+                        .lost_while_connecting
+                        .take()
+                        .unwrap_or_else(|| super::msg::connection_lost_reason(None));
+                    self.conn_state = ConnState::Failed(reason);
                     return;
                 }
                 self.conn_state = ConnState::Connected { server_version };
+                self.lost_while_connecting = None;
                 // A refusal from while there was no session (`not
                 // connected · r to retry …`) is untrue now.
                 if self
@@ -299,6 +304,29 @@ impl App {
                 // A statement timeout is the same SQLSTATE without the
                 // request, and stays an error.
                 let asked = std::mem::take(&mut self.cancel_requested);
+                // A FATAL in place of the result is the server ending the
+                // session: it is the connection-lost card's reason, not a
+                // query error under it. The notice channel's close says
+                // only that the connection closed — before this or after.
+                if detail
+                    .as_ref()
+                    .is_some_and(conn::QueryErrDetail::ends_session)
+                {
+                    let reason = super::msg::connection_lost_saying(Some(&error));
+                    match self.conn_state {
+                        ConnState::Connected { .. } => {
+                            self.on_connection_lost(reason);
+                            return;
+                        }
+                        ConnState::Failed(_) => {
+                            self.conn_state = ConnState::Failed(reason);
+                            self.last_error = None;
+                            self.last_error_detail = None;
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
                 if asked && detail.as_ref().and_then(|d| d.code.as_deref()) == Some("57014") {
                     self.last_error = None;
                     self.last_error_detail = None;

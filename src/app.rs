@@ -1412,6 +1412,11 @@ pub struct App {
     /// [`DemoTapFeed`]). `None` everywhere else.
     pub demo_tap_feed: Option<DemoTapFeed>,
     pub conn_state: ConnState,
+    /// The reason a `ConnectionLost` gave while this connect was still
+    /// in flight: unheeded then (there was no session to drop), it is
+    /// what the card says if the `Booted` that lands carries the closed
+    /// client. Cleared by each connect.
+    pub(crate) lost_while_connecting: Option<String>,
     pub dsn: Option<Dsn>,
     /// Where the current DSN came from — surfaced in the failure view to
     /// help the operator answer "wait, which connection did pgman just try?"
@@ -1892,6 +1897,7 @@ impl App {
             demo: false,
             demo_tap_feed: None,
             conn_state: ConnState::Disconnected,
+            lost_while_connecting: None,
             dsn,
             dsn_origin: None,
             grid: Grid::default(),
