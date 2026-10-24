@@ -63,7 +63,7 @@ impl Hint {
 ///
 /// The start card's line about the footer's tap badges, for `nplus1`
 /// repeated-query findings, in the longest wording that fits `width`
-/// columns — whole wordings, never one cut mid-phrase, so the `F4` at
+/// columns — whole wordings, never one cut mid-phrase, so the `:tap` at
 /// the end always survives. Pure.
 pub(crate) fn tap_badges_line(nplus1: usize, width: usize) -> String {
     let n = nplus1;
@@ -137,7 +137,7 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     let new_tab = Hint::new("ctrl-t", "new tab");
 
     // F8's description is long; shorten it rather than truncate it if
-    // it (plus, in two-column mode, F4's cell and the gap) wouldn't
+    // it (plus, in two-column mode, the tap's cell and the gap) wouldn't
     // fit at the current width.
     let f8_desc = pick_f8_desc(two_col, width);
     let f8 = Hint::new(F8_KEY, f8_desc);
