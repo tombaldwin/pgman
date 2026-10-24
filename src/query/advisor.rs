@@ -276,11 +276,11 @@ pub struct Context {
 
 pub const CONTEXT_SQL: &str = concat!(
     tag!(),
-    "SELECT current_setting('server_version_num')::int, \
-     current_setting('block_size')::int, \
-     current_setting('rds.extensions', true) IS NOT NULL, \
-     to_regproc('aurora_version') IS NOT NULL, \
-     pg_is_in_recovery(), \
+    "SELECT pg_catalog.current_setting('server_version_num')::int, \
+     pg_catalog.current_setting('block_size')::int, \
+     pg_catalog.current_setting('rds.extensions', true) IS NOT NULL, \
+     pg_catalog.to_regproc('aurora_version') IS NOT NULL, \
+     pg_catalog.pg_is_in_recovery(), \
      pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER'), \
      EXTRACT(EPOCH FROM clock_timestamp() - pg_postmaster_start_time())::float8, \
      date_trunc('second', pg_postmaster_start_time())::text, \

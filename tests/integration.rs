@@ -6897,6 +6897,109 @@ async fn the_paging_probe_ignores_a_schema_ahead_of_pg_catalog() {
     assert!(opened.cursor.is_some(), "a plain SELECT still pages");
 }
 
+/// A schema ahead of `pg_catalog` on the path — here the database's
+/// default, so the connect's own session gets it — with a
+/// `pg_is_in_recovery()` of its own that says yes. The connect's probe
+/// pins a standby read-only, so an unqualified probe made a primary
+/// read-only and called it a read replica; the other recovery probes
+/// (MCP's replica refusal and checks, the dashboard's, the advisor's)
+/// are asked on the same kind of session.
+#[test]
+fn the_recovery_probes_ignore_a_schema_ahead_of_pg_catalog() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = it_name("recpath");
+        let admin = raw("pgman_test").await;
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+            format!("ALTER DATABASE {db} SET search_path = shadow, public, pg_catalog"),
+        ] {
+            admin.batch_execute(&sql).await.unwrap();
+        }
+        let owner = raw(&db).await;
+        owner
+            .batch_execute(
+                "CREATE SCHEMA shadow; \
+                 CREATE FUNCTION shadow.pg_is_in_recovery() RETURNS boolean \
+                 LANGUAGE sql AS 'SELECT true'",
+            )
+            .await
+            .unwrap();
+        let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+        let shadowed: bool = raw(&db)
+            .await
+            .query_one("SELECT pg_is_in_recovery()", &[])
+            .await
+            .unwrap()
+            .get(0);
+
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        let booted = pgman::conn::connect_and_bootstrap(
+            pgman::conn::Dsn::parse(&dsn).unwrap(),
+            false,
+            5_000,
+            pgman::conn::BOOTSTRAP_SQL.to_string(),
+            notice_tx,
+            notification_tx,
+        )
+        .await
+        .expect("connect");
+        let read_only: String = booted
+            .client
+            .query_one("SHOW default_transaction_read_only", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let client = &booted.client;
+        let apply_says = pgman::query::apply::in_recovery(client).await;
+        let is_replica: bool = client
+            .query_one(pgman::query::preflight::IS_REPLICA_SQL, &[])
+            .await
+            .unwrap()
+            .get("is_replica");
+        let lag_says: bool = client
+            .query_one(pgman::query::preflight::REPLICA_LAG_SQL, &[])
+            .await
+            .unwrap()
+            .get("in_recovery");
+        let status_says: bool = client
+            .query_one(pgman::query::probe::STATUS_SQL, &[])
+            .await
+            .unwrap()
+            .get("in_recovery");
+        let advisor_says: bool = client
+            .query_one(pgman::query::advisor::CONTEXT_SQL, &[])
+            .await
+            .unwrap()
+            .get(4);
+        let booted_in_recovery = booted.in_recovery;
+        drop(booted);
+        drop(owner);
+        admin
+            .batch_execute(&format!("DROP DATABASE {db} WITH (FORCE)"))
+            .await
+            .unwrap();
+
+        assert!(shadowed, "the fixture shadows pg_is_in_recovery");
+        // Every probe that was fooled, not just the first.
+        let fooled: Vec<&str> = [
+            (booted_in_recovery != Some(false), "the connect's probe"),
+            (read_only != "off", "the connect's read-only pin"),
+            (apply_says != Ok(false), "apply_patches' replica refusal"),
+            (is_replica, "preflight::IS_REPLICA_SQL"),
+            (lag_says, "preflight::REPLICA_LAG_SQL"),
+            (status_says, "probe::STATUS_SQL"),
+            (advisor_says, "advisor::CONTEXT_SQL"),
+        ]
+        .into_iter()
+        .filter_map(|(bad, what)| bad.then_some(what))
+        .collect();
+        assert!(fooled.is_empty(), "the shadow answered: {fooled:?}");
+    });
+}
+
 /// A session the server ends under pgman — `pg_terminate_backend` from
 /// another connection here; a recovery conflict or an idle timeout in the
 /// field — hands its parting FATAL to the notice channel, which then

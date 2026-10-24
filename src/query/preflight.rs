@@ -111,11 +111,11 @@ ORDER BY a.xact_start NULLS LAST"
 
 /// Whether the server is a standby. A replica's sessions and locks are
 /// the replica's own, not the primary's — the caller says so.
-pub const IS_REPLICA_SQL: &str = "SELECT pg_is_in_recovery() AS is_replica";
+pub const IS_REPLICA_SQL: &str = "SELECT pg_catalog.pg_is_in_recovery() AS is_replica";
 
 /// Whether the server is a standby, and its lag (`lag_secs_sql!`).
 pub const REPLICA_LAG_SQL: &str = concat!(
-    "SELECT pg_is_in_recovery() AS in_recovery, ",
+    "SELECT pg_catalog.pg_is_in_recovery() AS in_recovery, ",
     super::probe::lag_secs_sql!(),
     " AS lag_secs"
 );

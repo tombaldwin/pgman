@@ -421,7 +421,7 @@ fn read_only_refusal_hint(
             },
             Some(
                 "pgman's profile for this database is writable · SHOW default_transaction_read_only, \
-                 SELECT pg_is_in_recovery(), and the role's and database's settings \
+                 SELECT pg_catalog.pg_is_in_recovery(), and the role's and database's settings \
                  (ALTER ROLE / ALTER DATABASE … SET) say where it comes from"
                     .to_string(),
             ),
@@ -1183,7 +1183,7 @@ pub async fn connect_and_bootstrap(
     // high-latency / tunnelled link.
     let (version_res, grid_res, schema_cache) = tokio::join!(
         client.query_one(
-            "SELECT current_setting('server_version'), pg_is_in_recovery()",
+            "SELECT pg_catalog.current_setting('server_version'), pg_catalog.pg_is_in_recovery()",
             &[]
         ),
         run_query(&client, &bootstrap_sql),
