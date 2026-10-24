@@ -175,23 +175,14 @@ pub fn incomplete_reason(locked: &[LockedRelation], timed_out: &[&str]) -> Optio
             0 => String::new(),
             n => format!(" (and {n} more)"),
         };
-        parts.push(if first.granted {
-            format!(
-                "{rel}{more} is locked ACCESS EXCLUSIVE by pid {}: sizes and indexes under the lock are left out",
-                first.pid
-            )
-        } else {
-            format!(
-                "pid {} waits for an ACCESS EXCLUSIVE lock on {rel}{more}: sizes and indexes under it are left out",
-                first.pid
-            )
-        });
+        let how = if first.granted { "held" } else { "awaited" };
+        parts.push(format!(
+            "ACCESS EXCLUSIVE lock on {rel}{more} {how} by pid {}: no size or indexes",
+            first.pid
+        ));
     }
     if !timed_out.is_empty() {
-        parts.push(format!(
-            "{} waited past lock_timeout behind another session's lock and are missing",
-            timed_out.join(", ")
-        ));
+        parts.push(format!("{} gave up at lock_timeout", timed_out.join(", ")));
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
@@ -817,19 +808,13 @@ mod tests {
     fn incomplete_reason_names_the_lock_its_holder_and_what_is_missing() {
         assert_eq!(
             incomplete_reason(&[locked("orders", 4242, true)], &[]).as_deref(),
-            Some(
-                "public.orders is locked ACCESS EXCLUSIVE by pid 4242: \
-                 sizes and indexes under the lock are left out"
-            )
+            Some("ACCESS EXCLUSIVE lock on public.orders held by pid 4242: no size or indexes")
         );
         // A request still waiting blocks readers just the same; the
         // message says it is waiting, not that it holds the lock.
         assert_eq!(
             incomplete_reason(&[locked("orders", 7, false)], &[]).as_deref(),
-            Some(
-                "pid 7 waits for an ACCESS EXCLUSIVE lock on public.orders: \
-                 sizes and indexes under it are left out"
-            )
+            Some("ACCESS EXCLUSIVE lock on public.orders awaited by pid 7: no size or indexes")
         );
     }
 
@@ -846,13 +831,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             why,
-            "public.a (and 2 more) is locked ACCESS EXCLUSIVE by pid 1: sizes and indexes \
-             under the lock are left out · partitions, indexes waited past lock_timeout \
-             behind another session's lock and are missing"
+            "ACCESS EXCLUSIVE lock on public.a (and 2 more) held by pid 1: no size or indexes \
+             · partitions, indexes gave up at lock_timeout"
         );
         assert_eq!(
             incomplete_reason(&[], &["columns"]).as_deref(),
-            Some("columns waited past lock_timeout behind another session's lock and are missing")
+            Some("columns gave up at lock_timeout")
         );
     }
 

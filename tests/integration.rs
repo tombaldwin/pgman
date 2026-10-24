@@ -3039,8 +3039,8 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
         // and be the one named; then ours is among the "more".
         assert!(
             why.contains(&format!(
-                "public.{t} is locked ACCESS EXCLUSIVE by pid {holder_pid}"
-            )) || why.contains(" more) is locked ACCESS EXCLUSIVE"),
+                "ACCESS EXCLUSIVE lock on public.{t} held by pid {holder_pid}"
+            )) || why.contains(" more) held by pid "),
             "{why}"
         );
         assert!(cache.columns_by_table.contains_key(&key), "columns read");
@@ -3077,7 +3077,7 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
             .as_deref()
             .expect("says it is incomplete");
         assert!(
-            why.contains("partitions") && why.contains("waited past lock_timeout"),
+            why.contains("partitions") && why.contains("gave up at lock_timeout"),
             "{why}"
         );
         assert!(took < std::time::Duration::from_secs(10), "{took:?}");
