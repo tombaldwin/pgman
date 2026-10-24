@@ -130,9 +130,19 @@ buckets were folded in once their initial passes shipped).
 
 ### From the v0.2.0 release panel (2026-10-23) — LOWs left for later
 - **Paging misses functions it can't see**: a function called inside a
-  view, through `t.func` attribute notation, or a user overload of a
-  built-in name called unqualified (`public.lower(mytype)`) still pages.
-  An xid check after the first FETCH would catch writes (not `nextval`).
+  view, through `t.func` column notation, a user operator, a cast to a
+  user type, or an RLS policy's function still pages. (A schema's own
+  function by a listed built-in's name is caught by the probe.) An xid
+  check after the first FETCH would catch writes (not `nextval`).
+- **Lost during a running query, card and footer disagree**: the card
+  says `the connection to the server closed` while the footer has the
+  query's `terminating connection due to administrator command`. Let a
+  57P01/57P02 `QueryFailed` behind the card refresh its reason; the
+  late-Booted closed-client path drops the forwarder's FATAL too.
+- **Untested by mutation**: the driver's use of `severity_word` (needs a
+  server with a non-English `lc_messages`); the session read-only passed
+  at `run_generated_select` and the cell edit (pgman's own SQL, which
+  can't carry the escape).
 - **The header says `Session: writable` on a standby** in the paging
   view's status; read the pinned read-only state there too.
 - **The cell-edit confirm shows a stale column name** (`SET b`) before
