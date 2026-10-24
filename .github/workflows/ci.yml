@@ -55,6 +55,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: docker compose -f docker-compose.test.yml up -d --wait
       - run: cargo test --features integration --test integration
+      # The library's own DB-backed tests (`cfg(all(test, feature =
+      # "integration"))` — a real App against the compose database, as in
+      # src/app/edit_cell.rs): `--test integration` alone never runs them.
+      - run: cargo test --locked --features integration --lib
 
   # Coverage report via cargo-llvm-cov. Posts the summary to the run
   # log; the lcov artifact is uploadable to Codecov or similar.
