@@ -7129,6 +7129,8 @@ fn the_recovery_probes_ignore_a_schema_ahead_of_pg_catalog() {
             .batch_execute(
                 "CREATE SCHEMA shadow; \
                  CREATE FUNCTION shadow.pg_is_in_recovery() RETURNS boolean \
+                 LANGUAGE sql AS 'SELECT true'; \
+                 CREATE FUNCTION shadow.pg_terminate_backend(integer) RETURNS boolean \
                  LANGUAGE sql AS 'SELECT true'",
             )
             .await
@@ -7181,6 +7183,25 @@ fn the_recovery_probes_ignore_a_schema_ahead_of_pg_catalog() {
             .await
             .unwrap()
             .get(4);
+        // The sessions panel's terminate: the shadow says `true` and
+        // ends nothing.
+        let victim = raw(&db).await;
+        let victim_pid: i32 = victim
+            .query_one("SELECT pg_catalog.pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        pgman::conn::terminate_backend(client, victim_pid)
+            .await
+            .unwrap();
+        let mut terminated = false;
+        for _ in 0..50 {
+            if victim.batch_execute("SELECT 1").await.is_err() {
+                terminated = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         let booted_in_recovery = booted.in_recovery;
         drop(booted);
         drop(owner);
@@ -7199,6 +7220,7 @@ fn the_recovery_probes_ignore_a_schema_ahead_of_pg_catalog() {
             (lag_says, "preflight::REPLICA_LAG_SQL"),
             (status_says, "probe::STATUS_SQL"),
             (advisor_says, "advisor::CONTEXT_SQL"),
+            (!terminated, "conn::terminate_backend"),
         ]
         .into_iter()
         .filter_map(|(bad, what)| bad.then_some(what))

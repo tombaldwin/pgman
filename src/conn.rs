@@ -1155,6 +1155,10 @@ pub enum LockBound {
 /// outside one and waits longer than [`BOOTSTRAP_LOCK_TIMEOUT`] (or
 /// forever). `OFFSET 0` keeps the old value read before the `set_config`
 /// runs; `CASE` runs that only when the bound applies.
+///
+/// The idle test holds only because this goes as its own simple query:
+/// sent in one string after a `BEGIN`, it would share that statement's
+/// `statement_timestamp` and read as idle inside the transaction.
 fn lock_bound_sql() -> String {
     format!(
         "SELECT old.idle, old.v, old.src, \
@@ -1988,7 +1992,7 @@ pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Gri
 /// the query runs here).
 pub async fn terminate_backend(client: &tokio_postgres::Client, pid: i32) -> Result<(), String> {
     client
-        .query_opt("SELECT pg_terminate_backend($1)", &[&pid])
+        .query_opt("SELECT pg_catalog.pg_terminate_backend($1)", &[&pid])
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())

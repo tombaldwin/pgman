@@ -390,7 +390,7 @@ pub async fn apply_outside(
     // Restored whatever happened: the next patch runs on this session.
     let restored = client
         .execute(
-            "SELECT set_config('statement_timeout', $1, false)",
+            "SELECT pg_catalog.set_config('statement_timeout', $1, false)",
             &[&saved],
         )
         .await;
@@ -529,7 +529,7 @@ fn quoted(name: &str) -> String {
 pub async fn other_sessions(client: &tokio_postgres::Client, db: &str) -> Result<i64, String> {
     client
         .query_one(
-            "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+            "SELECT pg_catalog.count(*) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_catalog.pg_backend_pid()",
             &[&db],
         )
         .await
