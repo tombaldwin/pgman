@@ -13,24 +13,24 @@
 class Pgman < Formula
   desc "k9s-style Postgres TUI for Java/AWS shops"
   homepage "https://github.com/tombaldwin/pgman"
-  version "0.2.0"
+  version "0.2.1"
   license "MIT OR Apache-2.0"
 
   if OS.mac?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "47bade883e7575d73f78d02e7db1708619c880c426d6eba81243f2861e379164"
+      sha256 "794ed75e9fb99e412a628c3124c66a3f037fc576a0baa0018eb096cc118c0fc7"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "232f5f52e8b1f0d25d478eb8c57579d96752d4a2f2d754ef1633a3b6390cd8e7"
+      sha256 "d91108e7ce4df57ae0919bfe7c91960114539e394ad7a1b177645f319f8d1c37"
     end
   elsif OS.linux?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "3ed84732b458080ba654a2531d92765ddb827236bb730db74f35d6c15095c03f"
+      sha256 "936beea68546ff27036d36ebc8e27715a9e2106accd83721acb9c973769a4ee0"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "0920444cf26bd506549ae85bea39b3c8889da130f468dfb56894f05b0582ad86"
+      sha256 "b266088f08315610f59ec4eaa21c2fe3d6b1d6996b740d5734800a951bda6095"
     end
   end
 
