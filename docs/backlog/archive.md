@@ -2150,3 +2150,14 @@ Post-release, each an item in BACKLOG.md → "After v0.1.0":
 - Require CI checks on `main`. Branch protection has none today.
 - Pin GitHub Actions to commit SHAs.
 - The two TLS backends in the build (aws-lc-rs and ring): settle on one.
+
+### 2026-10-25 v0.2.1 released
+
+Panel (four reviewers, GO with notes) → `panel-db` and `panel-ui` fix
+branches merged on main → re-review found two MEDs (a pager `Hold` that
+did not wait for earlier `Db` work still running, so a reload's
+`lock_timeout` bound could land in the operator's transaction; a reload
+inside an open transaction that could abort it) plus `pg_catalog`
+qualification of `apply_patches`' restore and the sessions terminate →
+fixed with CAUGHT lines → re-check GO. Tagged on ca9f096; published
+2026-10-25; tap 42d1d7e.

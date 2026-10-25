@@ -1,4 +1,4 @@
-# Plan — after v0.2.0
+# Plan — after v0.2.1
 
 The rolling window of active work, in the shape ebman uses. `BACKLOG.md`
 is the reservoir; this file is only *what to do next*. An item lives in
@@ -47,46 +47,43 @@ guards, DBUnit fixtures, the schema-lint wizard. The risk is not the
 wedge; it is that a first-time user hits a rough edge in the first
 minute and never reaches it.
 
-## Where we are (2026-10-24)
+## Where we are (2026-10-25)
 
-**v0.2.0 is released**: GitHub release (Latest), crates.io, and the
-Homebrew tap (`tombaldwin/homebrew-tap`), with the in-repo formula to
-match (PR #26). v0.1.0 went out on 2026-10-22. The release flow is the
-one in `docs/development.md`: CHANGELOG heading, tag on a green merge
-SHA, draft from `release.yml`, Tom publishes, then the formula.
+**v0.2.1 is released** (2026-10-25): GitHub release (Latest), crates.io,
+and the Homebrew tap, with the in-repo formula to match. v0.2.0 and
+v0.1.0 went out on 2026-10-24 and 2026-10-22. The release flow is the
+one in `docs/development.md`: one bump commit (Cargo.toml, Cargo.lock,
+CHANGELOG heading and links), tag on a green SHA, draft from
+`release.yml`, publish on Tom's go, then the formula.
 
-The phases, panels and release-day checklist this file carried up to
-v0.2.0 are in `docs/backlog/archive.md` → Release plan history.
+v0.2.1 went: a four-reviewer panel, two fix branches merged on main, a
+re-review of the fixes (two MEDs: the reload's lock bound racing
+earlier work, a reload aborting the operator's transaction), fixed, and
+a re-check GO. The phases and panels up to v0.2.0 are in
+`docs/backlog/archive.md` → Release plan history.
 
-## Window — v0.2.1
+## Window — after v0.2.1
 
-Tom, 2026-10-24: "1, 2, 3, then probably 4 but needs looking at first."
+### 1. Waiting on Tom
 
-### 1–3. Done on `housekeeping-0.2.1` (2026-10-24)
+- **pgman-tap JAR**: go or not yet; `io.poly` groupId; loopback-only
+  default with `pgman.tap.allow-remote`. Wire-compatible with 0.2.x (78
+  tests, 9/9 golden events) but no publishing setup (Central account,
+  namespace DNS record, GPG key, repo, secrets).
+- **The site's changelog** stops at v0.1.0: entries for v0.2.0 and
+  v0.2.1 need Tom's OK on wording, then `npm run fallbacks`.
+- **Required CI checks on main**: the branch-protection call needs Tom
+  (the payload is drafted).
 
-Housekeeping, the nine first-impressions items and the three panel
-correctness items, each in its own commit with a CAUGHT per guard;
-detail in CHANGELOG `[Unreleased]` and the archive. Follow-ups are in
-BACKLOG.md → From the v0.2.1 polish, and the panel section.
+### 2. Next from BACKLOG.md
 
-### 4. Look before deciding · review
-
-Looked at 2026-10-24 (read-only); findings went to Tom, who decides.
-The JAR is wire-compatible with 0.2.0 (78 tests, 9/9 golden events)
-but has no publishing setup; the site shows v0.2.0 but its changelog
-stops at v0.1.0.
-
-- **pgman-tap JAR**: built locally at `~/git/pgman-tap`, unpublished
-  and off the website. What would publishing take (Maven Central
-  coordinates, signing, the docs that name it), and is it ready?
-- **The poly.io pgman page** (site lane `aa7770e1`) awaits Tom's
-  review; check what it says against 0.2.0.
-
-Then cut v0.2.1 the same way as v0.2.0, panel first.
+The v0.2.1 polish follow-ups (BACKLOG.md → From the v0.2.1 polish):
+the scratch-safe `demo.tape` and a fresh `demo.gif`, the narrow tap
+views, the FATAL paths that miss the connection-lost card.
 
 ## Deferred
 
-- Publishing the `pgman-tap` JVM library: see Window step 3.
+- Publishing the `pgman-tap` JVM library: see Window step 1.
 - Mutation testing (`mutants.yml` / `scripts/sweep.sh`).
 - `unwrap_used` / `expect_used` deny lints.
 - `cargo-semver-checks`: meaningful now that 0.1.0 and 0.2.0 are on
