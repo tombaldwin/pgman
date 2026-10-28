@@ -8200,3 +8200,310 @@ async fn a_cell_edit_on_a_read_only_session_is_refused_by_the_server() {
     assert_eq!(open_tx.as_deref(), Some("t"));
     assert_eq!(after.as_deref(), Some("ann"));
 }
+
+/// A scratch home whose `staging` environment is the compose primary
+/// and its standby, as connections.toml entries with the password in
+/// `$IT_PW`, and an empty directory for dumps under it.
+#[cfg(unix)]
+fn dump_home(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let home = scratch_home(name, WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        "[[connections]]\nname = \"local-primary\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\nrole = \"primary\"\n\
+         [[connections]]\nname = \"local-replica\"\nurl = \"postgres://pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\nrole = \"replica\"\n\
+         [[connections]]\nname = \"limited\"\nurl = \"postgres://pgman_lim@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_LIM_PW\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"staging\"\nsource = { kind = \"static\", connections = [\"local-primary\", \"local-replica\"] }\n",
+    )
+    .unwrap();
+    let out = home.join("dumps");
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    (home, out)
+}
+
+/// `pgman <args>` from `cwd` with `home`, the password in `$IT_PW`, and
+/// misleading libpq variables pgman must not pass on.
+#[cfg(unix)]
+fn pgman_in(home: &std::path::Path, cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
+    pgman_in_env(home, cwd, &[], args)
+}
+
+/// [`pgman_in`] with more environment variables.
+#[cfg(unix)]
+fn pgman_in_env(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    vars: &[(&str, &str)],
+    args: &[&str],
+) -> std::process::Output {
+    pgman()
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("IT_PW", "pgman_test")
+        .env("IT_LIM_PW", "pgman_lim")
+        .env("PGPASSWORD", "not-the-password")
+        .env("PGHOST", "nowhere.invalid")
+        .env("PGDATABASE", "nope")
+        .envs(vars.iter().copied())
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("spawn pgman")
+}
+
+fn have_pg_dump() -> bool {
+    pgman::pgtool::find_tool("pg_dump", None).is_ok()
+}
+
+/// A dump of an environment comes from its replica, says so, is private
+/// to its owner, and gets a `-latest` link; pg_restore reads it.
+#[cfg(unix)]
+#[test]
+fn a_dump_comes_from_the_replica_and_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = dump_home("dump-replica");
+    let o = pgman_in(&home, &out, &["dump", "staging"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(o.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("on local-replica (replica of local-primary)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("(standby)"), "{stderr}");
+    let files: Vec<String> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    let dump = files
+        .iter()
+        .find(|f| f.starts_with("staging-pgman_test-2") && f.ends_with(".dump"))
+        .unwrap_or_else(|| panic!("{files:?}"));
+    assert_eq!(
+        files.len(),
+        2,
+        "the dump and its link, no partial: {files:?}"
+    );
+    let link = out.join("staging-pgman_test-latest.dump");
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        std::path::PathBuf::from(dump)
+    );
+    let mode = std::fs::metadata(out.join(dump))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600);
+    let tool = pgman::pgtool::find_tool("pg_restore", None).unwrap();
+    let list = Command::new(tool).arg("-l").arg(&link).output().unwrap();
+    assert!(list.status.success());
+    assert!(String::from_utf8_lossy(&list.stdout).contains("dbname: pgman_test"));
+
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "dump",
+            "staging",
+            "--primary",
+            "p.sql",
+            "--format",
+            "plain",
+            "--",
+            "--schema-only",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{stderr}");
+    assert!(stderr.contains("on local-primary (primary)"), "{stderr}");
+    let sql = std::fs::read_to_string(out.join("p.sql")).unwrap();
+    assert!(
+        sql.contains("PostgreSQL database dump") && !sql.contains("COPY "),
+        "schema only"
+    );
+}
+
+/// A dump that fails leaves the file it would have replaced as it was,
+/// and nothing of its own; a permission failure names the user.
+#[cfg(unix)]
+#[test]
+fn a_failed_dump_never_replaces_the_file() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = dump_home("dump-fail");
+    let t = it_name("dump_secret");
+    for sql in [
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
+         CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$"
+            .to_string(),
+        format!("CREATE TABLE IF NOT EXISTS {t} (id int)"),
+        format!("REVOKE ALL ON {t} FROM PUBLIC"),
+    ] {
+        let o = batch_with_home(&home, &["--yes", "--sql", &sql]);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    std::fs::write(out.join("good.dump"), "the good one").unwrap();
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "dump",
+            "limited",
+            "good.dump",
+            "--",
+            &format!("--table={t}"),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "{stderr}");
+    assert!(stderr.contains("permission denied"), "{stderr}");
+    assert!(stderr.contains("(pgman_lim)"), "{stderr}");
+    assert!(stderr.contains("good.dump is as it was"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(out.join("good.dump")).unwrap(),
+        "the good one"
+    );
+    assert_eq!(
+        std::fs::read_dir(&out).unwrap().count(),
+        1,
+        "no partial left"
+    );
+    let _ = batch_with_home(&home, &["--yes", "--sql", &format!("DROP TABLE {t}")]);
+}
+
+/// A fake `pg_dump` in a directory for `--pg-bin`: `--version` prints
+/// `version`; a dump records its arguments and the libpq variables it
+/// was given, then runs `then` (shell).
+#[cfg(unix)]
+fn fake_pg_dump(home: &std::path::Path, version: &str, then: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = home.join("fake-pg-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = bin.join("pg_dump");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'pg_dump (PostgreSQL) {version}'; exit 0; fi\n\
+             printf '%s\\n' \"$@\" > '{home}/argv'\nenv | grep '^PG' > '{home}/pgenv'\n{then}\n",
+            home = home.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+/// The password reaches pg_dump only in its environment, the operator's
+/// own libpq variables don't, and its command line carries neither.
+#[cfg(unix)]
+#[test]
+fn the_password_goes_only_into_pg_dumps_environment() {
+    let (home, out) = dump_home("dump-argv");
+    let o = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_dumper') THEN \
+             CREATE ROLE pgman_dumper LOGIN PASSWORD 'Dumper-S3cret-pw'; END IF; END $$",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let mut conns = std::fs::read_to_string(home.join(".config/pgman/connections.toml")).unwrap();
+    conns.push_str(
+        "[[connections]]\nname = \"dumper\"\nurl = \"postgres://pgman_dumper@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_DUMPER_PW\"\n",
+    );
+    std::fs::write(home.join(".config/pgman/connections.toml"), conns).unwrap();
+    let bin = fake_pg_dump(
+        &home,
+        "18.4",
+        "for a; do case $a in --file=*) echo dumped > \"${a#--file=}\";; esac; done",
+    );
+    let o = pgman_in_env(
+        &home,
+        &out,
+        &[("IT_DUMPER_PW", "Dumper-S3cret-pw")],
+        &[
+            "dump",
+            "dumper",
+            "x.dump",
+            "--pg-bin",
+            bin.to_str().unwrap(),
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let argv = std::fs::read_to_string(home.join("argv")).unwrap();
+    let pgenv = std::fs::read_to_string(home.join("pgenv")).unwrap();
+    assert!(!argv.contains("Dumper-S3cret-pw"), "{argv}");
+    assert!(argv.contains("host='127.0.0.1' port='55432'"), "{argv}");
+    assert!(argv.contains("user='pgman_dumper'"), "{argv}");
+    assert!(argv.contains("--no-password"), "{argv}");
+    assert_eq!(pgenv.trim(), "PGPASSWORD=Dumper-S3cret-pw", "{pgenv}");
+    assert_eq!(
+        std::fs::read_to_string(out.join("x.dump")).unwrap().trim(),
+        "dumped"
+    );
+}
+
+/// An older pg_dump than the server is refused before it runs.
+#[cfg(unix)]
+#[test]
+fn an_older_pg_dump_is_refused_before_it_runs() {
+    let (home, out) = dump_home("dump-old");
+    let bin = fake_pg_dump(&home, "15.4", "exit 0");
+    let _ = std::fs::remove_file(home.join("argv"));
+    let o = pgman_in(
+        &home,
+        &out,
+        &["dump", "staging", "--pg-bin", bin.to_str().unwrap()],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains("your pg_dump is version 15, older than the server's 16"),
+        "{stderr}"
+    );
+    assert!(!home.join("argv").exists(), "pg_dump never ran a dump");
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+}
+
+/// A replica cancelling the dump is named as that, with what to do.
+#[cfg(unix)]
+#[test]
+fn a_recovery_conflict_is_explained() {
+    let (home, out) = dump_home("dump-conflict");
+    let bin = fake_pg_dump(
+        &home,
+        "18.4",
+        "echo 'pg_dump: error: Dumping the contents of table \"events\" failed: PQgetResult() failed.' >&2\n\
+         echo 'pg_dump: detail: Error message from server: ERROR:  canceling statement due to conflict with recovery' >&2\nexit 1",
+    );
+    let o = pgman_in(
+        &home,
+        &out,
+        &["dump", "staging", "--pg-bin", bin.to_str().unwrap()],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains("the replica cancelled the dump"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("--primary"), "{stderr}");
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0, "nothing left");
+}

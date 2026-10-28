@@ -41,6 +41,7 @@ pub mod reconstruct;
 pub mod row_diff;
 pub mod schema;
 pub mod select_list;
+pub mod server;
 pub mod sessions;
 pub mod slow_queries;
 pub mod subst;

@@ -114,7 +114,7 @@ struct Cli {
 }
 
 /// The words that start a sub-command rather than name a DSN.
-const SUBCOMMANDS: &[&str] = &["query", "env", "mcp"];
+const SUBCOMMANDS: &[&str] = &["query", "env", "mcp", "dump"];
 
 /// `argv` with a sub-command that follows global options moved to the
 /// front: `pgman --dsn X query 'SQL'` becomes `pgman query 'SQL' --dsn X`.
@@ -148,6 +148,13 @@ fn hoist_subcommand(argv: Vec<String>, takes_value: impl Fn(&str) -> bool) -> Ve
         i += 1;
     }
     argv
+}
+
+/// `args` up to a `--`: what comes after it is another tool's, so its
+/// `-h` isn't a request for pgman's help. Pure.
+fn before_double_dash(args: &[String]) -> &[String] {
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    &args[..end]
 }
 
 /// Does `Cli`'s flag `name` (long, or a one-letter short) take a value?
@@ -195,6 +202,29 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(2);
+            }
+        }
+        return Ok(());
+    }
+
+    if argv.get(1).map(String::as_str) == Some("dump") {
+        if pgman::mcp::wants_help(before_double_dash(&argv[2..])) {
+            println!("{}", pgman::dump::USAGE);
+            return Ok(());
+        }
+        init_logging();
+        let opts = match pgman::dump::parse_cli(&argv[2..]) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        };
+        match pgman::dump::run_cli(&opts).await {
+            Ok(done) => println!("{}", pgman::dump::render(&done)),
+            Err(e) => {
+                eprintln!("pgman dump: {e}");
+                std::process::exit(1);
             }
         }
         return Ok(());
@@ -2047,6 +2077,18 @@ mod main_tests {
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn help_after_a_double_dash_is_the_other_tools() {
+        let a = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(!pgman::mcp::wants_help(before_double_dash(&a(&[
+            "staging", "--", "-h", "x"
+        ]))));
+        assert!(pgman::mcp::wants_help(before_double_dash(&a(&[
+            "staging", "-h"
+        ]))));
+        assert_eq!(before_double_dash(&a(&["x"])), a(&["x"]).as_slice());
     }
 
     #[test]
