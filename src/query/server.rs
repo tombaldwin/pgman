@@ -194,7 +194,12 @@ pub async fn create_database(client: &tokio_postgres::Client, name: &str) -> Res
         .await
         .map_err(|e| format!("could not lift the statement timeout: {}", message(&e)))?;
     client
-        .batch_execute(&format!("CREATE DATABASE {}", quoted(name)))
+        // template0, as pg_restore's own --create does: template1 may
+        // carry objects the dump has too.
+        .batch_execute(&format!(
+            "CREATE DATABASE {} TEMPLATE template0",
+            quoted(name)
+        ))
         .await
         .map_err(|e| format!("could not create database {name}: {}", message(&e)))
 }

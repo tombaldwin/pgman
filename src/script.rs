@@ -328,6 +328,12 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
                     let _ = crate::conn::cancel_query(&token).await;
                 }
             }
+            // The cancel may never reach the server; a second Ctrl-C
+            // doesn't wait for it. The server rolls back an open
+            // transaction when the connection goes.
+            crate::pgtool::interrupted().await;
+            eprintln!("pgman run: stopped; an open transaction is rolled back by the server");
+            std::process::exit(130);
         });
     }
     let (mut before, mut committed, mut transactions) = (0, 0, 0);

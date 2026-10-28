@@ -216,6 +216,9 @@ pub fn plan(
             })?;
         for s in &statements {
             index += 1;
+            if let Some(why) = needs_psql(s) {
+                return Err(format!("statement {index} {why}"));
+            }
             if crate::safety::has_unicode_escape(s) {
                 return Err(format!(
                     "statement {index} uses unicode-escaped names (U&\"…\"), which pgman can't check"
@@ -291,6 +294,32 @@ pub fn read_only_refusal(safety: &crate::safety::SafetyConfig, db: &str) -> Stri
         "{db} is read-only ({why}). To run scripts on it, set in your safety.toml \
          (pgman --init-config writes one):\n  [databases.{db}]\n  read_only = false"
     )
+}
+
+/// Why `stmt` can't be run here but would be in psql, if it can't: a
+/// `COPY` to or from the client (psql streams the data; there is no one
+/// here to stream it), or a psql meta-command on the same line as SQL
+/// (`INSERT …; \c other`), which psql reads and the server wouldn't.
+/// Pure.
+pub fn needs_psql(stmt: &str) -> Option<String> {
+    let trimmed = crate::safety::strip_sql_comments(stmt);
+    let trimmed = trimmed.trim_start();
+    if trimmed.starts_with('\\') {
+        return Some(
+            "is a psql meta-command after SQL on the same line; put it on a line of its own"
+                .to_string(),
+        );
+    }
+    let tokens = crate::safety::code_tokens(stmt);
+    if tokens.first().is_some_and(|t| t == "copy")
+        && tokens.iter().any(|t| t == "stdin" || t == "stdout")
+    {
+        return Some(
+            "is COPY to or from the client, which needs psql to carry the data; run it there, or COPY to or from a server-side file"
+                .to_string(),
+        );
+    }
+    None
 }
 
 /// How far a segment's run got.
@@ -556,6 +585,27 @@ mod tests {
         assert!(plan(&writable(), "ledger", &segs("\n\n"))
             .unwrap_err()
             .contains("no statements"));
+    }
+
+    #[test]
+    fn copy_through_the_client_and_inline_meta_commands_are_refused() {
+        let e = plan(&writable(), "ledger", &segs("COPY t FROM STDIN;\n")).unwrap_err();
+        assert!(
+            e.contains("statement 1 is COPY to or from the client"),
+            "{e}"
+        );
+        assert!(plan(&writable(), "ledger", &segs("copy (select 1) to stdout;\n")).is_err());
+        assert!(plan(&writable(), "ledger", &segs("COPY t FROM '/srv/t.csv';\n")).is_ok());
+        let e = needs_psql("\\c other").unwrap();
+        assert!(e.contains("line of its own"), "{e}");
+        assert_eq!(needs_psql("select '\\c'"), None);
+        let e = plan(
+            &writable(),
+            "ledger",
+            &segs("insert into t values (1); \\c other\n"),
+        )
+        .unwrap_err();
+        assert!(e.contains("line of its own") || e.contains("split"), "{e}");
     }
 
     #[test]

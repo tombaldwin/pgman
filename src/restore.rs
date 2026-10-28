@@ -574,6 +574,8 @@ impl Ready {
         let mut dsn = opened.dsn.clone();
         dsn.dbname = database.clone();
         let conninfo = pgtool::conninfo(&dsn, opened.via, "pgman-restore", have);
+        // Not pgtool::private_command: pg_restore reads files, it makes
+        // none. Anything that writes one must go through it (umask 077).
         let mut cmd = tokio::process::Command::new(&tool);
         cmd.args(pg_restore_args(&conninfo, &opts));
         pgtool::set_child_env(&mut cmd, opened.password());

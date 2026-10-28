@@ -224,6 +224,13 @@ pub async fn run_cli(opts: &Opts) -> Result<(String, bool), String> {
         tokio::spawn(async move {
             crate::pgtool::interrupted().await;
             cancel.cancel();
+            // A second one doesn't wait for the cancel to land.
+            crate::pgtool::interrupted().await;
+            eprintln!(
+                "pgman apply: stopped; a patch in its transaction is rolled back by the server, \
+                 and statements already run outside one stay"
+            );
+            std::process::exit(130);
         });
     }
     tracing::info!(target: "pgman::apply", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), mode = opts.mode.name(), "pgman apply confirmed");
