@@ -16,7 +16,7 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (beta)",
-    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman env discover [--save]\n       pgman mcp serve",
+    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman dump <target> [FILE]\n       pgman restore <FILE> <target>\n       pgman run <target> <FILE>\n       pgman apply <target>\n       pgman env discover [--save]\n       pgman mcp serve",
     after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nDump and restore: `pgman dump <target> [FILE]`, `pgman restore <FILE> <target>`; see docs/dump-restore.md.\nScripts and patches: `pgman run <target> <FILE>`, `pgman apply <target>`; see docs/run.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches, dump and restore ask you first); see docs/mcp.md."
 )]
 struct Cli {
@@ -148,6 +148,42 @@ fn hoist_subcommand(argv: Vec<String>, takes_value: impl Fn(&str) -> bool) -> Ve
         i += 1;
     }
     argv
+}
+
+/// Why `word`, the first argument, is refused, if it is: a bare word that
+/// isn't a sub-command and isn't a `postgres://` DSN (the only other bare
+/// first argument pgman takes) is a mistyped command, named as one with
+/// the nearest command when there is a close one. Pure.
+fn unknown_command(word: &str) -> Option<String> {
+    if word.starts_with('-') || word.contains("://") || SUBCOMMANDS.contains(&word) {
+        return None;
+    }
+    let near = SUBCOMMANDS
+        .iter()
+        .map(|c| (edit_distance(word, c), *c))
+        .filter(|(d, c)| *d <= 2 && *d < c.len())
+        .min();
+    Some(format!(
+        "pgman: unknown command {word:?}{}. Commands: dump, restore, run, apply, query, env, mcp; \
+         a DSN starts postgres:// — pgman --help",
+        near.map(|(_, c)| format!(" (did you mean {c}?)"))
+            .unwrap_or_default()
+    ))
+}
+
+/// Levenshtein distance, for "did you mean". Pure.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let sub = prev[j] + usize::from(ca != *cb);
+            cur.push(sub.min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
 }
 
 /// `args` up to a `--`: what comes after it is another tool's, so its
@@ -311,6 +347,11 @@ async fn main() -> anyhow::Result<()> {
 
     // `pgman query 'SQL' [--json]` — ebman's spelling of `--batch`,
     // rewritten to it so everything below sees one command line.
+    if let Some(why) = argv.get(1).and_then(|w| unknown_command(w)) {
+        eprintln!("{why}");
+        std::process::exit(2);
+    }
+
     let cli = if argv.get(1).map(String::as_str) == Some("query") {
         if pgman::mcp::wants_help(&argv[2..]) {
             println!("{}", batch::QUERY_USAGE);
@@ -2156,6 +2197,23 @@ mod main_tests {
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_mistyped_command_is_named_with_the_nearest_one() {
+        let e = unknown_command("dumpp").unwrap();
+        assert!(
+            e.starts_with("pgman: unknown command \"dumpp\" (did you mean dump?)"),
+            "{e}"
+        );
+        assert!(unknown_command("restor")
+            .unwrap()
+            .contains("did you mean restore?"));
+        assert!(!unknown_command("zzzzzz").unwrap().contains("did you mean"));
+        for ok in ["dump", "postgres://h/db", "--dsn", "-h"] {
+            assert_eq!(unknown_command(ok), None, "{ok}");
+        }
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
     }
 
     #[test]
