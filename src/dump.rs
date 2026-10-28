@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "\
 usage: pgman dump <target> [FILE] [--primary] [--format custom|plain|directory|tar]
-                  [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
+                  [--skip-unreadable] [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
 
 Dump a database with your own pg_dump, through pgman's connection: the
 password read from its secret (or password_env) now, the ssh tunnel
@@ -40,6 +40,10 @@ into place when pg_dump succeeds: a failed dump never replaces a file.
   --format       pg_dump's format (default custom, for pg_restore)
   --pg-bin DIR   where pg_dump is (default: PATH, then Homebrew's libpq)
   --verbose      show pg_dump's progress
+  --skip-unreadable
+                 leave out the tables, views and sequences the dump's user
+                 can't read (named in the result), rather than refuse; by
+                 default the dump is refused before pg_dump starts
   --             anything after it goes to pg_dump as it is
                  (--schema-only, --exclude-table-data=audit_log, -j 4 …);
                  the connection and output options are pgman's
@@ -101,6 +105,8 @@ pub struct Opts {
     pub verbose: bool,
     /// After `--`: passed to pg_dump.
     pub extra: Vec<String>,
+    /// Leave out what the dump's user can't read, rather than refuse.
+    pub skip_unreadable: bool,
 }
 
 /// Parse the arguments after `pgman dump`. Pure.
@@ -110,6 +116,7 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
     let mut format = Format::Custom;
     let mut pg_bin = None;
     let mut verbose = false;
+    let mut skip_unreadable = false;
     let mut extra = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -124,6 +131,7 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
                 break;
             }
             "--primary" => primary = true,
+            "--skip-unreadable" => skip_unreadable = true,
             "--verbose" | "-v" => verbose = true,
             "--format" => format = Format::parse(&value("--format")?)?,
             "--pg-bin" => pg_bin = Some(PathBuf::from(value("--pg-bin")?)),
@@ -154,7 +162,79 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
         pg_bin,
         verbose,
         extra,
+        skip_unreadable,
     })
+}
+
+/// pg_dump's `--exclude-table` for each of `unreadable`: schema and name
+/// each double-quoted, so neither case-folds and nothing in them (`*`,
+/// `?`, `.`) is read as a pattern. Pure.
+pub fn exclude_args(unreadable: &[crate::query::server::Unreadable]) -> Vec<String> {
+    let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    unreadable
+        .iter()
+        .map(|u| format!("--exclude-table={}.{}", q(&u.schema), q(&u.name)))
+        .collect()
+}
+
+/// `105 partitions, 9 views, 6 tables, 3 sequences`. Pure.
+fn kinds(unreadable: &[crate::query::server::Unreadable]) -> String {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for u in unreadable {
+        match counts.iter_mut().find(|(k, _)| *k == u.kind) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((&u.kind, 1)),
+        }
+    }
+    counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+    counts
+        .iter()
+        .map(|(k, n)| format!("{n} {k}{}", if *n == 1 { "" } else { "s" }))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The first few of `unreadable`, by name, and how many more. Pure.
+fn some_names(unreadable: &[crate::query::server::Unreadable]) -> String {
+    let shown: Vec<String> = unreadable
+        .iter()
+        .take(8)
+        .map(|u| format!("{}.{}", u.schema, u.name))
+        .collect();
+    let more = unreadable.len().saturating_sub(shown.len());
+    if more > 0 {
+        format!("{} and {more} more", shown.join(", "))
+    } else {
+        shown.join(", ")
+    }
+}
+
+/// Why a dump as `user` is refused before pg_dump starts: it can't read
+/// `unreadable`, and pg_dump would stop at the first, however far in.
+/// Pure.
+pub fn unreadable_refusal(user: &str, unreadable: &[crate::query::server::Unreadable]) -> String {
+    let mut owners: Vec<&str> = unreadable.iter().map(|u| u.owner.as_str()).collect();
+    owners.sort_unstable();
+    owners.dedup();
+    format!(
+        "{user} can't read {} object(s) the dump would cover ({}; owned by {}): {}.\n  \
+         pg_dump would stop at the first. --skip-unreadable leaves exactly these out and says \
+         so; or dump as a user that can read them (the owner, or one granted pg_read_all_data)",
+        unreadable.len(),
+        kinds(unreadable),
+        owners.join(", "),
+        some_names(unreadable)
+    )
+}
+
+/// The note a dump that left `unreadable` out ends with. Pure.
+pub fn skipped_note(user: &str, unreadable: &[crate::query::server::Unreadable]) -> String {
+    format!(
+        "left out {} object(s) {user} can't read ({}): {}",
+        unreadable.len(),
+        kinds(unreadable),
+        some_names(unreadable)
+    )
 }
 
 /// pg_dump's short options that take a value: in a bundle (`-sxt foo`)
@@ -360,9 +440,9 @@ pub fn explain_failure(tail: &str, replica: bool, user: Option<&str>) -> String 
     if lower.contains("permission denied for") {
         let who = user.map(|u| format!(" ({u})")).unwrap_or_default();
         return format!(
-            "{last}\n  The dump's user{who} can't read everything the dump covers. Dump as a user \
-             that can (the owner, or one granted pg_read_all_data), or leave those objects out: \
-             -- --exclude-table=… / --exclude-schema=…"
+            "{last}\n  The dump's user{who} can't read everything the dump covers. --skip-unreadable \
+             leaves out what it can't read; or dump as a user that can (the owner, or one granted \
+             pg_read_all_data), or leave objects out yourself: -- --exclude-table=…"
         );
     }
     if lower.contains("server version mismatch") {
@@ -559,13 +639,32 @@ pub async fn run(
     let opened = pgtool::open(&resolved).await?;
     let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000).await?;
     let facts = crate::query::server::facts(&client).await?;
+    let unreadable = crate::query::server::unreadable(&client).await?;
     drop(client);
+    let mut excludes = Vec::new();
+    let mut skipped = None;
+    if !unreadable.is_empty() {
+        if opts.skip_unreadable {
+            excludes = exclude_args(&unreadable);
+            skipped = Some(skipped_note(&facts.user, &unreadable));
+        } else if opts.extra.is_empty() {
+            return Err(unreadable_refusal(&facts.user, &unreadable));
+        } else {
+            // The options after `--` may leave them out already.
+            say(format!(
+                "note: {} can't read {} object(s) here ({}); if the dump covers one, it stops there",
+                facts.user,
+                unreadable.len(),
+                kinds(&unreadable)
+            ));
+        }
+    }
     let server = Major::from_num(facts.version_num)
         .ok_or_else(|| format!("unreadable server_version_num {}", facts.version_num))?;
     if let Some(why) = pgtool::version_refusal("pg_dump", have, server) {
         return Err(why);
     }
-    let mut notes = Vec::new();
+    let mut notes: Vec<String> = skipped.into_iter().collect();
     if resolved.role == crate::mcp::connections::Role::Replica && !facts.in_recovery {
         notes.push(format!(
             "{} is listed as a replica but isn't in recovery: the dump came from a primary",
@@ -580,7 +679,9 @@ pub async fn run(
     ));
 
     let conninfo = pgtool::conninfo(&opened.dsn, opened.via, "pgman-dump", have);
-    let mut cmd = pgtool::private_command(&tool, &pg_dump_args(&conninfo, opts, &p.partial));
+    let mut args = pg_dump_args(&conninfo, opts, &p.partial);
+    args.extend(excludes);
+    let mut cmd = pgtool::private_command(&tool, &args);
     pgtool::set_child_env(&mut cmd, opened.password());
     tracing::info!(target: "pgman::dump", source = %resolved.describe(), file = %p.file.display(), "pg_dump starting");
     let started = std::time::Instant::now();
@@ -823,6 +924,56 @@ mod tests {
         assert!(
             e.contains("(app_ro)") && e.contains("--exclude-table"),
             "{e}"
+        );
+    }
+
+    fn unreadable(schema: &str, name: &str, kind: &str) -> crate::query::server::Unreadable {
+        crate::query::server::Unreadable {
+            schema: schema.into(),
+            name: name.into(),
+            kind: kind.into(),
+            owner: "postgres".into(),
+        }
+    }
+
+    #[test]
+    fn excludes_name_exactly_what_cant_be_read() {
+        let a = exclude_args(&[
+            unreadable("public", "t_diary_y2021w1", "partition"),
+            unreadable("Odd Schema", "we\"ird*.x", "table"),
+        ]);
+        assert_eq!(
+            a,
+            args(&[
+                "--exclude-table=\"public\".\"t_diary_y2021w1\"",
+                "--exclude-table=\"Odd Schema\".\"we\"\"ird*.x\"",
+            ])
+        );
+        let o = parse_cli(&args(&["x", "--skip-unreadable"])).unwrap();
+        assert!(o.skip_unreadable);
+        assert_eq!(
+            refused_passthrough(&a),
+            None,
+            "pgman's own excludes are not refused"
+        );
+    }
+
+    #[test]
+    fn the_refusal_counts_kinds_and_names_a_few() {
+        let mut list: Vec<_> = (1..=10)
+            .map(|i| unreadable("public", &format!("t_diary_w{i}"), "partition"))
+            .collect();
+        list.push(unreadable("public", "v_recent", "view"));
+        let e = unreadable_refusal("app_ro", &list);
+        assert!(e.starts_with("app_ro can't read 11 object(s) the dump would cover (10 partitions, 1 view; owned by postgres)"), "{e}");
+        assert!(
+            e.contains("and 3 more") && e.contains("--skip-unreadable"),
+            "{e}"
+        );
+        let n = skipped_note("app_ro", &list[..1]);
+        assert_eq!(
+            n,
+            "left out 1 object(s) app_ro can't read (1 partition): public.t_diary_w1"
         );
     }
 

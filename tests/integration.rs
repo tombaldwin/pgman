@@ -9377,3 +9377,80 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         "the declined clean changed nothing"
     );
 }
+
+/// A dump whose user can't read everything is refused before pg_dump
+/// starts, naming what; with --skip-unreadable it leaves exactly those
+/// out and says so, and what it can read is in the dump.
+#[cfg(unix)]
+#[test]
+fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = dump_home("dump-unreadable");
+    let db = it_name("unread");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw("pgman_test").await;
+        let _ = c.batch_execute(&format!("DROP DATABASE IF EXISTS {db}")).await;
+        c.batch_execute(&format!("CREATE DATABASE {db}")).await.unwrap();
+        raw(&db)
+            .await
+            .batch_execute(
+                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
+                 CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$; \
+                 CREATE TABLE open_t (id int); INSERT INTO open_t VALUES (1); \
+                 CREATE TABLE closed_t (id int); CREATE VIEW closed_v AS SELECT * FROM closed_t; \
+                 GRANT SELECT ON open_t TO pgman_lim",
+            )
+            .await
+            .unwrap();
+    });
+    let url = format!("postgres://pgman_lim:pgman_lim@127.0.0.1:55432/{db}?sslmode=disable");
+    let o = pgman_in(&home, &out, &["dump", &url, "x.dump"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains("pgman_lim can't read 2 object(s) the dump would cover (1 table, 1 view; owned by pgman_test)"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("pg_dump: error"),
+        "refused before pg_dump ran: {stderr}"
+    );
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "dump",
+            &url,
+            "x.dump",
+            "--skip-unreadable",
+            "--format",
+            "plain",
+        ],
+    );
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(o.status.success(), "{stderr}");
+    assert!(
+        stdout.contains("note: left out 2 object(s) pgman_lim can't read (1 table, 1 view): public.closed_t, public.closed_v"),
+        "{stdout}"
+    );
+    let sql = std::fs::read_to_string(out.join("x.dump")).unwrap();
+    assert!(
+        sql.contains("CREATE TABLE public.open_t") && !sql.contains("closed_t"),
+        "{sql}"
+    );
+    rt.block_on(async {
+        let _ = raw("pgman_test")
+            .await
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {db}"))
+            .await;
+    });
+}

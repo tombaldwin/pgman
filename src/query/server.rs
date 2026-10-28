@@ -29,6 +29,48 @@ pub async fn facts(client: &tokio_postgres::Client) -> Result<Facts, String> {
     })
 }
 
+/// A relation the connected user can't read, which pg_dump would stop at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unreadable {
+    pub schema: String,
+    pub name: String,
+    /// `table`, `partition`, `view`, `sequence`…
+    pub kind: String,
+    pub owner: String,
+}
+
+/// What a dump of the whole database would need to read and the user
+/// can't: tables, partitions, views, materialized views, foreign tables
+/// and sequences outside the system schemas, without SELECT.
+pub const UNREADABLE_SQL: &str = "SELECT n.nspname::text, c.relname::text, \
+       CASE c.relkind WHEN 'S' THEN 'sequence' WHEN 'v' THEN 'view' \
+         WHEN 'm' THEN 'materialized view' WHEN 'f' THEN 'foreign table' \
+         ELSE CASE WHEN c.relispartition THEN 'partition' ELSE 'table' END END, \
+       pg_catalog.pg_get_userbyid(c.relowner)::text \
+     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S') \
+       AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%' \
+       AND NOT CASE WHEN c.relkind = 'S' THEN pg_catalog.has_sequence_privilege(c.oid, 'SELECT') \
+                    ELSE pg_catalog.has_table_privilege(c.oid, 'SELECT') END \
+     ORDER BY 1, 2";
+
+pub async fn unreadable(client: &tokio_postgres::Client) -> Result<Vec<Unreadable>, String> {
+    client
+        .query(UNREADABLE_SQL, &[])
+        .await
+        .map(|rows| {
+            rows.iter()
+                .map(|r| Unreadable {
+                    schema: r.get(0),
+                    name: r.get(1),
+                    kind: r.get(2),
+                    owner: r.get(3),
+                })
+                .collect()
+        })
+        .map_err(|e| format!("could not check what the dump can read: {}", message(&e)))
+}
+
 /// Another session on a database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {

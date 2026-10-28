@@ -30,7 +30,8 @@ pub fn tool_entries() -> Vec<Value> {
                 "properties": {
                     "target": {"type": "string", "description": "ENV, ENV/DATABASE, ENV/SERVER/DATABASE, a connection name, or a postgres:// URL."},
                     "file": {"type": "string", "description": "Relative to the working directory: a name ending .dump, or an existing directory. Default: a timestamped name in the working directory."},
-                    "primary": {"type": "boolean", "description": "Take it from the primary even when the environment has a replica."}
+                    "primary": {"type": "boolean", "description": "Take it from the primary even when the environment has a replica."},
+                    "skip_unreadable": {"type": "boolean", "description": "Leave out what the dump's user can't read (named in the result) instead of refusing. Ask the operator first: the copy is then incomplete."}
                 },
                 "required": ["target"],
                 "additionalProperties": false
@@ -243,6 +244,7 @@ impl Server {
             pg_bin: None,
             verbose: false,
             extra: Vec::new(),
+            skip_unreadable: arg_bool(args, "skip_unreadable"),
         };
         let resolved = crate::dump::resolve(&opts).await?;
         if let Some(why) = agent_tunnel(&target, &resolved) {

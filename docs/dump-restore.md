@@ -32,13 +32,20 @@ An environment name wins over a connection of the same name.
 
 ```
 pgman dump <target> [FILE] [--primary] [--format custom|plain|directory|tar]
-                    [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
+                    [--skip-unreadable] [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
 ```
 
 - **From the replica.** When the environment lists a replica of the
   database (and it isn't stopped), the dump is taken there, so a long read
   never weighs on the primary. `--primary` takes the primary instead.
   pgman says which server it used.
+- **What the user can't read, checked first.** An application role
+  often can't read every table: partitions or views another role owns,
+  say. pg_dump would stop at the first, however far into the dump. pgman
+  asks the server first and refuses, naming them, before pg_dump starts.
+  `--skip-unreadable` leaves exactly those out instead (each named, so
+  nothing else is), and the result says how many and which. The copy is
+  then incomplete; restoring it is your call.
 - **Version check.** Your `pg_dump` must be at least the server's major
   version; an older one is refused before anything runs, with how to get
   a newer one.
