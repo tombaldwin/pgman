@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 3845,
-    "digest": "30550ae35079a5bf"
+    "count": 3890,
+    "digest": "ddb44c041ad87c0e"
   },
   "resolves": [
     "fs",
@@ -226,7 +226,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
+      "hash": "8c31a7fd9f7cbd97683617492c0d8904",
       "invisible": [
         "serde_core"
       ]
@@ -238,7 +238,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97683617492c0d8904",
+      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
       "invisible": [
         "serde_core"
       ]
@@ -274,30 +274,6 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97ac7f72b889467ce8",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:221:39: 221:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97eb680d4f266c38e5",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:221:39: 221:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
       "hash": "8c31a7fd9f7cbd9746c74d25554f57ae",
       "invisible": [
         "serde_core"
@@ -310,7 +286,31 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97ac7f72b889467ce8",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "loc": "src/inventory.rs:221:39: 221:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
       "hash": "8c31a7fd9f7cbd9707aebcfe756007c5",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "loc": "src/inventory.rs:221:39: 221:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97eb680d4f266c38e5",
       "invisible": [
         "serde_core"
       ]
@@ -8516,7 +8516,7 @@
     },
     {
       "fn": "dump::commit",
-      "loc": "src/dump.rs:384:1: 384:61",
+      "loc": "src/dump.rs:389:1: 389:61",
       "inferred": [
         "Fs"
       ],
@@ -8539,7 +8539,7 @@
     },
     {
       "fn": "dump::point_latest",
-      "loc": "src/dump.rs:416:1: 416:70",
+      "loc": "src/dump.rs:421:1: 421:70",
       "inferred": [
         "Fs"
       ],
@@ -8562,7 +8562,7 @@
     },
     {
       "fn": "dump::remove_partial",
-      "loc": "src/dump.rs:374:1: 374:28",
+      "loc": "src/dump.rs:379:1: 379:28",
       "inferred": [
         "Fs"
       ],
@@ -8584,7 +8584,7 @@
     },
     {
       "fn": "dump::run_cli",
-      "loc": "src/dump.rs:474:1: 474:58",
+      "loc": "src/dump.rs:479:1: 479:58",
       "inferred": [
         "Clock",
         "Db",
@@ -11772,6 +11772,25 @@
       ]
     },
     {
+      "fn": "pgtool::confirm_cli",
+      "loc": "src/pgtool.rs:267:1: 267:71",
+      "inferred": [
+        "Unknown"
+      ],
+      "direct": [
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd97b03ba7b28d0fec92",
+      "unknownWhy": [
+        "dispatch:BufRead.read_line",
+        "dispatch:Write.flush"
+      ]
+    },
+    {
       "fn": "pgtool::find_in",
       "loc": "src/pgtool.rs:85:1: 85:64",
       "inferred": [
@@ -11816,7 +11835,7 @@
     },
     {
       "fn": "pgtool::open",
-      "loc": "src/pgtool.rs:284:1: 284:63",
+      "loc": "src/pgtool.rs:305:1: 305:63",
       "inferred": [
         "Clock",
         "Env",
@@ -11860,7 +11879,7 @@
     },
     {
       "fn": "pgtool::path_size",
-      "loc": "src/pgtool.rs:379:1: 379:37",
+      "loc": "src/pgtool.rs:400:1: 400:37",
       "inferred": [
         "Fs"
       ],
@@ -11922,7 +11941,7 @@
     },
     {
       "fn": "pgtool::run_tool_cli",
-      "loc": "src/pgtool.rs:332:1: 335:54",
+      "loc": "src/pgtool.rs:353:1: 356:54",
       "inferred": [
         "Exec"
       ],
@@ -13513,6 +13532,87 @@
       ]
     },
     {
+      "fn": "query::script::message",
+      "loc": "src/query/script.rs:359:1: 359:48",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97a90f4e80d8469d6a",
+      "invisible": [
+        "tokio_postgres"
+      ]
+    },
+    {
+      "fn": "query::script::plan",
+      "loc": "src/query/script.rs:178:1: 182:26",
+      "inferred": [
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Log"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd9771fe9f1f14d4e002",
+      "calls": [
+        "batch::check_statements"
+      ],
+      "invisible": [
+        "tracing_core"
+      ]
+    },
+    {
+      "fn": "query::script::prepare_session",
+      "loc": "src/query/script.rs:298:1: 298:84",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [
+        "Db"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd970c0413eb41a4a08f",
+      "invisible": [
+        "tokio_postgres"
+      ],
+      "incomplete": [
+        "Db"
+      ]
+    },
+    {
+      "fn": "query::script::run",
+      "loc": "src/query/script.rs:311:1: 315:13",
+      "inferred": [
+        "Db",
+        "Unknown"
+      ],
+      "direct": [
+        "Db",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd9760503c822c83315a",
+      "unknownWhy": [
+        "callback:fn-pointer / closure"
+      ],
+      "invisible": [
+        "tokio_postgres"
+      ],
+      "incomplete": [
+        "Db"
+      ]
+    },
+    {
       "fn": "query::server::create_database",
       "loc": "src/query/server.rs:83:1: 83:96",
       "inferred": [
@@ -13855,7 +13955,7 @@
     },
     {
       "fn": "restore::admin",
-      "loc": "src/restore.rs:455:1: 458:60",
+      "loc": "src/restore.rs:434:1: 437:60",
       "inferred": [
         "Clock",
         "Db",
@@ -13904,27 +14004,8 @@
       ]
     },
     {
-      "fn": "restore::confirm_cli",
-      "loc": "src/restore.rs:416:1: 416:67",
-      "inferred": [
-        "Unknown"
-      ],
-      "direct": [
-        "Unknown"
-      ],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "unresolved": true,
-      "hash": "8c31a7fd9f7cbd9752c98b60511dd4ec",
-      "unknownWhy": [
-        "dispatch:BufRead.read_line",
-        "dispatch:Write.flush"
-      ]
-    },
-    {
       "fn": "restore::drop_again_and_again",
-      "loc": "src/restore.rs:609:1: 612:24",
+      "loc": "src/restore.rs:588:1: 591:24",
       "inferred": [
         "Db"
       ],
@@ -13947,7 +14028,7 @@
     },
     {
       "fn": "restore::run_cli",
-      "loc": "src/restore.rs:480:1: 480:58",
+      "loc": "src/restore.rs:459:1: 459:58",
       "inferred": [
         "Clock",
         "Db",
@@ -13993,6 +14074,7 @@
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
         "conn::terminate_backend",
         "inventory::target::resolve",
+        "pgtool::confirm_cli",
         "pgtool::find_tool",
         "pgtool::open",
         "pgtool::run_tool_cli",
@@ -14003,7 +14085,6 @@
         "query::server::facts",
         "query::server::sessions_on",
         "restore::admin",
-        "restore::confirm_cli",
         "restore::drop_again_and_again",
         "restore::run_cli::{closure#0}::__CALLSITE",
         "restore::run_cli::{closure#0}::__CALLSITE"
@@ -14162,6 +14243,119 @@
       ],
       "invisible": [
         "toml"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
+      "fn": "script::run_cli",
+      "loc": "src/script.rs:199:1: 199:60",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [
+        "Env",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd9794878688c63bb7e4",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "aws",
+        "docker",
+        "ssh"
+      ],
+      "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "conn::connect_via_writable",
+        "inventory::target::resolve",
+        "pgtool::confirm_cli",
+        "pgtool::open",
+        "project::load_from",
+        "project::merge_safety",
+        "query::script::plan",
+        "query::script::prepare_session",
+        "query::script::run",
+        "safety::SafetyConfig::load_personal",
+        "script::run_cli::{closure#0}::__CALLSITE",
+        "script::run_cli::{closure#0}::__CALLSITE",
+        "script::run_cli::{closure#0}::__CALLSITE",
+        "script::segment_target"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
+      "fn": "script::segment_target",
+      "loc": "src/script.rs:130:1: 130:73",
+      "inferred": [
+        "Env",
+        "Exec",
+        "Fs",
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Exec",
+        "Fs",
+        "Log"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97233256d520b87b58",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "aws",
+        "docker"
+      ],
+      "calls": [
+        "inventory::target::resolve"
+      ],
+      "invisible": [
+        "serde_json",
+        "toml",
+        "tracing_core"
       ],
       "incomplete": [
         "Fs"
