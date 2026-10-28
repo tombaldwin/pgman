@@ -39,6 +39,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A `<target>` on the command line is `ENV`, `ENV/DATABASE`,
   `ENV/SERVER/DATABASE`, a `connections.toml` name, or a URL.
 
+### Fixed
+
+- Ctrl-C in the editor (and Esc twice while patches run) now cancels
+  the running statement on a server reached with `sslmode=require` or
+  `verify-*`, such as RDS: the cancel request went out without TLS,
+  which the client library refuses for such a session, so it never
+  reached the server.
+
 ## [0.2.1] — 2026-10-24
 
 ### Fixed

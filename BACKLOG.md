@@ -222,6 +222,16 @@ batch.
 - **Possible flake**: `a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently`
   failed once in a full parallel integration run; not reproduced.
 
+### From the dump/restore review (2026-10-28)
+
+- **A connection to a protected `rds` environment's host.** `restore`
+  and `run` protect a `connections.toml` entry by its environment, its
+  name or its host's name. A personal connection to the same RDS host
+  that a protected `rds`-sourced environment lists (found through the
+  aws CLI) isn't matched unless one of those says prod. Matching it
+  means an RDS listing on every restore; worth it only if such
+  connections turn up.
+
 ### From the v0.2.1 polish (2026-10-24)
 - **`demo.gif` still shows 0.1.0's chrome.** `demo.tape` installs into
   the real `~/.cargo/bin` and runs under the real HOME; make it use a
