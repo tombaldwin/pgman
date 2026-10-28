@@ -6,6 +6,20 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Highlights
+
+- **A local copy of an environment in two commands.** `pgman dump
+  staging/ledger` takes it from the replica through the bastion, the
+  password read at that moment and never on a command line or on disk;
+  `pgman restore … local --as ledger_copy --clean` puts it into a local
+  database, never a protected one.
+- **Scripts and patches from the command line.** `pgman run` runs a
+  script that manages its own transactions, `\c` between databases;
+  `pgman apply` is the environments view's `P`, `--outside` included.
+- **For a coding agent:** MCP `dump` and `restore`, each confirmed by
+  you, so an agent can refresh its copy without ever holding the
+  environment's credentials.
+
 ### Added
 
 - `pgman dump <target> [FILE]`: a dump by your own `pg_dump`, through
@@ -26,13 +40,18 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `pg_restore`, never into a protected environment and only on this
   machine unless `--allow-remote`. `--as NAME` restores into another
   database, `--create` makes it, `--clean` replaces it; other sessions
-  refuse it unless `--terminate`; it is confirmed, or `--yes`.
+  refuse it unless `--terminate`; it is confirmed, or `--yes`. It exits
+  1 when pg_restore went past real errors, counting a newer pg_dump's
+  `SET` of a setting the server doesn't have as harmless. `--jobs`,
+  `--keep-owners` and options after `--` go to pg_restore; a plain SQL
+  dump is psql's.
 - `pgman run <target> <FILE>`: a script that runs its own transactions
   (`BEGIN … COMMIT`), as `psql -f` does, with `\c DATABASE` moving it
   to another database of the environment. Checked against safety.toml
   first; confirmed (a protected target by typing its name); a failure
   or Ctrl-C reports what stayed committed, what rolled back and what
-  never ran. See `docs/run.md`.
+  never ran. `VACUUM` and `CONCURRENTLY` run without the statement
+  timeout; a standby is refused. See `docs/run.md`.
 - `pgman apply <target> [--outside] [--dry-run | --copy]`: the
   environments view's `P` from the command line. An `--outside` plan or
   a protected environment takes the typed name, which `--yes` doesn't
@@ -42,7 +61,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   replaced, by typing its name); files stay inside the server's
   working directory, and a restore is local and unprotected only.
 - A `<target>` on the command line is `ENV`, `ENV/DATABASE`,
-  `ENV/SERVER/DATABASE`, a `connections.toml` name, or a URL.
+  `ENV/SERVER/DATABASE`, a `connections.toml` name, or a URL. It is
+  protected by its environment, by "prod" in its name, or by being on a
+  server a protected environment reaches, however that is written.
+- `pgman dumpp` says `unknown command "dumpp" (did you mean dump?)`.
+- Ctrl-C, SIGTERM and SIGHUP stop `dump`, `restore`, `run` and `apply`
+  cleanly: the tool stopped, a partial file removed, a transaction
+  rolled back.
 
 ### Fixed
 
