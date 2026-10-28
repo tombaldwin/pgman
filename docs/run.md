@@ -55,8 +55,14 @@ terminal pgman refuses.
 Statements run one at a time. Anything outside `BEGIN … COMMIT` commits
 as it runs, so `VACUUM` and `CREATE INDEX CONCURRENTLY` work as they do in
 psql. Each statement waits at most 5s for a lock (a script's own `SET
-lock_timeout` overrides that), and the database's `statement_timeout`
-from `safety.toml` applies.
+lock_timeout` overrides that), so a busy table fails the script fast
+rather than queueing it behind live traffic, and runs for at most the
+database's `statement_timeout_ms` from `safety.toml` (30s unless you set
+it; `0` is no limit). The confirmation says both. What can't run in a
+transaction — `VACUUM`, `CREATE INDEX CONCURRENTLY` — has no time limit:
+it can take hours, and a concurrent build cut short is left `INVALID`. If
+one fails anyway (a lock it waited for), the report says to drop the
+invalid index before trying again.
 
 If a statement fails, the script stops there and pgman says:
 

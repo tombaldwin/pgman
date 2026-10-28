@@ -9764,3 +9764,47 @@ fn a_dump_stopped_by_sigterm_cleans_up_like_ctrl_c() {
     }
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
+
+/// The profile's statement timeout applies to a script's statements but
+/// not to what can't run in a transaction: a concurrent index build on a
+/// table too big for the timeout finishes, and a sleep past it doesn't.
+#[cfg(unix)]
+#[test]
+fn a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout() {
+    let (home, out) = run_home("run-untimed");
+    std::fs::write(
+        home.join(".config/pgman/safety.toml"),
+        "[default]\nread_only = false\nstatement_timeout_ms = 200\n",
+    )
+    .unwrap();
+    let t = it_name("untimed");
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {t}"));
+    on(
+        "pgman_test",
+        &format!("CREATE TABLE {t} AS SELECT g AS id, md5(g::text) AS v FROM generate_series(1, 1000000) g"),
+    )
+    .unwrap();
+    std::fs::write(out.join("slow.sql"), "SELECT pg_sleep(1);\n").unwrap();
+    let o = pgman_in(&home, &out, &["run", "local", "slow.sql", "--yes"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("statement timeout"),
+        "the profile's limit applies: {stderr}"
+    );
+    std::fs::write(
+        out.join("index.sql"),
+        format!("CREATE INDEX CONCURRENTLY {t}_v ON {t} (v);\n"),
+    )
+    .unwrap();
+    let o = pgman_in(&home, &out, &["run", "local", "index.sql", "--yes"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{stderr}");
+    let valid: bool = on(
+        "pgman_test",
+        &format!("SELECT indisvalid FROM pg_index WHERE indexrelid = '{t}_v'::regclass"),
+    )
+    .unwrap()[0]
+        .get(0);
+    assert!(valid, "built, not left INVALID");
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}

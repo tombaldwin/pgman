@@ -322,7 +322,17 @@ pub async fn run(
             o.cancelled = Some(i);
             break;
         }
-        if let Err(e) = client.execute(stmt.as_str(), &[]).await {
+        // What can't run in a transaction (VACUUM, CONCURRENTLY…) can
+        // take hours, and a concurrent build cut short is left INVALID:
+        // no statement timeout for it, as `apply --outside` does. The
+        // lock timeout stays.
+        let long = open.is_none() && super::apply::needs_no_transaction(stmt).is_some();
+        let ran = if long {
+            run_untimed(client, stmt).await
+        } else {
+            client.execute(stmt.as_str(), &[]).await.map(drop)
+        };
+        if let Err(e) = ran {
             o.failed = Some((i, message(&e)));
             break;
         }
@@ -358,6 +368,27 @@ pub async fn run(
         }
     }
     o
+}
+
+/// `stmt` with the session's statement timeout lifted, then put back.
+async fn run_untimed(
+    client: &tokio_postgres::Client,
+    stmt: &str,
+) -> Result<(), tokio_postgres::Error> {
+    let saved: String = client
+        .query_one("SHOW statement_timeout", &[])
+        .await?
+        .get(0);
+    client.batch_execute("SET statement_timeout = 0").await?;
+    let ran = client.execute(stmt, &[]).await.map(drop);
+    let restored = client
+        .execute(
+            "SELECT pg_catalog.set_config('statement_timeout', $1, false)",
+            &[&saved],
+        )
+        .await
+        .map(drop);
+    ran.and(restored)
 }
 
 fn message(e: &tokio_postgres::Error) -> String {

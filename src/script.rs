@@ -82,6 +82,7 @@ pub fn question(
     file: &str,
     base: &Resolved,
     protected_name: Option<&str>,
+    timeout_ms: u64,
 ) -> (String, String) {
     let first = &plan.segments[0];
     let mut q = format!(
@@ -101,6 +102,7 @@ pub fn question(
             seg.statements.len()
         ));
     }
+    q.push_str(&format!("\n  {}", limits(timeout_ms)));
     let confirms: Vec<String> = plan
         .segments
         .iter()
@@ -150,6 +152,32 @@ fn with_database(base: &Resolved, db: &str) -> Resolved {
     t
 }
 
+/// What a statement may wait and take, said before the script runs.
+/// Pure.
+fn limits(timeout_ms: u64) -> String {
+    let run = if timeout_ms == 0 {
+        "no time limit".to_string()
+    } else {
+        format!(
+            "at most {} (statement_timeout_ms in safety.toml)",
+            human_ms(timeout_ms)
+        )
+    };
+    format!(
+        "each statement waits at most {} for a lock and runs for {run}; VACUUM and CONCURRENTLY have no time limit",
+        crate::query::apply::LOCK_TIMEOUT
+    )
+}
+
+/// `30s`, `2m`, `1500ms`. Pure.
+fn human_ms(ms: u64) -> String {
+    match ms {
+        m if m % 60_000 == 0 => format!("{}m", m / 60_000),
+        m if m % 1000 == 0 => format!("{}s", m / 1000),
+        m => format!("{m}ms"),
+    }
+}
+
 /// A one-line form of `stmt` for a report. Pure.
 fn summary(stmt: &str) -> String {
     let one: String = stmt.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -172,11 +200,22 @@ pub fn stopped_report(
     let total = plan.statements();
     let statements = &plan.segments[seg].statements;
     let mut out = match (&o.failed, o.cancelled) {
-        (Some((i, msg)), _) => format!(
-            "statement {} of {total} failed on {db}: {msg}\n  statement: {}",
-            before + i + 1,
-            summary(&statements[*i])
-        ),
+        (Some((i, msg)), _) => {
+            let stmt = &statements[*i];
+            let tokens = crate::safety::code_tokens(stmt);
+            let invalid = tokens.first().is_some_and(|t| t == "create")
+                && tokens.iter().any(|t| t == "concurrently");
+            format!(
+                "statement {} of {total} failed on {db}: {msg}\n  statement: {}{}",
+                before + i + 1,
+                summary(stmt),
+                if invalid {
+                    "\n  a failed CREATE INDEX CONCURRENTLY leaves an INVALID index: drop it before trying again"
+                } else {
+                    ""
+                }
+            )
+        }
         (None, Some(i)) => format!("cancelled before statement {} of {total}", before + i + 1),
         (None, None) => format!("stopped on {db}"),
     };
@@ -252,11 +291,13 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
         ));
     }
     if !opts.yes {
+        let timeout = safety.profile_for(&base.database).statement_timeout_ms;
         let (prompt, accept) = question(
             &plan,
             &opts.file.display().to_string(),
             &base,
             protected_name.as_deref(),
+            timeout,
         );
         let ok = tokio::task::spawn_blocking(move || crate::pgtool::confirm_cli(&prompt, &accept))
             .await
@@ -379,7 +420,7 @@ mod tests {
         let p = plan_of(
             "create table t (id int);\nBEGIN;\ntruncate t;\nCOMMIT;\n\\c ledgerlog\nselect 1;\n",
         );
-        let (q, accept) = question(&p, "x.sql", &base(), None);
+        let (q, accept) = question(&p, "x.sql", &base(), None, 30_000);
         assert!(
             q.contains("5 statement(s) — 1 transaction(s), 2 statement(s) outside one"),
             "{q}"
@@ -387,7 +428,14 @@ mod tests {
         assert!(q.contains("then on ledgerlog: 1 statement(s)"), "{q}");
         assert!(q.contains("including: TRUNCATE on ledger"), "{q}");
         assert!(q.ends_with("[y/N] ") && accept == "y", "{q}");
-        let (q, accept) = question(&p, "x.sql", &base(), Some("live"));
+        assert!(
+            q.contains(
+                "waits at most 5s for a lock and runs for at most 30s (statement_timeout_ms"
+            ),
+            "{q}"
+        );
+        assert_eq!(human_ms(120_000), "2m");
+        let (q, accept) = question(&p, "x.sql", &base(), Some("live"), 30_000);
         assert!(
             q.ends_with("type live to go on: ") && accept == "live",
             "{q}"
@@ -430,6 +478,17 @@ mod tests {
             "{r}"
         );
         assert!(r.contains("not run: the last 2 statement(s)"), "{r}");
+    }
+
+    #[test]
+    fn a_failed_concurrent_build_says_to_drop_the_invalid_index() {
+        let p = plan_of("CREATE INDEX CONCURRENTLY i ON t (v);\n");
+        let o = Outcome {
+            failed: Some((0, "canceling statement due to lock timeout".into())),
+            ..Outcome::default()
+        };
+        let r = stopped_report(&p, 0, "ledger", 0, 0, &o);
+        assert!(r.contains("leaves an INVALID index: drop it"), "{r}");
     }
 
     #[test]
