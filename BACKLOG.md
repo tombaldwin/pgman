@@ -224,6 +224,20 @@ batch.
 
 ### From the dump/restore review (2026-10-28)
 
+- **"prod" in a name protects with no override for a connection or a
+  URL** (v0.3.0 panel, DBA L4). `restore --as ledger_products` and a
+  local `product_catalog` database are refused as protected. An
+  environment has `protected = false`; a connection has nothing. Tom's
+  call: a `protected = false` on a connections.toml entry, or a word
+  match rather than a substring.
+- **`--skip-unreadable` with thousands of partitions** (DBA L5) passes
+  one `--exclude-table` each, and pg_dump runs a catalog query per
+  pattern. pg_dump 17+ takes `--filter FILE`: write the excludes there
+  when the client is new enough.
+- **SIGTERM / SIGHUP in the TUI's own paths** are handled; the CLI's are
+  now too. A second signal ends the CLI at once; check that the TUI's
+  patch run does the same.
+
 - **A connection to a protected `rds` environment's host.** `restore`
   and `run` protect a `connections.toml` entry by its environment, its
   name or its host's name. A personal connection to the same RDS host
