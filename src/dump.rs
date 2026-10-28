@@ -477,18 +477,33 @@ pub struct Done {
 
 /// Run a dump. Progress goes to stderr; the result is what to print.
 pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
+    let resolved = resolve(opts).await?;
+    run(opts, resolved, &|line| eprintln!("pgman dump: {line}")).await
+}
+
+/// The database `opts` names, for a dump: its replica unless
+/// `--primary`. Reads no secret.
+pub async fn resolve(opts: &Opts) -> Result<target::Resolved, String> {
     let want = if opts.primary {
         Want::Primary
     } else {
         Want::PreferReplica
     };
     let text = opts.target.clone();
-    let resolved = tokio::task::spawn_blocking(move || target::resolve(&text, want))
+    tokio::task::spawn_blocking(move || target::resolve(&text, want))
         .await
-        .map_err(|e| format!("resolve task failed: {e}"))??;
+        .map_err(|e| format!("resolve task failed: {e}"))?
+}
+
+/// Dump `resolved` as `opts` says, telling `say` what it is doing.
+pub async fn run(
+    opts: &Opts,
+    resolved: target::Resolved,
+    say: &(dyn Fn(String) + Send + Sync),
+) -> Result<Done, String> {
     let tool = pgtool::find_tool("pg_dump", opts.pg_bin.as_deref())?;
     let have = pgtool::tool_version(&tool)?;
-    eprintln!("pgman dump: {} — {}", resolved.label, resolved.describe());
+    say(format!("{} — {}", resolved.label, resolved.describe()));
 
     let opened = pgtool::open(&resolved).await?;
     let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000).await?;
@@ -506,12 +521,12 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
             resolved.server
         ));
     }
-    eprintln!(
-        "pgman dump: PostgreSQL {}{}, as {}, with pg_dump {have}",
+    say(format!(
+        "PostgreSQL {}{}, as {}, with pg_dump {have}",
         facts.version,
         if facts.in_recovery { " (standby)" } else { "" },
         facts.user
-    );
+    ));
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

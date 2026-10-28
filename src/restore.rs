@@ -457,6 +457,103 @@ async fn admin(
 
 /// Run a restore. Progress and the question go to stderr.
 pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
+    let ready = prepare(opts, &|line| eprintln!("pgman restore: {line}")).await?;
+    if !opts.yes {
+        let (prompt, accept) = ready.question();
+        let ok = tokio::task::spawn_blocking(move || pgtool::confirm_cli(&prompt, &accept))
+            .await
+            .map_err(|e| format!("prompt task failed: {e}"))??;
+        if !ok {
+            return Err("not confirmed; nothing changed".to_string());
+        }
+    }
+    ready.execute().await
+}
+
+/// A restore checked, connected and planned, waiting for the operator's
+/// yes: [`Ready::question`] is what to ask, [`Ready::execute`] does it.
+/// Nothing has changed yet.
+pub struct Ready {
+    opts: Opts,
+    tool: PathBuf,
+    have: Major,
+    opened: pgtool::Opened,
+    client: std::sync::Arc<tokio_postgres::Client>,
+    server: String,
+    pub plan: Plan,
+    notes: Vec<String>,
+}
+
+impl Ready {
+    /// `host:port` of the server it restores on.
+    pub fn server(&self) -> &str {
+        &self.server
+    }
+
+    /// The question for the plan, and the answer that accepts it.
+    pub fn question(&self) -> (String, String) {
+        question(&self.plan, &self.opts.file, &self.server)
+    }
+
+    /// End the sessions, make or replace the database, run pg_restore.
+    pub async fn execute(self) -> Result<Done, String> {
+        let Ready {
+            opts,
+            tool,
+            have,
+            opened,
+            client,
+            server,
+            plan,
+            notes,
+        } = self;
+        let database = plan.database.clone();
+        for s in &plan.terminate {
+            crate::conn::terminate_backend(&client, s.pid).await?;
+        }
+        match plan.prepare {
+            Prepare::Existing => {}
+            Prepare::Create => crate::query::server::create_database(&client, &database).await?,
+            Prepare::Replace => {
+                drop_again_and_again(&client, &database).await?;
+                crate::query::server::create_database(&client, &database).await?;
+            }
+        }
+        drop(client);
+        tracing::info!(target: "pgman::restore", database = %database, server = %server, prepare = ?plan.prepare, "pg_restore starting");
+
+        let mut dsn = opened.dsn.clone();
+        dsn.dbname = database.clone();
+        let conninfo = pgtool::conninfo(&dsn, opened.via, "pgman-restore", have);
+        let mut cmd = tokio::process::Command::new(&tool);
+        cmd.args(pg_restore_args(&conninfo, &opts));
+        pgtool::set_child_env(&mut cmd, opened.password());
+        let (status, tail) = pgtool::run_tool_cli(cmd, opts.verbose)
+            .await
+            .map_err(|e| format!("pg_restore {e}; {database} is part-restored"))?;
+        drop(opened);
+        let tail = tail.text();
+        let errors = ignored_errors(&tail);
+        if !status.success() && errors.is_none() {
+            return Err(format!(
+                "{}\n  {database} may be part-restored",
+                crate::dump::last_error(&tail).unwrap_or("pg_restore failed with no message")
+            ));
+        }
+        tracing::info!(target: "pgman::restore", database = %database, errors = ?errors, "pg_restore done");
+        Ok(Done {
+            database,
+            server,
+            errors,
+            reported: restore_errors(&tail),
+            notes,
+        })
+    }
+}
+
+/// Everything up to the question: refuse what can't be restored into,
+/// read the archive, connect, and plan from what is there.
+pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Result<Ready, String> {
     if !opts.file.exists() {
         return Err(format!("{}: no such file", opts.file.display()));
     }
@@ -500,15 +597,15 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         .clone()
         .unwrap_or_else(|| resolved.database.clone());
     let server = crate::conn::host_port(&resolved.connect.dsn.host, resolved.connect.dsn.port);
-    eprintln!(
-        "pgman restore: {} ({}) → {database} on {server}",
+    say(format!(
+        "{} ({}) → {database} on {server}",
         opts.file.display(),
         archive
             .from_text
             .as_deref()
             .map(|v| format!("dumped from PostgreSQL {v}"))
             .unwrap_or_else(|| "an archive".to_string())
-    );
+    ));
 
     let opened = pgtool::open(&resolved).await?;
     let client = admin(&opened, &database).await?;
@@ -532,53 +629,14 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         Vec::new()
     };
     let plan = plan(opts, &database, exists, sessions)?;
-    if !opts.yes {
-        let (prompt, accept) = question(&plan, &opts.file, &server);
-        let ok = tokio::task::spawn_blocking(move || pgtool::confirm_cli(&prompt, &accept))
-            .await
-            .map_err(|e| format!("prompt task failed: {e}"))??;
-        if !ok {
-            return Err("not confirmed; nothing changed".to_string());
-        }
-    }
-    for s in &plan.terminate {
-        crate::conn::terminate_backend(&client, s.pid).await?;
-    }
-    match plan.prepare {
-        Prepare::Existing => {}
-        Prepare::Create => crate::query::server::create_database(&client, &database).await?,
-        Prepare::Replace => {
-            drop_again_and_again(&client, &database).await?;
-            crate::query::server::create_database(&client, &database).await?;
-        }
-    }
-    drop(client);
-    tracing::info!(target: "pgman::restore", database = %database, server = %server, prepare = ?plan.prepare, "pg_restore starting");
-
-    let mut dsn = opened.dsn.clone();
-    dsn.dbname = database.clone();
-    let conninfo = pgtool::conninfo(&dsn, opened.via, "pgman-restore", have);
-    let mut cmd = tokio::process::Command::new(&tool);
-    cmd.args(pg_restore_args(&conninfo, opts));
-    pgtool::set_child_env(&mut cmd, opened.password());
-    let (status, tail) = pgtool::run_tool_cli(cmd, opts.verbose)
-        .await
-        .map_err(|e| format!("pg_restore {e}; {database} is part-restored"))?;
-    drop(opened);
-    let tail = tail.text();
-    let errors = ignored_errors(&tail);
-    if !status.success() && errors.is_none() {
-        return Err(format!(
-            "{}\n  {database} may be part-restored",
-            crate::dump::last_error(&tail).unwrap_or("pg_restore failed with no message")
-        ));
-    }
-    tracing::info!(target: "pgman::restore", database = %database, errors = ?errors, "pg_restore done");
-    Ok(Done {
-        database,
+    Ok(Ready {
+        opts: opts.clone(),
+        tool,
+        have,
+        opened,
+        client,
         server,
-        errors,
-        reported: restore_errors(&tail),
+        plan,
         notes,
     })
 }
