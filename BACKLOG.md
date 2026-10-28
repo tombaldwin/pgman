@@ -224,6 +224,12 @@ batch.
 
 ### From the dump/restore review (2026-10-28)
 
+- **The formula's `brew audit --strict` notes** (all older than 0.3.1):
+  `license any_of: ["MIT", "Apache-2.0"]` rather than the SPDX string;
+  `version` is redundant with the URL (but `scripts/update-formula.sh`
+  rewrites that line, so change both together); the desc's lowercase
+  "k9s" is the product's name and stays.
+
 - **"prod" in a name protects with no override for a connection or a
   URL** (v0.3.0 panel, DBA L4). `restore --as ledger_products` and a
   local `product_catalog` database are refused as protected. An

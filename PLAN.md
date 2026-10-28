@@ -64,7 +64,15 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 
 ## Window — after v0.3.0
 
-### 0. v0.3.0 released (2026-10-28)
+### 0. v0.3.1 released (2026-10-28)
+
+The Homebrew formula depends on libpq and its wrapper names it in
+PGMAN_PG_BIN; dump and restore look in --pg-bin, PGMAN_PG_BIN,
+Homebrew's libpq, then PATH. Published on Tom's ask: GitHub release,
+crates.io, the tap (11e8b14). Checked with a real `brew upgrade pgman`
+(it pulled libpq in; a dump with libpq off PATH found it).
+
+### v0.3.0 released (2026-10-28)
 
 `pgman dump`, `restore`, `run`, `apply` and MCP `dump` / `restore`, on
 Tom's go. Published 2026-10-28: GitHub release, crates.io, the Homebrew

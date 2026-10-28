@@ -2174,3 +2174,13 @@ under --jobs). Fixed, re-checked (two security residuals: the directory
 format's path, address spellings; two DBA RLS edges), fixed, re-verified
 GO. Tagged on e554d69; published 2026-10-28; tap 4309d58.
 
+### 2026-10-28 v0.3.1 released
+
+Tom: the formula should depend on libpq, and pgman find it without
+linking. depends_on "libpq"; a write_env_script wrapper sets
+PGMAN_PG_BIN to libpq's opt_bin (a user's own value wins); the lookup is
+--pg-bin, PGMAN_PG_BIN, Homebrew's libpq, PATH, then `brew --prefix
+libpq`. One Fable release reviewer, GO with notes (two fixed before the
+tag). Tagged on cf44576; published 2026-10-28; tap 11e8b14; verified by
+upgrading this Mac's brew install from 0.1.0.
+
