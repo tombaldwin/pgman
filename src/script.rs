@@ -148,7 +148,10 @@ fn with_database(base: &Resolved, db: &str) -> Resolved {
     t.connect.dsn.dbname = db.to_string();
     t.database = db.to_string();
     t.label = db.to_string();
-    t.protected = base.protected || target::named_like_prod(db);
+    if !base.protected && target::named_like_prod(db) {
+        t.protected = true;
+        t.protected_why = Some(format!("its database {db:?} has \"prod\" in it"));
+    }
     t
 }
 
@@ -282,19 +285,19 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
         );
     }
     let protected = targets.iter().any(|t| t.protected);
-    let protected_name = targets
-        .iter()
-        .find(|t| t.protected)
-        .map(|t| t.environment.clone().unwrap_or_else(|| t.label.clone()));
+    let protecting = targets.iter().find(|t| t.protected);
+    let protected_name =
+        protecting.map(|t| t.environment.clone().unwrap_or_else(|| t.label.clone()));
+    let why = protecting.map(|t| t.protection()).unwrap_or_default();
     if protected && opts.yes {
         return Err(format!(
-            "{} is protected: it is confirmed by typing its name, which --yes doesn't answer",
+            "{} is protected ({why}): it is confirmed by typing its name, which --yes doesn't answer",
             protected_name.as_deref().unwrap_or_default()
         ));
     }
     if protected && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return Err(format!(
-            "{} is protected: it is confirmed by typing its name, and stdin isn't a terminal",
+            "{} is protected ({why}): it is confirmed by typing its name, and stdin isn't a terminal",
             protected_name.as_deref().unwrap_or_default()
         ));
     }

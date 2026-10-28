@@ -200,7 +200,10 @@ pub fn dump_question(
             .unwrap_or_else(|| resolved.label.clone())
     });
     if let Some(name) = &typed {
-        message.push_str(&format!(" {name} is protected: type its name to confirm."));
+        message.push_str(&format!(
+            " {name} is protected ({}): type its name to confirm.",
+            resolved.protection()
+        ));
     }
     (message, typed)
 }

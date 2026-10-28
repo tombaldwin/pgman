@@ -32,8 +32,9 @@ Restore a custom, directory or tar dump with your own pg_restore into
 <target> (as for pgman dump: ENV[/SERVER]/DATABASE, a connection name,
 or a postgres:// URL), through pgman's connection.
 
-Never into a protected environment (protected = true, or a name with
-\"prod\" in it). Only into a database on this machine unless
+Never into a protected database: one of an environment with
+protected = true (or \"prod\" in its name), a name with \"prod\" in it, or
+any database on a server a protected environment reaches. Only into a database on this machine unless
 --allow-remote. Refused while other sessions are connected to it,
 unless --terminate.
 
@@ -194,9 +195,9 @@ pub fn refusal(target: &Resolved, database: &str, allow_remote: bool) -> Option<
     }
     if target.protected {
         return Some(format!(
-            "{} is protected (protected = true, or a name with \"prod\" in it); pgman never \
-             restores into a protected database",
-            target.label
+            "{} is protected ({}); pgman never restores into a protected database",
+            target.label,
+            target.protection()
         ));
     }
     if !target.is_local() && !allow_remote {

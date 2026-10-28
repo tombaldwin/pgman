@@ -307,7 +307,7 @@ pub fn explain_connect(err: String, target: &Resolved) -> String {
     format!(
         "no password for {who}, and the server asks for one. Put it in the URL \
          (postgres://user:password@…), or use a connections.toml entry with password_env or a \
-         secret. PGPASSWORD isn't read for a target"
+         secret. pgman doesn't read PGPASSWORD here"
     )
 }
 
@@ -712,7 +712,7 @@ mod tests {
         let e = explain_connect("invalid configuration: password missing".into(), &t);
         assert!(
             e.starts_with("no password for app_ro@db.example:5432")
-                && e.contains("PGPASSWORD isn't read"),
+                && e.contains("doesn't read PGPASSWORD here"),
             "{e}"
         );
         assert_eq!(explain_connect("timed out".into(), &t), "timed out");

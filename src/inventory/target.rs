@@ -47,6 +47,10 @@ pub struct Resolved {
     /// For a replica, the server it replicates.
     pub replica_of: Option<String>,
     pub protected: bool,
+    /// Why it is protected, for a refusal to say: `the environment
+    /// "live" says protected = true`, `it is on db.internal:5432, a
+    /// server the protected environment "live" reaches`.
+    pub protected_why: Option<String>,
     pub connect: ConnectSpec,
 }
 
@@ -222,14 +226,46 @@ pub fn named_like_prod(name: &str) -> bool {
     name.to_ascii_lowercase().contains("prod")
 }
 
-/// Whether connection `name` (to `host`) is protected: an environment
-/// that lists it is, or its name or its host's says prod — as a URL to
-/// that host would be. Pure.
-pub fn connection_protected(name: &str, host: &str, envs: &[Environment]) -> bool {
-    named_like_prod(name) || named_like_prod(host) || envs.iter().any(|e| {
-        matches!(&e.source, Source::Static { connections } if connections.iter().any(|c| c == name))
-            && super::patching::is_protected(e)
+/// Why `env` is protected, if it is. Pure.
+fn env_protection(env: &Environment) -> Option<String> {
+    if !super::patching::is_protected(env) {
+        return None;
+    }
+    Some(if env.protected == Some(true) {
+        format!("the environment {:?} says protected = true", env.name)
+    } else {
+        format!("the environment {:?} has \"prod\" in its name", env.name)
     })
+}
+
+/// Why `name` (a database or host) is protected by the name rule. Pure.
+fn name_protection(what: &str, name: &str) -> Option<String> {
+    named_like_prod(name).then(|| format!("its {what} {name:?} has \"prod\" in it"))
+}
+
+/// Why connection `name` (to `host`) is protected, if it is: an
+/// environment that lists it is, or its name or its host's says prod —
+/// as a URL to that host would be. Pure.
+pub fn connection_protection(name: &str, host: &str, envs: &[Environment]) -> Option<String> {
+    envs.iter()
+        .filter(|e| matches!(&e.source, Source::Static { connections } if connections.iter().any(|c| c == name)))
+        .find_map(env_protection)
+        .or_else(|| name_protection("name", name))
+        .or_else(|| name_protection("host", host))
+}
+
+/// [`connection_protection`], as a yes or no. Pure.
+pub fn connection_protected(name: &str, host: &str, envs: &[Environment]) -> bool {
+    connection_protection(name, host, envs).is_some()
+}
+
+impl Resolved {
+    /// Why it is protected, for a refusal. Pure.
+    pub fn protection(&self) -> String {
+        self.protected_why
+            .clone()
+            .unwrap_or_else(|| "it is protected".to_string())
+    }
 }
 
 /// `target` of `env`, resolved. Pure.
@@ -246,6 +282,7 @@ fn from_target(label: String, env: &Environment, target: Target) -> Result<Resol
         role: target.role,
         replica_of: target.replica_of,
         protected: super::patching::is_protected(env),
+        protected_why: env_protection(env),
         connect,
     })
 }
@@ -263,6 +300,8 @@ pub fn from_url(url: &str) -> Result<Resolved, String> {
         role: Role::Direct,
         replica_of: None,
         protected: named_like_prod(&dsn.dbname) || named_like_prod(&dsn.host),
+        protected_why: name_protection("database", &dsn.dbname)
+            .or_else(|| name_protection("host", &dsn.host)),
         connect: ConnectSpec {
             dsn,
             secret: None,
@@ -284,10 +323,34 @@ pub fn resolve(text: &str, want: Want) -> Result<Resolved, String> {
     };
     let entries = crate::mcp::connections::build(&personal.connections, Vec::new(), false);
     let mut resolved = resolve_in(text, want, &envs, &entries)?;
+    // A connection's password_env (named directly, or a static
+    // environment's row), named again so the connect reads it then — and
+    // says which variable, when it is unset.
+    let from_connection = match &resolved.environment {
+        None => true,
+        Some(env) => envs
+            .iter()
+            .any(|e| &e.name == env && matches!(e.source, Source::Static { .. })),
+    };
+    if from_connection {
+        if let Some(pc) = personal
+            .connections
+            .iter()
+            .find(|c| c.base.name == resolved.server)
+        {
+            resolved.connect.password_env = pc.base.password_env.clone().filter(|v| !v.is_empty());
+        }
+    }
     // However it was named: a URL, or a second connection, to a server
     // a protected environment reaches is that environment's.
     let dsn = &resolved.connect.dsn;
-    if host_protected(&dsn.host, dsn.port, &envs, &entries) {
+    if let Some(env) = protecting_env(&dsn.host, dsn.port, &envs, &entries) {
+        if !resolved.protected {
+            resolved.protected_why = Some(format!(
+                "it is on {}, a server the protected environment {env:?} reaches",
+                crate::conn::host_port(&dsn.host, dsn.port)
+            ));
+        }
         resolved.protected = true;
     }
     Ok(resolved)
@@ -320,12 +383,23 @@ pub fn host_protected(
     envs: &[Environment],
     entries: &[crate::mcp::connections::Entry],
 ) -> bool {
+    protecting_env(host, port, envs, entries).is_some()
+}
+
+/// [`host_protected`]: the protected environment that reaches
+/// `host:port`, by name. Pure.
+pub fn protecting_env(
+    host: &str,
+    port: u16,
+    envs: &[Environment],
+    entries: &[crate::mcp::connections::Entry],
+) -> Option<String> {
     let key = host_key(host);
     let label = key.split('.').next().unwrap_or("");
     let rds = key.ends_with(".rds.amazonaws.com");
     envs.iter()
         .filter(|e| super::patching::is_protected(e))
-        .any(|e| match &e.source {
+        .find(|e| match &e.source {
             Source::Static { connections } => connections.iter().any(|name| {
                 entries
                     .iter()
@@ -340,6 +414,7 @@ pub fn host_protected(
             }
             Source::Docker { .. } => false,
         })
+        .map(|e| e.name.clone())
 }
 
 /// [`resolve`] before the server check. Blocking, as it is.
@@ -391,6 +466,7 @@ fn resolve_in(
                 role: e.role,
                 replica_of: None,
                 protected: connection_protected(&e.name, &dsn.host, envs),
+                protected_why: connection_protection(&e.name, &dsn.host, envs),
                 connect: ConnectSpec {
                     dsn,
                     secret: e.secret.clone(),
@@ -657,6 +733,33 @@ mod tests {
         ));
         assert_eq!(host_key("[::1]"), "localhost");
         assert_eq!(host_key("127.0.0.1"), "localhost");
+    }
+
+    #[test]
+    fn a_protected_target_says_why() {
+        let envs = crate::inventory::parse_config(
+            "[[environments]]\nname = \"live\"\nprotected = true\nsource = { kind = \"static\", connections = [\"main-db\"] }\n\
+             [[environments]]\nname = \"prod-eu\"\nsource = { kind = \"static\", connections = [\"eu-db\"] }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            connection_protection("main-db", "db.internal", &envs).as_deref(),
+            Some("the environment \"live\" says protected = true")
+        );
+        assert_eq!(
+            connection_protection("eu-db", "db.internal", &envs).as_deref(),
+            Some("the environment \"prod-eu\" has \"prod\" in its name")
+        );
+        assert_eq!(
+            connection_protection("other", "ledger-prod.example", &envs).as_deref(),
+            Some("its host \"ledger-prod.example\" has \"prod\" in it")
+        );
+        assert_eq!(connection_protection("other", "db.example", &envs), None);
+        let r = from_url("postgres://u@localhost/ledger_prod").unwrap();
+        assert_eq!(
+            r.protection(),
+            "its database \"ledger_prod\" has \"prod\" in it"
+        );
     }
 
     #[test]

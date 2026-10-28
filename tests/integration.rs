@@ -9366,7 +9366,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         serde_json::json!({"action": "accept", "content": {"name": "lve"}}),
     );
     assert!(
-        message.contains("live is protected: type its name"),
+        message.contains("live is protected (") && message.contains("type its name"),
         "{message}"
     );
     assert!(
