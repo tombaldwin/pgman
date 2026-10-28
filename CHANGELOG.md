@@ -6,6 +6,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-28
+
 ### Highlights
 
 - **A local copy of an environment in two commands.** `pgman dump
@@ -831,7 +833,8 @@ ratatui 0.30, crossterm 0.29, reqwest 0.12 (rustls only), `tb-tui-common`
 0.2 shared with ebman. `toml` 1.x is used but saved-query files are
 written with TOML 1.0-compatible escapes, pinned by test.
 
-[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tombaldwin/pgman/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/tombaldwin/pgman/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tombaldwin/pgman/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tombaldwin/pgman/releases/tag/v0.1.0
