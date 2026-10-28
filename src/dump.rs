@@ -338,7 +338,12 @@ pub fn last_error(tail: &str) -> Option<&str> {
 pub fn explain_failure(tail: &str, replica: bool, user: Option<&str>) -> String {
     let lower = tail.to_ascii_lowercase();
     let last = last_error(tail).unwrap_or("pg_dump failed with no message");
-    if lower.contains("conflict with recovery") {
+    // A standby reports some recovery conflicts as a deadlock: its
+    // replay of the primary's locks is one of the parties.
+    if lower.contains("conflict with recovery")
+        || lower.contains("deadlock with recovery")
+        || (replica && lower.contains("deadlock detected"))
+    {
         let primary = if replica {
             "; if it keeps happening, take it from the primary with --primary (which then carries the dump's reads)"
         } else {
@@ -737,6 +742,20 @@ mod tests {
         assert!(e.contains("Try again") && e.contains("--primary"), "{e}");
         let e = explain_failure(tail, false, None);
         assert!(!e.contains("--primary"), "{e}");
+    }
+
+    #[test]
+    fn a_deadlock_on_a_replica_is_a_recovery_conflict_too() {
+        let tail = "pg_dump: error: query failed: ERROR:  deadlock detected\n\
+                    DETAIL:  User transaction caused buffer deadlock with recovery.";
+        assert!(explain_failure(tail, true, None).starts_with("the replica cancelled the dump"));
+        let plain = "pg_dump: error: query failed: ERROR:  deadlock detected";
+        assert!(explain_failure(plain, true, None).starts_with("the replica cancelled"));
+        assert_eq!(
+            explain_failure(plain, false, None),
+            "pg_dump: error: query failed: ERROR:  deadlock detected",
+            "on a primary a deadlock is just a deadlock"
+        );
     }
 
     #[test]

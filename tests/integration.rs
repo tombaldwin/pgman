@@ -8272,7 +8272,35 @@ fn a_dump_comes_from_the_replica_and_is_private() {
         return;
     }
     let (home, out) = dump_home("dump-replica");
-    let o = pgman_in(&home, &out, &["dump", "staging"]);
+    // One table of this test's own: a whole-database dump on the standby
+    // races the other tests' DDL replaying there (a recovery conflict,
+    // which a_deadlock_on_a_replica_is_a_recovery_conflict_too covers).
+    let t = it_name("dump_rep");
+    on("pgman_test", &format!("DROP TABLE IF EXISTS {t}")).unwrap();
+    on("pgman_test", &format!("CREATE TABLE {t} (id int)")).unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let started = std::time::Instant::now();
+    while rt.block_on(async {
+        let (c, conn) = tokio_postgres::connect(STANDBY_DSN, tokio_postgres::NoTls)
+            .await
+            .unwrap();
+        tokio::spawn(conn);
+        c.query(
+            &format!("SELECT 1 FROM pg_class WHERE relname = '{t}'"),
+            &[],
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    }) {
+        assert!(started.elapsed().as_secs() < 30, "never replicated");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let o = pgman_in(
+        &home,
+        &out,
+        &["dump", "staging", "--", &format!("--table={t}")],
+    );
     let (stdout, stderr) = (
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr),
@@ -8324,6 +8352,7 @@ fn a_dump_comes_from_the_replica_and_is_private() {
             "plain",
             "--",
             "--schema-only",
+            &format!("--table={t}"),
         ],
     );
     let stderr = String::from_utf8_lossy(&o.stderr);
@@ -8331,9 +8360,10 @@ fn a_dump_comes_from_the_replica_and_is_private() {
     assert!(stderr.contains("on local-primary (primary)"), "{stderr}");
     let sql = std::fs::read_to_string(out.join("p.sql")).unwrap();
     assert!(
-        sql.contains("PostgreSQL database dump") && !sql.contains("COPY "),
+        sql.contains(&format!("CREATE TABLE public.{t}")) && !sql.contains("COPY "),
         "schema only"
     );
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
 
 /// A dump that fails leaves the file it would have replaced as it was,
