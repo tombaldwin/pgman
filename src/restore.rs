@@ -50,7 +50,8 @@ unless --terminate.
   --allow-remote  allow a target that isn't on this machine (still never
                   a protected one)
   --yes           don't ask; for scripts
-  --pg-bin DIR    where pg_restore is (default: PATH, then Homebrew's libpq)
+  --pg-bin DIR    where pg_restore is (default: $PGMAN_PG_BIN, then
+                  Homebrew's libpq, then PATH)
   --verbose       show pg_restore's progress
   --              anything after it goes to pg_restore as it is
 
@@ -621,7 +622,7 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     if let Some(why) = refusal(&resolved, &database, opts.allow_remote) {
         return Err(why);
     }
-    let tool = pgtool::find_tool("pg_restore", opts.pg_bin.as_deref())?;
+    let (tool, found_in) = pgtool::find_tool_from("pg_restore", opts.pg_bin.as_deref())?;
     let have = pgtool::tool_version(&tool)?;
     let listing = tokio::process::Command::new(&tool)
         .arg("--list")
@@ -651,13 +652,14 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     }
     let server = crate::conn::host_port(&resolved.connect.dsn.host, resolved.connect.dsn.port);
     say(format!(
-        "{} ({}) → {database} on {server}",
+        "{} ({}) → {database} on {server}, with pg_restore {have} ({found_in}: {})",
         opts.file.display(),
         archive
             .from_text
             .as_deref()
             .map(|v| format!("dumped from PostgreSQL {v}"))
-            .unwrap_or_else(|| "an archive".to_string())
+            .unwrap_or_else(|| "an archive".to_string()),
+        tool.display()
     ));
 
     let opened = pgtool::open(&resolved).await?;

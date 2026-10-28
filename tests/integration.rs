@@ -9878,3 +9878,44 @@ fn a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout() {
     assert!(valid, "built, not left INVALID");
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
+
+/// The formula's wrapper names its libpq in PGMAN_PG_BIN: that pg_dump is
+/// the one run, and says where it came from; --pg-bin still wins.
+#[cfg(unix)]
+#[test]
+fn pgman_pg_bin_names_the_tools_and_pg_bin_wins() {
+    let (home, out) = dump_home("dump-pg-bin-var");
+    let via_var = fake_pg_dump(&home, "18.4", "echo var > /dev/null");
+    let o = pgman_in_env(
+        &home,
+        &out,
+        &[("PGMAN_PG_BIN", via_var.to_str().unwrap())],
+        &["dump", "local-primary", "v.dump"],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "(PGMAN_PG_BIN: {}",
+            via_var.join("pg_dump").display()
+        )),
+        "{stderr}"
+    );
+    let other = home.join("other-bin");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::copy(via_var.join("pg_dump"), other.join("pg_dump")).unwrap();
+    let o = pgman_in_env(
+        &home,
+        &out,
+        &[("PGMAN_PG_BIN", via_var.to_str().unwrap())],
+        &[
+            "dump",
+            "local-primary",
+            "w.dump",
+            "--pg-bin",
+            other.to_str().unwrap(),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("(--pg-bin: "), "{stderr}");
+}

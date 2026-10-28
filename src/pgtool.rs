@@ -76,9 +76,68 @@ pub fn parse_tool_version(out: &str) -> Option<Major> {
     after.split_whitespace().find_map(Major::parse)
 }
 
-/// Directories tried after `PATH`: Homebrew's libpq is keg-only, so a
-/// Mac with `brew install libpq` has `pg_dump` but not on `PATH`.
-pub const FALLBACK_DIRS: &[&str] = &["/opt/homebrew/opt/libpq/bin", "/usr/local/opt/libpq/bin"];
+/// Homebrew's prefixes, tried when `$HOMEBREW_PREFIX` doesn't say:
+/// Apple silicon's, then Intel's.
+pub const BREW_PREFIXES: &[&str] = &["/opt/homebrew", "/usr/local"];
+
+/// The variable that names where pg_dump and pg_restore are. The
+/// Homebrew formula sets it to its libpq dependency's `bin` (libpq is
+/// keg-only, so nothing of it is on PATH), so a brew install finds
+/// them with nothing linked.
+pub const PG_BIN_VAR: &str = "PGMAN_PG_BIN";
+
+/// One place pgman looks for the tools, and what to call it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    pub dir: PathBuf,
+    /// `--pg-bin`, `PGMAN_PG_BIN`, `Homebrew's libpq`, `PATH`.
+    pub source: &'static str,
+}
+
+/// Where to look for the tools, in order: `--pg-bin` alone when given;
+/// else `$PGMAN_PG_BIN`, Homebrew's libpq (under `$HOMEBREW_PREFIX`,
+/// then the standard prefixes — before PATH, so an older PostgreSQL on
+/// PATH doesn't win over the libpq Homebrew keeps current), then each
+/// PATH entry. `var` reads the environment. Pure.
+pub fn candidates(pg_bin: Option<&Path>, var: &dyn Fn(&str) -> Option<String>) -> Vec<Candidate> {
+    if let Some(dir) = pg_bin {
+        return vec![Candidate {
+            dir: dir.to_path_buf(),
+            source: "--pg-bin",
+        }];
+    }
+    let mut out = Vec::new();
+    if let Some(dir) = var(PG_BIN_VAR).filter(|v| !v.is_empty()) {
+        out.push(Candidate {
+            dir: PathBuf::from(dir),
+            source: PG_BIN_VAR,
+        });
+    }
+    let mut prefixes: Vec<String> = var("HOMEBREW_PREFIX")
+        .filter(|v| !v.is_empty())
+        .into_iter()
+        .collect();
+    for p in BREW_PREFIXES {
+        if !prefixes.iter().any(|q| q == p) {
+            prefixes.push(p.to_string());
+        }
+    }
+    for p in prefixes {
+        out.push(Candidate {
+            dir: Path::new(&p).join("opt/libpq/bin"),
+            source: "Homebrew's libpq",
+        });
+    }
+    if let Some(path) = var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            out.push(Candidate {
+                dir,
+                source: "PATH",
+            });
+        }
+    }
+    out
+}
 
 /// `name` in the first of `dirs` that has it as a file. Pure apart from
 /// the existence checks.
@@ -86,24 +145,64 @@ pub fn find_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     dirs.iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
-/// Where `name` (`pg_dump`) is: in `bin_dir` when given (`--pg-bin`),
-/// else on `PATH`, else in [`FALLBACK_DIRS`].
-pub fn find_tool(name: &str, bin_dir: Option<&Path>) -> Result<PathBuf, String> {
-    if let Some(dir) = bin_dir {
-        return find_in(name, &[dir.to_path_buf()])
-            .ok_or_else(|| format!("--pg-bin {}: no {name} there", dir.display()));
+/// The first of `candidates` that has `name`, and where it came from.
+/// Reads the filesystem.
+pub fn first_found(name: &str, candidates: &[Candidate]) -> Option<(PathBuf, &'static str)> {
+    candidates
+        .iter()
+        .map(|c| (c.dir.join(name), c.source))
+        .find(|(p, _)| p.is_file())
+}
+
+/// `brew --prefix libpq`'s `bin`, for a Homebrew in an unusual place
+/// that `$HOMEBREW_PREFIX` doesn't name: the last resort, as it runs
+/// brew.
+fn brew_libpq() -> Option<PathBuf> {
+    let out = std::process::Command::new("brew")
+        .args(["--prefix", "libpq"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let prefix = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!prefix.is_empty()).then(|| Path::new(&prefix).join("bin"))
+}
+
+/// Where `name` (`pg_dump`) is, and where it was found: see
+/// [`candidates`] for the order, with `brew --prefix libpq` tried last.
+pub fn find_tool_from(
+    name: &str,
+    bin_dir: Option<&Path>,
+) -> Result<(PathBuf, &'static str), String> {
+    let env = |k: &str| std::env::var(k).ok();
+    let list = candidates(bin_dir, &env);
+    if let Some(found) = first_found(name, &list) {
+        return Ok(found);
     }
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect())
-        .unwrap_or_default();
-    dirs.extend(FALLBACK_DIRS.iter().map(PathBuf::from));
-    find_in(name, &dirs).ok_or_else(|| {
-        format!(
-            "{name} not found on PATH — pgman runs your own PostgreSQL client tools. \
-             Install them (macOS: brew install libpq; Debian/Ubuntu: apt install postgresql-client) \
-             or point at them with --pg-bin DIR"
+    if let Some(dir) = bin_dir {
+        return Err(format!("--pg-bin {}: no {name} there", dir.display()));
+    }
+    if let Some(found) = brew_libpq().and_then(|d| {
+        first_found(
+            name,
+            &[Candidate {
+                dir: d,
+                source: "Homebrew's libpq",
+            }],
         )
-    })
+    }) {
+        return Ok(found);
+    }
+    Err(format!(
+        "{name} not found — pgman runs your own PostgreSQL client tools. Install them \
+         (macOS: brew install libpq; Debian/Ubuntu: apt install postgresql-client), or point at \
+         them with --pg-bin DIR or {PG_BIN_VAR}"
+    ))
+}
+
+/// [`find_tool_from`], the path alone.
+pub fn find_tool(name: &str, bin_dir: Option<&Path>) -> Result<PathBuf, String> {
+    find_tool_from(name, bin_dir).map(|(p, _)| p)
 }
 
 /// `tool --version`, parsed.
@@ -645,6 +744,79 @@ mod tests {
             vec![("PGPASSWORD".to_string(), None)],
             "no password: the inherited one is still removed"
         );
+    }
+
+    #[test]
+    fn the_lookup_order_is_pg_bin_then_the_variable_then_libpq_then_path() {
+        let env = |vars: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                vars.iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        let order = |c: Vec<Candidate>| {
+            c.into_iter()
+                .map(|c| format!("{}={}", c.source, c.dir.display()))
+                .collect::<Vec<_>>()
+        };
+        let all = env(&[
+            ("PGMAN_PG_BIN", "/brew/opt/libpq/bin"),
+            ("HOMEBREW_PREFIX", "/custom"),
+            ("PATH", "/usr/bin:/opt/pg14/bin"),
+        ]);
+        assert_eq!(
+            order(candidates(None, &all)),
+            [
+                "PGMAN_PG_BIN=/brew/opt/libpq/bin",
+                "Homebrew's libpq=/custom/opt/libpq/bin",
+                "Homebrew's libpq=/opt/homebrew/opt/libpq/bin",
+                "Homebrew's libpq=/usr/local/opt/libpq/bin",
+                "PATH=/usr/bin",
+                "PATH=/opt/pg14/bin",
+            ]
+        );
+        assert_eq!(
+            order(candidates(Some(Path::new("/mine")), &all)),
+            ["--pg-bin=/mine"],
+            "--pg-bin alone"
+        );
+        let bare = env(&[("HOMEBREW_PREFIX", "/opt/homebrew"), ("PGMAN_PG_BIN", "")]);
+        assert_eq!(
+            order(candidates(None, &bare)),
+            [
+                "Homebrew's libpq=/opt/homebrew/opt/libpq/bin",
+                "Homebrew's libpq=/usr/local/opt/libpq/bin",
+            ],
+            "an empty variable is unset; a prefix isn't tried twice"
+        );
+    }
+
+    #[test]
+    fn the_first_candidate_that_has_the_tool_wins() {
+        let root = std::env::temp_dir().join(format!("pgman-pgtool-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (libpq, path) = (root.join("libpq/bin"), root.join("path/bin"));
+        std::fs::create_dir_all(&libpq).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("pg_dump"), "").unwrap();
+        let c = |d: &Path, s: &'static str| Candidate {
+            dir: d.to_path_buf(),
+            source: s,
+        };
+        let list = [c(&libpq, "Homebrew's libpq"), c(&path, "PATH")];
+        assert_eq!(
+            first_found("pg_dump", &list),
+            Some((path.join("pg_dump"), "PATH"))
+        );
+        std::fs::write(libpq.join("pg_dump"), "").unwrap();
+        assert_eq!(
+            first_found("pg_dump", &list),
+            Some((libpq.join("pg_dump"), "Homebrew's libpq")),
+            "libpq before PATH"
+        );
+        assert_eq!(first_found("pg_restore", &list), None);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

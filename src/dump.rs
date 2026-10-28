@@ -40,7 +40,8 @@ written to a temporary name and renamed into place when pg_dump
 succeeds: a failed dump never replaces a file.
 
   --format       pg_dump's format (default custom, for pg_restore)
-  --pg-bin DIR   where pg_dump is (default: PATH, then Homebrew's libpq)
+  --pg-bin DIR   where pg_dump is (default: $PGMAN_PG_BIN, then Homebrew's
+                 libpq, then PATH)
   --verbose      show pg_dump's progress
   --skip-unreadable
                  leave out the tables, views and sequences the dump's user
@@ -802,7 +803,7 @@ pub async fn run(
     resolved: target::Resolved,
     say: &(dyn Fn(String) + Send + Sync),
 ) -> Result<Done, String> {
-    let tool = pgtool::find_tool("pg_dump", opts.pg_bin.as_deref())?;
+    let (tool, found_in) = pgtool::find_tool_from("pg_dump", opts.pg_bin.as_deref())?;
     let have = pgtool::tool_version(&tool)?;
     say(format!("{} — {}", resolved.label, resolved.describe()));
 
@@ -857,10 +858,11 @@ pub async fn run(
         ));
     }
     say(format!(
-        "PostgreSQL {}{}, as {}, with pg_dump {have}",
+        "PostgreSQL {}{}, as {}, with pg_dump {have} ({found_in}: {})",
         facts.version,
         if facts.in_recovery { " (standby)" } else { "" },
-        facts.user
+        facts.user,
+        tool.display()
     ));
 
     let conninfo = pgtool::conninfo(&opened.dsn, opened.via, "pgman-dump", have);
