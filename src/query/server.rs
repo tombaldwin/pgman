@@ -141,7 +141,10 @@ pub struct Session {
     pub application: String,
 }
 
-/// Every session on `db` but `client`'s own.
+/// Every client session on `db` but `client`'s own: not autovacuum or
+/// another background worker, which come and go on their own (a freshly
+/// restored database is where autovacuum runs) and which the user may not
+/// be allowed to end.
 pub async fn sessions_on(
     client: &tokio_postgres::Client,
     db: &str,
@@ -150,7 +153,8 @@ pub async fn sessions_on(
         .query(
             "SELECT pid, coalesce(usename::text, ''), coalesce(application_name, '') \
              FROM pg_catalog.pg_stat_activity \
-             WHERE datname = $1 AND pid <> pg_catalog.pg_backend_pid() ORDER BY pid",
+             WHERE datname = $1 AND pid <> pg_catalog.pg_backend_pid() \
+               AND backend_type = 'client backend' ORDER BY pid",
             &[&db],
         )
         .await
