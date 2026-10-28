@@ -575,6 +575,7 @@ impl Ready {
             .await
             .map_err(|e| format!("pg_restore {e}; {database} is part-restored"))?;
         drop(opened);
+        let errors_text = tail.errors();
         let tail = tail.text();
         let errors = ignored_errors(&tail);
         if !status.success() && errors.is_none() {
@@ -588,7 +589,7 @@ impl Ready {
             database,
             server,
             errors,
-            reported: restore_errors(&tail),
+            reported: restore_errors(&errors_text),
             notes,
         })
     }
@@ -706,41 +707,70 @@ async fn drop_again_and_again(
 impl Done {
     /// Errors pg_restore went past that aren't [`RestoreError::harmless`]:
     /// a restore with any is incomplete, and exits non-zero.
+    ///
+    /// Read from what pg_restore printed, not its count: under `--jobs`
+    /// each worker prints the harmless SET a newer pg_dump writes, while
+    /// the count holds the leader's alone. Any it counted that pgman never
+    /// saw are counted as real.
     pub fn real_errors(&self) -> u64 {
-        let harmless = self.reported.iter().filter(|e| e.harmless).count() as u64;
-        self.errors.unwrap_or(0).saturating_sub(harmless)
+        let seen = self.reported.len() as u64;
+        let real = self.reported.iter().filter(|e| !e.harmless).count() as u64;
+        real + self.errors.unwrap_or(0).saturating_sub(seen)
     }
 }
 
+/// How many of `errors` the restore's list shows.
+const LISTED: usize = 12;
+
 /// What `pgman restore` prints when it finishes. Pure.
 pub fn render(done: &Done) -> String {
-    let harmless = done.reported.iter().filter(|e| e.harmless).count() as u64;
-    let errors = done.errors.unwrap_or(0);
-    let mut out = if errors == 0 {
-        format!("restored into {} on {}", done.database, done.server)
-    } else if errors == harmless {
+    let harmless = done.reported.iter().any(|e| e.harmless);
+    let real = done.real_errors();
+    let ignored = if harmless {
+        " (a newer pg_dump's SET of a setting this server doesn't have: ignored)"
+    } else {
+        ""
+    };
+    let mut out = if real == 0 {
         format!(
-            "restored into {} on {}; pg_restore went past {errors} harmless error(s): settings a \
-             newer pg_dump writes that this server doesn't have",
+            "restored into {} on {}{ignored}",
             done.database, done.server
         )
     } else {
+        let listed: Vec<&RestoreError> = done.reported.iter().filter(|e| !e.harmless).collect();
+        let exists = listed
+            .iter()
+            .filter(|e| e.message.contains("already exists") || e.message.contains("duplicate key"))
+            .count();
         let mut s = format!(
-            "restored into {} on {}, with {} error(s) pg_restore went past:",
+            "restored into {} on {}, with {real} error(s) pg_restore went past{}:",
             done.database,
             done.server,
-            errors - harmless
+            if exists * 2 > listed.len() {
+                format!(
+                    " — {exists} of them \"already exists\" or \"duplicate key\": the database \
+                     wasn't empty. --clean replaces it instead"
+                )
+            } else {
+                String::new()
+            }
         );
-        for e in done.reported.iter().filter(|e| !e.harmless) {
+        for e in listed.iter().take(LISTED) {
             s.push_str(&format!("\n  {}", e.message));
             if let Some(c) = &e.command {
                 s.push_str(&format!("\n    in: {}", ellipsize(c, 200)));
             }
         }
-        if harmless > 0 {
+        let more = real.saturating_sub(LISTED.min(listed.len()) as u64);
+        if more > 0 {
             s.push_str(&format!(
-                "\n  (and {harmless} harmless one(s): settings this server doesn't have)"
+                "\n  … and {more} more (--verbose shows pg_restore's own output)"
             ));
+        }
+        if harmless {
+            s.push_str(
+                "\n  and a newer pg_dump's SET of a setting this server doesn't have: ignored",
+            );
         }
         s
     };
@@ -1029,16 +1059,52 @@ mod tests {
             "{r}"
         );
         assert!(
-            r.contains("in: CREATE EXTENSION") && r.contains("1 harmless"),
+            r.contains("in: CREATE EXTENSION")
+                && r.contains("SET of a setting this server doesn't have: ignored"),
             "{r}"
         );
         let r = render(&done(1, vec![errs[0].clone()]));
-        assert!(
-            r.contains("1 harmless error(s)") && !r.contains("in:"),
-            "{r}"
+        assert_eq!(
+            r,
+            "restored into ledger on localhost:5432 (a newer pg_dump's SET of a setting this server doesn't have: ignored)"
         );
+        // --jobs: every worker prints the harmless SET, the count holds one.
+        let three = vec![errs[0].clone(), errs[0].clone(), errs[0].clone()];
+        assert_eq!(done(1, three.clone()).real_errors(), 0);
+        assert!(render(&done(1, three)).starts_with("restored into ledger on localhost:5432 ("));
+        // A real one among the workers' harmless ones, against the
+        // leader's count of one: still real.
+        let mixed = vec![errs[0].clone(), errs[0].clone(), errs[1].clone()];
+        assert_eq!(done(1, mixed).real_errors(), 1);
+        // Counted but never seen (cut off): real, not assumed harmless.
+        assert_eq!(done(3, vec![errs[0].clone()]).real_errors(), 2);
         let r = render(&done(0, Vec::new()));
         assert_eq!(r, "restored into ledger on localhost:5432");
+    }
+
+    #[test]
+    fn a_database_that_wasnt_empty_says_so_and_a_long_list_is_cut() {
+        let exists = |i: usize| RestoreError {
+            message: format!("could not execute query: ERROR:  relation \"t{i}\" already exists"),
+            command: Some(format!("CREATE TABLE public.t{i} (id int);")),
+            harmless: false,
+        };
+        let reported: Vec<RestoreError> = (0..30).map(exists).collect();
+        let d = Done {
+            database: "ledger".into(),
+            server: "localhost:5432".into(),
+            errors: Some(30),
+            reported,
+            notes: Vec::new(),
+        };
+        let r = render(&d);
+        assert!(
+            r.contains("with 30 error(s)")
+                && r.contains("the database wasn't empty. --clean replaces it"),
+            "{r}"
+        );
+        assert!(r.contains("… and 18 more"), "{r}");
+        assert_eq!(r.matches("already exists").count(), LISTED + 1, "{r}");
     }
 
     #[test]

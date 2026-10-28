@@ -8710,6 +8710,31 @@ fn a_restore_goes_into_another_name_and_clean_replaces_it() {
     );
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(count_in(&db, &t), Ok(25), "replaced, not merged");
+    // Parallel and verbose: each worker prints a newer pg_dump's harmless
+    // SET, and progress pushes errors out of the tail; neither is a
+    // failure (it panicked, and exited 1).
+    for extra in [&["--jobs", "2"][..], &["--verbose"]] {
+        let mut a = vec![
+            "restore",
+            "dump.dump",
+            "local",
+            "--as",
+            db.as_str(),
+            "--clean",
+            "--yes",
+        ];
+        a.extend_from_slice(extra);
+        let o = pgman_in(&home, &out, &a);
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        assert_eq!(
+            o.status.code(),
+            Some(0),
+            "{extra:?}: {stdout}\n{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(!stdout.contains("error(s)"), "{extra:?}: {stdout}");
+        assert_eq!(count_in(&db, &t), Ok(25));
+    }
     assert!(
         count_in(&db, &format!("{t}_extra")).is_err(),
         "the old database is gone"

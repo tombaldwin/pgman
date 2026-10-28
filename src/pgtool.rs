@@ -330,12 +330,25 @@ pub async fn open(target: &Resolved) -> Result<Opened, String> {
 #[derive(Debug, Default)]
 pub struct Tail {
     lines: std::collections::VecDeque<String>,
+    /// Every `error:` line and the `Command was:` line after it, however
+    /// long the output: what an error count is read from, which a
+    /// `--verbose` run's progress would otherwise push out of the tail.
+    errors: Vec<String>,
+    after_error: bool,
 }
 
 impl Tail {
     pub const CAP: usize = 200;
+    /// Error lines kept, at most.
+    pub const ERRORS_CAP: usize = 20_000;
 
     pub fn push(&mut self, line: String) {
+        let is_error = line.contains("error:");
+        let keep = is_error || (self.after_error && line.starts_with("Command was:"));
+        self.after_error = is_error;
+        if keep && self.errors.len() < Self::ERRORS_CAP {
+            self.errors.push(line.clone());
+        }
         if self.lines.len() == Self::CAP {
             self.lines.pop_front();
         }
@@ -344,6 +357,11 @@ impl Tail {
 
     pub fn text(&self) -> String {
         self.lines.iter().cloned().collect::<Vec<_>>().join("\n")
+    }
+
+    /// The kept error lines, as text.
+    pub fn errors(&self) -> String {
+        self.errors.join("\n")
     }
 }
 
@@ -644,6 +662,21 @@ mod tests {
         let mode = std::fs::metadata(&out).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_error_is_kept_past_the_tail() {
+        let mut t = Tail::default();
+        t.push("pg_restore: error: could not execute query: ERROR:  x".into());
+        t.push("Command was: SET transaction_timeout = 0;".into());
+        for i in 0..(Tail::CAP * 3) {
+            t.push(format!("pg_restore: processing item {i}"));
+        }
+        assert!(!t.text().contains("error:"), "scrolled out of the tail");
+        assert_eq!(
+            t.errors(),
+            "pg_restore: error: could not execute query: ERROR:  x\nCommand was: SET transaction_timeout = 0;"
+        );
     }
 
     #[test]
