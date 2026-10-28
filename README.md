@@ -174,11 +174,18 @@ brew install tombaldwin/tap/pgman
 On Homebrew 6 or newer, run `brew trust tombaldwin/tap` first: Homebrew
 only loads formulae from taps you have trusted.
 
+It brings `libpq`, whose `pg_dump` and `pg_restore` `pgman dump` and
+`pgman restore` run.
+
 **Cargo:**
 
 ```sh
 cargo install pgman --locked
 ```
+
+`pgman dump` and `pgman restore` also need PostgreSQL's client tools:
+`brew install libpq` on macOS, `apt install postgresql-client` on
+Debian/Ubuntu.
 
 **Pre-built binary:** download the tarball for your platform (Linux and
 macOS, x86_64 and arm64) from the

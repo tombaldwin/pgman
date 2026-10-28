@@ -8,8 +8,14 @@ pgman dump staging/ledger                      # from staging's replica
 pgman restore staging-ledger-latest.dump local --as ledger_copy --clean
 ```
 
-Both run your own `pg_dump` / `pg_restore` (macOS: `brew install libpq`;
-Debian/Ubuntu: `apt install postgresql-client`). pgman does the parts it
+Both run your own `pg_dump` / `pg_restore`. Installed with Homebrew,
+pgman brings them: the formula depends on `libpq` and tells pgman where
+it is. Installed with cargo, install them yourself (macOS: `brew install
+libpq`; Debian/Ubuntu: `apt install postgresql-client`). pgman looks, in
+order, in `--pg-bin DIR`, then `$PGMAN_PG_BIN`, then Homebrew's `libpq`
+(`$HOMEBREW_PREFIX`, `/opt/homebrew`, `/usr/local`; it is keg-only, so
+nothing needs linking), then `PATH`, and says which one it ran. Whichever
+it finds must be at least the server's major version. pgman does the parts it
 already does for the TUI: finding the database, reading the password from
 AWS Secrets Manager (or `password_env`) at that moment, and opening the
 ssh tunnel through the bastion.

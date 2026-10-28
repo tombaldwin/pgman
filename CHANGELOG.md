@@ -6,6 +6,17 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- The Homebrew formula depends on `libpq`, so `pgman dump` and `pgman
+  restore` work from a brew install with nothing else installed or
+  linked: its wrapper tells pgman where libpq's `pg_dump` and
+  `pg_restore` are (`PGMAN_PG_BIN`).
+- `dump` and `restore` look for the tools in `--pg-bin`, then
+  `$PGMAN_PG_BIN`, then Homebrew's libpq, then `PATH`, and say which
+  they ran. Homebrew's libpq now comes before `PATH`, so an older
+  PostgreSQL on `PATH` doesn't win over it.
+
 ## [0.3.0] — 2026-10-28
 
 ### Highlights
