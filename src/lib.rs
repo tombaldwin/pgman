@@ -36,6 +36,7 @@ pub mod report;
 pub mod restore;
 pub mod safety;
 pub mod saved;
+pub mod script;
 pub mod splash;
 pub mod tap;
 pub mod theme;

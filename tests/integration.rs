@@ -8836,3 +8836,219 @@ fn a_protected_remote_or_unconfirmed_restore_is_refused() {
     });
     assert!(!exists, "nothing was created");
 }
+
+/// `pgman run`'s scratch home: [`restore_home`]'s connections, a
+/// writable profile, and an empty working directory. Returns the home
+/// and that directory.
+#[cfg(unix)]
+fn run_home(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let (home, out) = dump_home(name);
+    let mut conns = std::fs::read_to_string(home.join(".config/pgman/connections.toml")).unwrap();
+    conns.push_str(
+        "[[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+         [[connections]]\nname = \"live-db\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n",
+    );
+    std::fs::write(home.join(".config/pgman/connections.toml"), conns).unwrap();
+    let mut envs = std::fs::read_to_string(home.join(".config/pgman/environments.toml")).unwrap();
+    envs.push_str(
+        "[[environments]]\nname = \"live\"\nprotected = true\nsource = { kind = \"static\", connections = [\"live-db\"] }\n",
+    );
+    std::fs::write(home.join(".config/pgman/environments.toml"), envs).unwrap();
+    (home, out)
+}
+
+/// `q` on database `db` of the compose server, through a raw client.
+fn on(db: &str, q: &str) -> Result<Vec<tokio_postgres::Row>, String> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async { raw(db).await.query(q, &[]).await.map_err(|e| e.to_string()) })
+}
+
+/// A script's own transactions commit as they say, a `\c` moves it to
+/// another database on the server, and a failure stops it: what ran
+/// outside a transaction or reached COMMIT stays, the open transaction
+/// rolls back, the rest never runs.
+#[cfg(unix)]
+#[test]
+fn a_script_runs_its_own_transactions_and_says_what_stayed() {
+    let (home, out) = run_home("run-tx");
+    let (t, logdb) = (it_name("run_t"), it_name("runlog"));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw("pgman_test").await;
+        c.batch_execute(&format!("DROP TABLE IF EXISTS {t}"))
+            .await
+            .unwrap();
+        let _ = c.batch_execute(&format!("CREATE DATABASE {logdb}")).await;
+    });
+    std::fs::write(
+        out.join("one.sql"),
+        format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY);\nBEGIN;\nINSERT INTO {t} VALUES (1);\nINSERT INTO {t} VALUES (2);\nCOMMIT;\n\
+             \\c {logdb}\nCREATE TABLE IF NOT EXISTS events (msg text);\nINSERT INTO events VALUES ('ran');\n"
+        ),
+    )
+    .unwrap();
+    let o = pgman_in(&home, &out, &["run", "local", "one.sql", "--yes"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(o.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains(&format!("5 on pgman_test, 2 on {logdb}")),
+        "{stdout}"
+    );
+    assert_eq!(on(&logdb, "SELECT msg FROM events").unwrap().len(), 1);
+
+    std::fs::write(
+        out.join("two.sql"),
+        format!(
+            "INSERT INTO {t} VALUES (3);\nBEGIN;\nINSERT INTO {t} VALUES (4);\nINSERT INTO {t} VALUES (1);\nCOMMIT;\nINSERT INTO {t} VALUES (5);\n"
+        ),
+    )
+    .unwrap();
+    let o = pgman_in(&home, &out, &["run", "local", "two.sql", "--yes"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains("statement 4 of 6 failed on pgman_test: duplicate key"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("committed: 1 statement(s)"), "{stderr}");
+    assert!(
+        stderr.contains("begun at statement 2 (1 statement(s) in it undone)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("not run: the last 2"), "{stderr}");
+    let ids: Vec<i32> = on("pgman_test", &format!("SELECT id FROM {t} ORDER BY id"))
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(
+        ids,
+        vec![1, 2, 3],
+        "3 committed as it ran, 4 rolled back, 5 never ran"
+    );
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}
+
+/// Refused before anything runs: a protected target with --yes (or no
+/// terminal to type its name on), a database safety.toml keeps
+/// read-only, a statement a guard blocks, and a transaction left open.
+#[cfg(unix)]
+#[test]
+fn a_script_is_refused_before_it_runs_anything() {
+    let (home, out) = run_home("run-refuse");
+    let t = it_name("run_refuse");
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {t}"));
+    let refused = |file: &str, sql: String, args: &[&str]| {
+        std::fs::write(out.join(file), sql).unwrap();
+        let mut a = vec!["run"];
+        a.extend_from_slice(args);
+        let o = pgman_in(&home, &out, &a);
+        assert!(!o.status.success());
+        String::from_utf8_lossy(&o.stderr).into_owned()
+    };
+    let create = format!("CREATE TABLE {t} (id int);\n");
+    let e = refused("p.sql", create.clone(), &["live", "p.sql", "--yes"]);
+    assert!(
+        e.contains("live is protected") && e.contains("--yes doesn't answer"),
+        "{e}"
+    );
+    let e = refused("p.sql", create.clone(), &["live-db", "p.sql"]);
+    assert!(
+        e.contains("is protected") && e.contains("stdin isn't a terminal"),
+        "{e}"
+    );
+    let e = refused(
+        "b.sql",
+        format!("{create}DROP TABLE pgman_test_other;\n"),
+        &["local", "b.sql", "--yes"],
+    );
+    assert!(e.contains("blocked by safety on pgman_test"), "{e}");
+    let e = refused(
+        "o.sql",
+        format!("{create}BEGIN;\nINSERT INTO {t} VALUES (1);\n"),
+        &["local", "o.sql", "--yes"],
+    );
+    assert!(e.contains("ends inside the transaction"), "{e}");
+    std::fs::remove_file(home.join(".config/pgman/safety.toml")).unwrap();
+    let e = refused("p.sql", create, &["local", "p.sql", "--yes"]);
+    assert!(e.contains("keeps 'pgman_test' read-only"), "{e}");
+    assert!(
+        on("pgman_test", &format!("SELECT 1 FROM {t}")).is_err(),
+        "nothing ran"
+    );
+}
+
+/// Ctrl-C during a statement cancels it on the server and rolls back
+/// the open transaction.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_cancels_a_script_and_rolls_back_its_transaction() {
+    let (home, out) = run_home("run-cancel");
+    let t = it_name("run_cancel");
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {t}"));
+    on("pgman_test", &format!("CREATE TABLE {t} (id int)")).unwrap();
+    std::fs::write(
+        out.join("slow.sql"),
+        format!("BEGIN;\nINSERT INTO {t} VALUES (1);\nSELECT pg_sleep(30);\nCOMMIT;\n"),
+    )
+    .unwrap();
+    let child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("IT_PW", "pgman_test")
+        .current_dir(&out)
+        .args(["run", "local", "slow.sql", "--yes"])
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Wait for the sleep to be running on the server.
+    let started = std::time::Instant::now();
+    loop {
+        let busy = on(
+            "pgman_test",
+            "SELECT 1 FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep(30)%' AND state = 'active'",
+        )
+        .unwrap();
+        if !busy.is_empty() {
+            break;
+        }
+        assert!(
+            started.elapsed().as_secs() < 15,
+            "the script never reached its sleep"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let killed = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let o = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        started.elapsed().as_secs() < 25,
+        "cancelled, not waited out"
+    );
+    assert!(
+        stderr.contains("statement 3 of 4 failed") && stderr.contains("cancel"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("rolled back: the transaction begun at statement 1"),
+        "{stderr}"
+    );
+    assert_eq!(
+        on("pgman_test", &format!("SELECT 1 FROM {t}"))
+            .unwrap()
+            .len(),
+        0
+    );
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}

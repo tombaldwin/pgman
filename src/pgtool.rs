@@ -263,6 +263,27 @@ pub fn set_child_env(cmd: &mut tokio::process::Command, password: Option<&str>) 
     }
 }
 
+/// Ask on the terminal; `Ok(true)` when the answer is `accept`.
+pub fn confirm_cli(prompt: &str, accept: &str) -> Result<bool, String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return Err("stdin isn't a terminal, so pgman can't ask; pass --yes to go ahead".into());
+    }
+    eprint!("{prompt}");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| format!("could not read the answer: {e}"))?;
+    let answer = line.trim();
+    Ok(if accept == "y" {
+        answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
+    } else {
+        answer == accept
+    })
+}
+
 /// A target with its secret read and its tunnel up: what the tool
 /// connects through. Dropping it closes the tunnel.
 pub struct Opened {

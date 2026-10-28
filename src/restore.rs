@@ -299,7 +299,7 @@ pub fn question(plan: &Plan, file: &Path, server: &str) -> (String, String) {
             plan.terminate.len()
         )
     };
-    let text = format!("restore {} {what}, on {server}{end}", file.display());
+    let text = format!("restore {} on {server} {what}{end}", file.display());
     match plan.prepare {
         Prepare::Replace => (
             format!("{text}\ntype {} to go on: ", plan.database),
@@ -410,27 +410,6 @@ pub struct Done {
     /// What [`restore_errors`] read from pg_restore's output.
     pub reported: Vec<RestoreError>,
     pub notes: Vec<String>,
-}
-
-/// Ask on the terminal; `Ok(true)` when the answer is `accept`.
-fn confirm_cli(prompt: &str, accept: &str) -> Result<bool, String> {
-    use std::io::{BufRead, IsTerminal, Write};
-    if !std::io::stdin().is_terminal() {
-        return Err("stdin isn't a terminal, so pgman can't ask; pass --yes to go ahead".into());
-    }
-    eprint!("{prompt}");
-    let _ = std::io::stderr().flush();
-    let mut line = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut line)
-        .map_err(|e| format!("could not read the answer: {e}"))?;
-    let answer = line.trim();
-    Ok(if accept == "y" {
-        answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
-    } else {
-        answer == accept
-    })
 }
 
 /// Why pg_restore (version `have`) can't read `file` (which starts with
@@ -555,7 +534,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let plan = plan(opts, &database, exists, sessions)?;
     if !opts.yes {
         let (prompt, accept) = question(&plan, &opts.file, &server);
-        let ok = tokio::task::spawn_blocking(move || confirm_cli(&prompt, &accept))
+        let ok = tokio::task::spawn_blocking(move || pgtool::confirm_cli(&prompt, &accept))
             .await
             .map_err(|e| format!("prompt task failed: {e}"))??;
         if !ok {

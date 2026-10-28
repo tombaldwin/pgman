@@ -114,7 +114,7 @@ struct Cli {
 }
 
 /// The words that start a sub-command rather than name a DSN.
-const SUBCOMMANDS: &[&str] = &["query", "env", "mcp", "dump", "restore"];
+const SUBCOMMANDS: &[&str] = &["query", "env", "mcp", "dump", "restore", "run"];
 
 /// `argv` with a sub-command that follows global options moved to the
 /// front: `pgman --dsn X query 'SQL'` becomes `pgman query 'SQL' --dsn X`.
@@ -247,6 +247,29 @@ async fn main() -> anyhow::Result<()> {
             Ok(done) => println!("{}", pgman::restore::render(&done)),
             Err(e) => {
                 eprintln!("pgman restore: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    if argv.get(1).map(String::as_str) == Some("run") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", pgman::script::USAGE);
+            return Ok(());
+        }
+        init_logging();
+        let opts = match pgman::script::parse_cli(&argv[2..]) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        };
+        match pgman::script::run_cli(&opts).await {
+            Ok(done) => println!("{done}"),
+            Err(e) => {
+                eprintln!("pgman run: {e}");
                 std::process::exit(1);
             }
         }

@@ -40,6 +40,7 @@ pub mod proxylog;
 pub mod reconstruct;
 pub mod row_diff;
 pub mod schema;
+pub mod script;
 pub mod select_list;
 pub mod server;
 pub mod sessions;
