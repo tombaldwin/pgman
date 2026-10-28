@@ -652,7 +652,9 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     ));
 
     let opened = pgtool::open(&resolved).await?;
-    let client = admin(&opened, &database).await?;
+    let client = admin(&opened, &database)
+        .await
+        .map_err(|e| pgtool::explain_connect(e, &resolved))?;
     let facts = crate::query::server::facts(&client).await?;
     if facts.in_recovery {
         return Err(format!("{server} is a standby; a restore needs a primary"));

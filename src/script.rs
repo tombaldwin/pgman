@@ -340,6 +340,7 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
             Ok::<_, String>((opened, client))
         }
         .await;
+        let connected = connected.map_err(|e| crate::pgtool::explain_connect(e, t));
         let (_opened, client) = match connected {
             Ok(c) => c,
             Err(e) if i == 0 => return Err(e),

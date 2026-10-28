@@ -794,7 +794,9 @@ pub async fn run(
         return Err(why);
     }
     let opened = pgtool::open(&resolved).await?;
-    let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000).await?;
+    let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000)
+        .await
+        .map_err(|e| pgtool::explain_connect(e, &resolved))?;
     let facts = crate::query::server::facts(&client).await?;
     let foreign = opts
         .extra

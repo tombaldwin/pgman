@@ -284,6 +284,29 @@ pub fn confirm_cli(prompt: &str, accept: &str) -> Result<bool, String> {
     })
 }
 
+/// A connect error for `target`, worded for the command line: the
+/// library's "password missing" — the server asked for a password and
+/// the target supplied none — says where one comes from. Pure.
+pub fn explain_connect(err: String, target: &Resolved) -> String {
+    if !err.contains("password missing") {
+        return err;
+    }
+    let dsn = &target.connect.dsn;
+    let who = format!(
+        "{}@{}",
+        dsn.user.as_deref().unwrap_or("(no user)"),
+        crate::conn::host_port(&dsn.host, dsn.port)
+    );
+    if let Some(var) = &target.connect.password_env {
+        return format!("no password for {who}: password_env names ${var}, which is not set");
+    }
+    format!(
+        "no password for {who}, and the server asks for one. Put it in the URL \
+         (postgres://user:password@…), or use a connections.toml entry with password_env or a \
+         secret. PGPASSWORD isn't read for a target"
+    )
+}
+
 /// A target with its secret read and its tunnel up: what the tool
 /// connects through. Dropping it closes the tunnel.
 pub struct Opened {
@@ -677,6 +700,18 @@ mod tests {
             t.errors(),
             "pg_restore: error: could not execute query: ERROR:  x\nCommand was: SET transaction_timeout = 0;"
         );
+    }
+
+    #[test]
+    fn a_missing_password_says_where_one_comes_from() {
+        let t = crate::inventory::target::from_url("postgres://app_ro@db.example/ledger").unwrap();
+        let e = explain_connect("invalid configuration: password missing".into(), &t);
+        assert!(
+            e.starts_with("no password for app_ro@db.example:5432")
+                && e.contains("PGPASSWORD isn't read"),
+            "{e}"
+        );
+        assert_eq!(explain_connect("timed out".into(), &t), "timed out");
     }
 
     #[test]
