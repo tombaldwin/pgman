@@ -35,8 +35,9 @@ postgres:// URL. An environment's replica is used when it has one;
 FILE defaults to a name after the target and the UTC time
 (staging-ledger-20261028T140322Z.dump, or the connection's name) in the
 current directory, or in FILE when it is a directory, and
-staging-ledger-latest.dump is pointed at the newest. The dump is written to a temporary name and renamed
-into place when pg_dump succeeds: a failed dump never replaces a file.
+staging-ledger-latest.dump is pointed at the newest. The dump is
+written to a temporary name and renamed into place when pg_dump
+succeeds: a failed dump never replaces a file.
 
   --format       pg_dump's format (default custom, for pg_restore)
   --pg-bin DIR   where pg_dump is (default: PATH, then Homebrew's libpq)

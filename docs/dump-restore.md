@@ -122,7 +122,11 @@ pgman restore <FILE> <target> [--as NAME] [--create] [--clean] [--terminate]
   target's server, so several local copies can sit side by side.
 - **Create, replace, or neither.** `--create` makes the database when it
   doesn't exist; `--clean` drops it and creates it again; with neither,
-  the dump is restored into the existing database as it is.
+  the dump is restored into the existing database as it is. A database
+  pgman makes is created from `template0` with the server's defaults,
+  as `pg_restore --create` does, so extensions come from the dump: a
+  user who isn't a superuser can't restore one an admin had put in
+  `template1` for them.
 - **Nobody else connected.** Other sessions on the database refuse the
   restore, listed by pid; `--terminate` ends them first.
 - **Confirmed.** pgman shows what it will do and asks; replacing a
