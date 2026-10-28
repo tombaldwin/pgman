@@ -151,7 +151,11 @@ fn quote(value: &str) -> String {
 /// The DSN parameters passed on to the tool: the TLS settings and the
 /// session options libpq knows. Anything else pgman accepts on a URL
 /// (`ssh_tunnel`, `application_name`, which pgman sets itself) stays
-/// with pgman; `password` never leaves.
+/// with pgman; `password` never leaves. `options` (session settings,
+/// `-c search_path=…`) is passed: it comes only from the operator's own
+/// connections.toml, environments.toml or a URL they typed — a target
+/// never comes from a file in the checkout — and pgman, not it, chooses
+/// the server.
 const PASSED_PARAMS: &[&str] = &[
     "sslmode",
     "sslrootcert",

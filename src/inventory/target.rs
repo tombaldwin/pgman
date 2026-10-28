@@ -252,7 +252,9 @@ fn from_target(label: String, env: &Environment, target: Target) -> Result<Resol
 
 /// A `postgres://` URL as a target. Pure.
 pub fn from_url(url: &str) -> Result<Resolved, String> {
-    let dsn = Dsn::parse(url).map_err(|e| format!("target {url:?}: {e}"))?;
+    // The URL as typed may carry a password: never echoed.
+    let dsn =
+        Dsn::parse(url).map_err(|e| format!("target {:?}: {e}", crate::conn::redact_url(url)))?;
     Ok(Resolved {
         label: dsn.dbname.clone(),
         environment: None,
@@ -655,6 +657,12 @@ mod tests {
         ));
         assert_eq!(host_key("[::1]"), "localhost");
         assert_eq!(host_key("127.0.0.1"), "localhost");
+    }
+
+    #[test]
+    fn a_bad_urls_password_isnt_echoed() {
+        let e = from_url("postgres://u:s3cretpw@db.example:notaport/ledger").unwrap_err();
+        assert!(!e.contains("s3cretpw"), "{e}");
     }
 
     #[test]
