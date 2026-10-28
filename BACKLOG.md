@@ -234,6 +234,18 @@ batch.
   one `--exclude-table` each, and pg_dump runs a catalog query per
   pattern. pg_dump 17+ takes `--filter FILE`: write the excludes there
   when the client is new enough.
+- **Close the last window on a directory-format dump** (v0.3.0 security
+  re-check, LOW). Between creating the partial directory and pg_dump's
+  start, a swap would make pg_dump chdir through the link; the identity
+  check still refuses to move it into place, but pg_dump would have
+  written elsewhere. Open the directory right after making it
+  (O_DIRECTORY|O_NOFOLLOW) and fchdir to it in pre_exec.
+- **A resolver that times out stalls every dump, restore and run**
+  (v0.3.0 security re-check, LOW). Protection resolves each protected
+  static connection's host on every target, synchronously; with DNS
+  down (VPN off) rather than NXDOMAIN, each costs the resolver's
+  timeout before the first prompt. Resolve once per run, with a short
+  timeout, falling back to the name.
 - **SIGTERM / SIGHUP in the TUI's own paths** are handled; the CLI's are
   now too. A second signal ends the CLI at once; check that the TUI's
   patch run does the same.
