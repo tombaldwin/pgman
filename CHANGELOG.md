@@ -6,6 +6,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-28
+
 ### Changed
 
 - The Homebrew formula depends on `libpq`, so `pgman dump` and `pgman
@@ -16,6 +18,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `$PGMAN_PG_BIN`, then Homebrew's libpq, then `PATH`, and say which
   they ran. Homebrew's libpq now comes before `PATH`, so an older
   PostgreSQL on `PATH` doesn't win over it.
+- A pg_dump older than the server says `brew upgrade libpq` too, since
+  the libpq found may be the stale one.
 
 ## [0.3.0] — 2026-10-28
 
@@ -844,7 +848,8 @@ ratatui 0.30, crossterm 0.29, reqwest 0.12 (rustls only), `tb-tui-common`
 0.2 shared with ebman. `toml` 1.x is used but saved-query files are
 written with TOML 1.0-compatible escapes, pinned by test.
 
-[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/tombaldwin/pgman/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/tombaldwin/pgman/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/tombaldwin/pgman/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tombaldwin/pgman/compare/v0.1.0...v0.2.0
