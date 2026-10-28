@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 3903,
-    "digest": "e66dcaae731d47b0"
+    "count": 3934,
+    "digest": "1b3a8ee180d26d03"
   },
   "resolves": [
     "fs",
@@ -226,7 +226,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97683617492c0d8904",
+      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
       "invisible": [
         "serde_core"
       ]
@@ -238,7 +238,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9750d405df3f2d185e",
+      "hash": "8c31a7fd9f7cbd97683617492c0d8904",
       "invisible": [
         "serde_core"
       ]
@@ -262,7 +262,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
+      "hash": "8c31a7fd9f7cbd9750d405df3f2d185e",
       "invisible": [
         "serde_core"
       ]
@@ -274,19 +274,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9746c74d25554f57ae",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:221:39: 221:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9707aebcfe756007c5",
+      "hash": "8c31a7fd9f7cbd97ac7f72b889467ce8",
       "invisible": [
         "serde_core"
       ]
@@ -310,7 +298,19 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97ac7f72b889467ce8",
+      "hash": "8c31a7fd9f7cbd9707aebcfe756007c5",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "loc": "src/inventory.rs:221:39: 221:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd9746c74d25554f57ae",
       "invisible": [
         "serde_core"
       ]
@@ -8654,8 +8654,46 @@
       ]
     },
     {
-      "fn": "dump::run_cli",
-      "loc": "src/dump.rs:479:1: 479:58",
+      "fn": "dump::resolve",
+      "loc": "src/dump.rs:486:1: 486:70",
+      "inferred": [
+        "Env",
+        "Exec",
+        "Fs",
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Exec",
+        "Fs",
+        "Log"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd973e10a3a3c81e0ca9",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "aws",
+        "docker"
+      ],
+      "calls": [
+        "inventory::target::resolve"
+      ],
+      "invisible": [
+        "serde_json",
+        "tokio",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
+      "fn": "dump::run",
+      "loc": "src/dump.rs:499:1: 503:26",
       "inferred": [
         "Clock",
         "Db",
@@ -8669,7 +8707,83 @@
       "direct": [
         "Clock",
         "Fs",
-        "Log"
+        "Log",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd97abd342e295e1075b",
+      "fs": [
+        "read",
+        "write"
+      ],
+      "cmds": [
+        "/bin/sh",
+        "aws",
+        "ssh"
+      ],
+      "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "conn::connect_via",
+        "dump::commit",
+        "dump::point_latest",
+        "dump::remove_partial",
+        "dump::run::{closure#0}::__CALLSITE",
+        "dump::run::{closure#0}::__CALLSITE",
+        "dump::run::{closure#0}::__CALLSITE",
+        "pgtool::find_tool",
+        "pgtool::open",
+        "pgtool::path_size",
+        "pgtool::private_command",
+        "pgtool::run_tool_cli",
+        "pgtool::set_child_env",
+        "pgtool::tool_version",
+        "query::server::facts"
+      ],
+      "unknownWhy": [
+        "callback:fn-pointer / closure"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Exec",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
+      "fn": "dump::run_cli",
+      "loc": "src/dump.rs:479:1: 479:58",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
       ],
       "declared": [],
       "undeclared": [
@@ -8695,23 +8809,8 @@
         "ssh"
       ],
       "calls": [
-        "<tunnel::SshTunnel as std::ops::Drop>::drop",
-        "conn::connect_via",
-        "dump::commit",
-        "dump::point_latest",
-        "dump::remove_partial",
-        "dump::run_cli::{closure#0}::__CALLSITE",
-        "dump::run_cli::{closure#0}::__CALLSITE",
-        "dump::run_cli::{closure#0}::__CALLSITE",
-        "inventory::target::resolve",
-        "pgtool::find_tool",
-        "pgtool::open",
-        "pgtool::path_size",
-        "pgtool::private_command",
-        "pgtool::run_tool_cli",
-        "pgtool::set_child_env",
-        "pgtool::tool_version",
-        "query::server::facts"
+        "dump::resolve",
+        "dump::run"
       ],
       "invisible": [
         "futures_util",
@@ -10328,7 +10427,7 @@
     },
     {
       "fn": "mcp::Server::deliver",
-      "loc": "src/mcp/mod.rs:207:5: 207:36",
+      "loc": "src/mcp/mod.rs:211:5: 211:36",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10341,7 +10440,7 @@
     },
     {
       "fn": "mcp::Server::elicit",
-      "loc": "src/mcp/mod.rs:146:5: 146:93",
+      "loc": "src/mcp/mod.rs:150:5: 150:93",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10354,7 +10453,7 @@
     },
     {
       "fn": "mcp::Server::handle_request",
-      "loc": "src/mcp/mod.rs:228:5: 228:69",
+      "loc": "src/mcp/mod.rs:232:5: 232:69",
       "inferred": [
         "Clock",
         "Db",
@@ -10386,11 +10485,13 @@
         "write"
       ],
       "cmds": [
+        "/bin/sh",
         "aws",
         "docker",
         "ssh"
       ],
       "tables": [
+        "pg_catalog.pg_database",
         "pg_catalog.pg_stat_activity"
       ],
       "calls": [
@@ -10411,6 +10512,7 @@
       ],
       "incomplete": [
         "Db",
+        "Exec",
         "Fs",
         "Net"
       ],
@@ -10420,7 +10522,7 @@
     },
     {
       "fn": "mcp::Server::new",
-      "loc": "src/mcp/mod.rs:116:5: 116:60",
+      "loc": "src/mcp/mod.rs:120:5: 120:60",
       "inferred": [
         "Exec"
       ],
@@ -10535,8 +10637,250 @@
       ]
     },
     {
+      "fn": "mcp::dumps::<impl mcp::Server>::tool_dump",
+      "loc": "src/mcp/dumps.rs:212:5: 212:81",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd97a457178a1b89e3ca",
+      "fs": [
+        "read",
+        "write"
+      ],
+      "cmds": [
+        "/bin/sh",
+        "aws",
+        "docker",
+        "ssh"
+      ],
+      "calls": [
+        "dump::resolve",
+        "dump::run",
+        "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::__CALLSITE",
+        "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::{closure#0}::__CALLSITE",
+        "mcp::dumps::dump_out"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Exec",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::<impl mcp::Server>::tool_restore",
+      "loc": "src/mcp/dumps.rs:263:5: 263:84",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd977ab68a86c399652a",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "aws",
+        "docker",
+        "ssh"
+      ],
+      "tables": [
+        "pg_catalog.pg_database",
+        "pg_catalog.pg_stat_activity"
+      ],
+      "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "mcp::dumps::<impl mcp::Server>::tool_restore::{closure#0}::__CALLSITE",
+        "mcp::dumps::<impl mcp::Server>::tool_restore::{closure#0}::{closure#0}::__CALLSITE",
+        "mcp::dumps::inside",
+        "restore::Ready::execute",
+        "restore::prepare"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Exec",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::accepted",
+      "loc": "src/mcp/dumps.rs:135:1: 135:86",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd970818225fe4bc84ec",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::arg_bool",
+      "loc": "src/mcp/dumps.rs:185:1: 185:45",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd9775b1e87d06a90646",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::arg_string",
+      "loc": "src/mcp/dumps.rs:189:1: 189:73",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97a21b031ace716173",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::dump_out",
+      "loc": "src/mcp/dumps.rs:101:1: 101:75",
+      "inferred": [
+        "Fs"
+      ],
+      "direct": [
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Fs"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd9753227f30515c290e",
+      "fs": [
+        "read"
+      ],
+      "calls": [
+        "mcp::dumps::inside"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::inside",
+      "loc": "src/mcp/dumps.rs:65:1: 65:82",
+      "inferred": [
+        "Fs"
+      ],
+      "direct": [
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Fs"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97b2c8bca8f655cdf1",
+      "fs": [
+        "read"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::schema",
+      "loc": "src/mcp/dumps.rs:118:1: 118:64",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97b70a112763fe5e89",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
+      "fn": "mcp::dumps::tool_entries",
+      "loc": "src/mcp/dumps.rs:23:1: 23:36",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd973f741afcba02b0d4",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
       "fn": "mcp::parse_error",
-      "loc": "src/mcp/mod.rs:400:1: 400:27",
+      "loc": "src/mcp/mod.rs:404:1: 404:27",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10548,7 +10892,7 @@
     },
     {
       "fn": "mcp::run",
-      "loc": "src/mcp/mod.rs:408:1: 408:56",
+      "loc": "src/mcp/mod.rs:412:1: 412:56",
       "inferred": [
         "Clock",
         "Db",
@@ -10581,11 +10925,13 @@
         "write"
       ],
       "cmds": [
+        "/bin/sh",
         "aws",
         "docker",
         "ssh"
       ],
       "tables": [
+        "pg_catalog.pg_database",
         "pg_catalog.pg_stat_activity"
       ],
       "calls": [
@@ -10608,6 +10954,7 @@
       ],
       "incomplete": [
         "Db",
+        "Exec",
         "Fs",
         "Net"
       ],
@@ -10617,7 +10964,7 @@
     },
     {
       "fn": "mcp::serve",
-      "loc": "src/mcp/mod.rs:424:1: 427:55",
+      "loc": "src/mcp/mod.rs:428:1: 431:55",
       "inferred": [
         "Clock",
         "Db",
@@ -10650,11 +10997,13 @@
         "write"
       ],
       "cmds": [
+        "/bin/sh",
         "aws",
         "docker",
         "ssh"
       ],
       "tables": [
+        "pg_catalog.pg_database",
         "pg_catalog.pg_stat_activity"
       ],
       "calls": [
@@ -10678,6 +11027,7 @@
       ],
       "incomplete": [
         "Db",
+        "Exec",
         "Fs",
         "Net"
       ],
@@ -10687,7 +11037,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::call_tool",
-      "loc": "src/mcp/tools.rs:208:5: 208:93",
+      "loc": "src/mcp/tools.rs:214:5: 214:93",
       "inferred": [
         "Clock",
         "Db",
@@ -10716,14 +11066,18 @@
         "write"
       ],
       "cmds": [
+        "/bin/sh",
         "aws",
         "docker",
         "ssh"
       ],
       "tables": [
+        "pg_catalog.pg_database",
         "pg_catalog.pg_stat_activity"
       ],
       "calls": [
+        "mcp::dumps::<impl mcp::Server>::tool_dump",
+        "mcp::dumps::<impl mcp::Server>::tool_restore",
         "mcp::tools::<impl mcp::Server>::tool_apply_patches",
         "mcp::tools::<impl mcp::Server>::tool_connections",
         "mcp::tools::<impl mcp::Server>::tool_doctor",
@@ -10750,6 +11104,7 @@
       ],
       "incomplete": [
         "Db",
+        "Exec",
         "Fs",
         "Net"
       ],
@@ -10759,7 +11114,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::prepare",
-      "loc": "src/mcp/tools.rs:507:5: 507:72",
+      "loc": "src/mcp/tools.rs:515:5: 515:72",
       "inferred": [
         "Env",
         "Fs",
@@ -10794,7 +11149,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_apply_patches",
-      "loc": "src/mcp/tools.rs:226:5: 226:79",
+      "loc": "src/mcp/tools.rs:234:5: 234:79",
       "inferred": [
         "Clock",
         "Db",
@@ -10861,7 +11216,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_connections",
-      "loc": "src/mcp/tools.rs:412:5: 412:41",
+      "loc": "src/mcp/tools.rs:420:5: 420:41",
       "inferred": [
         "Env",
         "Fs",
@@ -10895,7 +11250,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_doctor",
-      "loc": "src/mcp/tools.rs:355:5: 355:36",
+      "loc": "src/mcp/tools.rs:363:5: 363:36",
       "inferred": [
         "Env",
         "Fs",
@@ -10936,7 +11291,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_environments_save",
-      "loc": "src/mcp/tools.rs:295:5: 295:83",
+      "loc": "src/mcp/tools.rs:303:5: 303:83",
       "inferred": [
         "Clock",
         "Env",
@@ -10981,7 +11336,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_pending_patches",
-      "loc": "src/mcp/tools.rs:475:5: 475:81",
+      "loc": "src/mcp/tools.rs:483:5: 483:81",
       "inferred": [
         "Clock",
         "Db",
@@ -11049,7 +11404,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_query",
-      "loc": "src/mcp/tools.rs:417:5: 417:71",
+      "loc": "src/mcp/tools.rs:425:5: 425:71",
       "inferred": [
         "Clock",
         "Db",
@@ -11115,7 +11470,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_schema_lint",
-      "loc": "src/mcp/tools.rs:322:5: 322:77",
+      "loc": "src/mcp/tools.rs:330:5: 330:77",
       "inferred": [
         "Clock",
         "Db",
@@ -11180,7 +11535,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_sessions_locks",
-      "loc": "src/mcp/tools.rs:437:5: 437:80",
+      "loc": "src/mcp/tools.rs:445:5: 445:80",
       "inferred": [
         "Clock",
         "Db",
@@ -11245,7 +11600,7 @@
     },
     {
       "fn": "mcp::tools::arg_str",
-      "loc": "src/mcp/tools.rs:1290:1: 1290:70",
+      "loc": "src/mcp/tools.rs:1298:1: 1298:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11257,7 +11612,7 @@
     },
     {
       "fn": "mcp::tools::confirm_request",
-      "loc": "src/mcp/tools.rs:829:1: 832:21",
+      "loc": "src/mcp/tools.rs:837:1: 840:21",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11269,7 +11624,7 @@
     },
     {
       "fn": "mcp::tools::confirmed",
-      "loc": "src/mcp/tools.rs:920:1: 923:24",
+      "loc": "src/mcp/tools.rs:928:1: 931:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11281,7 +11636,7 @@
     },
     {
       "fn": "mcp::tools::connect",
-      "loc": "src/mcp/tools.rs:555:1: 565:2",
+      "loc": "src/mcp/tools.rs:563:1: 573:2",
       "inferred": [
         "Clock",
         "Db",
@@ -11345,7 +11700,7 @@
     },
     {
       "fn": "mcp::tools::find_on_path",
-      "loc": "src/mcp/tools.rs:729:1: 729:58",
+      "loc": "src/mcp/tools.rs:737:1: 737:58",
       "inferred": [
         "Env",
         "Fs"
@@ -11367,7 +11722,7 @@
     },
     {
       "fn": "mcp::tools::merged_safety",
-      "loc": "src/mcp/tools.rs:529:1: 532:33",
+      "loc": "src/mcp/tools.rs:537:1: 540:33",
       "inferred": [
         "Fs",
         "Log"
@@ -11396,7 +11751,7 @@
     },
     {
       "fn": "mcp::tools::parse_max_rows",
-      "loc": "src/mcp/tools.rs:1350:1: 1350:66",
+      "loc": "src/mcp/tools.rs:1358:1: 1358:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11408,7 +11763,7 @@
     },
     {
       "fn": "mcp::tools::parse_tables",
-      "loc": "src/mcp/tools.rs:1298:1: 1298:70",
+      "loc": "src/mcp/tools.rs:1306:1: 1306:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11420,7 +11775,7 @@
     },
     {
       "fn": "mcp::tools::patch_dir_within",
-      "loc": "src/mcp/tools.rs:682:1: 682:97",
+      "loc": "src/mcp/tools.rs:690:1: 690:97",
       "inferred": [
         "Fs"
       ],
@@ -11442,7 +11797,7 @@
     },
     {
       "fn": "mcp::tools::patches_config",
-      "loc": "src/mcp/tools.rs:655:1: 658:44",
+      "loc": "src/mcp/tools.rs:663:1: 666:44",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11454,7 +11809,7 @@
     },
     {
       "fn": "mcp::tools::render_apply",
-      "loc": "src/mcp/tools.rs:949:1: 953:12",
+      "loc": "src/mcp/tools.rs:957:1: 961:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11466,7 +11821,7 @@
     },
     {
       "fn": "mcp::tools::render_connections",
-      "loc": "src/mcp/tools.rs:1445:1: 1445:85",
+      "loc": "src/mcp/tools.rs:1453:1: 1453:85",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11478,7 +11833,7 @@
     },
     {
       "fn": "mcp::tools::render_environments",
-      "loc": "src/mcp/tools.rs:1146:1: 1150:12",
+      "loc": "src/mcp/tools.rs:1154:1: 1158:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11490,7 +11845,7 @@
     },
     {
       "fn": "mcp::tools::render_found",
-      "loc": "src/mcp/tools.rs:1081:1: 1081:73",
+      "loc": "src/mcp/tools.rs:1089:1: 1089:73",
       "inferred": [
         "Env"
       ],
@@ -11510,7 +11865,7 @@
     },
     {
       "fn": "mcp::tools::render_log_errors",
-      "loc": "src/mcp/tools.rs:989:1: 994:12",
+      "loc": "src/mcp/tools.rs:997:1: 1002:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11522,7 +11877,7 @@
     },
     {
       "fn": "mcp::tools::render_pending_patches",
-      "loc": "src/mcp/tools.rs:702:1: 707:12",
+      "loc": "src/mcp/tools.rs:710:1: 715:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11534,7 +11889,7 @@
     },
     {
       "fn": "mcp::tools::render_probe",
-      "loc": "src/mcp/tools.rs:1041:1: 1041:73",
+      "loc": "src/mcp/tools.rs:1049:1: 1049:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11546,7 +11901,7 @@
     },
     {
       "fn": "mcp::tools::render_query",
-      "loc": "src/mcp/tools.rs:1480:1: 1485:12",
+      "loc": "src/mcp/tools.rs:1488:1: 1493:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11559,7 +11914,7 @@
     },
     {
       "fn": "mcp::tools::render_row_probe",
-      "loc": "src/mcp/tools.rs:777:1: 781:11",
+      "loc": "src/mcp/tools.rs:785:1: 789:11",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11571,7 +11926,7 @@
     },
     {
       "fn": "mcp::tools::render_schema_lint",
-      "loc": "src/mcp/tools.rs:1006:1: 1011:12",
+      "loc": "src/mcp/tools.rs:1014:1: 1019:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11583,7 +11938,7 @@
     },
     {
       "fn": "mcp::tools::render_sessions_locks",
-      "loc": "src/mcp/tools.rs:1315:1: 1322:12",
+      "loc": "src/mcp/tools.rs:1323:1: 1330:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11595,7 +11950,7 @@
     },
     {
       "fn": "mcp::tools::replica_state",
-      "loc": "src/mcp/tools.rs:1214:1: 1217:26",
+      "loc": "src/mcp/tools.rs:1222:1: 1225:26",
       "inferred": [
         "Db"
       ],
@@ -11617,7 +11972,7 @@
     },
     {
       "fn": "mcp::tools::save_names",
-      "loc": "src/mcp/tools.rs:1126:1: 1126:63",
+      "loc": "src/mcp/tools.rs:1134:1: 1134:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11629,7 +11984,7 @@
     },
     {
       "fn": "mcp::tools::scope_from_args",
-      "loc": "src/mcp/tools.rs:1064:1: 1064:81",
+      "loc": "src/mcp/tools.rs:1072:1: 1072:81",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11641,7 +11996,7 @@
     },
     {
       "fn": "mcp::tools::single_checked_statement",
-      "loc": "src/mcp/tools.rs:1393:1: 1397:28",
+      "loc": "src/mcp/tools.rs:1401:1: 1405:28",
       "inferred": [
         "Log"
       ],
@@ -11660,7 +12015,7 @@
     },
     {
       "fn": "mcp::tools::tool_environment_logs",
-      "loc": "src/mcp/tools.rs:807:1: 807:71",
+      "loc": "src/mcp/tools.rs:815:1: 815:71",
       "inferred": [
         "Env",
         "Exec",
@@ -11697,7 +12052,7 @@
     },
     {
       "fn": "mcp::tools::tool_environments",
-      "loc": "src/mcp/tools.rs:737:1: 737:67",
+      "loc": "src/mcp/tools.rs:745:1: 745:67",
       "inferred": [
         "Clock",
         "Db",
@@ -11756,7 +12111,7 @@
     },
     {
       "fn": "mcp::tools::tool_environments_discover",
-      "loc": "src/mcp/tools.rs:1105:1: 1108:28",
+      "loc": "src/mcp/tools.rs:1113:1: 1116:28",
       "inferred": [
         "Env",
         "Exec",
@@ -11796,7 +12151,7 @@
     },
     {
       "fn": "mcp::tools::tool_names",
-      "loc": "src/mcp/tools.rs:174:1: 174:35",
+      "loc": "src/mcp/tools.rs:178:1: 178:35",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11820,7 +12175,7 @@
     },
     {
       "fn": "mcp::tools::with_replica",
-      "loc": "src/mcp/tools.rs:1269:1: 1269:80",
+      "loc": "src/mcp/tools.rs:1277:1: 1277:80",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11832,7 +12187,7 @@
     },
     {
       "fn": "mcp::tools::within_budget",
-      "loc": "src/mcp/tools.rs:1525:1: 1525:58",
+      "loc": "src/mcp/tools.rs:1533:1: 1533:58",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14025,6 +14380,48 @@
       ]
     },
     {
+      "fn": "restore::Ready::execute",
+      "loc": "src/restore.rs:499:5: 499:55",
+      "inferred": [
+        "Db",
+        "Env",
+        "Exec",
+        "Log"
+      ],
+      "direct": [
+        "Exec",
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Db",
+        "Env",
+        "Exec",
+        "Log"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97f859a67ddeff4995",
+      "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "conn::terminate_backend",
+        "pgtool::run_tool_cli",
+        "pgtool::set_child_env",
+        "query::server::create_database",
+        "restore::Ready::execute::{closure#0}::__CALLSITE",
+        "restore::Ready::execute::{closure#0}::__CALLSITE",
+        "restore::drop_again_and_again"
+      ],
+      "invisible": [
+        "tokio",
+        "tokio_postgres",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Exec"
+      ]
+    },
+    {
       "fn": "restore::admin",
       "loc": "src/restore.rs:434:1: 437:60",
       "inferred": [
@@ -14076,7 +14473,7 @@
     },
     {
       "fn": "restore::drop_again_and_again",
-      "loc": "src/restore.rs:588:1: 591:24",
+      "loc": "src/restore.rs:646:1: 649:24",
       "inferred": [
         "Db"
       ],
@@ -14098,8 +14495,8 @@
       ]
     },
     {
-      "fn": "restore::run_cli",
-      "loc": "src/restore.rs:459:1: 459:58",
+      "fn": "restore::prepare",
+      "loc": "src/restore.rs:556:1: 556:97",
       "inferred": [
         "Clock",
         "Db",
@@ -14113,7 +14510,79 @@
       "direct": [
         "Exec",
         "Fs",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
         "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd97ca348a165f55e135",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "aws",
+        "docker",
+        "ssh"
+      ],
+      "tables": [
+        "pg_catalog.pg_database",
+        "pg_catalog.pg_stat_activity"
+      ],
+      "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "inventory::target::resolve",
+        "pgtool::find_tool",
+        "pgtool::open",
+        "pgtool::tool_version",
+        "query::server::database_exists",
+        "query::server::facts",
+        "query::server::sessions_on",
+        "restore::admin"
+      ],
+      "unknownWhy": [
+        "callback:fn-pointer / closure",
+        "dispatch:Read.read"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Exec",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
+      "fn": "restore::run_cli",
+      "loc": "src/restore.rs:459:1: 459:58",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
         "Unknown"
       ],
       "declared": [],
@@ -14143,25 +14612,9 @@
       ],
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
-        "conn::terminate_backend",
-        "inventory::target::resolve",
         "pgtool::confirm_cli",
-        "pgtool::find_tool",
-        "pgtool::open",
-        "pgtool::run_tool_cli",
-        "pgtool::set_child_env",
-        "pgtool::tool_version",
-        "query::server::create_database",
-        "query::server::database_exists",
-        "query::server::facts",
-        "query::server::sessions_on",
-        "restore::admin",
-        "restore::drop_again_and_again",
-        "restore::run_cli::{closure#0}::__CALLSITE",
-        "restore::run_cli::{closure#0}::__CALLSITE"
-      ],
-      "unknownWhy": [
-        "dispatch:Read.read"
+        "restore::Ready::execute",
+        "restore::prepare"
       ],
       "invisible": [
         "futures_util",
