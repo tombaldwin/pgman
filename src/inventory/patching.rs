@@ -486,7 +486,15 @@ pub type FetchSecret =
 
 /// `target`'s DSN with its credentials.
 async fn dsn_for(target: &Target, fetch_secret: &FetchSecret) -> Result<crate::conn::Dsn, String> {
-    let spec = target.connect.clone()?;
+    spec_dsn(target.connect.clone()?, fetch_secret).await
+}
+
+/// `spec`'s DSN with its credentials: the secret read now, or the
+/// `password_env` variable.
+pub async fn spec_dsn(
+    spec: super::ConnectSpec,
+    fetch_secret: &FetchSecret,
+) -> Result<crate::conn::Dsn, String> {
     let mut dsn = spec.dsn.clone();
     match spec.secret {
         None => spec.apply_password_env(&mut dsn)?,
@@ -994,7 +1002,7 @@ pub async fn apply_for(
     }
 }
 
-fn aws_secrets() -> FetchSecret {
+pub fn aws_secrets() -> FetchSecret {
     std::sync::Arc::new(crate::creds::aws_secrets::fetch)
 }
 

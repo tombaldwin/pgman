@@ -25,6 +25,7 @@ pub mod patching;
 pub mod probe;
 pub mod rds;
 pub mod rds_logs;
+pub mod target;
 
 use crate::aws_cli::AwsScope;
 use crate::conn::Dsn;
