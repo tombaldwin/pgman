@@ -331,10 +331,25 @@ directory, one JSON line per event:
 
 `pgman copies report [--since DATE]` prints the journal as a readable
 account — taken, why, restored where, deleted when — for a client's DPO,
-an audit, or the end of an engagement. Optionally the same events go to a
-store the team controls (CloudWatch Logs, or S3 with Object Lock) using
-the operator's own AWS credentials; the local journal is for the
-developer, the central copy is evidence.
+an audit, or the end of an engagement.
+
+**The central journal is CloudWatch Logs.** Per environment, in the
+operator's own `environments.toml`:
+
+```toml
+journal = "cloudwatch:/pgman/dumps"   # a log group in the environment's AWS account
+```
+
+pgman writes each event to that log group as it happens, with the
+operator's own AWS credentials (`logs:PutLogEvents` on that group only),
+one log stream per developer and machine. The local journal is written
+first and is the developer's own record; a CloudWatch write that fails is
+retried on the next pgman run and never blocks a dump, but a dump of an
+environment with a `journal` set says when its events haven't reached the
+log yet. The log group lives in the client's account, so its retention,
+who may read it, and who may delete from it are the client's IAM and
+CloudWatch settings, not pgman's. Events carry no values, no secrets and
+no hostnames beyond the environment's name.
 
 What the journal is and isn't: it is a faithful record kept by a tool used
 in good faith, which is what a good developer needs to demonstrate good
@@ -423,8 +438,8 @@ or not yet confirmed at a terminal.
 
 | Phase | What | Size |
 |---|---|---|
-| 1 | Policy fields; typed confirmation and warning for raw protected dumps; MCP cap; reason prompt; the journal; `pgman copies` list and `rm` for dump files | 2 days |
-| 2a | Classifier with defaults and presets; core transformers (keep, null, fixed, password, hash, email, name, phone, ip, per-row date shift, drop rows); FK following; the data path and archive; restore with redaction; provenance; the leak test. **The protected default moves to `masked`.** | 6 days |
+| 1 | Policy fields; typed confirmation and warning for raw protected dumps; MCP cap; reason prompt; the journal, local and to CloudWatch; `pgman copies` list and `rm` for dump files | 2½ days |
+| 2a | Classifier with defaults and presets; core transformers (keep, null, fixed, password, hash, email, name, phone, ip, per-row date shift, drop rows); FK following; the data path and archive; restore with redaction; provenance; the leak test; `docs/privacy.md`. **The protected default moves to `masked`.** | 6½ days |
 | 2b | Encryption: KMS envelope and age; header binding; private temp for `--jobs` | 2–3 days |
 | 3 | The Masking screen and the policy editor; the copies view | 3–4 days |
 | 4 | Validate (check and sampled), including the re-identification warning | 2 days |
@@ -451,12 +466,13 @@ About three weeks to the end of phase 5; each phase ships on its own.
    agent mistakes and accidents; the journal is a faithful self-record,
    CloudTrail the record no one can edit.
 
-## Still open
-
-- Where the central journal goes, if anywhere (CloudWatch, S3 with Object
-  Lock, or nothing at first).
-- Whether a short privacy note for a client's DPO ships with the feature
-  (`docs/privacy.md`): what is masked, the lifecycle, the journal, the keys.
+8. **The central journal is CloudWatch Logs**, a log group per
+   environment in the client's account, set in the operator's config.
+9. **A privacy note ships with the feature**: `docs/privacy.md`, written
+   for a client's DPO — what pgman masks by default and how, encryption
+   and who holds the keys, the life of a copy, what the journal records
+   and where, the threat model, and what pgman does not claim. It is
+   written with phase 2a and kept true to what is built.
 
 ## Changes from the first draft
 

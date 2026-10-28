@@ -86,9 +86,9 @@ BACKLOG.md → From the dump/restore review.
 four-reviewer Fable panel, then revised with Tom's decisions. Masked by
 default with built-in rules (no config needed), adjustable in a Masking
 screen or a committed rules file; encrypted (KMS / age); every copy
-tracked from dump to deletion with a reason and a journal (hygiene for
-good developers, not policing); kept from the agent. Seven decisions
-made, two left open. Phase 1 (policy, journal, `pgman copies`) can start
+tracked from dump to deletion with a reason and a journal, local and
+to CloudWatch (hygiene for good developers, not policing); kept from the
+agent; a privacy note for a client's DPO. All nine decisions made. Phase 1 (policy, journal, `pgman copies`) can start
 when Tom says.
 
 ### 2. Waiting on Tom
