@@ -1,4 +1,4 @@
-# Plan — after v0.2.1
+# Plan — after v0.3.0
 
 The rolling window of active work, in the shape ebman uses. `BACKLOG.md`
 is the reservoir; this file is only *what to do next*. An item lives in
@@ -62,23 +62,15 @@ earlier work, a reload aborting the operator's transaction), fixed, and
 a re-check GO. The phases and panels up to v0.2.0 are in
 `docs/backlog/archive.md` → Release plan history.
 
-## Window — after v0.2.1
+## Window — after v0.3.0
 
-### 0. Dump, restore, run, apply (2026-10-28) — built, reviewed, fixed
+### 0. v0.3.0 released (2026-10-28)
 
-Tom's go 2026-10-28 ("yes to all including the optional mcp work"):
-`pgman dump`, `pgman restore`, `pgman run` (scripts with their own
-transactions, `\c` between databases), `pgman apply` (the CLI for `P`,
-with `--outside`), and MCP `dump` / `restore` behind elicitation. All
-on main with integration tests and CAUGHT lines; docs in
-`docs/dump-restore.md`, `docs/run.md`, `docs/mcp.md`. Remaining:
-
-- reviewed (one Fable reviewer, GO-with-notes: 6 MED, 7 LOW, no HIGH);
-  every finding fixed with a CAUGHT line (e4dfc70..b87f651), including
-  ctrl-c cancels over TLS for the editor too. One edge left in
-  BACKLOG.md (a connection to a protected rds environment's host);
-- a release (v0.3.0) when Tom wants one: a release panel first, as for
-  every release.
+`pgman dump`, `restore`, `run`, `apply` and MCP `dump` / `restore`, on
+Tom's go. Published 2026-10-28: GitHub release, crates.io, the Homebrew
+tap (with a libpq caveat). The panel (four reviewers) and its re-checks
+are in `docs/backlog/archive.md`; what they left for later is in
+BACKLOG.md → From the dump/restore review.
 
 ### 1. Waiting on Tom
 
@@ -86,8 +78,8 @@ on main with integration tests and CAUGHT lines; docs in
   default with `pgman.tap.allow-remote`. Wire-compatible with 0.2.x (78
   tests, 9/9 golden events) but no publishing setup (Central account,
   namespace DNS record, GPG key, repo, secrets).
-- **The site's changelog** stops at v0.1.0: entries for v0.2.0 and
-  v0.2.1 need Tom's OK on wording, then `npm run fallbacks`.
+- **The site's changelog** stops at v0.1.0: entries for v0.2.0,
+  v0.2.1 and v0.3.0 need Tom's OK on wording, then `npm run fallbacks`.
 - **Required CI checks on main**: the branch-protection call needs Tom
   (the payload is drafted).
 

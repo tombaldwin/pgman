@@ -2161,3 +2161,16 @@ inside an open transaction that could abort it) plus `pg_catalog`
 qualification of `apply_patches`' restore and the sessions terminate →
 fixed with CAUGHT lines → re-check GO. Tagged on ca9f096; published
 2026-10-25; tap 42d1d7e.
+
+### 2026-10-28 v0.3.0 released
+
+Built the same day on Tom's go: `pgman dump` / `restore` / `run` /
+`apply` and MCP `dump` / `restore`. One reviewer (13 findings, fixed),
+a real-environment smoke test (found the unreadable-objects pre-flight),
+then a four-reviewer panel: release risk GO-with-notes; security,
+DBA and first-time user NO-GO (a symlink planted at the dump's partial
+path, protection by spelling, owned sequences, restore's error count
+under --jobs). Fixed, re-checked (two security residuals: the directory
+format's path, address spellings; two DBA RLS edges), fixed, re-verified
+GO. Tagged on e554d69; published 2026-10-28; tap 4309d58.
+
