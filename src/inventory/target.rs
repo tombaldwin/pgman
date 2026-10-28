@@ -265,10 +265,6 @@ pub fn from_url(url: &str) -> Result<Resolved, String> {
 /// Find `text` (see the module docs) for `want`. Blocking: an `rds`
 /// environment lists its instances through the aws CLI.
 pub fn resolve(text: &str, want: Want) -> Result<Resolved, String> {
-    if text.contains("://") {
-        return from_url(text);
-    }
-    let spec = parse_spec(text)?;
     let envs = super::load().environments.unwrap_or_default();
     let personal = {
         let path = crate::util::config_file("connections.toml");
@@ -278,10 +274,80 @@ pub fn resolve(text: &str, want: Want) -> Result<Resolved, String> {
         }
     };
     let entries = crate::mcp::connections::build(&personal.connections, Vec::new(), false);
+    let mut resolved = resolve_in(text, want, &envs, &entries)?;
+    // However it was named: a URL, or a second connection, to a server
+    // a protected environment reaches is that environment's.
+    let dsn = &resolved.connect.dsn;
+    if host_protected(&dsn.host, dsn.port, &envs, &entries) {
+        resolved.protected = true;
+    }
+    Ok(resolved)
+}
+
+/// `host` as a key for comparing servers: lower case, without IPv6
+/// brackets, every spelling of this machine's loopback one. Pure.
+fn host_key(host: &str) -> String {
+    let h = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    let loopback = h == "localhost"
+        || h.parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if loopback {
+        "localhost".to_string()
+    } else {
+        h
+    }
+}
+
+/// Whether `host:port` is a server a protected environment reaches: the
+/// address of a connection a protected `static` environment lists, or
+/// an RDS endpoint (`<instance>.<…>.rds.amazonaws.com`) whose instance a
+/// protected `rds` environment's `instances` match. Pure.
+pub fn host_protected(
+    host: &str,
+    port: u16,
+    envs: &[Environment],
+    entries: &[crate::mcp::connections::Entry],
+) -> bool {
+    let key = host_key(host);
+    let label = key.split('.').next().unwrap_or("");
+    let rds = key.ends_with(".rds.amazonaws.com");
+    envs.iter()
+        .filter(|e| super::patching::is_protected(e))
+        .any(|e| match &e.source {
+            Source::Static { connections } => connections.iter().any(|name| {
+                entries
+                    .iter()
+                    .filter(|en| &en.name == name)
+                    .filter_map(|en| en.dsn.as_ref())
+                    .any(|d| host_key(&d.host) == key && d.port == port)
+            }),
+            Source::Rds { instances, .. } => {
+                rds && instances
+                    .iter()
+                    .any(|p| super::rds::glob_match(&p.to_ascii_lowercase(), label))
+            }
+            Source::Docker { .. } => false,
+        })
+}
+
+/// [`resolve`] before the server check. Blocking, as it is.
+fn resolve_in(
+    text: &str,
+    want: Want,
+    envs: &[Environment],
+    entries: &[crate::mcp::connections::Entry],
+) -> Result<Resolved, String> {
+    if text.contains("://") {
+        return from_url(text);
+    }
+    let spec = parse_spec(text)?;
     if let Some(env) = envs.iter().find(|e| e.name == spec.first) {
         let report = super::gather(
             std::slice::from_ref(env),
-            &entries,
+            entries,
             super::fetch_rds_listing,
             super::docker::fetch,
         )
@@ -315,7 +381,7 @@ pub fn resolve(text: &str, want: Want) -> Result<Resolved, String> {
                 database: dsn.dbname.clone(),
                 role: e.role,
                 replica_of: None,
-                protected: connection_protected(&e.name, &dsn.host, &envs),
+                protected: connection_protected(&e.name, &dsn.host, envs),
                 connect: ConnectSpec {
                     dsn,
                     secret: e.secret.clone(),
@@ -526,6 +592,62 @@ mod tests {
             connection_protected("main", "ledger-prod.example", &envs),
             "its host's name, as for a URL"
         );
+    }
+
+    #[test]
+    fn a_server_a_protected_environment_reaches_is_protected_however_named() {
+        let envs = crate::inventory::parse_config(
+            "[[environments]]\nname = \"live\"\nprotected = true\nsource = { kind = \"static\", connections = [\"main-db\"] }\n\
+             [[environments]]\nname = \"edge\"\nprotected = true\nsource = { kind = \"rds\", instances = [\"ledger-*\"], region = \"us-west-1\" }\n\
+             [[environments]]\nname = \"scratch\"\nsource = { kind = \"static\", connections = [\"dev-db\"] }\n",
+        )
+        .unwrap();
+        let conn = |name: &str, url: &str| crate::mcp::connections::PersonalConnection {
+            base: crate::project::Connection {
+                name: name.to_string(),
+                url: url.to_string(),
+                user: None,
+                password_env: None,
+                ssh_tunnel: None,
+            },
+            secret: None,
+            aws_region: None,
+            aws_account: None,
+            aws_profile: None,
+            role: None,
+        };
+        let entries = crate::mcp::connections::build(
+            &[
+                conn("main-db", "postgres://u@db.internal:5432/ledger"),
+                conn("dev-db", "postgres://u@127.0.0.1:55432/ledger"),
+            ],
+            Vec::new(),
+            false,
+        );
+        assert!(host_protected("db.internal", 5432, &envs, &entries));
+        assert!(host_protected("DB.INTERNAL", 5432, &envs, &entries), "case");
+        assert!(
+            !host_protected("db.internal", 5433, &envs, &entries),
+            "another port"
+        );
+        assert!(
+            !host_protected("127.0.0.1", 55432, &envs, &entries),
+            "an unprotected one's"
+        );
+        assert!(host_protected(
+            "ledger-main.abc123.us-west-1.rds.amazonaws.com",
+            5432,
+            &envs,
+            &entries
+        ));
+        assert!(!host_protected(
+            "other.abc123.us-west-1.rds.amazonaws.com",
+            5432,
+            &envs,
+            &entries
+        ));
+        assert_eq!(host_key("[::1]"), "localhost");
+        assert_eq!(host_key("127.0.0.1"), "localhost");
     }
 
     #[test]

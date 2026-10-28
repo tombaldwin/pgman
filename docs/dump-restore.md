@@ -97,7 +97,9 @@ pgman restore <FILE> <target> [--as NAME] [--create] [--clean] [--terminate]
   `protected = true`, or by default when its name contains "prod"; a
   connection is protected when an environment that lists it is, or when
   its name or its host's contains "prod"; a URL when its database or host
-  does; and `--as NAME` with "prod" in the name is refused too. There is
+  does; and any target on a server a protected environment reaches (one
+  of its connections' host and port, or an RDS endpoint of one of its
+  instances), however it is named; and `--as NAME` with "prod" in the name is refused too. There is
   no override. `--clean` never drops `postgres`, `template0` or
   `template1`.
 - **Only this machine,** unless `--allow-remote`: the target must be

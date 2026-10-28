@@ -8571,7 +8571,7 @@ fn restore_home(name: &str, rows: i32) -> (std::path::PathBuf, std::path::PathBu
     let mut conns = std::fs::read_to_string(home.join(".config/pgman/connections.toml")).unwrap();
     conns.push_str(
         "[[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
-         [[connections]]\nname = \"live-db\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n",
+         [[connections]]\nname = \"live-db\"\nurl = \"postgres://pgman_test@live.pgman-test.invalid:5432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n",
     );
     std::fs::write(home.join(".config/pgman/connections.toml"), conns).unwrap();
     let mut envs = std::fs::read_to_string(home.join(".config/pgman/environments.toml")).unwrap();
@@ -8911,7 +8911,7 @@ fn run_home(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let mut conns = std::fs::read_to_string(home.join(".config/pgman/connections.toml")).unwrap();
     conns.push_str(
         "[[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
-         [[connections]]\nname = \"live-db\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n",
+         [[connections]]\nname = \"live-db\"\nurl = \"postgres://pgman_test@live.pgman-test.invalid:5432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n",
     );
     std::fs::write(home.join(".config/pgman/connections.toml"), conns).unwrap();
     let mut envs = std::fs::read_to_string(home.join(".config/pgman/environments.toml")).unwrap();
@@ -9040,6 +9040,17 @@ fn a_script_is_refused_before_it_runs_anything() {
         e.contains("is protected") && e.contains("stdin isn't a terminal"),
         "{e}"
     );
+    // The same server by URL, however spelled, is just as protected.
+    let e = refused(
+        "p.sql",
+        create.clone(),
+        &[
+            "postgres://pgman_test:pgman_test@LIVE.pgman-test.invalid:5432/pgman_test?sslmode=disable",
+            "p.sql",
+            "--yes",
+        ],
+    );
+    assert!(e.contains("is protected"), "a URL to live's server: {e}");
     let e = refused(
         "b.sql",
         format!("{create}DROP TABLE pgman_test_other;\n"),
