@@ -9172,3 +9172,167 @@ fn pgman_apply_applies_patches_and_outside_needs_the_typed_name() {
     let _ = on("pgman_test", &format!("DROP TABLE {vt}"));
     let _ = on("pgman_test", &format!("DROP TABLE {tbl}"));
 }
+
+/// MCP's `dump` and `restore`, through a real server and an operator
+/// answering its elicitations: each runs only once confirmed, a
+/// protected environment and a replaced database take a typed name, a
+/// decline is final, a path out of the working directory and a
+/// protected restore target are refused without asking.
+#[cfg(unix)]
+#[test]
+fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
+    use std::io::{BufRead, Write};
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = run_home("mcp-dump");
+    let (src, copy) = (it_name("mcpsrc"), it_name("mcpcopy"));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw("pgman_test").await;
+        let _ = c
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {src}"))
+            .await;
+        let _ = c
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {copy}"))
+            .await;
+        c.batch_execute(&format!("CREATE DATABASE {src}"))
+            .await
+            .unwrap();
+        raw(&src)
+            .await
+            .batch_execute(
+                "CREATE TABLE accounts (id int); INSERT INTO accounts SELECT generate_series(1, 7)",
+            )
+            .await
+            .unwrap();
+    });
+    let url =
+        |db: &str| format!("postgres://pgman_test:pgman_test@127.0.0.1:55432/{db}?sslmode=disable");
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("IT_PW", "pgman_test")
+        .current_dir(&out)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    // A call that asks: (reply text, isError, the question asked).
+    let mut asked = |id: u64, tool: &str, args: serde_json::Value, answer: serde_json::Value| {
+        writeln!(stdin, "{}", tool_call(id, tool, args)).unwrap();
+        let ask = next();
+        assert_eq!(ask["method"], "elicitation/create", "{ask}");
+        let message = ask["params"]["message"].as_str().unwrap().to_string();
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": answer})
+        )
+        .unwrap();
+        let frame = next();
+        let (text, is_error) = reply(&[frame], id);
+        (text, is_error, message)
+    };
+
+    let (text, is_error, message) = asked(
+        2,
+        "dump",
+        serde_json::json!({"target": url(&src), "file": "copy.dump"}),
+        serde_json::json!({"action": "accept", "content": {"dump": true}}),
+    );
+    assert!(
+        message.contains("with pg_dump to") && message.contains("copy.dump"),
+        "{message}"
+    );
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["file"].as_str().unwrap().ends_with("copy.dump"), "{text}");
+    assert!(out.join("copy.dump").is_file());
+
+    let (text, is_error, message) = asked(
+        3,
+        "dump",
+        serde_json::json!({"target": "live"}),
+        serde_json::json!({"action": "accept", "content": {"name": "lve"}}),
+    );
+    assert!(
+        message.contains("live is protected: type its name"),
+        "{message}"
+    );
+    assert!(
+        is_error && text.contains("doesn't match live") && text.contains("final"),
+        "{text}"
+    );
+    let (text, is_error, _) = asked(
+        4,
+        "restore",
+        serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": copy, "create": true}),
+        serde_json::json!({"action": "accept", "content": {"restore": true}}),
+    );
+    assert!(!is_error, "{text}");
+    assert_eq!(count_in(&copy, "accounts"), Ok(7));
+    let (text, is_error, message) = asked(
+        5,
+        "restore",
+        serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": copy, "clean": true}),
+        serde_json::json!({"action": "accept", "content": {"restore": true}}),
+    );
+    assert!(
+        message.contains("DROPPED") && message.contains(&format!("Type {copy} to confirm")),
+        "{message}"
+    );
+    assert!(
+        is_error && text.contains("doesn't match"),
+        "a tick doesn't answer a typed name: {text}"
+    );
+
+    // Refused without asking: the decline above, a path out, a protected target.
+    let mut refused = |id: u64, tool: &str, args: serde_json::Value| {
+        writeln!(stdin, "{}", tool_call(id, tool, args)).unwrap();
+        let frame = next();
+        assert_eq!(frame["id"], id, "a reply, not a question: {frame}");
+        let (text, is_error) = reply(&[frame], id);
+        assert!(is_error, "{text}");
+        text
+    };
+    let t = refused(6, "dump", serde_json::json!({"target": "live"}));
+    assert!(t.contains("declined a dump of live"), "{t}");
+    let t = refused(
+        7,
+        "dump",
+        serde_json::json!({"target": url(&src), "file": "../escape.dump"}),
+    );
+    assert!(t.contains("no .."), "{t}");
+    let t = refused(
+        8,
+        "restore",
+        serde_json::json!({"file": "copy.dump", "target": "live", "as": copy, "create": true}),
+    );
+    assert!(t.contains("live is protected"), "{t}");
+    let t = refused(
+        9,
+        "restore",
+        serde_json::json!({"file": "copy.dump", "target": url(&copy), "clean": true}),
+    );
+    assert!(t.contains("declined a restore into"), "{t}");
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+    assert!(!home.join("escape.dump").exists());
+    assert_eq!(
+        count_in(&copy, "accounts"),
+        Ok(7),
+        "the declined clean changed nothing"
+    );
+}

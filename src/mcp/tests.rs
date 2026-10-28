@@ -74,7 +74,7 @@ async fn initialize_records_the_client_and_negotiates_the_version() {
     let text = resp["result"]["instructions"].as_str().unwrap();
     assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
     assert!(
-        text.contains("apply_patches is the one tool that writes"),
+        text.contains("apply_patches and restore are the tools that write to a database"),
         "{text}"
     );
     assert!(text.contains("environments_save appends"), "{text}");
@@ -210,7 +210,7 @@ async fn serve_answers_each_request_and_exits_when_input_closes() {
     assert_eq!(frames[1]["error"]["code"], -32700);
     assert_eq!(frames[2]["error"]["code"], -32600);
     assert_eq!(frames[3]["id"], 2);
-    assert_eq!(frames[3]["result"]["tools"].as_array().unwrap().len(), 11);
+    assert_eq!(frames[3]["result"]["tools"].as_array().unwrap().len(), 13);
 }
 
 /// A question to the operator goes out as `elicitation/create`, and the
@@ -458,4 +458,39 @@ async fn apply_patches_is_refused_read_only_or_without_elicitation() {
         .as_str()
         .unwrap()
         .contains("needs a client that supports elicitation"));
+}
+
+#[tokio::test]
+async fn dump_and_restore_are_refused_read_only_or_without_elicitation() {
+    for (tool, arguments) in [
+        ("dump", json!({"target": "staging"})),
+        ("restore", json!({"file": "x.dump", "target": "local"})),
+    ] {
+        let call = json!({
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        });
+        let ro = Server::new(
+            Opts {
+                read_only: true,
+                ..Opts::default()
+            },
+            std::path::PathBuf::from("/nonexistent"),
+        );
+        let r = ro.handle_request(&call).await.unwrap();
+        assert_eq!(r["result"]["isError"], true, "{tool}");
+        let text = |r: &Value| {
+            r["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert!(text(&r).contains("--read-only"), "{tool}: {}", text(&r));
+        let r = server().handle_request(&call).await.unwrap();
+        assert!(
+            text(&r).contains("needs a client that supports elicitation"),
+            "{tool}: {}",
+            text(&r)
+        );
+    }
 }

@@ -22,10 +22,10 @@ pub const STATEMENT_TIMEOUT_CAP_MS: u64 = 30_000;
 /// The advertised tools. Each description ends in CAVEATS: what the tool
 /// cannot see, said where the client reads it.
 pub fn tool_table() -> Value {
-    json!([
+    let mut table = json!([
         {
             "name": "doctor",
-            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (apply_patches, the one tool that writes to a database, after the operator confirms each run; environments_save, which appends to their environments.toml; neither under --read-only), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
+            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (apply_patches and restore, the tools that write to a database, after the operator confirms each run; dump, which writes a dump file in the working directory, likewise confirmed; environments_save, which appends to their environments.toml; none under --read-only), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
             "annotations": {"readOnlyHint": true, "openWorldHint": false}
         },
@@ -167,7 +167,11 @@ pub fn tool_table() -> Value {
             },
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true}
         }
-    ])
+    ]);
+    if let Some(t) = table.as_array_mut() {
+        t.extend(super::dumps::tool_entries());
+    }
+    table
 }
 
 /// Every advertised tool name.
@@ -198,6 +202,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         "environment_logs" => 180,
         // The operator's answer (`ELICIT_TIMEOUT`), then the patches.
         "apply_patches" => 1800,
+        // The operator's answer, then a whole dump or restore.
+        "dump" | "restore" => 7200,
         // sts, configure, then three listings, each bounded by the CLI.
         "environments_discover" | "environments_save" => 120,
         _ => 10,
@@ -216,6 +222,8 @@ impl Server {
             "schema_lint" => self.tool_schema_lint(args).await,
             "environment_logs" => tool_environment_logs(args).await,
             "apply_patches" => self.tool_apply_patches(args).await,
+            "dump" => self.tool_dump(args).await,
+            "restore" => self.tool_restore(args).await,
             "environments_discover" => tool_environments_discover(args, self.cwd.clone()).await,
             "environments_save" => self.tool_environments_save(args).await,
             other => Err(format!("unknown tool '{other}'")),
@@ -367,12 +375,12 @@ impl Server {
             "client": {
                 "name": client.0,
                 "declared_elicitation": client.1,
-                "note": "apply_patches asks the operator through elicitation, and is refused without it",
+                "note": "apply_patches, dump and restore ask the operator through elicitation, and are refused without it",
             },
             "write_surface": if self.opts.read_only {
-                "none — --read-only: environments_save and apply_patches are refused"
+                "none — --read-only: environments_save, apply_patches, dump and restore are refused"
             } else {
-                "environments_save appends discovered environments to environments.toml; apply_patches runs an environment's pending patches once the operator confirms through elicitation, on a database safety.toml lets write; `query` never writes, and --allow-writes is refused at startup"
+                "environments_save appends discovered environments to environments.toml; apply_patches runs an environment's pending patches once the operator confirms through elicitation, on a database safety.toml lets write; dump writes a dump file in the working directory and restore restores one into a local, unprotected database, each once confirmed; `query` never writes, and --allow-writes is refused at startup"
             },
             "read_only_floor": [
                 "every `query` connection opens with default_transaction_read_only=on, whatever safety.toml says",
@@ -1594,8 +1602,10 @@ mod tests {
         for d in tool_table().as_array().unwrap() {
             let desc = d["description"].as_str().unwrap();
             assert!(desc.contains("CAVEATS:"), "{} has no CAVEATS", d["name"]);
-            // Two tools write: a config file, and an environment's patches.
-            let writes = d["name"] == "environments_save" || d["name"] == "apply_patches";
+            // Four tools write: a config file, an environment's patches,
+            // a dump file, a local database.
+            let writes = ["environments_save", "apply_patches", "dump", "restore"]
+                .contains(&d["name"].as_str().unwrap_or(""));
             assert_eq!(d["annotations"]["readOnlyHint"], !writes, "{}", d["name"]);
         }
         assert_eq!(
@@ -1611,7 +1621,9 @@ mod tests {
                 "environment_logs",
                 "apply_patches",
                 "environments_discover",
-                "environments_save"
+                "environments_save",
+                "dump",
+                "restore"
             ]
         );
     }

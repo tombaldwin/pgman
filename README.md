@@ -50,8 +50,8 @@ At a glance:
   [`docs/dump-restore.md`](https://github.com/tombaldwin/pgman/blob/main/docs/dump-restore.md).
 - **For your coding agent** — `pgman mcp serve` gives Claude Code (or any
   MCP client) read-only tools for queries, lock pre-flights, pending
-  patches, schema lint and environments, plus `apply_patches`, the one
-  that writes to a database, confirmed by you. See
+  patches, schema lint and environments, plus `apply_patches`, `dump`
+  and `restore`, each confirmed by you. See
   [`docs/mcp.md`](https://github.com/tombaldwin/pgman/blob/main/docs/mcp.md).
 - **Connect fast** — auto-discovers datasources from Spring
   `application*.yml`/`.properties`, IntelliJ `.idea/dataSources.xml`, and a

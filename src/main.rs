@@ -17,7 +17,7 @@ use std::io::IsTerminal;
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (beta)",
     override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman env discover [--save]\n       pgman mcp serve",
-    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nDump and restore: `pgman dump <target> [FILE]`, `pgman restore <FILE> <target>`; see docs/dump-restore.md.\nScripts and patches: `pgman run <target> <FILE>`, `pgman apply <target>`; see docs/run.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
+    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nDump and restore: `pgman dump <target> [FILE]`, `pgman restore <FILE> <target>`; see docs/dump-restore.md.\nScripts and patches: `pgman run <target> <FILE>`, `pgman apply <target>`; see docs/run.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches, dump and restore ask you first); see docs/mcp.md."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.
