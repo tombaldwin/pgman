@@ -80,14 +80,16 @@ tap (with a libpq caveat). The panel (four reviewers) and its re-checks
 are in `docs/backlog/archive.md`; what they left for later is in
 BACKLOG.md → From the dump/restore review.
 
-### 1. Masked dumps — designed, not built
+### 1. Masked dumps and the life of a copy — designed, not built
 
-A copy of production with the data's shape and none of its people:
-`docs/design/masked-dumps.md` (2026-10-28). A per-environment dump
-policy, a committed rules file, fail-closed classification of every
-column, keyed deterministic transforms, validate without printing
-values, and later subsetting. Five decisions for Tom at the end of the
-note; phase 1 (the policy) can ship before the rest is settled.
+`docs/design/masked-dumps.md`, second draft (2026-10-28): reviewed by a
+four-reviewer Fable panel, then revised with Tom's decisions. Masked by
+default with built-in rules (no config needed), adjustable in a Masking
+screen or a committed rules file; encrypted (KMS / age); every copy
+tracked from dump to deletion with a reason and a journal (hygiene for
+good developers, not policing); kept from the agent. Seven decisions
+made, two left open. Phase 1 (policy, journal, `pgman copies`) can start
+when Tom says.
 
 ### 2. Waiting on Tom
 
