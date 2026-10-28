@@ -32,6 +32,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   environments view's `P` from the command line. An `--outside` plan or
   a protected environment takes the typed name, which `--yes` doesn't
   answer.
+- MCP: `dump` and `restore` tools, each confirmed by the operator
+  through elicitation (a protected environment, or a database to be
+  replaced, by typing its name); files stay inside the server's
+  working directory, and a restore is local and unprotected only.
 - A `<target>` on the command line is `ENV`, `ENV/DATABASE`,
   `ENV/SERVER/DATABASE`, a `connections.toml` name, or a URL.
 

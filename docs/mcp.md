@@ -16,12 +16,15 @@ only. Diagnostics go to the log file (`~/.cache/pgman/pgman.log.*`).
 
 `query` never writes, and refuses the server-control functions
 Postgres runs even in a read-only session (`pg_promote`,
-`pg_wal_replay_pause`, replication slots, `pg_stat_reset`…). Two tools do, and `--read-only` refuses both:
-`environments_save` appends to your `environments.toml`, and
-`apply_patches` runs an environment database's pending patches — only
-after **you** confirm through the client's elicitation prompt (a
-protected environment by typing its name), and only on a database your
-`safety.toml` lets write. Every `query` session opens with
+`pg_wal_replay_pause`, replication slots, `pg_stat_reset`…). Four tools do, and `--read-only` refuses all of them:
+`environments_save` appends to your `environments.toml`;
+`apply_patches` runs an environment database's pending patches, only on
+a database your `safety.toml` lets write; `dump` writes a dump file in
+the server's working directory; and `restore` restores one into a local,
+unprotected database. The last three run only after **you** confirm
+each call through the client's elicitation prompt — a protected
+environment by typing its name, a database `restore` would replace by
+typing the database's. Every `query` session opens with
 `default_transaction_read_only = on`, **whatever your `safety.toml`
 says**. Statements go through the same guards as `--batch` with no
 `--yes`: a statement a guard would ask a human to confirm is refused,
@@ -39,10 +42,12 @@ startup, not accepted and ignored.
 | `pending_patches` | Patch files whose id the database hasn't recorded. Each id comes from the file's own version-row `INSERT`. It also flags recent files with no version row, recorded ids whose file has no live version row (commented out, say), filename/id mismatches and duplicate ids. Configured by `[patches]` in `.pgman/pgman.toml`, or by passing `dir`, `table` and `column`. A file counts as applied when its id is recorded, not when its statements ran. |
 | `environments` | Every database in each environment of `environments.toml`, replicas under their primary, with role, status and engine version, from the sources alone. It connects to no database unless `probe: true` is passed. Then the environments with `probe = true` also report server version, recovery state, lag, patch level and pending patches (see [Probes](environments.md#probes)), and the others say probing isn't enabled. |
 | `apply_patches` | An environment database's pending patches: planned read-only and checked against `safety.toml`, shown to you through elicitation, then each run in its own transaction with a 5 s `lock_timeout`, stopping at the first failure. `mode` picks `apply` (the default), `dry_run` (all in one transaction, rolled back: the same locks as the real run, so confirmed the same way) or `copy` (applied for real to a template copy of the database on the same server, then dropped; needs nobody else connected to it). The result names files left out (`not_included`, and `below_recorded`: pending but numbered below the recorded version), the version recorded afterwards (`recorded_after`; on a copy, the copy's), the `mode`, and the `copy` made and whether it was dropped. A patch that can't run in a transaction (`VACUUM`, `CONCURRENTLY`) is never run from here; the TUI can run it outside one. Refused under `--read-only`, by a client without elicitation, on a replica, and on a read-only profile. See [applying patches](environments.md#applying-patches). |
+| `dump` | A dump of a database (`target`: `ENV`, `ENV/DATABASE`, `ENV/SERVER/DATABASE`, a connection name or a URL) by your own `pg_dump`, through pgman's connection: from the environment's replica unless `primary`, the password read from its secret at that moment and never shown to the agent. Custom format, to `file` (relative to the working directory, ending `.dump`, or a directory there), by default a timestamped name with a `-latest.dump` link. Confirmed by you each time; a protected environment by typing its name. The result names the file and its size. See [dump and restore](dump-restore.md). |
+| `restore` | A `.dump` file from the working directory restored by your own `pg_restore` into a database on this machine, never a protected one; `as` names another database on the target's server, `create` makes it, `clean` replaces it (you type its name), `terminate` ends other sessions on it first. There is no `--allow-remote` here. Errors pg_restore went past come back counted and listed. |
 | `environment_logs` | Recent errors from an RDS server's Postgres log, for a server an `rds` environment lists: ERROR, FATAL and PANIC lines grouped by message, with a count, who last hit it and when. `STATEMENT` and `DETAIL` lines are left out. |
 | `schema_lint` | The schema wizard's findings for a connection (tables without a primary key, unindexed foreign keys, unused or overlapping indexes, bloat, and more), each with a severity, why it matters, and a suggested fix. On a replica it warns that unused-index and bloat figures are the replica's own. |
 | `environments_discover` | Proposals for `environments.toml` from an AWS account (optional `region`, `profile`, `account`): per primary, its replicas, matching secret names, the bastion, and exactly the TOML a save appends, with notes to check. Reads names only, never a secret's value. |
-| `environments_save` | Appends the named proposals (`names`) from a fresh discovery to `environments.toml`. Only proposals can be saved, never free-form values. What's already in the file is never rewritten, and a primary already covered is refused. Refused under `--read-only`. It's the only tool that writes a file; `apply_patches` is the only one that writes a database. |
+| `environments_save` | Appends the named proposals (`names`) from a fresh discovery to `environments.toml`. Only proposals can be saved, never free-form values. What's already in the file is never rewritten, and a primary already covered is refused. Refused under `--read-only`. It and `dump` are the tools that write a file; `apply_patches` and `restore` are the ones that write a database. |
 
 Each tool's description ends in a CAVEATS paragraph that says what the
 tool cannot see.

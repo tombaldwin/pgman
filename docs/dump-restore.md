@@ -122,3 +122,11 @@ pgman restore ~/dumps/staging-ledger-latest.dump local --as ledger_staging --cle
 ```
 
 The second command, run again tomorrow, replaces yesterday's copy.
+
+## From a coding agent
+
+`pgman mcp serve` has `dump` and `restore` tools that do the same, each
+only after you confirm the call in your MCP client. An agent can refresh
+its own local copy (`restore` with `as`) without ever holding the
+environment's credentials. Its files stay in the server's working
+directory, and `restore` has no `--allow-remote`. See [mcp.md](mcp.md).
