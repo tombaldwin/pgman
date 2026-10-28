@@ -291,6 +291,20 @@ pub struct Outcome {
     pub rolled_back: Option<(usize, usize)>,
 }
 
+/// Set up a session for [`run`]: each statement waits at most
+/// [`super::apply::LOCK_TIMEOUT`] for a lock, so a busy table fails the
+/// script fast rather than queueing it behind live traffic. A script's
+/// own `SET lock_timeout` overrides it.
+pub async fn prepare_session(client: &tokio_postgres::Client) -> Result<(), String> {
+    client
+        .batch_execute(&format!(
+            "SET lock_timeout = '{}'",
+            super::apply::LOCK_TIMEOUT
+        ))
+        .await
+        .map_err(|e| format!("could not set lock_timeout: {}", message(&e)))
+}
+
 /// Run `statements` in order on `client`, each through the extended
 /// protocol (one command per string, as checked), stopping at the first
 /// failure or when `stop` says so; an open transaction then rolls back.

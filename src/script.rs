@@ -286,13 +286,7 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
             let opened = crate::pgtool::open(t).await?;
             let client =
                 crate::conn::connect_via_writable(opened.dsn.clone(), opened.via, timeout).await?;
-            client
-                .batch_execute(&format!(
-                    "SET lock_timeout = '{}'",
-                    crate::query::apply::LOCK_TIMEOUT
-                ))
-                .await
-                .map_err(|e| format!("could not set lock_timeout: {e}"))?;
+            script::prepare_session(&client).await?;
             Ok::<_, String>((opened, client))
         }
         .await;
