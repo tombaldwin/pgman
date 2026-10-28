@@ -116,12 +116,29 @@ An unrecognised name answers `unknown command :foo · :help lists them`.
 pgman [OPTIONS] [DSN]
 ```
 
-pgman is a TUI: every path except `--batch` (and `pgman query`), `--init-config`, `--upgrade`,
+pgman is a TUI: every path except the sub-commands below, `--batch`, `--init-config`, `--upgrade`,
 `--version`, and `--help` needs a real terminal on both stdin and stdout. A
 launch from a pipe or script without one is refused with `pgman needs a
 terminal. For pipes and scripts use --batch (see pgman --help).` (exit code
 `2`) rather than the raw crossterm error a bare terminal probe used to
 surface.
+
+Sub-commands, which need no terminal (`restore`, `run` and `apply` ask
+on one when it is there; `--yes` answers instead, except where a
+protected target's name must be typed):
+
+| Command | What it does |
+|---|---|
+| `pgman query 'SQL' [--json]` | One statement, no TUI: `--batch --sql 'SQL'`. |
+| `pgman env discover [--save]` | Propose environments from an AWS account ([environments](environments.md#discovering-environments-from-aws)). |
+| `pgman dump <target> [FILE]` | A dump by your own `pg_dump` through pgman's connection, from the replica by default ([dump and restore](dump-restore.md)). |
+| `pgman restore <FILE> <target>` | A dump restored by your own `pg_restore` into an unprotected local database ([dump and restore](dump-restore.md#pgman-restore)). |
+| `pgman run <target> <FILE>` | A script that runs its own transactions, `\c` between databases ([run](run.md)). |
+| `pgman apply <target>` | An environment's pending patches, as the environments view's `P` ([environments](environments.md#from-the-command-line-pgman-apply)). |
+| `pgman mcp serve` | The MCP server for coding agents ([mcp](mcp.md)). |
+
+Each takes `--help`. Exit codes: `0` done, `1` refused or failed (and
+`restore` past real errors), `2` a usage error.
 
 | Flag | Behaviour |
 |---|---|
