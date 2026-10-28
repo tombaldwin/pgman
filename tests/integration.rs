@@ -2849,9 +2849,8 @@ fn mcp_reuses_one_tunnel_across_calls() {
 #[test]
 fn connecting_works_when_a_database_on_the_server_refuses_connect() {
     let home = scratch_home("noconnect", WRITABLE_PROFILE);
+    shared_role("pgman_lim", "pgman_lim");
     for sql in [
-        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
-         CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$",
         "CREATE DATABASE pgman_noconnect",
         "REVOKE CONNECT ON DATABASE pgman_noconnect FROM PUBLIC",
     ] {
@@ -5599,12 +5598,25 @@ fn a_caught_up_standby_of_an_idle_primary_has_no_lag() {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         std::thread::sleep(std::time::Duration::from_secs(3));
-        let p = pgman::query::probe::run(&standby, pgman::query::probe::SchemaSource::None)
-            .await
-            .unwrap();
-        assert_eq!(p.in_recovery, Some(true));
-        let lag = p.lag_secs.expect("a standby reports lag");
-        assert!(lag < 1.0, "caught up, so no lag — got {lag}s");
+        // Other tests write to the primary meanwhile, so a probe can land
+        // mid-burst; a caught-up standby reads no lag at a quiet moment.
+        let mut lags = Vec::new();
+        for _ in 0..10 {
+            let p = pgman::query::probe::run(&standby, pgman::query::probe::SchemaSource::None)
+                .await
+                .unwrap();
+            assert_eq!(p.in_recovery, Some(true));
+            let lag = p.lag_secs.expect("a standby reports lag");
+            lags.push(lag);
+            if lag < 1.0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        assert!(
+            lags.iter().any(|l| *l < 1.0),
+            "caught up, so no lag at a quiet moment — got {lags:?}"
+        );
         let p = pgman::query::probe::run(&primary, pgman::query::probe::SchemaSource::None)
             .await
             .unwrap();
@@ -8266,6 +8278,40 @@ fn pgman_in_env(
 /// Whether the local PostgreSQL client tools are there. In CI they must
 /// be: a runner image without them would otherwise skip every dump and
 /// restore test and stay green.
+/// A role every test can use, made once however many ask at the same
+/// moment: `IF NOT EXISTS` races (two sessions both see it missing, and
+/// one fails on the catalog's unique index), so this process makes it
+/// under a lock, and a parallel run's copy made first is fine.
+fn shared_role(name: &str, password: &str) {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _held = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw("pgman_test").await;
+        let exists: bool = c
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)",
+                &[&name],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        if exists {
+            return;
+        }
+        if let Err(e) = c
+            .batch_execute(&format!("CREATE ROLE {name} LOGIN PASSWORD '{password}'"))
+            .await
+        {
+            let code = e.code().map(|c| c.code().to_string());
+            assert!(
+                matches!(code.as_deref(), Some("23505" | "42710")),
+                "creating role {name}: {e}"
+            );
+        }
+    });
+}
+
 fn have_pg_dump() -> bool {
     let found = pgman::pgtool::find_tool("pg_dump", None).is_ok();
     assert!(
@@ -8404,10 +8450,8 @@ fn a_failed_dump_never_replaces_the_file() {
     }
     let (home, out) = dump_home("dump-fail");
     let t = it_name("dump_secret");
+    shared_role("pgman_lim", "pgman_lim");
     for sql in [
-        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
-         CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$"
-            .to_string(),
         format!("CREATE TABLE IF NOT EXISTS {t} (id int)"),
         format!("REVOKE ALL ON {t} FROM PUBLIC"),
     ] {
@@ -8477,16 +8521,7 @@ fn fake_pg_dump(home: &std::path::Path, version: &str, then: &str) -> std::path:
 #[test]
 fn the_password_goes_only_into_pg_dumps_environment() {
     let (home, out) = dump_home("dump-argv");
-    let o = batch_with_home(
-        &home,
-        &[
-            "--yes",
-            "--sql",
-            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_dumper') THEN \
-             CREATE ROLE pgman_dumper LOGIN PASSWORD 'Dumper-S3cret-pw'; END IF; END $$",
-        ],
-    );
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    shared_role("pgman_dumper", "Dumper-S3cret-pw");
     let mut conns = std::fs::read_to_string(home.join(".config/pgman/connections.toml")).unwrap();
     conns.push_str(
         "[[connections]]\nname = \"dumper\"\nurl = \"postgres://pgman_dumper@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_DUMPER_PW\"\n",
@@ -9479,10 +9514,9 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
             .await
             .unwrap();
     });
+    shared_role("pgman_lim", "pgman_lim");
     in_db(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
-         CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$; \
-         CREATE TABLE open_t (id serial, v text); INSERT INTO open_t (v) VALUES ('a'); \
+        "CREATE TABLE open_t (id serial, v text); INSERT INTO open_t (v) VALUES ('a'); \
          CREATE TABLE closed_t (id serial); CREATE VIEW closed_v AS SELECT * FROM closed_t; \
          GRANT SELECT ON SEQUENCE closed_t_id_seq TO pgman_lim; \
          CREATE TABLE rls_part (id int) PARTITION BY LIST (id); \
