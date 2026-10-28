@@ -78,8 +78,9 @@ BACKLOG.md → From the dump/restore review.
   default with `pgman.tap.allow-remote`. Wire-compatible with 0.2.x (78
   tests, 9/9 golden events) but no publishing setup (Central account,
   namespace DNS record, GPG key, repo, secrets).
-- **The site's changelog** stops at v0.1.0: entries for v0.2.0,
-  v0.2.1 and v0.3.0 need Tom's OK on wording, then `npm run fallbacks`.
+- **The site's changelog**: entries for v0.2.0, v0.2.1 and v0.3.0 sent
+  to the site lane (poly · site) to land, 2026-10-28. Tom no longer
+  approves the wording first: write them for each release and tell him.
 - **Required CI checks on main**: the branch-protection call needs Tom
   (the payload is drafted).
 
