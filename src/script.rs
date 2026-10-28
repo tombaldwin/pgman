@@ -280,7 +280,7 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
             }
         });
     }
-    let (mut before, mut committed) = (0, 0);
+    let (mut before, mut committed, mut transactions) = (0, 0, 0);
     let mut dbs = Vec::new();
     for (i, (seg, t)) in plan.segments.iter().zip(&targets).enumerate() {
         let timeout = safety.profile_for(&seg.database).statement_timeout_ms;
@@ -288,6 +288,12 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
             let opened = crate::pgtool::open(t).await?;
             let client =
                 crate::conn::connect_via_writable(opened.dsn.clone(), opened.via, timeout).await?;
+            if crate::query::server::facts(&client).await?.in_recovery {
+                return Err(format!(
+                    "{} is a standby; a script runs on a primary",
+                    t.describe()
+                ));
+            }
             script::prepare_session(&client).await?;
             Ok::<_, String>((opened, client))
         }
@@ -323,13 +329,13 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
         }
         before += o.ran;
         committed += o.committed;
+        transactions += o.transactions;
         dbs.push(format!("{} on {}", o.ran, seg.database));
     }
     tracing::info!(target: "pgman::run", statements = before, "script done");
     Ok(format!(
-        "ran {before} statement(s) ({}): {} transaction(s) committed, {} statement(s) committed as they ran",
+        "ran {before} statement(s) ({}): {transactions} transaction(s) committed, {} statement(s) committed as they ran",
         dbs.join(", "),
-        plan.transactions,
         plan.autocommit
     ))
 }
@@ -406,6 +412,7 @@ mod tests {
         let o = Outcome {
             ran: 3,
             committed: 1,
+            transactions: 0,
             failed: Some((3, "duplicate key".into())),
             cancelled: None,
             rolled_back: Some((1, 1)),
@@ -430,6 +437,7 @@ mod tests {
         let o = Outcome {
             ran: 0,
             committed: 0,
+            transactions: 0,
             failed: None,
             cancelled: Some(0),
             rolled_back: None,

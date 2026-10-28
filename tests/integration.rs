@@ -8946,6 +8946,20 @@ fn a_script_runs_its_own_transactions_and_says_what_stayed() {
         "{stdout}"
     );
     assert_eq!(on(&logdb, "SELECT msg FROM events").unwrap().len(), 1);
+    assert!(stdout.contains("1 transaction(s) committed"), "{stdout}");
+
+    std::fs::write(
+        out.join("rolled.sql"),
+        format!("BEGIN;\nINSERT INTO {t} VALUES (10);\nROLLBACK;\nBEGIN;\nINSERT INTO {t} VALUES (11);\nCOMMIT;\n"),
+    )
+    .unwrap();
+    let o = pgman_in(&home, &out, &["run", "local", "rolled.sql", "--yes"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        stdout.contains("1 transaction(s) committed"),
+        "a rolled-back one isn't: {stdout}"
+    );
+    let _ = on("pgman_test", &format!("DELETE FROM {t} WHERE id = 11"));
 
     std::fs::write(
         out.join("two.sql"),
@@ -9023,6 +9037,16 @@ fn a_script_is_refused_before_it_runs_anything() {
     std::fs::remove_file(home.join(".config/pgman/safety.toml")).unwrap();
     let e = refused("p.sql", create, &["local", "p.sql", "--yes"]);
     assert!(e.contains("keeps 'pgman_test' read-only"), "{e}");
+    std::fs::write(home.join(".config/pgman/safety.toml"), WRITABLE_PROFILE).unwrap();
+    let e = refused(
+        "s.sql",
+        "SELECT 1;\n".into(),
+        &[STANDBY_DSN, "s.sql", "--yes"],
+    );
+    assert!(
+        e.contains("is a standby; a script runs on a primary"),
+        "{e}"
+    );
     assert!(
         on("pgman_test", &format!("SELECT 1 FROM {t}")).is_err(),
         "nothing ran"

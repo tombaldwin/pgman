@@ -282,6 +282,8 @@ pub struct Outcome {
     /// Of those, the ones whose work is committed: run outside a
     /// transaction, or in one that reached its COMMIT.
     pub committed: usize,
+    /// Transactions that reached their COMMIT.
+    pub transactions: usize,
     /// The statement (index in the segment) that failed, and why.
     pub failed: Option<(usize, String)>,
     /// Stopped (Ctrl-C) before the statement at this index.
@@ -330,6 +332,7 @@ pub async fn run(
             TxEffect::Commit => {
                 if let Some((_, n)) = open.take() {
                     o.committed += n;
+                    o.transactions += 1;
                 }
             }
             TxEffect::Rollback => open = None,
@@ -337,6 +340,7 @@ pub async fn run(
                 if let Some((_, n)) = open.take() {
                     if commits {
                         o.committed += n;
+                        o.transactions += 1;
                     }
                 }
                 open = Some((i, 0));
