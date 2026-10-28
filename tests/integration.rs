@@ -9090,7 +9090,10 @@ fn a_script_is_refused_before_it_runs_anything() {
     assert!(e.contains("ends inside the transaction"), "{e}");
     std::fs::remove_file(home.join(".config/pgman/safety.toml")).unwrap();
     let e = refused("p.sql", create, &["local", "p.sql", "--yes"]);
-    assert!(e.contains("keeps 'pgman_test' read-only"), "{e}");
+    assert!(
+        e.contains("pgman_test is read-only (read-only is the default)"),
+        "{e}"
+    );
     std::fs::write(home.join(".config/pgman/safety.toml"), WRITABLE_PROFILE).unwrap();
     let e = refused(
         "s.sql",

@@ -198,9 +198,7 @@ pub fn plan(
             continue;
         }
         if safety.profile_for(db).read_only {
-            return Err(format!(
-                "safety.toml keeps '{db}' read-only; set read_only = false for it to run scripts"
-            ));
+            return Err(read_only_refusal(safety, db));
         }
         let statements =
             crate::batch::check_statements(safety, db, &seg.sql, true).map_err(|r| match r {
@@ -272,6 +270,27 @@ pub fn plan(
         transactions,
         autocommit,
     })
+}
+
+/// Why a script can't run on `db`, which `safety` keeps read-only: where
+/// that comes from, and the lines that change it. Pure.
+pub fn read_only_refusal(safety: &crate::safety::SafetyConfig, db: &str) -> String {
+    let origin = safety.read_only_origin(db);
+    if let Some(block) = origin.project.filter(|_| !origin.personal) {
+        return format!(
+            "{db} is kept read-only by this project's .pgman/pgman.toml ({block}), which only \
+             tightens; change it there to run scripts"
+        );
+    }
+    let why = if origin.personal_own_entry {
+        "safety.toml keeps it read-only"
+    } else {
+        "read-only is the default"
+    };
+    format!(
+        "{db} is read-only ({why}). To run scripts on it, set in your safety.toml \
+         (pgman --init-config writes one):\n  [databases.{db}]\n  read_only = false"
+    )
 }
 
 /// How far a segment's run got.
@@ -512,7 +531,11 @@ mod tests {
             &segs("select 1;\n"),
         )
         .unwrap_err();
-        assert!(e.contains("keeps 'ledger' read-only"), "{e}");
+        assert!(
+            e.contains("ledger is read-only (read-only is the default)"),
+            "{e}"
+        );
+        assert!(e.contains("[databases.ledger]\n  read_only = false"), "{e}");
         safety
             .databases
             .insert("ledgerlog".into(), crate::safety::SafetyProfile::default());
@@ -523,7 +546,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            e.contains("keeps 'ledgerlog' read-only"),
+            e.contains("ledgerlog is read-only (safety.toml keeps it read-only)"),
             "the \\c database's own profile: {e}"
         );
         let e = plan(&writable(), "ledger", &segs("drop table t;\n")).unwrap_err();
