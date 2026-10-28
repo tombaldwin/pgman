@@ -9082,3 +9082,93 @@ fn ctrl_c_cancels_a_script_and_rolls_back_its_transaction() {
     );
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
+
+/// `pgman apply` plans and applies an environment's pending patches,
+/// stops before one that can't run in a transaction, and plans that one
+/// only with --outside — which, like a protected environment, takes the
+/// typed name, so --yes and a missing terminal are refused.
+#[cfg(unix)]
+#[test]
+fn pgman_apply_applies_patches_and_outside_needs_the_typed_name() {
+    let (home, out) = run_home("apply-cli");
+    let (vt, tbl) = (it_name("ac_v"), it_name("ac_t"));
+    let dir = home.join("patches");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-col.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\nALTER TABLE {tbl} ADD COLUMN c int;\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("003-index.sql"),
+        format!(
+            "INSERT INTO {vt} (id) VALUES (3);\nCREATE INDEX CONCURRENTLY {tbl}_c ON {tbl} (c);\n"
+        ),
+    )
+    .unwrap();
+    let mut envs = std::fs::read_to_string(home.join(".config/pgman/environments.toml")).unwrap();
+    envs.push_str(&format!(
+        "[[environments]]\nname = \"patchenv\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+         version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ));
+    std::fs::write(home.join(".config/pgman/environments.toml"), envs).unwrap();
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {vt}"));
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {tbl}"));
+    on("pgman_test", &format!("CREATE TABLE {vt} (id int)")).unwrap();
+    on("pgman_test", &format!("INSERT INTO {vt} VALUES (1)")).unwrap();
+    on("pgman_test", &format!("CREATE TABLE {tbl} (id int)")).unwrap();
+    let recorded = || -> Vec<i32> {
+        on("pgman_test", &format!("SELECT id FROM {vt} ORDER BY id"))
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect()
+    };
+
+    let o = pgman_in(&home, &out, &["apply", "patchenv", "--dry-run", "--yes"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(
+        stderr.contains("1 pending patch(es)") && stderr.contains("stops before 003-index.sql"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("(--outside plans it)"), "{stderr}");
+    assert!(stdout.starts_with("dry run: ran 1 patch(es)"), "{stdout}");
+    assert_eq!(recorded(), vec![1], "a dry run keeps nothing");
+
+    let o = pgman_in(&home, &out, &["apply", "patchenv", "--yes"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        !o.status.success(),
+        "stopped before a patch: not all applied"
+    );
+    assert!(
+        stdout.starts_with("applied 1 patch(es) · recorded up to 2 now"),
+        "{stdout}"
+    );
+    assert_eq!(recorded(), vec![1, 2]);
+
+    let o = pgman_in(&home, &out, &["apply", "patchenv", "--outside", "--yes"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("runs a patch outside a transaction: it is confirmed by typing its name, which --yes doesn't answer"), "{stderr}");
+    let o = pgman_in(&home, &out, &["apply", "patchenv", "--outside"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("confirmed by typing its name, and stdin isn't a terminal"),
+        "{stderr}"
+    );
+    assert_eq!(recorded(), vec![1, 2], "neither ran");
+
+    let o = pgman_in(&home, &out, &["apply", "local", "--yes"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("isn't an environment's database"),
+        "{stderr}"
+    );
+    let _ = on("pgman_test", &format!("DROP TABLE {vt}"));
+    let _ = on("pgman_test", &format!("DROP TABLE {tbl}"));
+}

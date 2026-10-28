@@ -5,6 +5,7 @@
 //! `BACKLOG.md` for the milestone plan.
 
 pub mod app;
+pub mod apply_cli;
 pub mod aws_cli;
 pub mod batch;
 pub mod conn;

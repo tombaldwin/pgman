@@ -17,7 +17,7 @@ use std::io::IsTerminal;
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (beta)",
     override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman env discover [--save]\n       pgman mcp serve",
-    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
+    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nDump and restore: `pgman dump <target> [FILE]`, `pgman restore <FILE> <target>`; see docs/dump-restore.md.\nScripts and patches: `pgman run <target> <FILE>`, `pgman apply <target>`; see docs/run.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.
@@ -114,7 +114,7 @@ struct Cli {
 }
 
 /// The words that start a sub-command rather than name a DSN.
-const SUBCOMMANDS: &[&str] = &["query", "env", "mcp", "dump", "restore", "run"];
+const SUBCOMMANDS: &[&str] = &["query", "env", "mcp", "dump", "restore", "run", "apply"];
 
 /// `argv` with a sub-command that follows global options moved to the
 /// front: `pgman --dsn X query 'SQL'` becomes `pgman query 'SQL' --dsn X`.
@@ -270,6 +270,34 @@ async fn main() -> anyhow::Result<()> {
             Ok(done) => println!("{done}"),
             Err(e) => {
                 eprintln!("pgman run: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    if argv.get(1).map(String::as_str) == Some("apply") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", pgman::apply_cli::USAGE);
+            return Ok(());
+        }
+        init_logging();
+        let opts = match pgman::apply_cli::parse_cli(&argv[2..]) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        };
+        match pgman::apply_cli::run_cli(&opts).await {
+            Ok((report, ok)) => {
+                println!("{report}");
+                if !ok {
+                    std::process::exit(1);
+                }
+            }
+            Err(e) => {
+                eprintln!("pgman apply: {e}");
                 std::process::exit(1);
             }
         }
