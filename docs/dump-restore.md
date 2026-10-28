@@ -37,7 +37,8 @@ An environment name wins over a connection of the same name.
 ## `pgman dump`
 
 ```
-pgman dump <target> [FILE] [--primary] [--format custom|plain|directory|tar]
+pgman dump <target> [FILE] [--schema-only] [--reason TEXT] [--ticket KEY]
+                    [--primary] [--format custom|plain|directory|tar]
                     [--skip-unreadable] [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
 ```
 
@@ -82,12 +83,18 @@ pgman dump <target> [FILE] [--primary] [--format custom|plain|directory|tar]
   name — and the UTC time (`staging-ledger-20261028T140322Z.dump`), and
   `staging-ledger-latest.dump` is pointed at the newest one. A FILE you
   name is replaced when the dump succeeds, and the result says so.
-- **No question asked.** A dump only reads, so `pgman dump` doesn't ask
-  first, even for a protected environment. (MCP's `dump` does: there the
-  agent asks, and you answer.)
+- **A protected environment asks.** A dump of a protected target
+  (`protected = true`, or "prod" in the name, as for restore below) asks
+  why it is taken, and a raw dump of one — every row — also takes the
+  environment's name typed, after a warning that it copies personal data
+  to this machine. See [the dump policy](#the-dump-policy). Other targets
+  are dumped without a question, as before.
+- **The structure alone.** `--schema-only` dumps no rows; it never needs
+  the typed name.
+- **In the journal.** Every dump is recorded, with its reason: `pgman
+  copies` lists them, and deletes one when you're done. See [copies](#pgman-copies).
 - **Options.** Anything after `--` goes to pg_dump:
-  `-- --exclude-table-data=audit_log`, `-- --schema-only`,
-  `--format directory -- -j 4`. The connection and output options
+  `-- --exclude-table-data=audit_log`, `--format directory -- -j 4`. The connection and output options
   (`--dbname`, `--host`, `--file`… and their abbreviations) are pgman's
   and are refused.
 
@@ -151,11 +158,103 @@ Takes custom, directory and tar dumps. It doesn't take a plain SQL dump
 (`--format plain`): run that with `psql` yourself, `psql -d DATABASE -f
 FILE`, and none of the checks above apply.
 
+## The dump policy
+
+An environment in `environments.toml` can say what a dump of it may be,
+and the defaults follow `protected`:
+
+```toml
+[[environments]]
+name = "production"
+dump = "unmasked"        # unmasked | masked | schema | never
+dump_ttl = "14d"         # when pgman copies calls a copy expired: 36h, 14d, 2w
+dump_reason = "required" # required | optional
+unattended = false       # true: raw dumps may run without a terminal
+```
+
+| `dump` | A dump may be |
+| --- | --- |
+| `unmasked` (the default) | raw, or schema only |
+| `masked` | schema only, until pgman can mask (then masked, or schema only) |
+| `schema` | schema only |
+| `never` | nothing |
+
+A protected environment's dumps need a reason (`dump_reason`), and are
+kept 14 days before `pgman copies` calls them expired; others need none
+and are kept 30.
+
+- **The reason.** At a terminal pgman asks, offering the ticket in your
+  branch's name (`feature/APP-101-invoice-rounding` offers `APP-101`;
+  Enter takes it), else the last reason you gave for that target. It is
+  one line of up to 120 characters: a ticket id or a few words, not
+  people's names. `--reason "…"` or `--ticket APP-101` gives it instead.
+  When no reason is needed, the branch's ticket is recorded anyway.
+- **A raw dump of a protected environment needs a terminal.** The
+  environment's name is typed, and no flag answers that: run from cron,
+  CI, a script or an agent's shell, it is refused. A job that must take
+  raw copies of one environment can be allowed to, by `unattended =
+  true` on that environment in your own `environments.toml` (never a
+  project file); each such dump still needs `--reason` or `--ticket`, and
+  is journaled as unattended. A schema dump needs no terminal.
+- **A project can lower it.** A repository's `.pgman/pgman.toml` can cap
+  an environment, never raise it:
+
+  ```toml
+  [dumps.environments.production]
+  dump = "schema"
+
+  [dumps]
+  ticket_keys = ["APP"]   # only these projects' keys count as tickets
+  ticket_url = "https://examplecorp.atlassian.net/browse/{ticket}"
+  ```
+
+  A `pgman.toml` that is there and can't be read refuses the dump rather
+  than dropping its cap. `ticket_url` makes `pgman copies` and its report
+  show each ticket as a link.
+
+Masking, and encrypting dumps, are designed but not built yet
+([docs/design/masked-dumps.md](design/masked-dumps.md)): until then a
+dump is the data as it is, in a file only you can read.
+
+## `pgman copies`
+
+```
+pgman copies [list] [--all]
+pgman copies show <copy>
+pgman copies rm <copy> [--yes]
+pgman copies report [--since YYYY-MM-DD] [--format text|markdown|json]
+```
+
+Every dump pgman takes goes in a journal on this machine
+(`~/.local/share/pgman/journal.jsonl`, readable by you alone): when, of
+what, raw or schema, from a protected target or not, why, the file and
+its size, when it expires, from the command line, unattended or MCP; and
+each restore of it, and its deletion. No data, no connection details, no
+secrets.
+
+- `pgman copies` lists the copies still on disk — their id, age, size,
+  expiry (`EXPIRED` once past it) and ticket — and the dump files in the
+  current directory the journal doesn't know (an older pgman's, or
+  pg_dump's by hand).
+- `pgman copies show <copy>` gives one in full, with where it was
+  restored. A copy is named by the start of its id, or by its file (its
+  `-latest` link too).
+- `pgman copies rm <copy>` deletes the file (asking first, unless
+  `--yes`), records the deletion, and points the `-latest` link at the
+  newest copy left, or removes it. A link where the dump was is never
+  followed. A copy already deleted by hand is recorded as gone.
+- `pgman copies report` is the whole account, oldest first: what was
+  taken, why, where it was restored, and when it was deleted. `--format
+  markdown` pastes into a ticket; `--format json` is for a script.
+
+A database restored from a copy isn't dropped by `rm` yet.
+
 ## A local copy, end to end
 
 ```sh
 pgman dump staging/ledger ~/dumps/
 pgman restore ~/dumps/staging-ledger-latest.dump local --as ledger_staging --clean --terminate
+pgman copies rm staging-ledger-latest.dump   # when you're done with it
 ```
 
 The second command, run again tomorrow, replaces yesterday's copy.
@@ -163,7 +262,10 @@ The second command, run again tomorrow, replaces yesterday's copy.
 ## From a coding agent
 
 `pgman mcp serve` has `dump` and `restore` tools that do the same, each
-only after you confirm the call in your MCP client. An agent can refresh
+only after you confirm the call in your MCP client, giving the reason
+when the environment asks for one (the agent may suggest it; the one
+recorded is yours). A protected environment is dumped schema only over
+MCP: its raw copy is yours to take, at a terminal. An agent can refresh
 its own local copy (`restore` with `as`) without ever holding the
 environment's credentials. Its files stay in the server's working
 directory, and `restore` has no `--allow-remote`. See [mcp.md](mcp.md).

@@ -366,6 +366,22 @@ pub fn set_child_env(cmd: &mut tokio::process::Command, password: Option<&str>) 
     }
 }
 
+/// Ask on the terminal; the line typed, trimmed.
+pub fn ask_cli(prompt: &str) -> Result<String, String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return Err("stdin isn't a terminal, so pgman can't ask".into());
+    }
+    eprint!("{prompt}");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| format!("could not read the answer: {e}"))?;
+    Ok(line.trim().to_string())
+}
+
 /// Ask on the terminal; `Ok(true)` when the answer is `accept`.
 pub fn confirm_cli(prompt: &str, accept: &str) -> Result<bool, String> {
     use std::io::{BufRead, IsTerminal, Write};

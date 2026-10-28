@@ -33,6 +33,30 @@ pub struct ProjectConfig {
     /// The `[patches]` block: where schema patches live and which table
     /// records the applied ones. Read by the MCP `pending_patches` tool.
     pub patches: Option<crate::query::patches::PatchesConfig>,
+    /// The `[dumps]` block: caps on what a dump of an environment may be
+    /// (only ever lower than the operator's own setting), and how a
+    /// dump's reason finds its ticket.
+    pub dumps: Option<ProjectDumps>,
+}
+
+/// `[dumps]`, with `[dumps.environments.<name>]` beneath it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProjectDumps {
+    pub environments: HashMap<String, ProjectDumpEnv>,
+    /// Ticket keys a branch name is searched for (`["APP"]`); empty, any
+    /// Jira-style key.
+    pub ticket_keys: Vec<String>,
+    /// A ticket's link, `{ticket}` replaced: `https://…/browse/{ticket}`.
+    pub ticket_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProjectDumpEnv {
+    /// The most a dump of the environment may be; lowers the operator's
+    /// `dump`, never raises it.
+    pub dump: Option<crate::policy::DumpMode>,
 }
 
 /// The `[editor]` block: how Ctrl-F lays a statement out, and the
@@ -409,6 +433,29 @@ pub fn load_from(start: &Path) -> Option<(PathBuf, ProjectConfig)> {
             None
         }
     }
+}
+
+/// The project's `[dumps]` block above `start`, and the file it is in.
+/// Unlike [`load_from`], a file that is there and can't be read is an
+/// error, not nothing: it may hold a cap the client relies on. Reads
+/// files.
+pub fn load_dumps(start: &Path) -> Result<Option<(PathBuf, ProjectDumps)>, String> {
+    let Some(root) = find_root(start) else {
+        return Ok(None);
+    };
+    let path = config_path(&root);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    let cfg = parse(&text).map_err(|e| {
+        format!(
+            "{} can't be read ({e}), and it may cap what a dump may be: fix it first",
+            path.display()
+        )
+    })?;
+    Ok(cfg.dumps.map(|d| (path, d)))
 }
 
 /// The editor options for a session started under `start`: the

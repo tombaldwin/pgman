@@ -9321,9 +9321,11 @@ fn pgman_apply_applies_patches_and_outside_needs_the_typed_name() {
 
 /// MCP's `dump` and `restore`, through a real server and an operator
 /// answering its elicitations: each runs only once confirmed, a
-/// protected environment and a replaced database take a typed name, a
+/// protected environment is dumped schema only with the operator's
+/// reason (never the agent's), a replaced database takes a typed name, a
 /// decline is final, a path out of the working directory and a
-/// protected restore target are refused without asking.
+/// protected restore target are refused without asking, and every dump
+/// and restore is journaled.
 #[cfg(unix)]
 #[test]
 fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
@@ -9334,6 +9336,8 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     }
     let (home, out) = run_home("mcp-dump");
     let (src, copy) = (it_name("mcpsrc"), it_name("mcpcopy"));
+    // "prod" in the name: a protected database.
+    let prod = it_name("mcpprod");
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let c = raw("pgman_test").await;
@@ -9343,7 +9347,13 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         let _ = c
             .batch_execute(&format!("DROP DATABASE IF EXISTS {copy}"))
             .await;
+        let _ = c
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {prod}"))
+            .await;
         c.batch_execute(&format!("CREATE DATABASE {src}"))
+            .await
+            .unwrap();
+        c.batch_execute(&format!("CREATE DATABASE {prod}"))
             .await
             .unwrap();
         raw(&src)
@@ -9375,12 +9385,14 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
     writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
     next();
-    // A call that asks: (reply text, isError, the question asked).
+    // A call that asks: (reply text, isError, the question asked, the
+    // form's required fields).
     let mut asked = |id: u64, tool: &str, args: serde_json::Value, answer: serde_json::Value| {
         writeln!(stdin, "{}", tool_call(id, tool, args)).unwrap();
         let ask = next();
         assert_eq!(ask["method"], "elicitation/create", "{ask}");
         let message = ask["params"]["message"].as_str().unwrap().to_string();
+        let required = ask["params"]["requestedSchema"]["required"].to_string();
         writeln!(
             stdin,
             "{}",
@@ -9389,10 +9401,10 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         .unwrap();
         let frame = next();
         let (text, is_error) = reply(&[frame], id);
-        (text, is_error, message)
+        (text, is_error, message, required)
     };
 
-    let (text, is_error, message) = asked(
+    let (text, is_error, message, _) = asked(
         2,
         "dump",
         serde_json::json!({"target": url(&src), "file": "copy.dump"}),
@@ -9407,21 +9419,35 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     assert!(v["file"].as_str().unwrap().ends_with("copy.dump"), "{text}");
     assert!(out.join("copy.dump").is_file());
 
-    let (text, is_error, message) = asked(
+    // A protected environment: schema only, and the operator's reason.
+    let (text, is_error, message, required) = asked(
         3,
         "dump",
-        serde_json::json!({"target": "live"}),
-        serde_json::json!({"action": "accept", "content": {"name": "lve"}}),
+        serde_json::json!({"target": "live", "schema_only": true, "reason": "APP-5"}),
+        serde_json::json!({"action": "decline"}),
     );
     assert!(
-        message.contains("live is protected (") && message.contains("type its name"),
+        message.starts_with("Dump the schema of live") && message.contains("It is protected ("),
         "{message}"
     );
-    assert!(
-        is_error && text.contains("doesn't match live") && text.contains("final"),
-        "{text}"
+    assert_eq!(required, r#"["dump","reason"]"#);
+    assert!(is_error && text.contains("final"), "{text}");
+    let (text, is_error, _, _) = asked(
+        31,
+        "dump",
+        serde_json::json!({"target": url(&prod), "schema_only": true, "file": "prod.dump", "reason": "agent's own words"}),
+        serde_json::json!({"action": "accept", "content": {"dump": true, "reason": "APP-6 schema check"}}),
     );
-    let (text, is_error, _) = asked(
+    assert!(!is_error, "{text}");
+    let (text, is_error, _, _) = asked(
+        32,
+        "dump",
+        serde_json::json!({"target": url(&prod), "schema_only": true, "file": "prod2.dump"}),
+        serde_json::json!({"action": "accept", "content": {"dump": true}}),
+    );
+    assert!(is_error && text.contains("takes a reason"), "{text}");
+    assert!(!out.join("prod2.dump").exists());
+    let (text, is_error, _, _) = asked(
         4,
         "restore",
         serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": copy, "create": true}),
@@ -9429,7 +9455,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     );
     assert!(!is_error, "{text}");
     assert_eq!(count_in(&copy, "accounts"), Ok(7));
-    let (text, is_error, message) = asked(
+    let (text, is_error, message, _) = asked(
         5,
         "restore",
         serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": copy, "clean": true}),
@@ -9453,8 +9479,14 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         assert!(is_error, "{text}");
         text
     };
-    let t = refused(6, "dump", serde_json::json!({"target": "live"}));
+    let t = refused(
+        6,
+        "dump",
+        serde_json::json!({"target": "live", "schema_only": true}),
+    );
     assert!(t.contains("declined a dump of live"), "{t}");
+    let t = refused(61, "dump", serde_json::json!({"target": url(&prod)}));
+    assert!(t.contains("dumped schema only"), "{t}");
     let t = refused(
         7,
         "dump",
@@ -9476,11 +9508,206 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     drop(stdin);
     assert!(child.wait().unwrap().success());
     assert!(!home.join("escape.dump").exists());
+    // Each dump and restore is in the journal, with the operator's reason.
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let events: Vec<serde_json::Value> = journal
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let dumps: Vec<&serde_json::Value> = events.iter().filter(|e| e["event"] == "dump").collect();
+    assert_eq!(dumps.len(), 2, "{journal}");
+    assert_eq!(dumps[0]["via"], "mcp");
+    assert_eq!(dumps[0]["mode"], "raw");
+    assert_eq!(dumps[1]["mode"], "schema");
+    assert_eq!(dumps[1]["protected"], true);
+    assert_eq!(dumps[1]["reason"], "APP-6 schema check");
+    assert_eq!(dumps[1]["ticket"], "APP-6");
+    assert!(!journal.contains("agent's own words"), "{journal}");
+    let restore = events.iter().find(|e| e["event"] == "restore").unwrap();
+    assert_eq!(restore["copy"], dumps[0]["copy"]);
+    assert_eq!(restore["into_database"], copy.as_str());
+    on("pgman_test", &format!("DROP DATABASE IF EXISTS {prod}")).unwrap();
     assert_eq!(
         count_in(&copy, "accounts"),
         Ok(7),
         "the declined clean changed nothing"
     );
+}
+
+/// A protected environment's dump policy at the command line: with no
+/// terminal a raw dump is refused unless the operator's own file says
+/// `unattended = true`, a schema dump needs a reason, a project's cap
+/// lowers what is allowed (and a broken project file refuses rather than
+/// dropping its cap). Each dump and restore is journaled; `pgman copies`
+/// lists them, `rm` deletes one and points `-latest` at the one left, and
+/// `report` gives the account.
+#[cfg(unix)]
+#[test]
+fn the_dump_policy_and_the_journal_from_the_command_line() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = dump_home("policy");
+    let envs_path = home.join(".config/pgman/environments.toml");
+    // The standby: restoring into the primary isn't into the protected server.
+    let base = "[[environments]]\nname = \"production\"\nsource = { kind = \"static\", connections = [\"local-replica\"] }\n";
+    std::fs::write(&envs_path, base).unwrap();
+    let copy = it_name("policycopy");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
+    let run = |args: &[&str]| {
+        let o = pgman_in(&home, &out, args);
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let files = || {
+        let mut f: Vec<String> = std::fs::read_dir(&out)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        f.sort();
+        f
+    };
+
+    let (code, _, err) = run(&["dump", "production"]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(
+        err.contains("no terminal") && err.contains("unattended = true"),
+        "{err}"
+    );
+    let (code, _, err) = run(&["dump", "production", "--schema-only"]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(
+        err.contains("takes a reason") && err.contains("--ticket"),
+        "{err}"
+    );
+    assert!(files().is_empty(), "{:?}", files());
+
+    let (code, said, err) = run(&["dump", "production", "--schema-only", "--ticket", "APP-7"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(said.contains("in the journal: pgman copies"), "{said}");
+    // The stamp is to the second: the next dump gets its own name.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(&envs_path, format!("{base}unattended = true\n")).unwrap();
+    let (code, _, err) = run(&["dump", "production", "--reason", "APP-8 nightly refresh"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(err.contains("This is a raw copy"), "{err}");
+    assert_eq!(files().len(), 3, "two dumps and the link: {:?}", files());
+
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let events: Vec<serde_json::Value> = journal
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(events.len(), 2, "{journal}");
+    assert_eq!(events[0]["mode"], "schema");
+    assert_eq!(events[0]["ticket"], "APP-7");
+    assert_eq!(events[0]["protected"], true);
+    assert_eq!(events[0]["via"], "cli");
+    assert_eq!(events[1]["mode"], "raw");
+    assert_eq!(events[1]["via"], "unattended");
+    assert_eq!(events[1]["ticket"], "APP-8");
+    // Names and times, never a connection string or a secret.
+    assert!(
+        !journal.contains("postgres://") && !journal.contains("IT_PW"),
+        "{journal}"
+    );
+    let raw_id = events[1]["copy"].as_str().unwrap().to_string();
+    let raw_file = events[1]["file"].as_str().unwrap().to_string();
+    let schema_file = events[0]["file"].as_str().unwrap().to_string();
+
+    let (code, said, err) = run(&["copies"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        said.contains("schema, protected") && said.contains("raw, protected"),
+        "{said}"
+    );
+    assert!(
+        said.contains(&raw_id[..8]) && said.contains("APP-8"),
+        "{said}"
+    );
+
+    let (code, _, err) = run(&[
+        "restore",
+        &raw_file,
+        "local-primary",
+        "--as",
+        &copy,
+        "--create",
+        "--yes",
+    ]);
+    assert_eq!(code, Some(0), "{err}");
+    let (_, said, _) = run(&["copies", "show", &raw_id[..8]]);
+    assert!(
+        said.contains(&format!("restored  into {copy} on 127.0.0.1:55432")),
+        "{said}"
+    );
+
+    let latest = out.join("production-pgman_test-latest.dump");
+    assert_eq!(
+        std::fs::read_link(&latest).unwrap().to_string_lossy(),
+        std::path::Path::new(&raw_file)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    );
+    let (code, said, err) = run(&["copies", "rm", &raw_id[..8], "--yes"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        said.contains("deleted") && said.contains("now points at"),
+        "{said}"
+    );
+    assert!(!std::path::Path::new(&raw_file).exists());
+    assert_eq!(
+        std::fs::read_link(&latest).unwrap().to_string_lossy(),
+        std::path::Path::new(&schema_file)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    );
+    let (code, _, err) = run(&["copies", "rm", &raw_id[..8], "--yes"]);
+    assert_eq!(code, Some(1));
+    assert!(err.contains("deleted already"), "{err}");
+
+    let (_, said, _) = run(&["copies", "report", "--format", "markdown"]);
+    assert!(
+        said.contains("| production | schema, protected |"),
+        "{said}"
+    );
+    assert!(said.contains("APP-8: APP-8 nightly refresh"), "{said}");
+    assert!(
+        said.contains(&format!("restored into {copy}")) && said.contains("(by hand)"),
+        "{said}"
+    );
+
+    // A project's cap lowers it; a broken project file refuses.
+    std::fs::create_dir_all(out.join(".pgman")).unwrap();
+    std::fs::write(
+        out.join(".pgman/pgman.toml"),
+        "[dumps.environments.production]\ndump = \"schema\"\n",
+    )
+    .unwrap();
+    let (code, _, err) = run(&["dump", "production", "--reason", "APP-9"]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(
+        err.contains("caps production at dump = \"schema\""),
+        "{err}"
+    );
+    std::fs::write(
+        out.join(".pgman/pgman.toml"),
+        "[dumps.environments.production]\ndump = \"some\"\n",
+    )
+    .unwrap();
+    let (code, _, err) = run(&["dump", "production", "--reason", "APP-9"]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(
+        err.contains("can't be read") && err.contains("fix it first"),
+        "{err}"
+    );
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
 }
 
 /// A dump whose user can't read everything is refused before pg_dump

@@ -123,9 +123,11 @@ terminal. For pipes and scripts use --batch (see pgman --help).` (exit code
 `2`) rather than the raw crossterm error a bare terminal probe used to
 surface.
 
-Sub-commands, which need no terminal (`restore`, `run` and `apply` ask
-on one when it is there; `--yes` answers instead, except where a
-protected target's name must be typed):
+Sub-commands, which need no terminal (`restore`, `run`, `apply` and
+`copies rm` ask on one when it is there; `--yes` answers instead, except
+where a protected target's name must be typed; `dump` asks a protected
+target's reason, and its name for a raw dump, which only a terminal
+answers):
 
 | Command | What it does |
 |---|---|
@@ -133,6 +135,7 @@ protected target's name must be typed):
 | `pgman env discover [--save]` | Propose environments from an AWS account ([environments](environments.md#discovering-environments-from-aws)). |
 | `pgman dump <target> [FILE]` | A dump by your own `pg_dump` through pgman's connection, from the replica by default ([dump and restore](dump-restore.md)). |
 | `pgman restore <FILE> <target>` | A dump restored by your own `pg_restore` into an unprotected local database ([dump and restore](dump-restore.md#pgman-restore)). |
+| `pgman copies [show\|rm\|report]` | The dumps taken on this machine, from the journal: list, one in full, delete one, the whole account ([copies](dump-restore.md#pgman-copies)). |
 | `pgman run <target> <FILE>` | A script that runs its own transactions, `\c` between databases ([run](run.md)). |
 | `pgman apply <target>` | An environment's pending patches, as the environments view's `P` ([environments](environments.md#from-the-command-line-pgman-apply)). |
 | `pgman mcp serve` | The MCP server for coding agents ([mcp](mcp.md)). |

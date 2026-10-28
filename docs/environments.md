@@ -379,6 +379,9 @@ A replica is never patched: its primary is. An environment is
 **protected** when it says `protected = true`, or — when it says
 nothing — when its name contains `prod`. A protected environment is
 confirmed by typing its name; `protected = false` turns that off.
+What a dump of an environment may be — and what it asks first — is set
+by `dump`, `dump_ttl`, `dump_reason` and `unattended`: see [the dump
+policy](dump-restore.md#the-dump-policy).
 
 ### From the command line: `pgman apply`
 

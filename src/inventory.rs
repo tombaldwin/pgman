@@ -89,6 +89,24 @@ pub struct Environment {
     /// Unset, an environment whose name contains "prod" is protected.
     #[serde(default)]
     pub protected: Option<bool>,
+    /// What a dump may be: `unmasked`, `masked`, `schema` or `never`
+    /// ([`crate::policy`]). Unset, anything; a protected environment's
+    /// raw dump takes its name typed.
+    #[serde(default)]
+    pub dump: Option<crate::policy::DumpMode>,
+    /// How long a dump is kept before `pgman copies` calls it expired:
+    /// `36h`, `14d`, `2w`. Unset, 14 days when protected, else 30.
+    #[serde(default)]
+    pub dump_ttl: Option<String>,
+    /// Whether a dump asks why it is taken. Unset, `required` when
+    /// protected, else `optional`.
+    #[serde(default)]
+    pub dump_reason: Option<crate::policy::ReasonRule>,
+    /// A raw dump of this protected environment may run without a
+    /// terminal (a job), journaled as unattended. Only here, in the
+    /// operator's own file.
+    #[serde(default)]
+    pub unattended: bool,
 }
 
 /// `version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }`
@@ -290,6 +308,16 @@ impl Source {
 }
 
 impl Environment {
+    /// The dump fields, for [`crate::policy::effective`].
+    pub fn dump_settings(&self) -> crate::policy::EnvSettings {
+        crate::policy::EnvSettings {
+            dump: self.dump,
+            ttl: self.dump_ttl.clone(),
+            reason: self.dump_reason,
+            unattended: self.unattended,
+        }
+    }
+
     /// The connection settings are for discovered servers; a static
     /// environment's connections carry their own in `connections.toml`.
     fn check_connection_settings(&self) -> Result<(), String> {
@@ -336,6 +364,9 @@ impl Environment {
         }
         if let Some(d) = &self.migrations_dir {
             migration_locations(d)?;
+        }
+        if let Some(t) = &self.dump_ttl {
+            crate::policy::parse_ttl(t)?;
         }
         if let Some(v) = &self.version_table {
             crate::query::patches::applied_ids_sql(&v.config())
@@ -1021,6 +1052,10 @@ source = { kind = "static", connections = ["ledger-local"] }
             version_table: None,
             migrations_dir: None,
             protected: None,
+            dump: None,
+            dump_ttl: None,
+            dump_reason: None,
+            unattended: false,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);

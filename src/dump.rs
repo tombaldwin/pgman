@@ -20,7 +20,8 @@ use crate::pgtool::{self, Major};
 use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "\
-usage: pgman dump <target> [FILE] [--primary] [--format custom|plain|directory|tar]
+usage: pgman dump <target> [FILE] [--schema-only] [--reason TEXT] [--ticket KEY]
+                  [--primary] [--format custom|plain|directory|tar]
                   [--skip-unreadable] [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
 
 Dump a database with your own pg_dump, through pgman's connection: the
@@ -39,6 +40,15 @@ staging-ledger-latest.dump is pointed at the newest. The dump is
 written to a temporary name and renamed into place when pg_dump
 succeeds: a failed dump never replaces a file.
 
+A protected target (production, or as environments.toml says) asks
+why the copy is taken, offering the ticket in your branch's name; a raw
+dump of one also takes its name typed, at a terminal. Each dump goes in
+the journal: pgman copies lists them.
+
+  --schema-only  the structure alone, no rows
+  --reason TEXT  why, for the journal: a ticket id or a few words, no names
+  --ticket KEY   the ticket it is for (APP-101); found in the branch's name
+                 when not given
   --format       pg_dump's format (default custom, for pg_restore)
   --pg-bin DIR   where pg_dump is (default: $PGMAN_PG_BIN, then Homebrew's
                  libpq, then PATH)
@@ -48,7 +58,7 @@ succeeds: a failed dump never replaces a file.
                  can't read (named in the result), rather than refuse; by
                  default the dump is refused before pg_dump starts
   --             anything after it goes to pg_dump as it is
-                 (--schema-only, --exclude-table-data=audit_log, -j 4 …);
+                 (--exclude-table-data=audit_log, -j 4 …);
                  the connection and output options are pgman's
 
   pgman dump staging/ledger
@@ -110,6 +120,12 @@ pub struct Opts {
     pub extra: Vec<String>,
     /// Leave out what the dump's user can't read, rather than refuse.
     pub skip_unreadable: bool,
+    /// The structure alone.
+    pub schema_only: bool,
+    /// Why, as given with `--reason`.
+    pub reason: Option<String>,
+    /// The ticket, as given with `--ticket`.
+    pub ticket: Option<String>,
 }
 
 /// Parse the arguments after `pgman dump`. Pure.
@@ -120,6 +136,9 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
     let mut pg_bin = None;
     let mut verbose = false;
     let mut skip_unreadable = false;
+    let mut schema_only = false;
+    let mut reason = None;
+    let mut ticket = None;
     let mut extra = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -135,6 +154,9 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
             }
             "--primary" => primary = true,
             "--skip-unreadable" => skip_unreadable = true,
+            "--schema-only" => schema_only = true,
+            "--reason" => reason = Some(value("--reason")?),
+            "--ticket" => ticket = Some(value("--ticket")?),
             "--verbose" | "-v" => verbose = true,
             "--format" => format = Format::parse(&value("--format")?)?,
             "--pg-bin" => pg_bin = Some(PathBuf::from(value("--pg-bin")?)),
@@ -166,7 +188,47 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
         verbose,
         extra,
         skip_unreadable,
+        schema_only,
+        reason,
+        ticket,
     })
+}
+
+/// pg_dump options that bring rows (or large objects) into a dump, by
+/// long name; and their short letters.
+const DATA_LONG: &[&str] = &[
+    "data-only",
+    "section",
+    "large-objects",
+    "blobs",
+    "include-foreign-data",
+];
+const DATA_SHORT: &str = "ab";
+
+/// Whether `extra` asks pg_dump for rows: `-a`, `--data-only`,
+/// `--section`, large objects — or a prefix of one, as getopt reads it.
+/// Pure.
+pub fn brings_data(extra: &[String]) -> bool {
+    passthrough_refusal(
+        extra,
+        SHORT_WITH_VALUE,
+        DATA_SHORT,
+        DATA_LONG,
+        LONG_WITH_VALUE,
+    )
+    .is_some()
+}
+
+/// What `opts` dumps: the schema alone (`--schema-only`, or pg_dump's
+/// own `--schema-only` / `-s` after `--`, with nothing there asking for
+/// rows), else every row. Pure.
+pub fn kind(opts: &Opts) -> crate::policy::Kind {
+    let asked = opts.schema_only || opts.extra.iter().any(|a| a == "--schema-only" || a == "-s");
+    if asked && !brings_data(&opts.extra) {
+        crate::policy::Kind::Schema
+    } else {
+        crate::policy::Kind::Raw
+    }
 }
 
 /// pg_dump's `--exclude-table` for each of `unreadable`: schema and name
@@ -758,6 +820,9 @@ pub fn pg_dump_args(conninfo: &str, opts: &Opts, partial: &Path) -> Vec<String> 
         args.push("--file=.".to_string());
     }
     args.push("--no-password".to_string());
+    if opts.schema_only {
+        args.push("--schema-only".to_string());
+    }
     if opts.verbose {
         args.push("--verbose".to_string());
     }
@@ -775,12 +840,267 @@ pub struct Done {
     pub notes: Vec<String>,
     /// FILE was there before, and this dump replaced it.
     pub replaced: bool,
+    /// Its id in the journal, once recorded.
+    pub copy: Option<String>,
 }
 
-/// Run a dump. Progress goes to stderr; the result is what to print.
+/// What a dump is, for the journal: settled before it runs.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub copy: String,
+    pub kind: crate::policy::Kind,
+    pub protected: bool,
+    pub reason: Option<String>,
+    pub ticket: Option<String>,
+    /// `cli`, `unattended` or `mcp`.
+    pub via: &'static str,
+    pub ttl_secs: u64,
+}
+
+/// What a dump's reason is settled from.
+#[derive(Debug, Clone, Copy)]
+pub struct ReasonQuestion<'a> {
+    /// `--reason`.
+    pub reason: Option<&'a str>,
+    /// `--ticket`.
+    pub ticket: Option<&'a str>,
+    /// The policy asks for one.
+    pub needed: bool,
+    /// The ticket in the branch's name.
+    pub branch_ticket: Option<&'a str>,
+    /// What the prompt offers: [`crate::copies::reason_default`].
+    pub offer: Option<&'a str>,
+    /// The project's ticket keys.
+    pub keys: &'a [String],
+    /// The target, for messages.
+    pub name: &'a str,
+}
+
+/// Asks the operator for a reason, offering a default.
+pub type Ask<'a> = &'a dyn Fn(Option<&str>) -> Result<String, String>;
+
+/// The reason and ticket a dump records, from `--reason` / `--ticket`,
+/// else (when one is needed and there is a terminal) `ask`ed with
+/// `offer` as the default, else the branch's ticket alone. Pure but for
+/// `ask`.
+pub fn settle_reason(
+    q: &ReasonQuestion,
+    ask: Option<Ask>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let ReasonQuestion {
+        reason: given_reason,
+        ticket: given_ticket,
+        needed,
+        branch_ticket,
+        offer,
+        keys,
+        name,
+    } = *q;
+    let ticket = match given_ticket {
+        Some(t) => Some(
+            crate::copies::ticket_in(t, &[])
+                .filter(|k| k.eq_ignore_ascii_case(t.trim()))
+                .ok_or_else(|| format!("--ticket {t:?} isn't a ticket key: APP-101"))?,
+        ),
+        None => None,
+    };
+    if let Some(r) = given_reason {
+        let reason = crate::journal::clean_reason(r)?;
+        let ticket = ticket.or_else(|| {
+            reason
+                .as_deref()
+                .and_then(|r| crate::copies::ticket_in(r, keys))
+        });
+        if needed && reason.is_none() && ticket.is_none() {
+            return Err(format!(
+                "a dump of {name} takes a reason: --reason is empty"
+            ));
+        }
+        return Ok((reason, ticket));
+    }
+    if ticket.is_some() || !needed {
+        return Ok((None, ticket.or_else(|| branch_ticket.map(str::to_string))));
+    }
+    let Some(ask) = ask else {
+        return Err(format!(
+            "a dump of {name} takes a reason, and there is no terminal to ask on: pass --reason \"…\" or --ticket KEY"
+        ));
+    };
+    let answer = ask(offer)?;
+    let (reason, ticket) = crate::copies::read_reason(&answer, offer, keys)?;
+    if reason.is_none() {
+        return Err(format!("a dump of {name} takes a reason; nothing dumped"));
+    }
+    Ok((reason, ticket))
+}
+
+/// The warning before a raw dump of a protected target. Pure.
+pub fn raw_warning(name: &str, why: &str) -> String {
+    format!(
+        "{name} is protected ({why}). This is a raw copy: every row, personal data included, \
+         written to this machine unencrypted. pgman copies rm deletes it when you're done."
+    )
+}
+
+/// Ask a line on the terminal, offering `offer`.
+fn ask_reason_cli(offer: Option<&str>) -> Result<String, String> {
+    let prompt = match offer {
+        Some(o) => format!("why is this copy taken? ticket id or a few words, no names [{o}]: "),
+        None => "why is this copy taken? ticket id or a few words, no names: ".to_string(),
+    };
+    crate::pgtool::ask_cli(&prompt)
+}
+
+/// Record `result` of the dump `entry` describes in the journal. What
+/// to add to the result's notes, if the journal couldn't be written.
+pub fn journal_dump(
+    entry: &Entry,
+    env: Option<&str>,
+    database: &str,
+    label: &str,
+    result: &Result<Done, String>,
+) -> Option<String> {
+    use crate::journal::{Event, Kind};
+    let now = crate::journal::now();
+    let mut e = Event::new(Kind::Dump, now, &crate::journal::machine_id());
+    e.copy = Some(entry.copy.clone());
+    e.env = env.map(str::to_string);
+    e.database = Some(database.to_string());
+    e.label = Some(label.to_string());
+    e.protected = entry.protected;
+    e.mode = Some(entry.kind.as_str().to_string());
+    e.reason = entry.reason.clone();
+    e.ticket = entry.ticket.clone();
+    e.via = Some(entry.via.to_string());
+    match result {
+        Ok(done) => {
+            let file = done
+                .file
+                .canonicalize()
+                .unwrap_or_else(|_| done.file.clone());
+            e.file = Some(file.display().to_string());
+            e.latest = done.latest.as_ref().map(|l| {
+                let l = std::path::absolute(l).unwrap_or_else(|_| l.clone());
+                l.display().to_string()
+            });
+            e.bytes = Some(done.bytes);
+            e.expires = Some(now.saturating_add(entry.ttl_secs));
+        }
+        Err(_) => e.ok = Some(false),
+    }
+    crate::journal::append(&e)
+}
+
+/// Copies past their expiry still on disk, for a note after a dump.
+/// Reads the journal.
+pub fn expired_note(except: &str) -> Option<String> {
+    let (events, _) = crate::journal::read_in(&crate::journal::dir());
+    let now = crate::journal::now();
+    let n = crate::copies::registry(&events)
+        .iter()
+        .filter(|c| {
+            c.id != except
+                && c.deleted.is_none()
+                && c.expired(now)
+                && crate::copies::present(&c.file)
+        })
+        .count();
+    (n > 0).then(|| {
+        format!(
+            "{n} older cop{} past {} expiry: pgman copies lists {}",
+            if n == 1 { "y is" } else { "ies are" },
+            if n == 1 { "its" } else { "their" },
+            if n == 1 { "it" } else { "them" }
+        )
+    })
+}
+
+/// Run a dump at the command line: the policy's gate (the typed name,
+/// the reason) asked on the terminal, the dump, the journal. Progress
+/// goes to stderr; the result is what to print.
 pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
+    use std::io::IsTerminal;
     let resolved = resolve(opts).await?;
-    run(opts, resolved, &|line| eprintln!("pgman dump: {line}")).await
+    let cwd = std::env::current_dir().map_err(|e| format!("the current directory: {e}"))?;
+    let (policy, dumps, branch, copies) = {
+        let resolved = resolved.clone();
+        let cwd = cwd.clone();
+        tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let policy = crate::policy::for_target(&resolved, &cwd)?;
+            let dumps = crate::project::load_dumps(&cwd)?
+                .map(|(_, d)| d)
+                .unwrap_or_default();
+            let branch = crate::copies::git_branch(&cwd);
+            let (events, _) = crate::journal::read_in(&crate::journal::dir());
+            Ok((policy, dumps, branch, crate::copies::registry(&events)))
+        })
+        .await
+        .map_err(|e| format!("policy task failed: {e}"))??
+    };
+    let tty = std::io::stdin().is_terminal();
+    let via = if tty {
+        crate::policy::Via::Terminal
+    } else {
+        crate::policy::Via::NoTerminal
+    };
+    let kind = kind(opts);
+    let name = resolved
+        .environment
+        .clone()
+        .unwrap_or_else(|| resolved.label.clone());
+    let gate = crate::policy::gate(&policy, kind, via, &name)?;
+    if gate.typed.is_some() || gate.unattended {
+        eprintln!("pgman dump: {}", raw_warning(&name, &resolved.protection()));
+    }
+    let keys = dumps.ticket_keys.clone();
+    let branch_ticket = branch
+        .as_deref()
+        .and_then(|b| crate::copies::ticket_in(b, &keys));
+    let last = crate::copies::last_reason(&copies, &resolved.label).map(str::to_string);
+    let offer = crate::copies::reason_default(branch_ticket.as_deref(), last.as_deref());
+    let ask: Ask = &ask_reason_cli;
+    let (reason, ticket) = settle_reason(
+        &ReasonQuestion {
+            reason: opts.reason.as_deref(),
+            ticket: opts.ticket.as_deref(),
+            needed: gate.reason,
+            branch_ticket: branch_ticket.as_deref(),
+            offer: offer.as_deref(),
+            keys: &keys,
+            name: &name,
+        },
+        tty.then_some(ask),
+    )?;
+    if let Some(typed) = &gate.typed {
+        let prompt = format!("type {typed} to dump it: ");
+        let typed2 = typed.clone();
+        let ok = tokio::task::spawn_blocking(move || crate::pgtool::confirm_cli(&prompt, &typed2))
+            .await
+            .map_err(|e| format!("prompt task failed: {e}"))??;
+        if !ok {
+            return Err(format!("the name typed isn't {typed}; nothing dumped"));
+        }
+    }
+    let entry = Entry {
+        copy: crate::journal::new_id(),
+        kind,
+        protected: policy.protected,
+        reason,
+        ticket,
+        via: if gate.unattended { "unattended" } else { "cli" },
+        ttl_secs: policy.ttl_secs,
+    };
+    let env = resolved.environment.clone();
+    let database = resolved.database.clone();
+    let label = resolved.label.clone();
+    let mut result = run(opts, resolved, &|line| eprintln!("pgman dump: {line}")).await;
+    let warn = journal_dump(&entry, env.as_deref(), &database, &label, &result);
+    if let Ok(done) = &mut result {
+        done.copy = Some(entry.copy.clone());
+        done.notes.extend(warn);
+        done.notes.extend(expired_note(&entry.copy));
+    }
+    result
 }
 
 /// The database `opts` names, for a dump: its replica unless
@@ -936,6 +1256,7 @@ pub async fn run(
         source: resolved.describe(),
         notes,
         replaced,
+        copy: None,
     })
 }
 
@@ -952,6 +1273,12 @@ pub fn render(done: &Done) -> String {
             ""
         }
     );
+    if let Some(c) = &done.copy {
+        out.push_str(&format!(
+            "\ncopy {} in the journal: pgman copies",
+            &c[..8.min(c.len())]
+        ));
+    }
     if let Some(l) = &done.latest {
         let name = done
             .file
@@ -997,12 +1324,167 @@ mod tests {
         assert!(parse_cli(&args(&["a", "b", "c"]))
             .unwrap_err()
             .contains("unexpected"));
-        assert!(parse_cli(&args(&["a", "--schema-only"]))
+        assert!(parse_cli(&args(&["a", "--no-owner"]))
             .unwrap_err()
             .contains("after --"));
         assert!(parse_cli(&args(&["a", "--format", "zip"]))
             .unwrap_err()
             .contains("custom"));
+        let o = parse_cli(&args(&[
+            "production",
+            "--schema-only",
+            "--reason",
+            "APP-1 repro",
+            "--ticket",
+            "APP-1",
+        ]))
+        .unwrap();
+        assert!(o.schema_only);
+        assert_eq!(o.reason.as_deref(), Some("APP-1 repro"));
+        assert_eq!(o.ticket.as_deref(), Some("APP-1"));
+        assert!(parse_cli(&args(&["a", "--reason"]))
+            .unwrap_err()
+            .contains("needs a value"));
+    }
+
+    fn opts(schema_only: bool, extra: &[&str]) -> Opts {
+        let mut o = parse_cli(&args(&["t"])).unwrap();
+        o.schema_only = schema_only;
+        o.extra = args(extra);
+        o
+    }
+
+    #[test]
+    fn a_dump_is_schema_only_when_nothing_asks_for_rows() {
+        use crate::policy::Kind;
+        assert_eq!(kind(&opts(false, &[])), Kind::Raw);
+        assert_eq!(kind(&opts(true, &[])), Kind::Schema);
+        assert_eq!(kind(&opts(false, &["--schema-only"])), Kind::Schema);
+        assert_eq!(kind(&opts(false, &["-s"])), Kind::Schema);
+        assert_eq!(kind(&opts(true, &["-n", "app"])), Kind::Schema);
+        for rows in [
+            &["--data-only"][..],
+            &["-a"],
+            &["-sa"],
+            &["--data"],
+            &["--section=data"],
+            &["--sec", "data"],
+            &["-b"],
+            &["--large-objects"],
+            &["--blobs"],
+            &["--include-foreign-data=srv"],
+        ] {
+            assert_eq!(kind(&opts(true, rows)), Kind::Raw, "{rows:?}");
+        }
+        // A value isn't an option: `-t a` names a table called a.
+        assert_eq!(kind(&opts(true, &["-t", "a"])), Kind::Schema);
+        // pg_dump's --schema is -n, not --schema-only.
+        assert_eq!(kind(&opts(false, &["--schema=app"])), Kind::Raw);
+        let args = pg_dump_args("x", &opts(true, &[]), Path::new("p"));
+        assert!(args.contains(&"--schema-only".to_string()), "{args:?}");
+        let args = pg_dump_args("x", &opts(false, &[]), Path::new("p"));
+        assert!(!args.contains(&"--schema-only".to_string()), "{args:?}");
+    }
+
+    fn rq<'a>(
+        reason: Option<&'a str>,
+        ticket: Option<&'a str>,
+        needed: bool,
+        branch_ticket: Option<&'a str>,
+        offer: Option<&'a str>,
+        name: &'a str,
+    ) -> ReasonQuestion<'a> {
+        ReasonQuestion {
+            reason,
+            ticket,
+            needed,
+            branch_ticket,
+            offer,
+            keys: &[],
+            name,
+        }
+    }
+
+    #[test]
+    fn a_reason_is_given_asked_or_taken_from_the_branch() {
+        // Given.
+        assert_eq!(
+            settle_reason(
+                &rq(Some("repro APP-2"), None, true, Some("APP-1"), None, "p"),
+                None
+            ),
+            Ok((Some("repro APP-2".into()), Some("APP-2".into())))
+        );
+        assert_eq!(
+            settle_reason(&rq(None, Some("app-3"), true, None, None, "p"), None),
+            Ok((None, Some("APP-3".into())))
+        );
+        assert!(
+            settle_reason(&rq(None, Some("soon"), true, None, None, "p"), None)
+                .unwrap_err()
+                .contains("isn't a ticket key")
+        );
+        assert!(
+            settle_reason(&rq(Some("  "), None, true, None, None, "p"), None)
+                .unwrap_err()
+                .contains("takes a reason")
+        );
+        // Needed, no terminal.
+        let e = settle_reason(
+            &rq(None, None, true, Some("APP-1"), Some("APP-1"), "production"),
+            None,
+        )
+        .unwrap_err();
+        assert!(e.contains("--reason") && e.contains("production"), "{e}");
+        // Not needed: the branch's ticket, silently.
+        assert_eq!(
+            settle_reason(&rq(None, None, false, Some("APP-1"), None, "p"), None),
+            Ok((None, Some("APP-1".into())))
+        );
+        // Asked: Enter takes the offer; an empty answer with no offer refuses.
+        let enter = |_: Option<&str>| Ok(String::new());
+        let ask: Ask = &enter;
+        assert_eq!(
+            settle_reason(
+                &rq(None, None, true, Some("APP-1"), Some("APP-1"), "p"),
+                Some(ask)
+            ),
+            Ok((Some("APP-1".into()), Some("APP-1".into())))
+        );
+        assert!(
+            settle_reason(&rq(None, None, true, None, None, "p"), Some(ask))
+                .unwrap_err()
+                .contains("takes a reason")
+        );
+        let typed = |offer: Option<&str>| {
+            assert_eq!(offer, Some("last time"));
+            Ok("checking totals".to_string())
+        };
+        let ask: Ask = &typed;
+        assert_eq!(
+            settle_reason(
+                &rq(None, None, true, None, Some("last time"), "p"),
+                Some(ask)
+            ),
+            Ok((Some("checking totals".into()), None))
+        );
+    }
+
+    #[test]
+    fn the_raw_warning_says_what_the_copy_is() {
+        let w = raw_warning(
+            "production",
+            "the environment \"production\" has \"prod\" in its name",
+        );
+        assert!(
+            w.starts_with("production is protected (the environment"),
+            "{w}"
+        );
+        assert!(
+            w.contains("personal data") && w.contains("unencrypted"),
+            "{w}"
+        );
+        assert!(w.contains("pgman copies rm"), "{w}");
     }
 
     #[test]

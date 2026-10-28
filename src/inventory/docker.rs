@@ -264,6 +264,10 @@ mod tests {
             version_table: None,
             migrations_dir: None,
             protected: None,
+            dump: None,
+            dump_ttl: None,
+            dump_reason: None,
+            unattended: false,
         }
     }
 

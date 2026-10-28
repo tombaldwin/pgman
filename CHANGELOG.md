@@ -6,6 +6,41 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- `pgman copies`: every dump taken on this machine, from a journal
+  pgman now keeps (`~/.local/share/pgman/journal.jsonl`): when, of what,
+  raw or schema, why, the file, when it expires, where it was restored.
+  `copies show` gives one in full, `copies rm` deletes one (and repoints
+  its `-latest` link), `copies report` prints the whole account as text,
+  markdown or JSON. No data, connection details or secrets are recorded.
+- A dump policy per environment in `environments.toml`: `dump`
+  (`unmasked`, `masked`, `schema`, `never`), `dump_ttl`, `dump_reason`
+  and `unattended`. A project's `.pgman/pgman.toml` can lower an
+  environment's (`[dumps.environments.<name>] dump = "schema"`), never
+  raise it.
+- `pgman dump --schema-only`, `--reason` and `--ticket`. The reason
+  prompt offers the ticket in the branch's name (`feature/APP-101-…`),
+  else the last reason given; `[dumps] ticket_url` links tickets in
+  `pgman copies`.
+
+### Changed
+
+- A dump of a protected environment asks why it is taken, and a raw
+  dump of one (every row) also takes the environment's name typed,
+  after a warning that it copies personal data to this machine. Without
+  a terminal, a raw dump of a protected environment is refused unless
+  the environment says `unattended = true` in your own
+  `environments.toml`; scripts that need only the structure use
+  `--schema-only --reason …`. Other environments are dumped as before.
+- MCP's `dump` takes a protected environment schema only
+  (`schema_only`), with the reason given by you in the confirmation; a
+  raw dump of one over MCP, which v0.3 allowed after its name was typed,
+  is refused. Each MCP dump and restore is journaled.
+- `environments.toml` has new keys (`dump`, `dump_ttl`, `dump_reason`,
+  `unattended`): an older pgman reading a file that uses them refuses
+  it as unknown keys.
+
 ## [0.3.1] — 2026-10-28
 
 ### Changed

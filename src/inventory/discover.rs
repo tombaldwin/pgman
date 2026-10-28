@@ -477,6 +477,10 @@ pub fn propose(
                 version_table: None,
                 migrations_dir: None,
             protected: None,
+            dump: None,
+            dump_ttl: None,
+            dump_reason: None,
+            unattended: false,
             };
             Proposal {
                 covered_by: covering(&name, existing),

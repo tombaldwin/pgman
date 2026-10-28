@@ -1,6 +1,6 @@
 # Design: masked dumps, and the life of a copy
 
-Status: **proposal, third draft, not built.** First draft 2026-10-28,
+Status: **proposal, third draft; phase 1 built (2026-10-28), the rest not.** First draft 2026-10-28,
 reviewed the same day by a four-reviewer panel (privacy and compliance,
 security, DBA and feasibility, developer experience) and revised with
 Tom's decisions; the second draft was reviewed again by the same four and
@@ -644,6 +644,30 @@ About four to five weeks to the end of phase 5; each phase ships on its
 own. Until 2b, protected dumps aren't encrypted (as in v0.3), and each one
 says so.
 
+### Phase 1 as built
+
+What shipped, and where it differs from the plan above:
+
+- `src/policy.rs` (the merge and the gate, pure), `src/journal.rs`,
+  `src/copies.rs`; `dump::run_cli` and MCP's `dump` call the gate.
+- Parsed now: `dump`, `dump_ttl`, `dump_reason`, `unattended`. Not yet:
+  `encrypt`, `masking_key` and `journal`, which arrive with the phases
+  that use them (an unknown key is still an error, so nothing is
+  silently ignored).
+- The local journal records the dump's full path, which `pgman copies`
+  needs to find it; events sent to CloudWatch (1b) carry the file's name
+  only. It records no identity yet: 1b adds the IAM ARN, when events
+  first leave the machine.
+- Events: `dump` (and failed ones, `"ok": false`), `restore`, `delete`.
+  `expired`, `restore_expired`, `rules_confirmed` and `policy_changed` come
+  with the features that make them; a newer pgman's event is kept, not
+  counted as a bad line.
+- `copies report` (text, markdown, JSON) shipped in phase 1, since it is
+  what demonstrates the hygiene. Expired copies are flagged in `copies`
+  and after each dump; the TUI header flag waits for the copies view.
+- Untracked dumps are found in the working directory; the dump directory
+  comes with 2a.
+
 ## Decided
 
 1. Protected default: **`masked`**, from the release that ships masking;
@@ -670,7 +694,11 @@ says so.
    records and where, the layers, and what pgman does not claim. Written
    with phase 2a and kept true to what is built.
 10. **A raw protected dump needs a terminal.** No flag answers the typed
-    name; scripts take masked or schema dumps.
+    name; scripts take masked or schema dumps — unless the operator sets
+    `unattended = true` on that environment in their own
+    `environments.toml` (never a project file), which lets its raw dumps
+    run without a terminal, each with `--reason` or `--ticket`, journaled
+    as `via = "unattended"` (Tom, 2026-10-28).
 11. **Undecided means NULL, or the type's empty value** where NULL can't be
     stored; never a refusal for a missing rule, and every NULLed column is
     named.

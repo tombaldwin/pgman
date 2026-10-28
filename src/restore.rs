@@ -510,7 +510,29 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
             return Err("not confirmed; nothing changed".to_string());
         }
     }
-    ready.execute().await
+    let mut done = ready.execute().await?;
+    done.notes.extend(journal_restore(&opts.file, &done));
+    Ok(done)
+}
+
+/// Record a restore of `file` in the journal, against the copy the
+/// journal knows it as (if any). What to add to the notes when the
+/// journal couldn't be written.
+pub fn journal_restore(file: &Path, done: &Done) -> Option<String> {
+    use crate::journal::{Event, Kind};
+    let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+    let (events, _) = crate::journal::read_in(&crate::journal::dir());
+    let copies = crate::copies::registry(&events);
+    let mut e = Event::new(
+        Kind::Restore,
+        crate::journal::now(),
+        &crate::journal::machine_id(),
+    );
+    e.copy = crate::copies::by_file(&copies, &file).map(|c| c.id.clone());
+    e.file = Some(file.display().to_string());
+    e.into_server = Some(done.server.clone());
+    e.into_database = Some(done.database.clone());
+    crate::journal::append(&e)
 }
 
 /// A restore checked, connected and planned, waiting for the operator's
