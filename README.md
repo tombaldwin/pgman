@@ -39,6 +39,12 @@ At a glance:
   read-only, checks each against your guard rails, and after you confirm
   runs each in its own transaction; a dry run or a throwaway copy rehearses
   it first. `l` shows the RDS server's recent errors.
+- **Dump and restore** — `pgman dump staging/ledger` runs your own
+  `pg_dump` through pgman's connection (from the replica, the password
+  read at that moment, through the bastion; nothing secret on a command
+  line or on disk), and `pgman restore` puts it into a local database,
+  never a protected one. See
+  [`docs/dump-restore.md`](https://github.com/tombaldwin/pgman/blob/main/docs/dump-restore.md).
 - **For your coding agent** — `pgman mcp serve` gives Claude Code (or any
   MCP client) read-only tools for queries, lock pre-flights, pending
   patches, schema lint and environments, plus `apply_patches`, the one
@@ -222,6 +228,7 @@ coverage, fuzzing, and what CI runs on every push.
 - [`docs/commands.md`](https://github.com/tombaldwin/pgman/blob/main/docs/commands.md) — command reference.
 - [`docs/configuration.md`](https://github.com/tombaldwin/pgman/blob/main/docs/configuration.md) — config file locations and options.
 - [`docs/environments.md`](https://github.com/tombaldwin/pgman/blob/main/docs/environments.md) — the environments view, `environments.toml` and `pgman env discover`.
+- [`docs/dump-restore.md`](https://github.com/tombaldwin/pgman/blob/main/docs/dump-restore.md) — `pgman dump` and `pgman restore`.
 - [`docs/mcp.md`](https://github.com/tombaldwin/pgman/blob/main/docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
 - [`docs/safety-and-privacy.md`](https://github.com/tombaldwin/pgman/blob/main/docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
 - [`docs/logs-to-sql.md`](https://github.com/tombaldwin/pgman/blob/main/docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.

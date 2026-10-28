@@ -6,6 +6,25 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- `pgman dump <target> [FILE]`: a dump by your own `pg_dump`, through
+  pgman's connection — the environment's replica unless `--primary`, the
+  password read from its secret at that moment and given to pg_dump only
+  in its environment, the ssh tunnel opened for it. The local pg_dump's
+  version is checked against the server first; the dump is written to a
+  hidden name and renamed into place on success, private to you, with a
+  `-latest` link for a default name. A replica cancelling the dump (a
+  recovery conflict) and a permission failure are explained. See
+  `docs/dump-restore.md`.
+- `pgman restore <FILE> <target>`: a dump restored by your own
+  `pg_restore`, never into a protected environment and only on this
+  machine unless `--allow-remote`. `--as NAME` restores into another
+  database, `--create` makes it, `--clean` replaces it; other sessions
+  refuse it unless `--terminate`; it is confirmed, or `--yes`.
+- A `<target>` on the command line is `ENV`, `ENV/DATABASE`,
+  `ENV/SERVER/DATABASE`, a `connections.toml` name, or a URL.
+
 ## [0.2.1] — 2026-10-24
 
 ### Fixed
