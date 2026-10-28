@@ -139,11 +139,14 @@ fn segment_target(base: &Resolved, db: &str) -> Result<Resolved, String> {
     Ok(with_database(base, db))
 }
 
-/// `base` with its database swapped for `db`. Pure.
+/// `base` with its database swapped for `db`: protected when `base` is,
+/// or when `db`'s name says prod, as a URL naming it would be. Pure.
 fn with_database(base: &Resolved, db: &str) -> Resolved {
     let mut t = base.clone();
     t.connect.dsn.dbname = db.to_string();
     t.database = db.to_string();
+    t.label = db.to_string();
+    t.protected = base.protected || target::named_like_prod(db);
     t
 }
 
@@ -232,11 +235,10 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
         );
     }
     let protected = targets.iter().any(|t| t.protected);
-    let protected_name = protected.then(|| {
-        base.environment
-            .clone()
-            .unwrap_or_else(|| base.label.clone())
-    });
+    let protected_name = targets
+        .iter()
+        .find(|t| t.protected)
+        .map(|t| t.environment.clone().unwrap_or_else(|| t.label.clone()));
     if protected && opts.yes {
         return Err(format!(
             "{} is protected: it is confirmed by typing its name, which --yes doesn't answer",
@@ -382,6 +384,19 @@ mod tests {
         assert!(
             q.ends_with("type live to go on: ") && accept == "live",
             "{q}"
+        );
+    }
+
+    #[test]
+    fn connecting_to_a_prod_named_database_makes_it_protected() {
+        let t = with_database(&base(), "ledger_prod");
+        assert!(t.protected && t.label == "ledger_prod" && t.connect.dsn.dbname == "ledger_prod");
+        assert!(!with_database(&base(), "ledgerlog").protected);
+        let mut p = base();
+        p.protected = true;
+        assert!(
+            with_database(&p, "ledgerlog").protected,
+            "a protected base stays so"
         );
     }
 

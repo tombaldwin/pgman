@@ -211,14 +211,15 @@ pub fn pick(env: &str, spec: &Spec, targets: &[Target], want: Want) -> Result<Ta
 
 /// The name rule for something no environment speaks for: "prod" in
 /// it. Pure.
-fn named_like_prod(name: &str) -> bool {
+pub fn named_like_prod(name: &str) -> bool {
     name.to_ascii_lowercase().contains("prod")
 }
 
-/// Whether connection `name` is protected: an environment that lists it
-/// is, or the name says prod. Pure.
-pub fn connection_protected(name: &str, envs: &[Environment]) -> bool {
-    named_like_prod(name) || envs.iter().any(|e| {
+/// Whether connection `name` (to `host`) is protected: an environment
+/// that lists it is, or its name or its host's says prod — as a URL to
+/// that host would be. Pure.
+pub fn connection_protected(name: &str, host: &str, envs: &[Environment]) -> bool {
+    named_like_prod(name) || named_like_prod(host) || envs.iter().any(|e| {
         matches!(&e.source, Source::Static { connections } if connections.iter().any(|c| c == name))
             && super::patching::is_protected(e)
     })
@@ -314,7 +315,7 @@ pub fn resolve(text: &str, want: Want) -> Result<Resolved, String> {
                 database: dsn.dbname.clone(),
                 role: e.role,
                 replica_of: None,
-                protected: connection_protected(&e.name, &envs),
+                protected: connection_protected(&e.name, &dsn.host, &envs),
                 connect: ConnectSpec {
                     dsn,
                     secret: e.secret.clone(),
@@ -512,9 +513,19 @@ mod tests {
              [[environments]]\nname = \"scratch\"\nsource = { kind = \"static\", connections = [\"dev-db\"] }\n",
         )
         .unwrap();
-        assert!(connection_protected("main-db", &envs), "its environment is");
-        assert!(!connection_protected("dev-db", &envs));
-        assert!(connection_protected("prod-replica", &envs), "the name rule");
+        assert!(
+            connection_protected("main-db", "db.example", &envs),
+            "its environment is"
+        );
+        assert!(!connection_protected("dev-db", "db.example", &envs));
+        assert!(
+            connection_protected("prod-replica", "db.example", &envs),
+            "the name rule"
+        );
+        assert!(
+            connection_protected("main", "ledger-prod.example", &envs),
+            "its host's name, as for a URL"
+        );
     }
 
     #[test]

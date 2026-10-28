@@ -76,7 +76,8 @@ the script to another database: a second, logging database on the same
 server, say. In an environment, pgman uses that environment's entry for
 the database on the same server when there is one (it may have its own
 secret). Otherwise it keeps the same server and credentials and swaps the
-database, as psql does. A quoted name works (`\c "Odd name"`); another
+database, as psql does; a database named like prod ("prod" in it) is
+then protected, so the script is confirmed by typing its name. A quoted name works (`\c "Odd name"`); another
 user, host or port does not. No other psql meta-command (`\set`, `\i`,
 …) is read, and a script containing one is refused.
 

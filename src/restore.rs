@@ -183,7 +183,13 @@ pub fn check_name(name: &str) -> Result<(), String> {
 
 /// Why `target` may not be restored into at all, before connecting.
 /// Pure.
-pub fn refusal(target: &Resolved, allow_remote: bool) -> Option<String> {
+pub fn refusal(target: &Resolved, database: &str, allow_remote: bool) -> Option<String> {
+    if target::named_like_prod(database) && database != target.database {
+        return Some(format!(
+            "{database} has \"prod\" in its name, which makes it protected; pgman never \
+             restores into a protected database"
+        ));
+    }
     if target.protected {
         return Some(format!(
             "{} is protected (protected = true, or a name with \"prod\" in it); pgman never \
@@ -251,6 +257,11 @@ pub fn plan(
             ))
         }
     };
+    if prepare == Prepare::Replace && ["postgres", "template0", "template1"].contains(&database) {
+        return Err(format!(
+            "{database} is one of the server's own databases; --clean won't drop it"
+        ));
+    }
     if !sessions.is_empty() && !opts.terminate {
         let who: Vec<String> = sessions
             .iter()
@@ -561,7 +572,11 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     let resolved = tokio::task::spawn_blocking(move || target::resolve(&text, Want::Primary))
         .await
         .map_err(|e| format!("resolve task failed: {e}"))??;
-    if let Some(why) = refusal(&resolved, opts.allow_remote) {
+    let database = opts
+        .as_name
+        .clone()
+        .unwrap_or_else(|| resolved.database.clone());
+    if let Some(why) = refusal(&resolved, &database, opts.allow_remote) {
         return Err(why);
     }
     let tool = pgtool::find_tool("pg_restore", opts.pg_bin.as_deref())?;
@@ -592,10 +607,6 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
              pg_restore at least as new (--pg-bin DIR)"
         ));
     }
-    let database = opts
-        .as_name
-        .clone()
-        .unwrap_or_else(|| resolved.database.clone());
     let server = crate::conn::host_port(&resolved.connect.dsn.host, resolved.connect.dsn.port);
     say(format!(
         "{} ({}) → {database} on {server}",
@@ -783,24 +794,49 @@ mod tests {
     fn a_protected_target_is_refused_even_when_remote_is_allowed() {
         let mut t = target("postgres://u@localhost/ledger");
         t.protected = true;
-        assert!(refusal(&t, true).unwrap().contains("never restores"));
+        assert!(refusal(&t, &t.database.clone(), true)
+            .unwrap()
+            .contains("never restores"));
         let t = target("postgres://u@localhost/ledger_prod");
-        assert!(refusal(&t, false).unwrap().contains("protected"));
+        assert!(refusal(&t, &t.database.clone(), false)
+            .unwrap()
+            .contains("protected"));
+    }
+
+    #[test]
+    fn as_a_prod_name_is_protected_like_the_url_would_be() {
+        let t = target("postgres://u@localhost/ledger");
+        assert!(refusal(&t, "ledger_prod", false)
+            .unwrap()
+            .contains("\"prod\" in its name"));
+        assert_eq!(refusal(&t, "ledger_copy", false), None);
+    }
+
+    #[test]
+    fn clean_never_drops_the_servers_own_databases() {
+        for db in ["postgres", "template0", "template1"] {
+            let e = plan(&opts(&["f", "t", "--clean"]), db, true, Vec::new()).unwrap_err();
+            assert!(e.contains("server's own databases"), "{e}");
+        }
+        assert!(
+            plan(&opts(&["f", "t"]), "postgres", true, Vec::new()).is_ok(),
+            "restoring into it is the operator's call"
+        );
     }
 
     #[test]
     fn a_remote_target_needs_the_flag() {
         let t = target("postgres://u@db.example/ledger");
-        let e = refusal(&t, false).unwrap();
+        let e = refusal(&t, &t.database.clone(), false).unwrap();
         assert!(
             e.contains("isn't on this machine (db.example:5432)") && e.contains("--allow-remote"),
             "{e}"
         );
-        assert_eq!(refusal(&t, true), None);
+        assert_eq!(refusal(&t, &t.database.clone(), true), None);
         let mut t = target("postgres://u@localhost/ledger");
-        assert_eq!(refusal(&t, false), None);
+        assert_eq!(refusal(&t, &t.database.clone(), false), None);
         t.connect.dsn.ssh_tunnel = Some(crate::tunnel::SshTunnelSpec::parse("jump").unwrap());
-        assert!(refusal(&t, false)
+        assert!(refusal(&t, &t.database.clone(), false)
             .unwrap()
             .contains("through an ssh tunnel"));
     }
