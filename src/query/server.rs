@@ -95,6 +95,12 @@ pub async fn create_database(client: &tokio_postgres::Client, name: &str) -> Res
 /// target it has already checked is unprotected and has no other
 /// sessions, after the operator confirmed replacing it.
 pub async fn drop_database(client: &tokio_postgres::Client, name: &str) -> Result<(), String> {
+    // A large database takes a while to drop; the restore's admin
+    // session has a short statement timeout.
+    client
+        .batch_execute("SET statement_timeout = 0")
+        .await
+        .map_err(|e| format!("could not lift the statement timeout: {}", message(&e)))?;
     client
         .batch_execute(&format!("DROP DATABASE IF EXISTS {}", quoted(name)))
         .await

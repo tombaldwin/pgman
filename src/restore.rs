@@ -290,6 +290,30 @@ pub fn plan(
     })
 }
 
+/// The sessions to end before the restore, from those connected `now`
+/// (after the operator confirmed `plan`): all of them with
+/// `--terminate`; without it, any is a refusal — one connected since the
+/// plan, which found none. Pure.
+pub fn sessions_to_end(
+    plan: &Plan,
+    now: Vec<crate::query::server::Session>,
+    terminate: bool,
+) -> Result<Vec<crate::query::server::Session>, String> {
+    if terminate || now.is_empty() {
+        return Ok(now);
+    }
+    Err(format!(
+        "{} session(s) connected to {} since you confirmed (pid {}); nothing changed. Run it \
+         again, or with --terminate",
+        now.len(),
+        plan.database,
+        now.iter()
+            .map(|s| s.pid.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 /// The confirmation question for `plan` on `server`, and the answer that
 /// accepts it: the database's name when it would be dropped, `y`
 /// otherwise. Pure.
@@ -519,7 +543,15 @@ impl Ready {
             notes,
         } = self;
         let database = plan.database.clone();
-        for s in &plan.terminate {
+        // Listed again: someone may have connected while the operator
+        // read the question.
+        let now = if plan.prepare == Prepare::Create {
+            Vec::new()
+        } else {
+            crate::query::server::sessions_on(&client, &database).await?
+        };
+        let to_end = sessions_to_end(&plan, now, opts.terminate)?;
+        for s in &to_end {
             crate::conn::terminate_backend(&client, s.pid).await?;
         }
         match plan.prepare {
@@ -904,6 +936,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.terminate, vec![session(41)]);
+    }
+
+    #[test]
+    fn a_session_that_connected_after_the_question_stops_it_unless_ending_them() {
+        let p = plan(&opts(&["f", "t", "--clean"]), "ledger", true, Vec::new()).unwrap();
+        let e = sessions_to_end(&p, vec![session(77)], false).unwrap_err();
+        assert!(e.contains("since you confirmed (pid 77)"), "{e}");
+        assert_eq!(
+            sessions_to_end(&p, vec![session(77)], true).unwrap(),
+            vec![session(77)]
+        );
+        assert_eq!(sessions_to_end(&p, Vec::new(), false).unwrap(), Vec::new());
     }
 
     #[test]
