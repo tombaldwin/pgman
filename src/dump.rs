@@ -355,7 +355,9 @@ pub fn explain_failure(tail: &str, replica: bool, user: Option<&str>) -> String 
              or raise max_standby_streaming_delay on the replica.\n  pg_dump said: {last}"
         );
     }
-    if lower.contains("permission denied") {
+    // The server's wording ("permission denied for table …"), not a
+    // local file's ("could not open output file …: Permission denied").
+    if lower.contains("permission denied for") {
         let who = user.map(|u| format!(" ({u})")).unwrap_or_default();
         return format!(
             "{last}\n  The dump's user{who} can't read everything the dump covers. Dump as a user \
@@ -448,6 +450,35 @@ pub fn point_latest(latest: &Path, file: &Path) -> Result<(), String> {
     }
 }
 
+/// Why the dump can't be written where `p` says, before anything runs:
+/// FILE names a directory that isn't there (`dumps/`), a directory to
+/// put the dump in doesn't exist, or the directory format would replace
+/// a file (or a file format a directory). Reads the filesystem.
+pub fn output_problem(opts: &Opts, p: &Paths) -> Option<String> {
+    if let Some(out) = &opts.out {
+        let text = out.to_string_lossy();
+        if (text.ends_with('/') || text.ends_with(std::path::MAIN_SEPARATOR)) && !out.is_dir() {
+            return Some(format!("{} is not a directory", out.display()));
+        }
+    }
+    if let Some(dir) = p.file.parent().filter(|d| !d.as_os_str().is_empty()) {
+        if !dir.is_dir() {
+            return Some(format!("{} is not a directory", dir.display()));
+        }
+    }
+    let existing = std::fs::symlink_metadata(&p.file).ok();
+    match (opts.format, existing) {
+        (Format::Directory, Some(m)) if !m.is_dir() => Some(format!(
+            "{} is a file; a directory-format dump would replace it with a directory. Name another",
+            p.file.display()
+        )),
+        (f, Some(m)) if f != Format::Directory && m.is_dir() => {
+            Some(format!("{} is a directory", p.file.display()))
+        }
+        _ => None,
+    }
+}
+
 /// The pg_dump command line for `conninfo`, writing `partial`. The
 /// password is not an argument: [`pgtool::set_child_env`] gives it to
 /// the process alone. Pure.
@@ -505,6 +536,26 @@ pub async fn run(
     let have = pgtool::tool_version(&tool)?;
     say(format!("{} — {}", resolved.label, resolved.describe()));
 
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let out_is_dir = opts.out.as_deref().is_some_and(Path::is_dir);
+    let label = match &resolved.environment {
+        Some(env) => format!("{env}/{}", resolved.database),
+        None => resolved.label.clone(),
+    };
+    let p = paths(
+        &label,
+        opts.format,
+        opts.out.as_deref(),
+        out_is_dir,
+        now,
+        std::process::id(),
+    );
+    if let Some(why) = output_problem(opts, &p) {
+        return Err(why);
+    }
     let opened = pgtool::open(&resolved).await?;
     let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000).await?;
     let facts = crate::query::server::facts(&client).await?;
@@ -528,28 +579,6 @@ pub async fn run(
         facts.user
     ));
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let out_is_dir = opts.out.as_deref().is_some_and(Path::is_dir);
-    let label = match &resolved.environment {
-        Some(env) => format!("{env}/{}", resolved.database),
-        None => resolved.label.clone(),
-    };
-    let p = paths(
-        &label,
-        opts.format,
-        opts.out.as_deref(),
-        out_is_dir,
-        now,
-        std::process::id(),
-    );
-    if let Some(dir) = p.file.parent().filter(|d| !d.as_os_str().is_empty()) {
-        if !dir.is_dir() {
-            return Err(format!("{} is not a directory", dir.display()));
-        }
-    }
     let conninfo = pgtool::conninfo(&opened.dsn, opened.via, "pgman-dump", have);
     let mut cmd = pgtool::private_command(&tool, &pg_dump_args(&conninfo, opts, &p.partial));
     pgtool::set_child_env(&mut cmd, opened.password());
@@ -577,7 +606,14 @@ pub async fn run(
             }
         ));
     }
-    commit(&p.partial, &p.file).inspect_err(|_| remove_partial(&p.partial))?;
+    // A finished dump is kept whatever went wrong moving it: it may
+    // have taken an hour.
+    commit(&p.partial, &p.file).map_err(|e| {
+        format!(
+            "{e}\n  the finished dump is kept at {}",
+            p.partial.display()
+        )
+    })?;
     let mut latest = None;
     if let Some(l) = &p.latest {
         match point_latest(l, &p.file) {
@@ -788,6 +824,43 @@ mod tests {
             e.contains("(app_ro)") && e.contains("--exclude-table"),
             "{e}"
         );
+    }
+
+    #[test]
+    fn a_local_file_error_is_not_read_as_the_users_rights() {
+        let tail = "pg_dump: error: could not open output file \"ro/.x.dump.partial-1\": Permission denied";
+        let e = explain_failure(tail, false, Some("app_ro"));
+        assert!(!e.contains("pg_read_all_data"), "{e}");
+    }
+
+    #[test]
+    fn an_output_that_cant_work_is_refused_before_anything_runs() {
+        let dir = std::env::temp_dir().join(format!("pgman-dump-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("adir")).unwrap();
+        std::fs::write(dir.join("afile"), "x").unwrap();
+        let check = |out: &str, format: &str| {
+            let mut a = vec!["t".to_string(), dir.join(out).display().to_string()];
+            if out.is_empty() {
+                a.pop();
+            }
+            a.extend(["--format".to_string(), format.to_string()]);
+            let o = parse_cli(&a).unwrap();
+            let is_dir = o.out.as_deref().is_some_and(Path::is_dir);
+            let p = paths("t", o.format, o.out.as_deref(), is_dir, 0, 1);
+            output_problem(&o, &p)
+        };
+        assert!(check("newdir/", "custom")
+            .unwrap()
+            .contains("is not a directory"));
+        assert!(check("nodir/x.dump", "custom")
+            .unwrap()
+            .contains("is not a directory"));
+        assert!(check("afile", "directory").unwrap().contains("is a file"));
+        assert_eq!(check("adir", "custom"), None, "a directory to put it in");
+        assert_eq!(check("afile", "custom"), None, "a file it replaces");
+        assert_eq!(check("new.dir", "directory"), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
