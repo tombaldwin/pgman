@@ -8480,6 +8480,9 @@ fn the_password_goes_only_into_pg_dumps_environment() {
             "x.dump",
             "--pg-bin",
             bin.to_str().unwrap(),
+            // Other tests' tables in the shared database, which this
+            // role can't read: not what this test is about.
+            "--skip-unreadable",
         ],
     );
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -9453,4 +9456,135 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
             .batch_execute(&format!("DROP DATABASE IF EXISTS {db}"))
             .await;
     });
+}
+
+/// The path a real environment takes: the password from a Secrets
+/// Manager secret (the fake aws CLI), the database behind an ssh bastion
+/// (a fake ssh whose forward reaches the compose server whatever host it
+/// is asked for). The database's own host doesn't resolve, so the dump
+/// and the restore can only have gone through the tunnel; the restore,
+/// being remote, needs --allow-remote.
+#[cfg(unix)]
+#[test]
+fn dump_and_restore_go_through_the_tunnel_with_the_secrets_password() {
+    use std::os::unix::fs::PermissionsExt;
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = dump_home("dump-tunnel");
+    let bin = home.join("tunnelssh");
+    std::fs::create_dir_all(&bin).unwrap();
+    let ssh_log = home.join("tunnel-ssh.log");
+    let _ = std::fs::remove_file(&ssh_log);
+    std::fs::write(
+        bin.join("ssh"),
+        format!(
+            r#"#!/usr/bin/env python3
+import socket, sys, threading
+open({log:?}, "a").write(" ".join(sys.argv[1:]) + "\n")
+fwd = sys.argv[sys.argv.index("-L") + 1].split(":")
+lport, port = int(fwd[1]), int(fwd[3])
+srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", lport)); srv.listen(16)
+def pipe(a, b):
+    try:
+        while True:
+            d = a.recv(65536)
+            if not d: break
+            b.sendall(d)
+    except OSError: pass
+    finally:
+        for s in (a, b):
+            try: s.close()
+            except OSError: pass
+while True:
+    c, _ = srv.accept()
+    u = socket.create_connection(("127.0.0.1", port))
+    threading.Thread(target=pipe, args=(c, u), daemon=True).start()
+    threading.Thread(target=pipe, args=(u, c), daemon=True).start()
+"#,
+            log = ssh_log.display().to_string()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("ssh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (aws_path, aws_log) = fake_aws(&home);
+    let mut path = std::ffi::OsString::from(&bin);
+    path.push(":");
+    path.push(&aws_path);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        "[[connections]]\nname = \"far\"\nurl = \"postgres://db.pgman-test.invalid:55432/pgman_test?sslmode=disable\"\n\
+         ssh_tunnel = \"ec2-user@bastion.pgman-test.invalid\"\nsecret = \"test/database/pgman/credentials\"\n\
+         aws_region = \"us-west-1\"\naws_account = \"210987654321\"\n",
+    )
+    .unwrap();
+    let t = it_name("tunnel_t");
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {t}"));
+    on("pgman_test", &format!("CREATE TABLE {t} (id int)")).unwrap();
+    on(
+        "pgman_test",
+        &format!("INSERT INTO {t} SELECT generate_series(1, 5)"),
+    )
+    .unwrap();
+    let vars = [
+        ("PATH", path.to_str().unwrap()),
+        ("FAKE_AWS_ACCOUNT", "210987654321"),
+    ];
+    let o = pgman_in_env(
+        &home,
+        &out,
+        &vars,
+        &["dump", "far", "t.dump", "--", &format!("--table={t}")],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{stderr}");
+    let launches = std::fs::read_to_string(&ssh_log).unwrap();
+    assert!(
+        launches.contains("db.pgman-test.invalid:55432")
+            && launches.contains("bastion.pgman-test.invalid"),
+        "{launches}"
+    );
+    let calls = std::fs::read_to_string(&aws_log).unwrap();
+    assert!(
+        calls.contains(
+            "secretsmanager get-secret-value --secret-id test/database/pgman/credentials"
+        ),
+        "{calls}"
+    );
+    assert!(out.join("t.dump").is_file());
+
+    let copy = it_name("tunnel_copy");
+    let o = pgman_in_env(
+        &home,
+        &out,
+        &vars,
+        &[
+            "restore", "t.dump", "far", "--as", &copy, "--create", "--yes",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("isn't on this machine") && stderr.contains("through an ssh tunnel"),
+        "{stderr}"
+    );
+    let o = pgman_in_env(
+        &home,
+        &out,
+        &vars,
+        &[
+            "restore",
+            "t.dump",
+            "far",
+            "--as",
+            &copy,
+            "--create",
+            "--allow-remote",
+            "--yes",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(count_in(&copy, &t), Ok(5));
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
