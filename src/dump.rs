@@ -609,6 +609,21 @@ pub fn create_partial(partial: &Path, format: Format) -> Result<Option<std::fs::
     o.open(partial).map(Some).map_err(refuse)
 }
 
+/// What `path` is, not followed if a link: its device and inode, so a
+/// swap shows. `None` when it can't be read.
+fn identity(path: &Path) -> Option<(u64, u64, bool)> {
+    let m = std::fs::symlink_metadata(path).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((m.dev(), m.ino(), m.file_type().is_symlink()))
+    }
+    #[cfg(not(unix))]
+    {
+        Some((0, 0, m.file_type().is_symlink()))
+    }
+}
+
 /// Remove what a failed dump left: a file, or a directory format's
 /// directory.
 fn remove_partial(p: &Path) {
@@ -733,8 +748,12 @@ pub fn pg_dump_args(conninfo: &str, opts: &Opts, partial: &Path) -> Vec<String> 
     // A file format goes to stdout, into the file [`create_partial`]
     // made: pg_dump never opens a path, so nothing planted at one is
     // followed. A directory has to be named; pgman made that too.
+    // The directory format runs inside the directory pgman made
+    // (`current_dir`), told `.`: entered as pg_dump starts, not looked up
+    // by name after it has connected.
+    let _ = partial;
     if opts.format == Format::Directory {
-        args.push(format!("--file={}", partial.display()));
+        args.push("--file=.".to_string());
     }
     args.push("--no-password".to_string());
     if opts.verbose {
@@ -847,11 +866,14 @@ pub async fn run(
     let mut args = pg_dump_args(&conninfo, opts, &p.partial);
     args.extend(excludes);
     let out_file = create_partial(&p.partial, opts.format)?;
+    let made = identity(&p.partial);
     let mut cmd = pgtool::private_command(&tool, &args);
     // Never pgman's own stdout, which under MCP is the protocol.
     match out_file {
         Some(f) => cmd.stdout(f),
-        None => cmd.stdout(std::process::Stdio::null()),
+        None => cmd
+            .current_dir(&p.partial)
+            .stdout(std::process::Stdio::null()),
     };
     pgtool::set_child_env(&mut cmd, opened.password());
     tracing::info!(target: "pgman::dump", source = %resolved.describe(), file = %p.file.display(), "pg_dump starting");
@@ -881,6 +903,15 @@ pub async fn run(
     let replaced = std::fs::symlink_metadata(&p.file).is_ok();
     // A finished dump is kept whatever went wrong moving it: it may
     // have taken an hour.
+    // What is moved into place is what pgman made: a directory swapped for
+    // another (or a link) while pg_dump ran isn't.
+    if identity(&p.partial) != made {
+        return Err(format!(
+            "{} was replaced while pg_dump ran; the dump isn't moved into place. Check what is \
+             there before using it",
+            p.partial.display()
+        ));
+    }
     commit(&p.partial, &p.file).map_err(|e| {
         format!(
             "{e}\n  the finished dump is kept at {}",
@@ -1323,7 +1354,7 @@ mod tests {
     fn a_directory_dump_names_its_directory_and_a_file_dump_names_nothing() {
         let o = parse_cli(&args(&["x", "--format", "directory"])).unwrap();
         let a = pg_dump_args("c", &o, Path::new("/d/.x.partial-1"));
-        assert!(a.contains(&"--file=/d/.x.partial-1".to_string()), "{a:?}");
+        assert!(a.contains(&"--file=.".to_string()), "run inside it: {a:?}");
         let o = parse_cli(&args(&["x"])).unwrap();
         let a = pg_dump_args("c", &o, Path::new("/d/.x.partial-1"));
         assert!(!a.iter().any(|x| x.starts_with("--file")), "{a:?}");
@@ -1366,6 +1397,26 @@ mod tests {
             "a dangling link isn't followed either"
         );
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_swapped_directory_has_another_identity() {
+        let dir = std::env::temp_dir().join(format!("pgman-dump-ident-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("elsewhere")).unwrap();
+        let d = dir.join(".d.dir.partial-1");
+        create_partial(&d, Format::Directory).unwrap();
+        let made = identity(&d);
+        assert!(made.is_some());
+        assert_eq!(identity(&d), made, "unchanged");
+        std::fs::rename(&d, dir.join("moved")).unwrap();
+        std::os::unix::fs::symlink(dir.join("elsewhere"), &d).unwrap();
+        assert_ne!(identity(&d), made, "a link in its place");
+        std::fs::remove_file(&d).unwrap();
+        std::fs::create_dir(&d).unwrap();
+        assert_ne!(identity(&d), made, "another directory in its place");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
