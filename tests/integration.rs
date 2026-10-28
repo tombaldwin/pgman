@@ -8629,6 +8629,23 @@ fn a_restore_goes_into_another_name_and_clean_replaces_it() {
     );
     assert_eq!(count_in(&db, &t), Ok(25));
 
+    // Into the existing database as it is: its table is already there.
+    let o = pgman_in(
+        &home,
+        &out,
+        &["restore", "dump.dump", "local", "--as", &db, "--yes"],
+    );
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(
+        o.status.code(),
+        Some(1),
+        "an incomplete restore exits 1: {stdout}"
+    );
+    assert!(
+        stdout.contains("error(s) pg_restore went past") && stdout.contains("already exists"),
+        "{stdout}"
+    );
+
     let o = pgman_in(
         &home,
         &out,

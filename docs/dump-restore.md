@@ -112,7 +112,8 @@ pgman restore <FILE> <target> [--as NAME] [--create] [--clean] [--terminate]
 - **Errors.** pg_restore goes past errors and counts them; pgman lists
   them. A dump from a newer pg_dump sets settings an older server doesn't
   have (`SET transaction_timeout = 0` from pg_dump 17 into a 16 server);
-  those are counted as harmless.
+  those are counted as harmless. Any other error makes `pgman restore`
+  exit with status 1, so a script can tell the copy is incomplete.
 
 Takes custom, directory and tar dumps. A plain SQL dump (`--format
 plain`) is run with `psql`.

@@ -671,6 +671,15 @@ async fn drop_again_and_again(
     }
 }
 
+impl Done {
+    /// Errors pg_restore went past that aren't [`RestoreError::harmless`]:
+    /// a restore with any is incomplete, and exits non-zero.
+    pub fn real_errors(&self) -> u64 {
+        let harmless = self.reported.iter().filter(|e| e.harmless).count() as u64;
+        self.errors.unwrap_or(0).saturating_sub(harmless)
+    }
+}
+
 /// What `pgman restore` prints when it finishes. Pure.
 pub fn render(done: &Done) -> String {
     let harmless = done.reported.iter().filter(|e| e.harmless).count() as u64;
@@ -968,6 +977,8 @@ mod tests {
             reported,
             notes: Vec::new(),
         };
+        assert_eq!(done(2, errs.clone()).real_errors(), 1);
+        assert_eq!(done(1, vec![errs[0].clone()]).real_errors(), 0);
         let r = render(&done(2, errs.clone()));
         assert!(
             r.contains("with 1 error(s)") && r.contains("aws_commons"),

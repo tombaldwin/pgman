@@ -244,7 +244,12 @@ async fn main() -> anyhow::Result<()> {
             }
         };
         match pgman::restore::run_cli(&opts).await {
-            Ok(done) => println!("{}", pgman::restore::render(&done)),
+            Ok(done) => {
+                println!("{}", pgman::restore::render(&done));
+                if done.real_errors() > 0 {
+                    std::process::exit(1);
+                }
+            }
             Err(e) => {
                 eprintln!("pgman restore: {e}");
                 std::process::exit(1);
