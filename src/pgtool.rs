@@ -225,8 +225,8 @@ pub fn version_refusal(tool: &str, have: Major, server: Major) -> Option<String>
     (have < server).then(|| {
         format!(
             "your {tool} is version {have}, older than the server's {server}: {tool} can't \
-             work with a newer server. Install the {server} client tools (macOS: brew install \
-             libpq, or postgresql@{server}) or point at them with --pg-bin DIR"
+             work with a newer server. Get the {server} client tools (macOS: brew upgrade libpq, \
+             or brew install libpq or postgresql@{server}) or point at them with --pg-bin DIR"
         )
     })
 }

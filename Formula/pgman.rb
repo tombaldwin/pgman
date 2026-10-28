@@ -40,8 +40,11 @@ class Pgman < Formula
 
   def install
     libexec.install "pgman"
-    # opt_bin, not the versioned keg: it follows libpq's upgrades.
-    (bin/"pgman").write_env_script libexec/"pgman", PGMAN_PG_BIN: formula_opt_bin("libpq")
+    # opt_bin, not the versioned keg: it follows libpq's upgrades. A
+    # PGMAN_PG_BIN of the user's own still wins (the wrapper's value is
+    # double-quoted, so bash expands it as it runs).
+    (bin/"pgman").write_env_script libexec/"pgman",
+                                   PGMAN_PG_BIN: "${PGMAN_PG_BIN:-#{formula_opt_bin("libpq")}}"
     prefix.install "README.md", "LICENSE-MIT", "LICENSE-APACHE"
   end
 
