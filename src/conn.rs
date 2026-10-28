@@ -1150,6 +1150,28 @@ pub async fn connect_via_writable(
     Ok(Arc::new(client))
 }
 
+/// Send `token`'s cancel request: plaintext, as servers accept it, or —
+/// when the session's `sslmode` requires TLS, which tokio-postgres then
+/// insists on for the cancel too — over TLS without checking the
+/// certificate. The request carries only the backend's cancel key, which
+/// can stop that one session's statement and nothing else; verifying
+/// would also need the session's root store for no gain. Before this,
+/// `NoTls` failed outright under `sslmode=require` / `verify-*` (RDS),
+/// so Ctrl-C / Esc never reached the server.
+pub async fn cancel_query(token: &tokio_postgres::CancelToken) -> Result<(), String> {
+    match token.cancel_query(tokio_postgres::NoTls).await {
+        Ok(()) => Ok(()),
+        Err(plain) => {
+            let tls = build_tls_connector(TlsVerify::Nothing, &RootSource::Default)
+                .map_err(|e| format!("{plain}; and TLS for the cancel: {e}"))?;
+            token
+                .cancel_query(tls)
+                .await
+                .map_err(|e| format!("{plain}; over TLS: {e}"))
+        }
+    }
+}
+
 /// The longest one of the connect's own catalog reads waits for a lock
 /// (`lock_timeout`) before it gives up and the connect goes on without it.
 pub const BOOTSTRAP_LOCK_TIMEOUT: &str = "2s";
@@ -3464,6 +3486,124 @@ mod tests {
             let startup = server.expect("server side of the handshake");
             let text = String::from_utf8_lossy(&startup);
             assert!(text.contains("user\0pgman_tls\0"), "{text:?}");
+        }
+
+        /// Read an SSLRequest on `tcp`, answer 'S' and take the TLS
+        /// handshake with `pki`'s leaf.
+        fn accept_tls(
+            mut tcp: std::net::TcpStream,
+            pki_chain: Vec<CertificateDer<'static>>,
+            key: PrivateKeyDer<'static>,
+        ) -> Result<rustls::StreamOwned<rustls::ServerConnection, std::net::TcpStream>, String>
+        {
+            tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .map_err(|e| e.to_string())?;
+            let mut req = [0u8; 8];
+            tcp.read_exact(&mut req).map_err(|e| e.to_string())?;
+            if req != [0, 0, 0, 8, 4, 210, 22, 47] {
+                return Err(format!("not an SSLRequest: {req:?}"));
+            }
+            tcp.write_all(b"S").map_err(|e| e.to_string())?;
+            let config = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(pki_chain, key)
+                .map_err(|e| e.to_string())?;
+            let conn = rustls::ServerConnection::new(std::sync::Arc::new(config))
+                .map_err(|e| e.to_string())?;
+            Ok(rustls::StreamOwned::new(conn, tcp))
+        }
+
+        /// The backend key [`serve_login_then_cancel`] hands out.
+        const PID: u32 = 4242;
+        const SECRET: u32 = 0x5ec2e7;
+
+        /// What [`serve_login_then_cancel`]'s server thread returns: the
+        /// cancel request's (code, pid, secret).
+        type CancelSeen = std::thread::JoinHandle<Result<(u32, u32, u32), String>>;
+
+        /// Accept a TLS login (any user, no password) and answer it with
+        /// backend key [`PID`]/[`SECRET`] and ready-for-query, then accept a
+        /// second TLS connection and return the cancel request read on it:
+        /// (code, pid, secret).
+        fn serve_login_then_cancel(pki: &Pki) -> (u16, CancelSeen) {
+            let chain = vec![pki.leaf.clone()];
+            let key = pki.leaf_key.clone_key();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let handle = std::thread::spawn(move || {
+                let (tcp, _) = listener.accept().map_err(|e| e.to_string())?;
+                let mut tls = accept_tls(tcp, chain.clone(), key.clone_key())?;
+                let mut len = [0u8; 4];
+                tls.read_exact(&mut len).map_err(|e| e.to_string())?;
+                let mut startup = vec![0u8; (u32::from_be_bytes(len) as usize).saturating_sub(4)];
+                tls.read_exact(&mut startup).map_err(|e| e.to_string())?;
+                let mut out = Vec::new();
+                out.extend_from_slice(&[b'R', 0, 0, 0, 8, 0, 0, 0, 0]);
+                out.extend_from_slice(&[b'K', 0, 0, 0, 12]);
+                out.extend_from_slice(&PID.to_be_bytes());
+                out.extend_from_slice(&SECRET.to_be_bytes());
+                out.extend_from_slice(&[b'Z', 0, 0, 0, 5, b'I']);
+                tls.write_all(&out).map_err(|e| e.to_string())?;
+                tls.flush().map_err(|e| e.to_string())?;
+                // A plaintext try comes first and gives up at the TLS
+                // step; the cancel is on a later connection.
+                for _ in 0..4 {
+                    let (tcp, _) = listener.accept().map_err(|e| e.to_string())?;
+                    let Ok(mut cancel) = accept_tls(tcp, chain.clone(), key.clone_key()) else {
+                        continue;
+                    };
+                    let mut req = [0u8; 16];
+                    if cancel.read_exact(&mut req).is_err() {
+                        continue;
+                    }
+                    let word = |i: usize| u32::from_be_bytes(req[i..i + 4].try_into().unwrap());
+                    if word(0) != 16 {
+                        return Err(format!("not a cancel request: {req:?}"));
+                    }
+                    drop(tls);
+                    return Ok((word(4), word(8), word(12)));
+                }
+                Err("no cancel request arrived".to_string())
+            });
+            (port, handle)
+        }
+
+        /// A session opened with `sslmode=require` is cancelled over TLS:
+        /// tokio-postgres refuses a plaintext cancel for it, which is what
+        /// left the editor's ctrl-c (and pgman run's, and the patch
+        /// runner's) unable to stop a statement on RDS.
+        #[tokio::test]
+        async fn a_session_that_requires_tls_is_cancelled_over_tls() {
+            let (port, server) = serve_login_then_cancel(&pki());
+            let mut cfg = tokio_postgres::Config::new();
+            cfg.host("x")
+                .hostaddr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+                .port(port)
+                .user("pgman_tls")
+                .dbname("pgman_tls")
+                .ssl_mode(tokio_postgres::config::SslMode::Require)
+                .connect_timeout(std::time::Duration::from_secs(10));
+            let (client, connection) = cfg
+                .connect(
+                    build_tls_connector(TlsVerify::Nothing, &super::super::RootSource::Default)
+                        .unwrap(),
+                )
+                .await
+                .expect("the fake server's login");
+            tokio::spawn(connection);
+            let token = client.cancel_token();
+            assert!(
+                token.cancel_query(tokio_postgres::NoTls).await.is_err(),
+                "the premise: plaintext is refused for this session"
+            );
+            super::super::cancel_query(&token)
+                .await
+                .expect("cancel sent");
+            let (code, pid, secret) = tokio::task::spawn_blocking(move || server.join().unwrap())
+                .await
+                .unwrap()
+                .expect("the server read a cancel request");
+            assert_eq!((code, pid, secret), (80877102, PID, SECRET));
         }
 
         #[tokio::test]

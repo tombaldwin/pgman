@@ -381,9 +381,8 @@ fn canceller(client: &tokio_postgres::Client) -> CancelFn {
     std::sync::Arc::new(move || {
         let token = token.clone();
         tokio::spawn(async move {
-            // The cancel packet is unauthenticated and servers take it
-            // plaintext, as the editor's ctrl-c does.
-            if let Err(e) = token.cancel_query(tokio_postgres::NoTls).await {
+            // As the editor's ctrl-c does (`conn::cancel_query`).
+            if let Err(e) = crate::conn::cancel_query(&token).await {
                 tracing::warn!(target: "pgman::patching", "cancel request failed: {e}");
             }
         });

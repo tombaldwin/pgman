@@ -273,7 +273,7 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
                 stop.store(true, Ordering::SeqCst);
                 let token = cancel.lock().ok().and_then(|t| t.clone());
                 if let Some(token) = token {
-                    let _ = token.cancel_query(tokio_postgres::NoTls).await;
+                    let _ = crate::conn::cancel_query(&token).await;
                 }
             }
         });

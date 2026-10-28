@@ -698,11 +698,9 @@ impl CancelDispatcher for PgCancelDispatcher {
     fn dispatch(&self) {
         let token = self.token.clone();
         tokio::spawn(async move {
-            // CancelRequest is an unauthenticated short packet;
-            // servers always accept it plaintext. `NoTls` saves
-            // the cost of a fresh TLS handshake just to interrupt
-            // a query.
-            if let Err(e) = token.cancel_query(tokio_postgres::NoTls).await {
+            // Plaintext when the session allows it; TLS when its
+            // sslmode requires (`conn::cancel_query`).
+            if let Err(e) = crate::conn::cancel_query(&token).await {
                 tracing::warn!("CancelRequest failed: {e}");
             }
         });
