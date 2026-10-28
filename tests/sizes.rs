@@ -83,7 +83,12 @@ fn redact_build(out: String) -> String {
     if pgman::RELEASE_DATE.is_empty() {
         out
     } else {
-        out.replace(pgman::RELEASE_DATE, "YYYY-MM-DD")
+        // As the header and About show it, not wherever the date turns
+        // up: the demo's data has dates too, and one is a release day.
+        out.replace(
+            &format!("released {}", pgman::RELEASE_DATE),
+            "released YYYY-MM-DD",
+        )
     }
 }
 
