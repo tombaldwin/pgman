@@ -8482,7 +8482,8 @@ fn the_password_goes_only_into_pg_dumps_environment() {
     let bin = fake_pg_dump(
         &home,
         "18.4",
-        "for a; do case $a in --file=*) echo dumped > \"${a#--file=}\";; esac; done",
+        // A file format comes back on stdout, into the file pgman made.
+        "echo dumped",
     );
     let o = pgman_in_env(
         &home,

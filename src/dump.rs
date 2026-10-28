@@ -456,6 +456,39 @@ pub fn explain_failure(tail: &str, replica: bool, user: Option<&str>) -> String 
     last.to_string()
 }
 
+/// Make the partial pg_dump writes into, before it runs: for a file
+/// format the file itself (returned, for pg_dump's stdout), for the
+/// directory format the directory — both owner-only, and both created
+/// exclusively. Whatever is already at that name — a symlink, a hard
+/// link to someone's file, a directory symlinked elsewhere — is refused
+/// rather than written through: the name is predictable (the target's
+/// and the pid), so something could be waiting there. Reads the
+/// filesystem.
+pub fn create_partial(partial: &Path, format: Format) -> Result<Option<std::fs::File>, String> {
+    let refuse = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "{} already exists; pgman won't write a dump through something it didn't make. Remove it and run again",
+                partial.display()
+            )
+        } else {
+            format!("could not create {}: {e}", partial.display())
+        }
+    };
+    if format == Format::Directory {
+        let mut b = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+        b.create(partial).map_err(refuse)?;
+        return Ok(None);
+    }
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o.open(partial).map(Some).map_err(refuse)
+}
+
 /// Remove what a failed dump left: a file, or a directory format's
 /// directory.
 fn remove_partial(p: &Path) {
@@ -566,9 +599,14 @@ pub fn pg_dump_args(conninfo: &str, opts: &Opts, partial: &Path) -> Vec<String> 
     let mut args = vec![
         format!("--dbname={conninfo}"),
         format!("--format={}", opts.format.letter()),
-        format!("--file={}", partial.display()),
-        "--no-password".to_string(),
     ];
+    // A file format goes to stdout, into the file [`create_partial`]
+    // made: pg_dump never opens a path, so nothing planted at one is
+    // followed. A directory has to be named; pgman made that too.
+    if opts.format == Format::Directory {
+        args.push(format!("--file={}", partial.display()));
+    }
+    args.push("--no-password".to_string());
     if opts.verbose {
         args.push("--verbose".to_string());
     }
@@ -681,7 +719,13 @@ pub async fn run(
     let conninfo = pgtool::conninfo(&opened.dsn, opened.via, "pgman-dump", have);
     let mut args = pg_dump_args(&conninfo, opts, &p.partial);
     args.extend(excludes);
+    let out_file = create_partial(&p.partial, opts.format)?;
     let mut cmd = pgtool::private_command(&tool, &args);
+    // Never pgman's own stdout, which under MCP is the protocol.
+    match out_file {
+        Some(f) => cmd.stdout(f),
+        None => cmd.stdout(std::process::Stdio::null()),
+    };
     pgtool::set_child_env(&mut cmd, opened.password());
     tracing::info!(target: "pgman::dump", source = %resolved.describe(), file = %p.file.display(), "pg_dump starting");
     let started = std::time::Instant::now();
@@ -1045,12 +1089,61 @@ mod tests {
             args(&[
                 "--dbname=host='h' dbname='d'",
                 "--format=c",
-                "--file=/d/.x.partial-1",
                 "--no-password",
                 "--verbose",
                 "--schema-only",
             ])
         );
+    }
+
+    #[test]
+    fn a_directory_dump_names_its_directory_and_a_file_dump_names_nothing() {
+        let o = parse_cli(&args(&["x", "--format", "directory"])).unwrap();
+        let a = pg_dump_args("c", &o, Path::new("/d/.x.partial-1"));
+        assert!(a.contains(&"--file=/d/.x.partial-1".to_string()), "{a:?}");
+        let o = parse_cli(&args(&["x"])).unwrap();
+        let a = pg_dump_args("c", &o, Path::new("/d/.x.partial-1"));
+        assert!(!a.iter().any(|x| x.starts_with("--file")), "{a:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_partial_is_made_fresh_and_private_and_nothing_planted_is_followed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("pgman-dump-plant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("elsewhere")).unwrap();
+        let victim = dir.join("elsewhere/victim");
+        std::fs::write(&victim, "keep me").unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+
+        let f = dir.join(".a.dump.partial-1");
+        assert!(create_partial(&f, Format::Custom).unwrap().is_some());
+        assert_eq!(mode(&f), 0o600);
+        let d = dir.join(".d.dir.partial-1");
+        assert!(create_partial(&d, Format::Directory).unwrap().is_none());
+        assert_eq!(mode(&d), 0o700);
+
+        let sym = dir.join(".s.dump.partial-1");
+        std::os::unix::fs::symlink(&victim, &sym).unwrap();
+        assert!(create_partial(&sym, Format::Custom)
+            .unwrap_err()
+            .contains("won't write a dump through"));
+        let hard = dir.join(".h.dump.partial-1");
+        std::fs::hard_link(&victim, &hard).unwrap();
+        assert!(create_partial(&hard, Format::Plain).is_err());
+        let dsym = dir.join(".ds.dir.partial-1");
+        std::os::unix::fs::symlink(dir.join("elsewhere"), &dsym).unwrap();
+        assert!(create_partial(&dsym, Format::Directory).is_err());
+        let dangling = dir.join(".dg.dump.partial-1");
+        std::os::unix::fs::symlink(dir.join("elsewhere/new"), &dangling).unwrap();
+        assert!(create_partial(&dangling, Format::Custom).is_err());
+        assert!(
+            !dir.join("elsewhere/new").exists(),
+            "a dangling link isn't followed either"
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
