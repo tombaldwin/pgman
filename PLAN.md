@@ -64,7 +64,7 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 
 ## Window — after v0.2.1
 
-### 0. Dump, restore, run, apply (2026-10-28) — built, in review
+### 0. Dump, restore, run, apply (2026-10-28) — built, reviewed, fixed
 
 Tom's go 2026-10-28 ("yes to all including the optional mcp work"):
 `pgman dump`, `pgman restore`, `pgman run` (scripts with their own
@@ -73,8 +73,10 @@ with `--outside`), and MCP `dump` / `restore` behind elicitation. All
 on main with integration tests and CAUGHT lines; docs in
 `docs/dump-restore.md`, `docs/run.md`, `docs/mcp.md`. Remaining:
 
-- the independent review of d424e1f..HEAD (security and correctness),
-  then its fixes;
+- reviewed (one Fable reviewer, GO-with-notes: 6 MED, 7 LOW, no HIGH);
+  every finding fixed with a CAUGHT line (e4dfc70..b87f651), including
+  ctrl-c cancels over TLS for the editor too. One edge left in
+  BACKLOG.md (a connection to a protected rds environment's host);
 - a release (v0.3.0) when Tom wants one: a release panel first, as for
   every release.
 
