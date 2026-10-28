@@ -32,9 +32,10 @@ environments.toml, a connection name from connections.toml, or a
 postgres:// URL. An environment's replica is used when it has one;
 --primary takes the primary instead.
 
-FILE defaults to <target>-<UTC time>.dump in the current directory (or
-in FILE, when it is a directory), and <target>-latest.dump is pointed
-at the newest. The dump is written to a temporary name and renamed
+FILE defaults to a name after the target and the UTC time
+(staging-ledger-20261028T140322Z.dump, or the connection's name) in the
+current directory, or in FILE when it is a directory, and
+staging-ledger-latest.dump is pointed at the newest. The dump is written to a temporary name and renamed
 into place when pg_dump succeeds: a failed dump never replaces a file.
 
   --format       pg_dump's format (default custom, for pg_restore)
@@ -690,12 +691,22 @@ pub fn output_problem(opts: &Opts, p: &Paths) -> Option<String> {
     if let Some(out) = &opts.out {
         let text = out.to_string_lossy();
         if (text.ends_with('/') || text.ends_with(std::path::MAIN_SEPARATOR)) && !out.is_dir() {
-            return Some(format!("{} is not a directory", out.display()));
+            return Some(format!(
+                "{} doesn't exist; create it, or name a file in a directory that does",
+                out.display()
+            ));
         }
     }
     if let Some(dir) = p.file.parent().filter(|d| !d.as_os_str().is_empty()) {
         if !dir.is_dir() {
-            return Some(format!("{} is not a directory", dir.display()));
+            return Some(if dir.exists() {
+                format!("{} is not a directory", dir.display())
+            } else {
+                format!(
+                    "{} doesn't exist; create it, or name a file in a directory that does",
+                    dir.display()
+                )
+            });
         }
     }
     let existing = std::fs::symlink_metadata(&p.file).ok();
@@ -741,6 +752,8 @@ pub struct Done {
     pub bytes: u64,
     pub source: String,
     pub notes: Vec<String>,
+    /// FILE was there before, and this dump replaced it.
+    pub replaced: bool,
 }
 
 /// Run a dump. Progress goes to stderr; the result is what to print.
@@ -865,6 +878,7 @@ pub async fn run(
             }
         ));
     }
+    let replaced = std::fs::symlink_metadata(&p.file).is_ok();
     // A finished dump is kept whatever went wrong moving it: it may
     // have taken an hour.
     commit(&p.partial, &p.file).map_err(|e| {
@@ -887,19 +901,30 @@ pub async fn run(
         latest,
         source: resolved.describe(),
         notes,
+        replaced,
     })
 }
 
 /// What `pgman dump` prints on success. Pure.
 pub fn render(done: &Done) -> String {
     let mut out = format!(
-        "{} ({}) from {}",
+        "{} ({}) from {}{}",
         done.file.display(),
         pgtool::size_of(done.bytes),
-        done.source
+        done.source,
+        if done.replaced {
+            ", replacing the file that was there"
+        } else {
+            ""
+        }
     );
     if let Some(l) = &done.latest {
-        out.push_str(&format!("\n{} → it", l.display()));
+        let name = done
+            .file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        out.push_str(&format!("\n{} now points at {name}", l.display()));
     }
     for n in &done.notes {
         out.push_str(&format!("\nnote: {n}"));
@@ -1245,10 +1270,10 @@ mod tests {
         };
         assert!(check("newdir/", "custom")
             .unwrap()
-            .contains("is not a directory"));
+            .contains("doesn't exist; create it"));
         assert!(check("nodir/x.dump", "custom")
             .unwrap()
-            .contains("is not a directory"));
+            .contains("doesn't exist; create it"));
         assert!(check("afile", "directory").unwrap().contains("is a file"));
         assert_eq!(check("adir", "custom"), None, "a directory to put it in");
         assert_eq!(check("afile", "custom"), None, "a file it replaces");

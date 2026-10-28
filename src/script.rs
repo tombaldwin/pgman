@@ -239,8 +239,16 @@ pub fn stopped_report(
 /// Run a script. The question and progress go to stderr; the result is
 /// what to print.
 pub async fn run_cli(opts: &Opts) -> Result<String, String> {
-    let meta =
-        std::fs::metadata(&opts.file).map_err(|e| format!("{}: {e}", opts.file.display()))?;
+    let meta = std::fs::metadata(&opts.file).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "{}: no such file (the script comes after the target: pgman run <target> <FILE>)",
+                opts.file.display()
+            )
+        } else {
+            format!("{}: {e}", opts.file.display())
+        }
+    })?;
     if meta.len() > MAX_SCRIPT_BYTES {
         return Err(format!(
             "{} is over {} MiB; pgman run is for scripts",

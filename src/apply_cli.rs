@@ -15,7 +15,9 @@ use crate::inventory::patching::{self, PatchPlan, RunMode};
 use crate::inventory::target::{self, Want};
 
 pub const USAGE: &str = "\
-usage: pgman apply <ENV[/SERVER]/DATABASE> [--outside] [--dry-run | --copy] [--yes]
+usage: pgman apply <target> [--outside] [--dry-run | --copy] [--yes]
+
+<target> is ENV, ENV/DATABASE or ENV/SERVER/DATABASE in environments.toml.
 
 Apply an environment database's pending patches (its version_table's
 patches directory, in environments.toml), as the environments view's P

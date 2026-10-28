@@ -49,6 +49,8 @@ unless --terminate.
   --allow-remote  allow a target that isn't on this machine (still never
                   a protected one)
   --yes           don't ask; for scripts
+  --pg-bin DIR    where pg_restore is (default: PATH, then Homebrew's libpq)
+  --verbose       show pg_restore's progress
   --              anything after it goes to pg_restore as it is
 
   pgman restore staging-ledger-latest.dump local --as ledger_copy --create
@@ -452,7 +454,11 @@ pub struct Done {
 pub fn unreadable(file: &Path, head: &[u8], stderr: &str, have: Major) -> String {
     let why = stderr.trim();
     let hint = if why.contains("text format dump") || head.starts_with(b"--") {
-        "A plain SQL dump (--format plain) is run with psql instead".to_string()
+        format!(
+            "pgman restore takes custom, directory and tar dumps, not a plain SQL one: run that \
+             with psql yourself (psql -d DATABASE -f {})",
+            file.display()
+        )
     } else if why.contains("unsupported version") {
         format!("The dump was made by a newer pg_dump than your pg_restore {have}; use one at least as new (--pg-bin DIR)")
     } else {
@@ -1128,7 +1134,7 @@ mod tests {
             "pg_restore: error: input file appears to be a text format dump. Please use psql.",
             v
         )
-        .contains("run with psql"));
+        .contains("with psql yourself"));
         assert!(unreadable(
             f,
             b"PG",
@@ -1140,7 +1146,7 @@ mod tests {
             "pg_restore: error: input file does not appear to be a valid archive (too short?)";
         assert!(unreadable(f, b"\x00\x01", short, v).contains("custom, directory or tar"));
         assert!(
-            unreadable(f, b"--", short, v).contains("run with psql"),
+            unreadable(f, b"--", short, v).contains("with psql yourself"),
             "a plain dump starts with a comment"
         );
     }

@@ -72,8 +72,13 @@ pgman dump <target> [FILE] [--primary] [--format custom|plain|directory|tar]
 - **Private.** `pg_dump` runs with a umask of 077: the dump is readable
   by you alone from the moment it exists.
 - **Names.** With no FILE, or a directory for FILE, the dump is named
-  `<environment>-<database>-<UTC time>.dump` and
-  `<environment>-<database>-latest.dump` is pointed at the newest one.
+  after the target — `<environment>-<database>`, or the connection's
+  name — and the UTC time (`staging-ledger-20261028T140322Z.dump`), and
+  `staging-ledger-latest.dump` is pointed at the newest one. A FILE you
+  name is replaced when the dump succeeds, and the result says so.
+- **No question asked.** A dump only reads, so `pgman dump` doesn't ask
+  first, even for a protected environment. (MCP's `dump` does: there the
+  agent asks, and you answer.)
 - **Options.** Anything after `--` goes to pg_dump:
   `-- --exclude-table-data=audit_log`, `-- --schema-only`,
   `--format directory -- -j 4`. The connection and output options
@@ -132,8 +137,9 @@ pgman restore <FILE> <target> [--as NAME] [--create] [--clean] [--terminate]
   those are counted as harmless. Any other error makes `pgman restore`
   exit with status 1, so a script can tell the copy is incomplete.
 
-Takes custom, directory and tar dumps. A plain SQL dump (`--format
-plain`) is run with `psql`.
+Takes custom, directory and tar dumps. It doesn't take a plain SQL dump
+(`--format plain`): run that with `psql` yourself, `psql -d DATABASE -f
+FILE`, and none of the checks above apply.
 
 ## A local copy, end to end
 

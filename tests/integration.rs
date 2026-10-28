@@ -8904,7 +8904,7 @@ fn a_protected_remote_or_unconfirmed_restore_is_refused() {
         ],
     );
     let stderr = String::from_utf8_lossy(&o.stderr);
-    assert!(stderr.contains("run with psql instead"), "{stderr}");
+    assert!(stderr.contains("with psql yourself"), "{stderr}");
     let o = pgman_in(
         &home,
         &out,

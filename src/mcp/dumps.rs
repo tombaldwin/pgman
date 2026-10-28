@@ -45,10 +45,10 @@ pub fn tool_entries() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "file": {"type": "string", "description": "A .dump file, relative to the working directory."},
-                    "target": {"type": "string"},
+                    "target": {"type": "string", "description": "A local, unprotected database: ENV, ENV/DATABASE, ENV/SERVER/DATABASE, a connection name, or a postgres:// URL."},
                     "as": {"type": "string", "description": "Restore into this database on the target's server."},
-                    "create": {"type": "boolean"},
-                    "clean": {"type": "boolean"},
+                    "create": {"type": "boolean", "description": "Create the database when it doesn't exist."},
+                    "clean": {"type": "boolean", "description": "Drop the database and create it again first; the operator types its name to confirm."},
                     "terminate": {"type": "boolean", "description": "End other sessions on the database first."}
                 },
                 "required": ["file", "target"],

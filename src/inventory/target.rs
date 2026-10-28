@@ -174,7 +174,14 @@ pub fn pick(env: &str, spec: &Spec, targets: &[Target], want: Want) -> Result<Ta
             )
         })?;
         if want == Want::Primary && t.role == Role::Replica {
-            return Err(super::patching::replica_refusal(t));
+            return Err(format!(
+                "{} is a replica, where nothing can be written; name its primary{}",
+                t.server,
+                t.replica_of
+                    .as_deref()
+                    .map(|p| format!(" ({env}/{p}/{database})"))
+                    .unwrap_or_default()
+            ));
         }
         return Ok((*t).clone());
     }
@@ -536,7 +543,7 @@ mod tests {
             "ledger-db-replica"
         );
         let e = pick("staging", &s, &staging(), Want::Primary).unwrap_err();
-        assert!(e.contains("is a replica"), "{e}");
+        assert!(e.contains("is a replica, where nothing can be written; name its primary (staging/ledger-db/ledger)"), "{e}");
     }
 
     #[test]
