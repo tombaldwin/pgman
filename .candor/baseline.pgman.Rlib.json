@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 3939,
-    "digest": "f40083e5da587cc3"
+    "count": 3950,
+    "digest": "09e07f52968519d4"
   },
   "resolves": [
     "fs",
@@ -238,7 +238,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd978f8bd4666f178093",
+      "hash": "8c31a7fd9f7cbd9750d405df3f2d185e",
       "invisible": [
         "serde_core"
       ]
@@ -262,7 +262,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
+      "hash": "8c31a7fd9f7cbd978f8bd4666f178093",
       "invisible": [
         "serde_core"
       ]
@@ -274,7 +274,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9750d405df3f2d185e",
+      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
       "invisible": [
         "serde_core"
       ]
@@ -286,7 +286,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97eb680d4f266c38e5",
+      "hash": "8c31a7fd9f7cbd9707aebcfe756007c5",
       "invisible": [
         "serde_core"
       ]
@@ -310,7 +310,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9746c74d25554f57ae",
+      "hash": "8c31a7fd9f7cbd97eb680d4f266c38e5",
       "invisible": [
         "serde_core"
       ]
@@ -322,7 +322,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9707aebcfe756007c5",
+      "hash": "8c31a7fd9f7cbd9746c74d25554f57ae",
       "invisible": [
         "serde_core"
       ]
@@ -334,7 +334,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9711675aedf1eb336d",
+      "hash": "8c31a7fd9f7cbd97c1e4e6e2ca016308",
       "invisible": [
         "serde"
       ]
@@ -346,7 +346,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97c1e4e6e2ca016308",
+      "hash": "8c31a7fd9f7cbd9711675aedf1eb336d",
       "invisible": [
         "serde"
       ]
@@ -8656,7 +8656,7 @@
     },
     {
       "fn": "dump::commit",
-      "loc": "src/dump.rs:391:1: 391:61",
+      "loc": "src/dump.rs:471:1: 471:61",
       "inferred": [
         "Fs"
       ],
@@ -8679,7 +8679,7 @@
     },
     {
       "fn": "dump::output_problem",
-      "loc": "src/dump.rs:457:1: 457:64",
+      "loc": "src/dump.rs:537:1: 537:64",
       "inferred": [
         "Fs"
       ],
@@ -8701,7 +8701,7 @@
     },
     {
       "fn": "dump::point_latest",
-      "loc": "src/dump.rs:423:1: 423:70",
+      "loc": "src/dump.rs:503:1: 503:70",
       "inferred": [
         "Fs"
       ],
@@ -8724,7 +8724,7 @@
     },
     {
       "fn": "dump::remove_partial",
-      "loc": "src/dump.rs:381:1: 381:28",
+      "loc": "src/dump.rs:461:1: 461:28",
       "inferred": [
         "Fs"
       ],
@@ -8746,7 +8746,7 @@
     },
     {
       "fn": "dump::resolve",
-      "loc": "src/dump.rs:517:1: 517:70",
+      "loc": "src/dump.rs:597:1: 597:70",
       "inferred": [
         "Env",
         "Exec",
@@ -8784,7 +8784,7 @@
     },
     {
       "fn": "dump::run",
-      "loc": "src/dump.rs:530:1: 534:26",
+      "loc": "src/dump.rs:610:1: 614:26",
       "inferred": [
         "Clock",
         "Db",
@@ -8840,7 +8840,8 @@
         "pgtool::run_tool_cli",
         "pgtool::set_child_env",
         "pgtool::tool_version",
-        "query::server::facts"
+        "query::server::facts",
+        "query::server::unreadable"
       ],
       "unknownWhy": [
         "callback:fn-pointer / closure"
@@ -8866,7 +8867,7 @@
     },
     {
       "fn": "dump::run_cli",
-      "loc": "src/dump.rs:510:1: 510:58",
+      "loc": "src/dump.rs:590:1: 590:58",
       "inferred": [
         "Clock",
         "Db",
@@ -10748,7 +10749,7 @@
     },
     {
       "fn": "mcp::dumps::<impl mcp::Server>::tool_dump",
-      "loc": "src/mcp/dumps.rs:234:5: 234:81",
+      "loc": "src/mcp/dumps.rs:235:5: 235:81",
       "inferred": [
         "Clock",
         "Db",
@@ -10814,7 +10815,7 @@
     },
     {
       "fn": "mcp::dumps::<impl mcp::Server>::tool_restore",
-      "loc": "src/mcp/dumps.rs:288:5: 288:84",
+      "loc": "src/mcp/dumps.rs:290:5: 290:84",
       "inferred": [
         "Clock",
         "Db",
@@ -10883,7 +10884,7 @@
     },
     {
       "fn": "mcp::dumps::accepted",
-      "loc": "src/mcp/dumps.rs:137:1: 137:86",
+      "loc": "src/mcp/dumps.rs:138:1: 138:86",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10895,7 +10896,7 @@
     },
     {
       "fn": "mcp::dumps::arg_bool",
-      "loc": "src/mcp/dumps.rs:207:1: 207:45",
+      "loc": "src/mcp/dumps.rs:208:1: 208:45",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10907,7 +10908,7 @@
     },
     {
       "fn": "mcp::dumps::arg_string",
-      "loc": "src/mcp/dumps.rs:211:1: 211:73",
+      "loc": "src/mcp/dumps.rs:212:1: 212:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10919,7 +10920,7 @@
     },
     {
       "fn": "mcp::dumps::dump_out",
-      "loc": "src/mcp/dumps.rs:101:1: 101:75",
+      "loc": "src/mcp/dumps.rs:102:1: 102:75",
       "inferred": [
         "Fs"
       ],
@@ -10944,7 +10945,7 @@
     },
     {
       "fn": "mcp::dumps::inside",
-      "loc": "src/mcp/dumps.rs:65:1: 65:82",
+      "loc": "src/mcp/dumps.rs:66:1: 66:82",
       "inferred": [
         "Fs"
       ],
@@ -10966,7 +10967,7 @@
     },
     {
       "fn": "mcp::dumps::schema",
-      "loc": "src/mcp/dumps.rs:120:1: 120:64",
+      "loc": "src/mcp/dumps.rs:121:1: 121:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14150,7 +14151,7 @@
     },
     {
       "fn": "query::server::create_database",
-      "loc": "src/query/server.rs:83:1: 83:96",
+      "loc": "src/query/server.rs:125:1: 125:96",
       "inferred": [
         "Db"
       ],
@@ -14172,7 +14173,7 @@
     },
     {
       "fn": "query::server::database_exists",
-      "loc": "src/query/server.rs:65:1: 65:96",
+      "loc": "src/query/server.rs:107:1: 107:96",
       "inferred": [
         "Db"
       ],
@@ -14194,7 +14195,7 @@
     },
     {
       "fn": "query::server::drop_database",
-      "loc": "src/query/server.rs:97:1: 97:94",
+      "loc": "src/query/server.rs:139:1: 139:94",
       "inferred": [
         "Db"
       ],
@@ -14238,7 +14239,7 @@
     },
     {
       "fn": "query::server::message",
-      "loc": "src/query/server.rs:110:1: 110:48",
+      "loc": "src/query/server.rs:152:1: 152:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14250,7 +14251,7 @@
     },
     {
       "fn": "query::server::sessions_on",
-      "loc": "src/query/server.rs:41:1: 44:34",
+      "loc": "src/query/server.rs:83:1: 86:34",
       "inferred": [
         "Db"
       ],
@@ -14268,6 +14269,28 @@
       ],
       "invisible": [
         "tokio_postgres"
+      ]
+    },
+    {
+      "fn": "query::server::unreadable",
+      "loc": "src/query/server.rs:57:1: 57:92",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [
+        "Db"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97ff09d0ebe1fdc52d",
+      "invisible": [
+        "tokio_postgres"
+      ],
+      "incomplete": [
+        "Db"
       ]
     },
     {
