@@ -40,12 +40,20 @@ pgman dump <target> [FILE] [--primary] [--format custom|plain|directory|tar]
   never weighs on the primary. `--primary` takes the primary instead.
   pgman says which server it used.
 - **What the user can't read, checked first.** An application role
-  often can't read every table: partitions or views another role owns,
-  say. pg_dump would stop at the first, however far into the dump. pgman
-  asks the server first and refuses, naming them, before pg_dump starts.
-  `--skip-unreadable` leaves exactly those out instead (each named, so
-  nothing else is), and the result says how many and which. The copy is
-  then incomplete; restoring it is your call.
+  often can't read everything another role owns: old partitions, a
+  schema it has no `USAGE` on, a table under row-level security, large
+  objects. pg_dump would stop at the first, however far into the dump.
+  pgman asks the server first and refuses, naming them, before pg_dump
+  starts. `--skip-unreadable` leaves exactly those out instead (each
+  table named, so nothing else is; large objects all together, as
+  `pg_dump -B` does), and the result says what it left out. The copy is
+  then incomplete; restoring it is your call. Views it can't select from
+  are no obstacle: pg_dump reads their definitions, not their rows.
+- **A sequence its table needs.** pg_dump reads a table's own sequences
+  (`serial` and identity columns) along with it, so a role that can read
+  a table but not its sequence can't be dumped around — not even with
+  `--skip-unreadable`. pgman says which, and that `GRANT SELECT ON
+  SEQUENCE` (`USAGE` isn't enough) or `pg_read_all_data` fixes it.
 - **Version check.** Your `pg_dump` must be at least the server's major
   version; an older one is refused before anything runs, with how to get
   a newer one.

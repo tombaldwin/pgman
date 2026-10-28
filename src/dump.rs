@@ -177,21 +177,27 @@ pub fn exclude_args(unreadable: &[crate::query::server::Unreadable]) -> Vec<Stri
         .collect()
 }
 
-/// `105 partitions, 9 views, 6 tables, 3 sequences`. Pure.
+/// `106 partitions, 2 sequences; no SELECT`: kinds by count, then why.
+/// Pure.
 fn kinds(unreadable: &[crate::query::server::Unreadable]) -> String {
     let mut counts: Vec<(&str, usize)> = Vec::new();
+    let mut reasons: Vec<&str> = Vec::new();
     for u in unreadable {
         match counts.iter_mut().find(|(k, _)| *k == u.kind) {
             Some((_, n)) => *n += 1,
             None => counts.push((&u.kind, 1)),
         }
+        if !reasons.contains(&u.reason.as_str()) {
+            reasons.push(&u.reason);
+        }
     }
     counts.sort_by_key(|c| std::cmp::Reverse(c.1));
-    counts
+    let kinds = counts
         .iter()
         .map(|(k, n)| format!("{n} {k}{}", if *n == 1 { "" } else { "s" }))
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(", ");
+    format!("{kinds}; {}", reasons.join(", "))
 }
 
 /// The first few of `unreadable`, by name, and how many more. Pure.
@@ -209,32 +215,133 @@ fn some_names(unreadable: &[crate::query::server::Unreadable]) -> String {
     }
 }
 
-/// Why a dump as `user` is refused before pg_dump starts: it can't read
-/// `unreadable`, and pg_dump would stop at the first, however far in.
-/// Pure.
-pub fn unreadable_refusal(user: &str, unreadable: &[crate::query::server::Unreadable]) -> String {
-    let mut owners: Vec<&str> = unreadable.iter().map(|u| u.owner.as_str()).collect();
-    owners.sort_unstable();
-    owners.dedup();
-    format!(
-        "{user} can't read {} object(s) the dump would cover ({}; owned by {}): {}.\n  \
-         pg_dump would stop at the first. --skip-unreadable leaves exactly these out and says \
-         so; or dump as a user that can read them (the owner, or one granted pg_read_all_data)",
-        unreadable.len(),
-        kinds(unreadable),
-        owners.join(", "),
-        some_names(unreadable)
-    )
+/// What the pre-flight decided: what to leave out, and what to say.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Preflight {
+    /// `--exclude-table`s, and `--no-blobs` for unreadable large objects.
+    pub args: Vec<String>,
+    /// For the result: what was left out.
+    pub notes: Vec<String>,
+    /// For progress: what wasn't checked because the options after `--`
+    /// choose what the dump covers.
+    pub warning: Option<String>,
 }
 
-/// The note a dump that left `unreadable` out ends with. Pure.
-pub fn skipped_note(user: &str, unreadable: &[crate::query::server::Unreadable]) -> String {
-    format!(
-        "left out {} object(s) {user} can't read ({}): {}",
-        unreadable.len(),
-        kinds(unreadable),
-        some_names(unreadable)
-    )
+/// Decide what a dump as `user` does about `unreadable` and
+/// `large_objects` (unreadable ones): refuse before pg_dump starts,
+/// leave them out (`--skip-unreadable`), or — with options after `--`,
+/// which may leave them out already — only warn. A sequence a readable
+/// table owns can't be left out at all, so it is refused even with
+/// `--skip-unreadable`. Pure.
+pub fn preflight(
+    user: &str,
+    unreadable: &[crate::query::server::Unreadable],
+    large_objects: i64,
+    opts: &Opts,
+) -> Result<Preflight, String> {
+    let (skippable, blocking): (Vec<_>, Vec<_>) =
+        unreadable.iter().cloned().partition(|u| u.skippable());
+    if !opts.extra.is_empty() {
+        let n = unreadable.len() + usize::from(large_objects > 0);
+        return Ok(Preflight {
+            warning: (n > 0).then(|| {
+                format!(
+                    "note: {user} can't read {} object(s) here{}; if the dump covers one, it stops there",
+                    unreadable.len(),
+                    if large_objects > 0 {
+                        format!(" and {large_objects} large object(s)")
+                    } else {
+                        String::new()
+                    }
+                )
+            }),
+            ..Preflight::default()
+        });
+    }
+    if !blocking.is_empty() {
+        let names: Vec<String> = blocking
+            .iter()
+            .take(6)
+            .map(|u| {
+                let table = u.owned_by.as_ref().map(|(t, _)| t.as_str()).unwrap_or("?");
+                format!("{}.{} (of {table})", u.schema, u.name)
+            })
+            .collect();
+        let more = blocking.len().saturating_sub(names.len());
+        return Err(format!(
+            "{user} can read these tables but not their sequences: {}{}.\n  pg_dump reads a \
+             table's own sequences (serial and identity columns) along with it, so they can't be \
+             left out on their own. GRANT SELECT ON SEQUENCE … TO {user} (USAGE isn't enough), or \
+             use a role with pg_read_all_data; or leave those tables out: -- --exclude-table=…",
+            names.join(", "),
+            if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            }
+        ));
+    }
+    if skippable.is_empty() && large_objects == 0 {
+        return Ok(Preflight::default());
+    }
+    let lo = if large_objects > 0 {
+        format!(", and {large_objects} large object(s)")
+    } else {
+        String::new()
+    };
+    if !opts.skip_unreadable {
+        let mut owners: Vec<&str> = skippable.iter().map(|u| u.owner.as_str()).collect();
+        owners.sort_unstable();
+        owners.dedup();
+        let what = if skippable.is_empty() {
+            "nothing else".to_string()
+        } else {
+            format!(
+                "{} object(s) ({}; owned by {}): {}",
+                skippable.len(),
+                kinds(&skippable),
+                owners.join(", "),
+                some_names(&skippable)
+            )
+        };
+        let rls = if skippable.iter().any(|u| u.reason == "row-level security") {
+            " For tables under row-level security, -- --enable-row-security dumps the rows it can see."
+        } else {
+            ""
+        };
+        return Err(format!(
+            "{user} can't read what the dump would cover: {what}{lo}.\n  pg_dump would stop at \
+             the first. --skip-unreadable leaves exactly these out{} and says so; or dump as a \
+             user that can read them (the owner, or one granted pg_read_all_data).{rls}",
+            if large_objects > 0 {
+                " (large objects all together, as pg_dump -B does)"
+            } else {
+                ""
+            }
+        ));
+    }
+    let mut args = exclude_args(&skippable);
+    let mut notes = Vec::new();
+    if !skippable.is_empty() {
+        notes.push(format!(
+            "left out {} object(s) {user} can't read ({}): {}",
+            skippable.len(),
+            kinds(&skippable),
+            some_names(&skippable)
+        ));
+    }
+    if large_objects > 0 {
+        args.push("-B".to_string());
+        notes.push(format!(
+            "left out the large objects: {user} can't read {large_objects} of them, and pg_dump \
+             can't leave out some"
+        ));
+    }
+    Ok(Preflight {
+        args,
+        notes,
+        warning: None,
+    })
 }
 
 /// pg_dump's short options that take a value: in a bundle (`-sxt foo`)
@@ -433,6 +540,18 @@ pub fn explain_failure(tail: &str, replica: bool, user: Option<&str>) -> String 
             "the replica cancelled the dump: a long read conflicted with changes it was replaying \
              from the primary (a recovery conflict).\n  Try again, at a quieter time if you can{primary}, \
              or raise max_standby_streaming_delay on the replica.\n  pg_dump said: {last}"
+        );
+    }
+    if lower.contains("permission denied for large object") {
+        return format!(
+            "{last}\n  Large objects can't be left out one by one: -- -B leaves out all of them, \
+             or dump as a user that can read them"
+        );
+    }
+    if lower.contains("row-level security") {
+        return format!(
+            "{last}\n  pg_dump reads every row or none: dump as the table's owner or a role with \
+             BYPASSRLS, or -- --enable-row-security to dump the rows this user can see"
         );
     }
     // The server's wording ("permission denied for table …"), not a
@@ -677,32 +796,25 @@ pub async fn run(
     let opened = pgtool::open(&resolved).await?;
     let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000).await?;
     let facts = crate::query::server::facts(&client).await?;
-    let unreadable = crate::query::server::unreadable(&client).await?;
+    let foreign = opts
+        .extra
+        .iter()
+        .any(|a| a.starts_with("--include-foreign-data"));
+    let unreadable = crate::query::server::unreadable(&client, foreign).await?;
+    let large_objects = crate::query::server::unreadable_large_objects(&client).await?;
     drop(client);
-    let mut excludes = Vec::new();
-    let mut skipped = None;
-    if !unreadable.is_empty() {
-        if opts.skip_unreadable {
-            excludes = exclude_args(&unreadable);
-            skipped = Some(skipped_note(&facts.user, &unreadable));
-        } else if opts.extra.is_empty() {
-            return Err(unreadable_refusal(&facts.user, &unreadable));
-        } else {
-            // The options after `--` may leave them out already.
-            say(format!(
-                "note: {} can't read {} object(s) here ({}); if the dump covers one, it stops there",
-                facts.user,
-                unreadable.len(),
-                kinds(&unreadable)
-            ));
-        }
+    let pre = preflight(&facts.user, &unreadable, large_objects, opts)?;
+    if let Some(w) = &pre.warning {
+        say(w.clone());
     }
+    let excludes = pre.args;
+    let skipped = pre.notes;
     let server = Major::from_num(facts.version_num)
         .ok_or_else(|| format!("unreadable server_version_num {}", facts.version_num))?;
     if let Some(why) = pgtool::version_refusal("pg_dump", have, server) {
         return Err(why);
     }
-    let mut notes: Vec<String> = skipped.into_iter().collect();
+    let mut notes: Vec<String> = skipped;
     if resolved.role == crate::mcp::connections::Role::Replica && !facts.in_recovery {
         notes.push(format!(
             "{} is listed as a replica but isn't in recovery: the dump came from a primary",
@@ -977,6 +1089,8 @@ mod tests {
             name: name.into(),
             kind: kind.into(),
             owner: "postgres".into(),
+            reason: "no SELECT".into(),
+            owned_by: None,
         }
     }
 
@@ -1004,21 +1118,103 @@ mod tests {
 
     #[test]
     fn the_refusal_counts_kinds_and_names_a_few() {
-        let mut list: Vec<_> = (1..=10)
+        let list: Vec<_> = (1..=11)
             .map(|i| unreadable("public", &format!("t_diary_w{i}"), "partition"))
             .collect();
-        list.push(unreadable("public", "v_recent", "view"));
-        let e = unreadable_refusal("app_ro", &list);
-        assert!(e.starts_with("app_ro can't read 11 object(s) the dump would cover (10 partitions, 1 view; owned by postgres)"), "{e}");
+        let o = parse_cli(&args(&["x"])).unwrap();
+        let e = preflight("app_ro", &list, 0, &o).unwrap_err();
+        assert!(e.starts_with("app_ro can't read what the dump would cover: 11 object(s) (11 partitions; no SELECT; owned by postgres)"), "{e}");
         assert!(
             e.contains("and 3 more") && e.contains("--skip-unreadable"),
             "{e}"
         );
-        let n = skipped_note("app_ro", &list[..1]);
+        let o = parse_cli(&args(&["x", "--skip-unreadable"])).unwrap();
+        let p = preflight("app_ro", &list[..1], 0, &o).unwrap();
+        assert_eq!(p.args, args(&["--exclude-table=\"public\".\"t_diary_w1\""]));
         assert_eq!(
-            n,
-            "left out 1 object(s) app_ro can't read (1 partition): public.t_diary_w1"
+            p.notes,
+            vec!["left out 1 object(s) app_ro can't read (1 partition; no SELECT): public.t_diary_w1".to_string()]
         );
+    }
+
+    #[test]
+    fn a_sequence_a_readable_table_owns_cant_be_skipped() {
+        let mut seq = unreadable("app", "accounts_id_seq", "sequence");
+        seq.owned_by = Some(("app.accounts".into(), true));
+        for flags in [&["x"][..], &["x", "--skip-unreadable"]] {
+            let o = parse_cli(&args(flags)).unwrap();
+            let e = preflight("app_ro", std::slice::from_ref(&seq), 0, &o).unwrap_err();
+            assert!(
+                e.contains("app.accounts_id_seq (of app.accounts)")
+                    && e.contains("GRANT SELECT ON SEQUENCE"),
+                "{flags:?}: {e}"
+            );
+            assert!(
+                !e.contains("--skip-unreadable"),
+                "never suggests the flag that can't help: {e}"
+            );
+        }
+        // Owned by a table it can't read either: both are left out.
+        seq.owned_by = Some(("app.secrets".into(), false));
+        let table = unreadable("app", "secrets", "table");
+        let o = parse_cli(&args(&["x", "--skip-unreadable"])).unwrap();
+        let p = preflight("app_ro", &[seq, table], 0, &o).unwrap();
+        assert_eq!(p.args.len(), 2, "{:?}", p.args);
+    }
+
+    #[test]
+    fn unreadable_large_objects_go_all_together_and_say_so() {
+        let o = parse_cli(&args(&["x"])).unwrap();
+        let e = preflight("app_ro", &[], 3, &o).unwrap_err();
+        assert!(
+            e.contains("and 3 large object(s)") && e.contains("pg_dump -B"),
+            "{e}"
+        );
+        let o = parse_cli(&args(&["x", "--skip-unreadable"])).unwrap();
+        let p = preflight("app_ro", &[], 3, &o).unwrap();
+        assert_eq!(p.args, args(&["-B"]));
+        assert!(
+            p.notes[0].contains("left out the large objects"),
+            "{:?}",
+            p.notes
+        );
+    }
+
+    #[test]
+    fn with_options_after_the_double_dash_it_only_warns() {
+        let o = parse_cli(&args(&["x", "--", "--table=app.accounts"])).unwrap();
+        let p = preflight("app_ro", &[unreadable("app", "secrets", "table")], 0, &o).unwrap();
+        assert!(p.args.is_empty() && p.warning.unwrap().contains("if the dump covers one"));
+        assert_eq!(
+            preflight("app_ro", &[], 0, &o).unwrap(),
+            Preflight::default()
+        );
+    }
+
+    #[test]
+    fn row_level_security_names_the_way_round_it() {
+        let mut t = unreadable("app", "tenants", "table");
+        t.reason = "row-level security".into();
+        let e = preflight("app_ro", &[t], 0, &parse_cli(&args(&["x"])).unwrap()).unwrap_err();
+        assert!(
+            e.contains("row-level security") && e.contains("--enable-row-security"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn large_objects_and_row_security_get_their_own_advice() {
+        let e = explain_failure(
+            "pg_dump: error: query failed: ERROR:  permission denied for large object 93875",
+            false,
+            None,
+        );
+        assert!(
+            e.contains("-- -B") && !e.contains("--skip-unreadable"),
+            "{e}"
+        );
+        let e = explain_failure("pg_dump: error: Dumping the contents of table \"secrets\" failed: ERROR:  query would be affected by row-level security policy for table \"secrets\"", false, None);
+        assert!(e.contains("--enable-row-security"), "{e}");
     }
 
     #[test]

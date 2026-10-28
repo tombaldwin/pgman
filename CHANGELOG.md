@@ -16,8 +16,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   hidden name and renamed into place on success, private to you, with a
   `-latest` link for a default name. A replica cancelling the dump (a
   recovery conflict) and a permission failure are explained. What the
-  dump's user can't read is found before pg_dump starts and refused by
-  name; `--skip-unreadable` leaves exactly that out and says so. See
+  dump's user can't read (no SELECT, no USAGE on its schema, row-level
+  security, large objects) is found before pg_dump starts and refused
+  by name; `--skip-unreadable` leaves exactly that out and says so. A
+  sequence that a readable table owns can't be left out, and is named
+  with the GRANT that fixes it. See
   `docs/dump-restore.md`.
 - `pgman restore <FILE> <target>`: a dump restored by your own
   `pg_restore`, never into a protected environment and only on this

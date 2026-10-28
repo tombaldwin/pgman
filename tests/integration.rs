@@ -9434,7 +9434,11 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
 
 /// A dump whose user can't read everything is refused before pg_dump
 /// starts, naming what; with --skip-unreadable it leaves exactly those
-/// out and says so, and what it can read is in the dump.
+/// out and says so, and what it can read is in the dump. What pg_dump
+/// fails on is what counts: no SELECT, no USAGE on the schema, row-level
+/// security, an unreadable large object — and a sequence a readable
+/// table owns, which can't be left out at all. A view it can't select
+/// from is no obstacle (pg_dump reads its definition, not its rows).
 #[cfg(unix)]
 #[test]
 fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
@@ -9445,61 +9449,90 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
     let (home, out) = dump_home("dump-unreadable");
     let db = it_name("unread");
     let rt = tokio::runtime::Runtime::new().unwrap();
+    let in_db = |sql: &str| {
+        let sql = sql.to_string();
+        let db = db.clone();
+        rt.block_on(async move { raw(&db).await.batch_execute(&sql).await.unwrap() })
+    };
     rt.block_on(async {
         let c = raw("pgman_test").await;
-        let _ = c.batch_execute(&format!("DROP DATABASE IF EXISTS {db}")).await;
-        c.batch_execute(&format!("CREATE DATABASE {db}")).await.unwrap();
-        raw(&db)
-            .await
-            .batch_execute(
-                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
-                 CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$; \
-                 CREATE TABLE open_t (id int); INSERT INTO open_t VALUES (1); \
-                 CREATE TABLE closed_t (id int); CREATE VIEW closed_v AS SELECT * FROM closed_t; \
-                 GRANT SELECT ON open_t TO pgman_lim",
-            )
+        let _ = c
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {db}"))
+            .await;
+        c.batch_execute(&format!("CREATE DATABASE {db}"))
             .await
             .unwrap();
     });
+    in_db(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
+         CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$; \
+         CREATE TABLE open_t (id serial, v text); INSERT INTO open_t (v) VALUES ('a'); \
+         CREATE TABLE closed_t (id int); CREATE VIEW closed_v AS SELECT * FROM closed_t; \
+         CREATE SCHEMA hidden; CREATE TABLE hidden.h (id int); \
+         CREATE TABLE rls_t (id int); ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY; \
+         SELECT lo_create(0); \
+         GRANT SELECT ON open_t, rls_t, hidden.h TO pgman_lim",
+    );
     let url = format!("postgres://pgman_lim:pgman_lim@127.0.0.1:55432/{db}?sslmode=disable");
-    let o = pgman_in(&home, &out, &["dump", &url, "x.dump"]);
+    let dump = |extra: &[&str]| {
+        let mut a = vec!["dump", url.as_str(), "x.dump"];
+        a.extend_from_slice(extra);
+        pgman_in(&home, &out, &a)
+    };
+    for flags in [&[][..], &["--skip-unreadable"]] {
+        let o = dump(flags);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(!o.status.success());
+        assert!(
+            stderr.contains("can read these tables but not their sequences: public.open_t_id_seq (of public.open_t)"),
+            "{flags:?}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("pg_dump: error"),
+            "refused before pg_dump ran: {stderr}"
+        );
+    }
+    in_db("GRANT SELECT ON SEQUENCE open_t_id_seq TO pgman_lim");
+    let o = dump(&[]);
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success());
-    assert!(
-        stderr.contains("pgman_lim can't read 2 object(s) the dump would cover (1 table, 1 view; owned by pgman_test)"),
-        "{stderr}"
-    );
-    assert!(
-        !stderr.contains("pg_dump: error"),
-        "refused before pg_dump ran: {stderr}"
-    );
+    for want in [
+        "3 object(s) (3 tables; ",
+        "no SELECT",
+        "no USAGE on its schema",
+        "row-level security",
+        "public.closed_t",
+        "hidden.h",
+        "public.rls_t",
+        "and 1 large object(s)",
+    ] {
+        assert!(stderr.contains(want), "{want}: {stderr}");
+    }
+    assert!(!stderr.contains("closed_v"), "a view isn't read: {stderr}");
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
 
-    let o = pgman_in(
-        &home,
-        &out,
-        &[
-            "dump",
-            &url,
-            "x.dump",
-            "--skip-unreadable",
-            "--format",
-            "plain",
-        ],
-    );
+    let o = dump(&["--skip-unreadable", "--format", "plain"]);
     let (stdout, stderr) = (
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr),
     );
     assert!(o.status.success(), "{stderr}");
     assert!(
-        stdout.contains("note: left out 2 object(s) pgman_lim can't read (1 table, 1 view): public.closed_t, public.closed_v"),
+        stdout.contains("note: left out 3 object(s) pgman_lim can't read"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("note: left out the large objects"),
         "{stdout}"
     );
     let sql = std::fs::read_to_string(out.join("x.dump")).unwrap();
+    assert!(sql.contains("CREATE TABLE public.open_t"), "{sql}");
     assert!(
-        sql.contains("CREATE TABLE public.open_t") && !sql.contains("closed_t"),
-        "{sql}"
+        sql.contains("CREATE VIEW public.closed_v"),
+        "the view's definition is kept"
+    );
+    assert!(
+        !sql.contains("CREATE TABLE public.closed_t") && !sql.contains("CREATE TABLE hidden.h")
     );
     rt.block_on(async {
         let _ = raw("pgman_test")
