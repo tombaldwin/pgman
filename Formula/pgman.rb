@@ -16,6 +16,10 @@ class Pgman < Formula
   version "0.3.0"
   license "MIT OR Apache-2.0"
 
+  # pgman dump and restore run pg_dump and pg_restore, from libpq. It is
+  # keg-only (nothing on PATH), so the wrapper below tells pgman where.
+  depends_on "libpq"
+
   if OS.mac?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-apple-darwin.tar.gz"
@@ -35,20 +39,19 @@ class Pgman < Formula
   end
 
   def install
-    bin.install "pgman"
+    libexec.install "pgman"
+    # opt_bin, not the versioned keg: it follows libpq's upgrades.
+    (bin/"pgman").write_env_script libexec/"pgman", PGMAN_PG_BIN: formula_opt_bin("libpq")
     prefix.install "README.md", "LICENSE-MIT", "LICENSE-APACHE"
-  end
-
-  def caveats
-    <<~EOS
-      pgman dump and pgman restore run your own pg_dump and pg_restore.
-      If you don't have them yet: brew install libpq
-    EOS
   end
 
   test do
     # pgman prints "pgman <version> · beta" — a substring match, since the
     # trailing beta tag isn't part of the version this formula tracks.
     assert_match "pgman #{version}", shell_output("#{bin}/pgman --version")
+    # The tools dump and restore run are where the wrapper says.
+    assert_path_exists formula_opt_bin("libpq")/"pg_dump"
+    assert_path_exists formula_opt_bin("libpq")/"pg_restore"
+    assert_match "PGMAN_PG_BIN", (bin/"pgman").read
   end
 end
