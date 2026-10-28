@@ -80,7 +80,16 @@ tap (with a libpq caveat). The panel (four reviewers) and its re-checks
 are in `docs/backlog/archive.md`; what they left for later is in
 BACKLOG.md → From the dump/restore review.
 
-### 1. Waiting on Tom
+### 1. Masked dumps — designed, not built
+
+A copy of production with the data's shape and none of its people:
+`docs/design/masked-dumps.md` (2026-10-28). A per-environment dump
+policy, a committed rules file, fail-closed classification of every
+column, keyed deterministic transforms, validate without printing
+values, and later subsetting. Five decisions for Tom at the end of the
+note; phase 1 (the policy) can ship before the rest is settled.
+
+### 2. Waiting on Tom
 
 - **pgman-tap JAR**: go or not yet; `io.poly` groupId; loopback-only
   default with `pgman.tap.allow-remote`. Wire-compatible with 0.2.x (78
@@ -92,7 +101,7 @@ BACKLOG.md → From the dump/restore review.
 - **Required CI checks on main**: the branch-protection call needs Tom
   (the payload is drafted).
 
-### 2. Next from BACKLOG.md
+### 3. Next from BACKLOG.md
 
 The v0.2.1 polish follow-ups (BACKLOG.md → From the v0.2.1 polish):
 the scratch-safe `demo.tape` and a fresh `demo.gif`, the narrow tap
