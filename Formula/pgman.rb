@@ -13,30 +13,37 @@
 class Pgman < Formula
   desc "k9s-style Postgres TUI for Java/AWS shops"
   homepage "https://github.com/tombaldwin/pgman"
-  version "0.2.1"
+  version "0.3.0"
   license "MIT OR Apache-2.0"
 
   if OS.mac?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "794ed75e9fb99e412a628c3124c66a3f037fc576a0baa0018eb096cc118c0fc7"
+      sha256 "1c39140902a737eec254896565cc8a3af1f939e4e933081be6fd27c84384acf3"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "d91108e7ce4df57ae0919bfe7c91960114539e394ad7a1b177645f319f8d1c37"
+      sha256 "7bb287bfee867af1987203a198092b24039d1401076259b08b6d1973e3c9c2ef"
     end
   elsif OS.linux?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "936beea68546ff27036d36ebc8e27715a9e2106accd83721acb9c973769a4ee0"
+      sha256 "c070b44e61e4f177acd91a45ec4169df84a63cd474bd3bc1e98fb5399ac70b53"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "b266088f08315610f59ec4eaa21c2fe3d6b1d6996b740d5734800a951bda6095"
+      sha256 "12e62f13746078ccdbe740059103287b295ab7e5770de3383eb25833c53d49df"
     end
   end
 
   def install
     bin.install "pgman"
     prefix.install "README.md", "LICENSE-MIT", "LICENSE-APACHE"
+  end
+
+  def caveats
+    <<~EOS
+      pgman dump and pgman restore run your own pg_dump and pg_restore.
+      If you don't have them yet: brew install libpq
+    EOS
   end
 
   test do
