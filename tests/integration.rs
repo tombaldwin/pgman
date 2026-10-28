@@ -8310,11 +8310,24 @@ fn a_dump_comes_from_the_replica_and_is_private() {
         assert!(started.elapsed().as_secs() < 30, "never replicated");
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    let o = pgman_in(
-        &home,
-        &out,
-        &["dump", "staging", "--", &format!("--table={t}")],
-    );
+    // The other tests' DDL on the primary can cancel a read on the
+    // standby (a recovery conflict); pgman says so and to try again,
+    // which is what this does.
+    let mut tries = 0;
+    let o = loop {
+        let o = pgman_in(
+            &home,
+            &out,
+            &["dump", "staging", "--", &format!("--table={t}")],
+        );
+        tries += 1;
+        let conflict =
+            String::from_utf8_lossy(&o.stderr).contains("the replica cancelled the dump");
+        if !conflict || tries == 5 {
+            break o;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    };
     let (stdout, stderr) = (
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr),
