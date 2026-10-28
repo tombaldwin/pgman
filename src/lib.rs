@@ -33,6 +33,7 @@ pub mod redact;
 #[cfg(test)]
 pub(crate) mod release_meta;
 pub mod report;
+pub mod restore;
 pub mod safety;
 pub mod saved;
 pub mod splash;

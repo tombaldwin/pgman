@@ -1125,6 +1125,31 @@ pub async fn connect_via(
     Ok(Arc::new(client))
 }
 
+/// [`connect_via`], writable: for `pgman restore`'s own statements
+/// (`CREATE DATABASE`, ending other sessions), on a target the caller
+/// has already checked may be written to.
+pub async fn connect_via_writable(
+    dsn: Dsn,
+    via: Option<u16>,
+    statement_timeout_ms: u64,
+) -> Result<Arc<tokio_postgres::Client>, String> {
+    if dsn.ssh_tunnel.is_some() {
+        return Err("connect_via_writable: the caller opens the tunnel".to_string());
+    }
+    let (notice_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (client, _) = connect_inner(
+        dsn,
+        via,
+        false,
+        statement_timeout_ms,
+        notice_tx,
+        notification_tx,
+    )
+    .await?;
+    Ok(Arc::new(client))
+}
+
 /// The longest one of the connect's own catalog reads waits for a lock
 /// (`lock_timeout`) before it gives up and the connect goes on without it.
 pub const BOOTSTRAP_LOCK_TIMEOUT: &str = "2s";

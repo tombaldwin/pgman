@@ -8383,7 +8383,13 @@ fn a_failed_dump_never_replaces_the_file() {
         1,
         "no partial left"
     );
-    let _ = batch_with_home(&home, &["--yes", "--sql", &format!("DROP TABLE {t}")]);
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        raw("pgman_test")
+            .await
+            .batch_execute(&format!("DROP TABLE {t}"))
+            .await
+            .unwrap()
+    });
 }
 
 /// A fake `pg_dump` in a directory for `--pg-bin`: `--version` prints
@@ -8506,4 +8512,327 @@ fn a_recovery_conflict_is_explained() {
     );
     assert!(stderr.contains("--primary"), "{stderr}");
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0, "nothing left");
+}
+
+/// [`dump_home`] with a `local` connection to the compose primary, a
+/// protected environment over it, and a fresh custom-format dump of a
+/// table of `rows` rows in `dump.dump`. Returns the table's name too.
+#[cfg(unix)]
+fn restore_home(name: &str, rows: i32) -> (std::path::PathBuf, std::path::PathBuf, String) {
+    let (home, out) = dump_home(name);
+    let mut conns = std::fs::read_to_string(home.join(".config/pgman/connections.toml")).unwrap();
+    conns.push_str(
+        "[[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+         [[connections]]\nname = \"live-db\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n",
+    );
+    std::fs::write(home.join(".config/pgman/connections.toml"), conns).unwrap();
+    let mut envs = std::fs::read_to_string(home.join(".config/pgman/environments.toml")).unwrap();
+    envs.push_str(
+        "[[environments]]\nname = \"live\"\nprotected = true\nsource = { kind = \"static\", connections = [\"live-db\"] }\n",
+    );
+    std::fs::write(home.join(".config/pgman/environments.toml"), envs).unwrap();
+    let t = it_name(&format!("{name}_src").replace('-', "_"));
+    let sql = |q: String| {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { raw("pgman_test").await.batch_execute(&q).await })
+            .unwrap()
+    };
+    sql(format!(
+        "DROP TABLE IF EXISTS {t}; CREATE TABLE {t} (id int PRIMARY KEY); \
+         INSERT INTO {t} SELECT generate_series(1, {rows})"
+    ));
+    let o = pgman_in(
+        &home,
+        &out,
+        &["dump", "local", "dump.dump", "--", &format!("--table={t}")],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    sql(format!("DROP TABLE {t}"));
+    (home, out, t)
+}
+
+/// `SELECT count(*) FROM t` in database `db`, or the error.
+fn count_in(db: &str, t: &str) -> Result<i64, String> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw(db).await;
+        c.query_one(&format!("SELECT count(*) FROM {t}"), &[])
+            .await
+            .map(|r| r.get(0))
+            .map_err(|e| e.to_string())
+    })
+}
+
+/// A restore goes into a database of another name, `--create` makes it
+/// and refuses one that exists, and `--clean` replaces what is there.
+#[cfg(unix)]
+#[test]
+fn a_restore_goes_into_another_name_and_clean_replaces_it() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out, t) = restore_home("restore-as", 25);
+    let db = it_name("restored");
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "local",
+            "--as",
+            &db,
+            "--create",
+            "--yes",
+        ],
+    );
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(o.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains(&format!("restored into {db} on 127.0.0.1:55432")),
+        "{stdout}"
+    );
+    assert_eq!(count_in(&db, &t), Ok(25));
+
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "local",
+            "--as",
+            &db,
+            "--create",
+            "--yes",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains("already exists; --clean replaces it"),
+        "{stderr}"
+    );
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        raw(&db)
+            .await
+            .batch_execute(&format!(
+                "INSERT INTO {t} VALUES (1000); CREATE TABLE {t}_extra (x int)"
+            ))
+            .await
+            .unwrap();
+    });
+    assert_eq!(count_in(&db, &t), Ok(26));
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "local",
+            "--as",
+            &db,
+            "--clean",
+            "--yes",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(count_in(&db, &t), Ok(25), "replaced, not merged");
+    assert!(
+        count_in(&db, &format!("{t}_extra")).is_err(),
+        "the old database is gone"
+    );
+    assert_eq!(
+        count_in("pgman_test", &t).map_err(|_| ()),
+        Err(()),
+        "the source table was dropped; nothing restored there"
+    );
+}
+
+/// Another session on the database stops a restore, by pid; with
+/// `--terminate` it is ended and the restore goes on.
+#[cfg(unix)]
+#[test]
+fn a_restore_refuses_while_another_session_is_connected() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out, t) = restore_home("restore-busy", 3);
+    let db = it_name("busy");
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "local",
+            "--as",
+            &db,
+            "--create",
+            "--yes",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (other, pid) = rt.block_on(async {
+        let c = raw(&db).await;
+        let pid: i32 = c
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        (c, pid)
+    });
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "local",
+            "--as",
+            &db,
+            "--clean",
+            "--yes",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains(&format!("1 other session(s) connected to {db}: pid {pid}")),
+        "{stderr}"
+    );
+    assert!(stderr.contains("--terminate"), "{stderr}");
+    assert_eq!(count_in(&db, &t), Ok(3), "untouched");
+
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "local",
+            "--as",
+            &db,
+            "--clean",
+            "--terminate",
+            "--yes",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let gone = rt.block_on(async { other.query_one("SELECT 1", &[]).await.is_err() });
+    assert!(gone, "the other session was ended");
+    assert_eq!(count_in(&db, &t), Ok(3));
+}
+
+/// A protected target and one off this machine are refused before
+/// anything is connected to; so is a plain SQL file, and a restore that
+/// would ask with no terminal to ask on.
+#[cfg(unix)]
+#[test]
+fn a_protected_remote_or_unconfirmed_restore_is_refused() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out, _t) = restore_home("restore-refuse", 1);
+    let db = it_name("refused");
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "live",
+            "--as",
+            &db,
+            "--create",
+            "--yes",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(stderr.contains("live is protected"), "{stderr}");
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "live-db",
+            "--as",
+            &db,
+            "--create",
+            "--yes",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("live-db is protected"),
+        "by its environment: {stderr}"
+    );
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "dump.dump",
+            "postgres://pgman_test@10.0.1.23/ledger",
+            "--create",
+            "--yes",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("isn't on this machine (10.0.1.23:5432)"),
+        "{stderr}"
+    );
+    std::fs::write(
+        out.join("plain.sql"),
+        "--\n-- PostgreSQL database dump\n--\n\nSELECT 1;\n",
+    )
+    .unwrap();
+    let o = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            "plain.sql",
+            "local",
+            "--as",
+            &db,
+            "--create",
+            "--yes",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("run with psql instead"), "{stderr}");
+    let o = pgman_in(
+        &home,
+        &out,
+        &["restore", "dump.dump", "local", "--as", &db, "--create"],
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("pass --yes"), "{stderr}");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let exists: bool = rt.block_on(async {
+        raw("pgman_test")
+            .await
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
+                &[&db],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    });
+    assert!(!exists, "nothing was created");
 }

@@ -324,17 +324,20 @@ pub fn paths(
     }
 }
 
+/// The last error line of a tool's stderr, else its last line. Pure.
+pub fn last_error(tail: &str) -> Option<&str> {
+    tail.lines()
+        .rev()
+        .find(|l| l.contains("error:") || l.contains("ERROR:") || l.contains("FATAL:"))
+        .or_else(|| tail.lines().rev().find(|l| !l.trim().is_empty()))
+        .map(str::trim)
+}
+
 /// What a failed pg_dump's stderr (`tail`) means, for the operator.
 /// `replica`: it ran on a standby. `user`: who it connected as. Pure.
 pub fn explain_failure(tail: &str, replica: bool, user: Option<&str>) -> String {
     let lower = tail.to_ascii_lowercase();
-    let last = tail
-        .lines()
-        .rev()
-        .find(|l| l.contains("error:") || l.contains("ERROR:") || l.contains("FATAL:"))
-        .or_else(|| tail.lines().rev().find(|l| !l.trim().is_empty()))
-        .unwrap_or("pg_dump failed with no message")
-        .trim();
+    let last = last_error(tail).unwrap_or("pg_dump failed with no message");
     if lower.contains("conflict with recovery") {
         let primary = if replica {
             "; if it keeps happening, take it from the primary with --primary (which then carries the dump's reads)"
