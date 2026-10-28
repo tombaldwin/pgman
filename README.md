@@ -38,7 +38,10 @@ At a glance:
 - **Applying patches** — `P` plans an environment's pending patches
   read-only, checks each against your guard rails, and after you confirm
   runs each in its own transaction; a dry run or a throwaway copy rehearses
-  it first. `l` shows the RDS server's recent errors.
+  it first; `pgman apply` does the same from the command line, and
+  `pgman run` runs a script that manages its own transactions
+  ([`docs/run.md`](https://github.com/tombaldwin/pgman/blob/main/docs/run.md)).
+  `l` shows the RDS server's recent errors.
 - **Dump and restore** — `pgman dump staging/ledger` runs your own
   `pg_dump` through pgman's connection (from the replica, the password
   read at that moment, through the bastion; nothing secret on a command
@@ -228,6 +231,7 @@ coverage, fuzzing, and what CI runs on every push.
 - [`docs/commands.md`](https://github.com/tombaldwin/pgman/blob/main/docs/commands.md) — command reference.
 - [`docs/configuration.md`](https://github.com/tombaldwin/pgman/blob/main/docs/configuration.md) — config file locations and options.
 - [`docs/environments.md`](https://github.com/tombaldwin/pgman/blob/main/docs/environments.md) — the environments view, `environments.toml` and `pgman env discover`.
+- [`docs/run.md`](https://github.com/tombaldwin/pgman/blob/main/docs/run.md) — `pgman run`, scripts with their own transactions and `\c`.
 - [`docs/dump-restore.md`](https://github.com/tombaldwin/pgman/blob/main/docs/dump-restore.md) — `pgman dump` and `pgman restore`.
 - [`docs/mcp.md`](https://github.com/tombaldwin/pgman/blob/main/docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
 - [`docs/safety-and-privacy.md`](https://github.com/tombaldwin/pgman/blob/main/docs/safety-and-privacy.md) — safety guard rails, what's stored locally.

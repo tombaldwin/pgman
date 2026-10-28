@@ -325,8 +325,10 @@ before you confirm:
   disk, so it suits an idle local or dev database, not a live one;
   pgman refuses when anyone else is connected rather than make the
   copy. If the copy can't be dropped afterwards, the result names it
-  for you to drop. That `DROP DATABASE` is the only one pgman runs, and
-  it takes only a name pgman made.
+  for you to drop. That `DROP DATABASE` takes only a name pgman made;
+  the only other one pgman runs is `pgman restore --clean`'s, on an
+  unprotected local database you confirm by typing its name (see
+  [dump-restore.md](dump-restore.md)).
 
 **`DO` blocks and `CALL`.** The plan checks a `DO` block or a `CALL`
 as one statement; what its body does isn't read, so its body can do
@@ -369,13 +371,35 @@ run **outside a transaction**:
 
 Ordinary patches in the same plan still run in their own transactions,
 and every other refusal stands. MCP's `apply_patches` never plans this
-way: run those patches from the TUI. Its `mode` argument picks a dry
-run (`dry_run`) or a copy (`copy`), as Tab does.
+way: run those patches from the TUI, or `pgman apply --outside`. Its
+`mode` argument picks a dry run (`dry_run`) or a copy (`copy`), as Tab
+does.
 
 A replica is never patched: its primary is. An environment is
 **protected** when it says `protected = true`, or — when it says
 nothing — when its name contains `prod`. A protected environment is
 confirmed by typing its name; `protected = false` turns that off.
+
+### From the command line: `pgman apply`
+
+```sh
+pgman apply staging/ledger --dry-run
+pgman apply staging/ledger
+pgman apply staging/ledger --outside      # also plan VACUUM, CONCURRENTLY…
+```
+
+The same plan and run as `P`, printed: the pending patches, what each
+includes, what was left out and where the plan stops. `--dry-run` and
+`--copy` are Tab's other two modes; `--outside` is `o`. The target is
+`ENV`, `ENV/DATABASE` or `ENV/SERVER/DATABASE` (the primary, never a
+replica). It asks before applying: `y`, or `--yes` in a script — except
+for a protected environment or an `--outside` plan, which take the
+environment's name typed at a terminal, and which `--yes` doesn't
+answer. Ctrl-C cancels as Esc twice does. It exits non-zero when a
+patch failed or the plan stopped before one.
+
+A script that runs its own transactions, rather than a patch, is
+[`pgman run`](run.md).
 
 ## Keys
 

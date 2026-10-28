@@ -22,6 +22,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   machine unless `--allow-remote`. `--as NAME` restores into another
   database, `--create` makes it, `--clean` replaces it; other sessions
   refuse it unless `--terminate`; it is confirmed, or `--yes`.
+- `pgman run <target> <FILE>`: a script that runs its own transactions
+  (`BEGIN … COMMIT`), as `psql -f` does, with `\c DATABASE` moving it
+  to another database of the environment. Checked against safety.toml
+  first; confirmed (a protected target by typing its name); a failure
+  or Ctrl-C reports what stayed committed, what rolled back and what
+  never ran. See `docs/run.md`.
+- `pgman apply <target> [--outside] [--dry-run | --copy]`: the
+  environments view's `P` from the command line. An `--outside` plan or
+  a protected environment takes the typed name, which `--yes` doesn't
+  answer.
 - A `<target>` on the command line is `ENV`, `ENV/DATABASE`,
   `ENV/SERVER/DATABASE`, a `connections.toml` name, or a URL.
 
