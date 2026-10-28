@@ -220,9 +220,8 @@ pub async fn run_cli(opts: &Opts) -> Result<(String, bool), String> {
     {
         let cancel = cancel.clone();
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                cancel.cancel();
-            }
+            crate::pgtool::interrupted().await;
+            cancel.cancel();
         });
     }
     tracing::info!(target: "pgman::apply", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), mode = opts.mode.name(), "pgman apply confirmed");

@@ -347,6 +347,45 @@ impl Tail {
     }
 }
 
+/// Completes when the operator stops a command-line run: Ctrl-C, and on
+/// Unix also SIGTERM (`kill`) and SIGHUP (the terminal closing). Each
+/// way, the run then cleans up as for Ctrl-C — the tool killed, the
+/// partial file removed, the transaction rolled back — rather than the
+/// process ending with pg_dump left running and the tunnel up.
+pub async fn interrupted() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).ok();
+        let mut hup = signal(SignalKind::hangup()).ok();
+        let term = async {
+            match term.as_mut() {
+                Some(s) => {
+                    s.recv().await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
+        let hup = async {
+            match hup.as_mut() {
+                Some(s) => {
+                    s.recv().await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term => {}
+            _ = hup => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
 /// Run `cmd` (stderr piped), echoing its stderr lines to ours when
 /// `echo`, and keep their tail. Cancelled by Ctrl-C: the tool is killed
 /// and the run says so.
@@ -362,7 +401,7 @@ pub async fn run_tool_cli(
     let stderr = child.stderr.take().ok_or("no stderr")?;
     let mut lines = tokio::io::BufReader::new(stderr).lines();
     let mut tail = Tail::default();
-    let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+    let mut ctrl_c = std::pin::pin!(interrupted());
     loop {
         tokio::select! {
             line = lines.next_line() => match line {
@@ -376,7 +415,7 @@ pub async fn run_tool_cli(
             },
             _ = &mut ctrl_c => {
                 let _ = child.kill().await;
-                return Err("cancelled (Ctrl-C)".to_string());
+                return Err("stopped (Ctrl-C, or the process was signalled)".to_string());
             }
         }
     }
@@ -384,7 +423,7 @@ pub async fn run_tool_cli(
         s = child.wait() => s.map_err(|e| format!("waiting for it failed: {e}"))?,
         _ = &mut ctrl_c => {
             let _ = child.kill().await;
-            return Err("cancelled (Ctrl-C)".to_string());
+            return Err("stopped (Ctrl-C, or the process was signalled)".to_string());
         }
     };
     Ok((status, tail))

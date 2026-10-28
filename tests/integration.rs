@@ -8204,6 +8204,12 @@ async fn a_cell_edit_on_a_read_only_session_is_refused_by_the_server() {
 /// A scratch home whose `staging` environment is the compose primary
 /// and its standby, as connections.toml entries with the password in
 /// `$IT_PW`, and an empty directory for dumps under it.
+///
+/// A test that dumps the shared `pgman_test` database whole, as a role
+/// that can't read every table, races the other tests' tables: dump's
+/// pre-flight refuses what the role can't read. Dump a table of the
+/// test's own (`-- --table=`), a database of its own, or pass
+/// `--skip-unreadable`.
 #[cfg(unix)]
 fn dump_home(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let home = scratch_home(name, WRITABLE_PROFILE);
@@ -8257,8 +8263,16 @@ fn pgman_in_env(
         .expect("spawn pgman")
 }
 
+/// Whether the local PostgreSQL client tools are there. In CI they must
+/// be: a runner image without them would otherwise skip every dump and
+/// restore test and stay green.
 fn have_pg_dump() -> bool {
-    pgman::pgtool::find_tool("pg_dump", None).is_ok()
+    let found = pgman::pgtool::find_tool("pg_dump", None).is_ok();
+    assert!(
+        found || std::env::var_os("CI").is_none(),
+        "CI must have pg_dump: the dump and restore tests would be skipped"
+    );
+    found
 }
 
 /// A dump of an environment comes from its replica, says so, is private
@@ -9586,5 +9600,97 @@ while True:
     );
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(count_in(&copy, &t), Ok(5));
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}
+
+/// SIGTERM (a `kill`, or the terminal's hangup) stops a dump the way
+/// Ctrl-C does: pg_dump killed, its partial file removed, the file it
+/// would have replaced left as it was.
+#[cfg(unix)]
+#[test]
+fn a_dump_stopped_by_sigterm_cleans_up_like_ctrl_c() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = dump_home("dump-sigterm");
+    let t = it_name("sigterm_t");
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {t}"));
+    on("pgman_test", &format!("CREATE TABLE {t} (id int)")).unwrap();
+    std::fs::write(out.join("keep.dump"), "the good one").unwrap();
+    // Hold the table so pg_dump waits on its lock, still running.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let holder = rt.block_on(async {
+        let c = raw("pgman_test").await;
+        c.batch_execute(&format!("BEGIN; LOCK {t} IN ACCESS EXCLUSIVE MODE"))
+            .await
+            .unwrap();
+        c
+    });
+    let child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("IT_PW", "pgman_test")
+        .current_dir(&out)
+        .args([
+            "dump",
+            "local-primary",
+            "keep.dump",
+            "--",
+            &format!("--table={t}"),
+        ])
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while !std::fs::read_dir(&out).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".partial-")
+    }) {
+        assert!(started.elapsed().as_secs() < 15, "pg_dump never started");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let o = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains("stopped (Ctrl-C, or the process was signalled)"),
+        "{stderr}"
+    );
+    let names: Vec<String> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["keep.dump".to_string()], "no partial left");
+    assert_eq!(
+        std::fs::read_to_string(out.join("keep.dump")).unwrap(),
+        "the good one"
+    );
+    // Its backend waits on the lock until it is released, then finds
+    // the client gone.
+    rt.block_on(async { holder.batch_execute("ROLLBACK").await.unwrap() });
+    let waited = std::time::Instant::now();
+    while !on(
+        "pgman_test",
+        &format!(
+            "SELECT 1 FROM pg_stat_activity WHERE application_name = 'pgman-dump' AND query LIKE '%{t}%'"
+        ),
+    )
+    .unwrap()
+    .is_empty()
+    {
+        assert!(waited.elapsed().as_secs() < 15, "pg_dump's session outlived it");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }

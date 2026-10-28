@@ -54,6 +54,10 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: docker compose -f docker-compose.test.yml up -d --wait
+      # The dump / restore tests run the runner's own PostgreSQL client;
+      # fail here, by name, if the image stops shipping it (the tests
+      # also refuse to skip under CI).
+      - run: pg_dump --version && pg_restore --version
       - run: cargo test --features integration --test integration
       # The library's own DB-backed tests (`cfg(all(test, feature =
       # "integration"))` — a real App against the compose database, as in

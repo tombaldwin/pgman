@@ -271,7 +271,8 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
     {
         let (stop, cancel) = (stop.clone(), cancel.clone());
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
+            {
+                crate::pgtool::interrupted().await;
                 stop.store(true, Ordering::SeqCst);
                 let token = cancel.lock().ok().and_then(|t| t.clone());
                 if let Some(token) = token {
