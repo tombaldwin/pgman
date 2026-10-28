@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 3890,
-    "digest": "ddb44c041ad87c0e"
+    "count": 3903,
+    "digest": "e66dcaae731d47b0"
   },
   "resolves": [
     "fs",
@@ -238,18 +238,6 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:221:39: 221:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
       "hash": "8c31a7fd9f7cbd9750d405df3f2d185e",
       "invisible": [
         "serde_core"
@@ -268,13 +256,13 @@
       ]
     },
     {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
       "loc": "src/inventory.rs:221:39: 221:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd9746c74d25554f57ae",
+      "hash": "8c31a7fd9f7cbd979a1b1076c0ad445a",
       "invisible": [
         "serde_core"
       ]
@@ -286,7 +274,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8c31a7fd9f7cbd97ac7f72b889467ce8",
+      "hash": "8c31a7fd9f7cbd9746c74d25554f57ae",
       "invisible": [
         "serde_core"
       ]
@@ -311,6 +299,18 @@
       "undeclared": [],
       "overdeclared": [],
       "hash": "8c31a7fd9f7cbd97eb680d4f266c38e5",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "loc": "src/inventory.rs:221:39: 221:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "8c31a7fd9f7cbd97ac7f72b889467ce8",
       "invisible": [
         "serde_core"
       ]
@@ -6805,6 +6805,77 @@
       ],
       "overdeclared": [],
       "hash": "8c31a7fd9f7cbd97c3f451d266fcc88f"
+    },
+    {
+      "fn": "apply_cli::run_cli",
+      "loc": "src/apply_cli.rs:161:1: 161:68",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [
+        "Env",
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "8c31a7fd9f7cbd97bfe08ee57fdf00eb",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "aws",
+        "docker",
+        "ssh"
+      ],
+      "tables": [
+        "pg_catalog.pg_stat_activity"
+      ],
+      "calls": [
+        "apply_cli::run_cli::{closure#0}::__CALLSITE",
+        "inventory::patching::CancelSlot::cancel",
+        "inventory::patching::apply_for",
+        "inventory::patching::plan_for",
+        "inventory::target::resolve",
+        "pgtool::confirm_cli",
+        "project::load_from",
+        "project::merge_safety",
+        "safety::SafetyConfig::load_personal"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
     },
     {
       "fn": "aws_cli::AwsScope::check_account",
