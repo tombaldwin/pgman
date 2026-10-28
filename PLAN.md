@@ -87,11 +87,12 @@ passes (four Fable reviewers, then the same four plus a fresh one) and
 Tom's decisions. Masked by default with built-in rules (undecided columns
 NULLed, or the type's empty value, and named); encrypted from phase 2b;
 every copy tracked from dump to deletion with a reason and a journal,
-local and to CloudWatch; kept from an MCP-only agent. Eleven decisions
-made; one open (MCP `query` on the live protected environment, not needed
-for phase 1). Phase 1 (policy, typed confirmation, reason, MCP
-schema-only, dump id, local journal, `pgman copies`; ~3 days) is ready to
-build when Tom says.
+local and to CloudWatch; kept from an MCP-only agent. Thirteen decisions
+made (live MCP `query` stays; the reason prefers a ticket from the branch).
+Open with Tom: whether an operator-level `unattended = true` lets one
+environment's raw dumps run without a terminal. Phase 1 (policy, typed
+confirmation, reason with ticket, MCP schema-only, dump id, local journal,
+`pgman copies`; ~3½ days) is ready to build when Tom says.
 
 ### 2. Waiting on Tom
 

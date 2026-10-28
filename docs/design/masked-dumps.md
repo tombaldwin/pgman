@@ -45,7 +45,7 @@ What pgman guards against itself are mistakes, not malice:
 Pseudonymised data is still personal data; masked copies get the same
 lifecycle as raw ones, just fewer of the people in them. And masking is a
 control on what reaches the disk: MCP `query` against the live protected
-database still returns its rows (see Still open).
+database still returns its rows, by decision (Decided, 12).
 
 ## The shape, in one paragraph
 
@@ -113,10 +113,26 @@ The new fields are new keys under `deny_unknown_fields`: an older pgman
 reading the same `environments.toml` refuses it. The release notes say so.
 
 **The reason** is one line, at most 120 characters, prompted as "ticket id
-or short reason — no names"; the prompt offers the last reason given for
-that target (Enter accepts). Without a terminal, `--reason` is required
-where the policy requires one. Over MCP the operator gives it in the
-confirmation form; the agent may propose one, never supply it.
+or short reason — no names". People will type the same thing every time,
+so pgman makes the useful answer the easy one:
+
+- **The ticket from the branch.** When the current git branch names a
+  ticket (`feature/APP-101-invoice-rounding`), the prompt offers `APP-101`
+  as the default (Enter accepts) and records it as the copy's `ticket`,
+  separately from any free text. The pattern defaults to Jira-style keys
+  (`[A-Z][A-Z0-9]+-[0-9]+`) and is settable per project (`[dumps]
+  ticket_pattern`).
+- **Otherwise the last reason** given for that target is offered.
+- **A link** when the project sets `[dumps] ticket_url =
+  "https://examplecorp.atlassian.net/browse/{ticket}"`: `pgman copies` and
+  the report show each copy's ticket as a link, so a DPO or reviewer goes
+  from "why was this copy taken" to the ticket in one click.
+- **Checking the ticket exists** (and is open) against Jira is a later
+  item, opt-in, through the operator's own Jira credentials.
+
+Without a terminal, `--reason` (or `--ticket`) is required where the policy
+requires one. Over MCP the operator gives it in the confirmation form,
+prefilled from the branch; the agent may propose one, never supply it.
 
 ## 2. Masking that works out of the box
 
@@ -438,7 +454,7 @@ server can all append), one JSON line per event:
 ```json
 {"v":1,"id":"<ulid>","event":"dump","at":"2026-10-28T14:03:11Z",
  "copy":"<dump id>","env":"production","database":"ledger",
- "protected":true,"mode":"masked","reason":"APP-101 invoice rounding",
+ "protected":true,"mode":"masked","ticket":"APP-101","reason":"invoice rounding repro",
  "by":"arn:aws:sts::123456789012:assumed-role/dev/ava","machine":"m-7f3a9c",
  "via":"cli","file":"production-ledger-20261028T1403Z.pgman-dump",
  "bytes":24117248,"rules":"<digest>","keys":["<fingerprint>"],
@@ -615,7 +631,7 @@ and an MCP dump refuses rules that are uncommitted or not yet confirmed.
 
 | Phase | What | Size |
 |---|---|---|
-| 1 | Policy fields and the project cap (`policy::effective`, pure); typed confirmation, warning and reason for raw protected dumps, refused without a terminal; reason for every protected dump; MCP protected dumps schema-only; the dump id; the local journal; `pgman copies` list, show, rm for files (untracked v0.3 dumps listed); docs updated | 3 days |
+| 1 | Policy fields and the project cap (`policy::effective`, pure); typed confirmation, warning and reason for raw protected dumps, refused without a terminal; reason for every protected dump, with the ticket from the branch and `ticket_url` links; MCP protected dumps schema-only; the dump id; the local journal; `pgman copies` list, show, rm for files (untracked v0.3 dumps listed); docs updated | 3½ days |
 | 1b | The journal to CloudWatch: `aws logs` builder (pure), cursor, retries, the IAM policy in the docs | 1½ days |
 | 2a | Classifier with defaults, placeholders and presets; core transformers (keep, null, fixed, password, hash, email, name, phone, ip, per-row date shift, drop rows); FK following; the data path and archive; restore with checksums and redaction; provenance; `copies rm` for databases; the dump directory and synced-folder checks; `masking show` and `check`; the leak test; `docs/privacy.md`. **The protected default moves to `masked`.** | 9 days |
 | 2b | Encryption: KMS envelope and age; header binding; private temp for `--jobs`. **`encrypt` becomes required.** | 2–3 days |
@@ -659,14 +675,14 @@ says so.
     stored; never a refusal for a missing rule, and every NULLed column is
     named.
 
-## Still open
-
-- **MCP `query` against the live protected environment.** Masking keeps
-  raw rows off the disk; `query` still sends up to 5,000 raw rows per call
-  from production into the agent's context. Options: leave it (it is what
-  the operator configured MCP to do), cap protected environments at
-  schema-only reads over MCP, or mask `query` results with the same rules
-  later. Not needed for phase 1.
+12. **MCP `query` against the live protected environment stays as it
+    is.** Masking keeps raw rows off the disk; `query` still reads
+    production for the agent, because querying it is what MCP is for. The
+    privacy note says so plainly. Masking `query` results with the same
+    rules is a possible later item, not planned.
+13. **The reason prefers a ticket**, taken from the branch name, shown as a
+    link where the project configures one; checking it against Jira is
+    later.
 
 ## Changes from the second draft
 
