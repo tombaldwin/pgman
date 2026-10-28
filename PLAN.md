@@ -82,14 +82,16 @@ BACKLOG.md → From the dump/restore review.
 
 ### 1. Masked dumps and the life of a copy — designed, not built
 
-`docs/design/masked-dumps.md`, second draft (2026-10-28): reviewed by a
-four-reviewer Fable panel, then revised with Tom's decisions. Masked by
-default with built-in rules (no config needed), adjustable in a Masking
-screen or a committed rules file; encrypted (KMS / age); every copy
-tracked from dump to deletion with a reason and a journal, local and
-to CloudWatch (hygiene for good developers, not policing); kept from the
-agent; a privacy note for a client's DPO. All nine decisions made. Phase 1 (policy, journal, `pgman copies`) can start
-when Tom says.
+`docs/design/masked-dumps.md`, third draft (2026-10-28): two review
+passes (four Fable reviewers, then the same four plus a fresh one) and
+Tom's decisions. Masked by default with built-in rules (undecided columns
+NULLed, or the type's empty value, and named); encrypted from phase 2b;
+every copy tracked from dump to deletion with a reason and a journal,
+local and to CloudWatch; kept from an MCP-only agent. Eleven decisions
+made; one open (MCP `query` on the live protected environment, not needed
+for phase 1). Phase 1 (policy, typed confirmation, reason, MCP
+schema-only, dump id, local journal, `pgman copies`; ~3 days) is ready to
+build when Tom says.
 
 ### 2. Waiting on Tom
 
