@@ -104,7 +104,9 @@ pub fn dump_out(cwd: &Path, file: Option<&str>) -> Result<PathBuf, String> {
     };
     let p = inside(cwd, rel, false)?;
     if p.is_dir() {
-        return Ok(p);
+        // Resolved whole: a directory that is a symlink out of `cwd`
+        // passes the parent's check alone.
+        return inside(cwd, rel, true);
     }
     if !rel.ends_with(".dump") {
         return Err(format!(
@@ -393,6 +395,16 @@ mod tests {
             .unwrap_err()
             .contains("ends .dump"));
         assert_eq!(dump_out(&cwd, None).unwrap(), cwd.canonicalize().unwrap());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(std::env::temp_dir(), cwd.join("elsewhere")).unwrap();
+            assert!(
+                dump_out(&cwd, Some("elsewhere"))
+                    .unwrap_err()
+                    .contains("outside"),
+                "a directory symlinked out of the working directory"
+            );
+        }
         let _ = std::fs::remove_dir_all(&cwd);
     }
 
