@@ -47,7 +47,7 @@ guards, DBUnit fixtures, the schema-lint wizard. The risk is not the
 wedge; it is that a first-time user hits a rough edge in the first
 minute and never reaches it.
 
-## Where we are (2026-10-25)
+## Where we are (2026-10-28)
 
 **v0.2.1 is released** (2026-10-25): GitHub release (Latest), crates.io,
 and the Homebrew tap, with the in-repo formula to match. v0.2.0 and
@@ -63,6 +63,20 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 `docs/backlog/archive.md` → Release plan history.
 
 ## Window — after v0.2.1
+
+### 0. Dump, restore, run, apply (2026-10-28) — built, in review
+
+Tom's go 2026-10-28 ("yes to all including the optional mcp work"):
+`pgman dump`, `pgman restore`, `pgman run` (scripts with their own
+transactions, `\c` between databases), `pgman apply` (the CLI for `P`,
+with `--outside`), and MCP `dump` / `restore` behind elicitation. All
+on main with integration tests and CAUGHT lines; docs in
+`docs/dump-restore.md`, `docs/run.md`, `docs/mcp.md`. Remaining:
+
+- the independent review of d424e1f..HEAD (security and correctness),
+  then its fixes;
+- a release (v0.3.0) when Tom wants one: a release panel first, as for
+  every release.
 
 ### 1. Waiting on Tom
 
