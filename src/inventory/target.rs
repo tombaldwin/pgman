@@ -362,21 +362,55 @@ fn host_key(host: &str) -> String {
     let h = host
         .trim_start_matches('[')
         .trim_end_matches(']')
+        .trim_end_matches('.')
         .to_ascii_lowercase();
-    let loopback = h == "localhost"
-        || h.parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback());
-    if loopback {
+    match h.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip_key(ip),
+        Err(_) if h == "localhost" => "localhost".to_string(),
+        Err(_) => h,
+    }
+}
+
+/// An address as a key: an IPv4-mapped IPv6 one as its IPv4, and every
+/// address that reaches this machine (loopback, or the unspecified
+/// `0.0.0.0` / `::`) as `localhost`. Pure.
+fn ip_key(ip: std::net::IpAddr) -> String {
+    let ip = match ip {
+        std::net::IpAddr::V6(v6) => v6.to_ipv4_mapped().map(std::net::IpAddr::V4).unwrap_or(ip),
+        v4 => v4,
+    };
+    if ip.is_loopback() || ip.is_unspecified() {
         "localhost".to_string()
     } else {
-        h
+        ip.to_string()
     }
+}
+
+/// Every key `host` is known by: its own ([`host_key`]) and each address
+/// it resolves to — so `127.1`, `0x7f000001`, `localhost.` and a
+/// hostname and its IP all compare equal, however written. Blocking (the
+/// resolver); a name that doesn't resolve keeps its own key alone.
+fn server_keys(host: &str, port: u16) -> Vec<String> {
+    use std::net::ToSocketAddrs;
+    let own = host_key(host);
+    let mut keys = vec![own.clone()];
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(addrs) = (bare, port).to_socket_addrs() {
+        for a in addrs {
+            let k = ip_key(a.ip());
+            if !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+    }
+    keys
 }
 
 /// Whether `host:port` is a server a protected environment reaches: the
 /// address of a connection a protected `static` environment lists, or
 /// an RDS endpoint (`<instance>.<…>.rds.amazonaws.com`) whose instance a
-/// protected `rds` environment's `instances` match. Pure.
+/// protected `rds` environment's `instances` match. Blocking: names are
+/// resolved, so a server is matched however it is written.
 pub fn host_protected(
     host: &str,
     port: u16,
@@ -387,7 +421,7 @@ pub fn host_protected(
 }
 
 /// [`host_protected`]: the protected environment that reaches
-/// `host:port`, by name. Pure.
+/// `host:port`, by name. Blocking, as it is.
 pub fn protecting_env(
     host: &str,
     port: u16,
@@ -397,6 +431,7 @@ pub fn protecting_env(
     let key = host_key(host);
     let label = key.split('.').next().unwrap_or("");
     let rds = key.ends_with(".rds.amazonaws.com");
+    let mine = server_keys(host, port);
     envs.iter()
         .filter(|e| super::patching::is_protected(e))
         .find(|e| match &e.source {
@@ -405,7 +440,12 @@ pub fn protecting_env(
                     .iter()
                     .filter(|en| &en.name == name)
                     .filter_map(|en| en.dsn.as_ref())
-                    .any(|d| host_key(&d.host) == key && d.port == port)
+                    .any(|d| {
+                        d.port == port
+                            && server_keys(&d.host, d.port)
+                                .iter()
+                                .any(|k| mine.contains(k))
+                    })
             }),
             Source::Rds { instances, .. } => {
                 rds && instances
@@ -733,6 +773,35 @@ mod tests {
         ));
         assert_eq!(host_key("[::1]"), "localhost");
         assert_eq!(host_key("127.0.0.1"), "localhost");
+        // Spellings of this machine the resolver takes and a parser doesn't.
+        let entries = crate::mcp::connections::build(
+            &[conn("main-db", "postgres://u@127.0.0.1:55432/ledger")],
+            Vec::new(),
+            false,
+        );
+        let envs = crate::inventory::parse_config(
+            "[[environments]]\nname = \"live\"\nprotected = true\nsource = { kind = \"static\", connections = [\"main-db\"] }\n",
+        )
+        .unwrap();
+        for spelling in [
+            "localhost.",
+            "127.1",
+            "0x7f000001",
+            "0.0.0.0",
+            "::ffff:127.0.0.1",
+            "[::1]",
+            "LOCALHOST",
+        ] {
+            assert!(
+                host_protected(spelling, 55432, &envs, &entries),
+                "{spelling}"
+            );
+        }
+        assert!(
+            !host_protected("127.0.0.1", 55433, &envs, &entries),
+            "another port"
+        );
+        assert_eq!(host_key("db.internal."), "db.internal");
     }
 
     #[test]
