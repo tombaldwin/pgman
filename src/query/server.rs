@@ -57,11 +57,14 @@ impl Unreadable {
 /// What pg_dump would need to read and the user can't, for a dump of the
 /// whole database by a user that isn't a superuser: a table, partition or
 /// sequence without SELECT, or in a schema without USAGE; a table under
-/// row-level security the user doesn't bypass (pg_dump turns
-/// `row_security` off, and the server refuses rather than filter); and,
-/// with `$1` (`--include-foreign-data`), a foreign table. Not views or
-/// materialized views: pg_dump reads their definitions from the catalog,
-/// never their rows.
+/// row-level security the user doesn't bypass — not its owner, unless
+/// FORCE (pg_dump turns `row_security` off, and the server refuses
+/// rather than filter) — checked on leaf tables, the ones pg_dump copies
+/// from, not a partitioned parent; a sequence whose table is itself left
+/// out, which goes with it; and, with `$1` (`--include-foreign-data`), a
+/// foreign table. Not views or materialized views (pg_dump reads their
+/// definitions, never their rows), nor an extension's own tables, which
+/// pg_dump doesn't dump.
 pub const UNREADABLE_SQL: &str = "WITH me AS (SELECT rolsuper, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user) \
      SELECT n.nspname::text, c.relname::text, \
        CASE c.relkind WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'foreign table' \
@@ -70,6 +73,7 @@ pub const UNREADABLE_SQL: &str = "WITH me AS (SELECT rolsuper, rolbypassrls FROM
        CASE WHEN NOT pg_catalog.has_schema_privilege(n.oid, 'USAGE') THEN 'no USAGE on its schema' \
             WHEN c.relkind = 'S' AND NOT pg_catalog.has_sequence_privilege(c.oid, 'SELECT') THEN 'no SELECT' \
             WHEN c.relkind <> 'S' AND NOT pg_catalog.has_table_privilege(c.oid, 'SELECT') THEN 'no SELECT' \
+            WHEN c.relkind = 'S' THEN 'its table is left out' \
             ELSE 'row-level security' END, \
        CASE WHEN t.oid IS NOT NULL THEN tn.nspname::text || '.' || t.relname::text END, \
        CASE WHEN t.oid IS NOT NULL THEN pg_catalog.has_schema_privilege(tn.oid, 'USAGE') \
@@ -81,12 +85,17 @@ pub const UNREADABLE_SQL: &str = "WITH me AS (SELECT rolsuper, rolbypassrls FROM
      LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace \
      WHERE NOT (SELECT rolsuper FROM me) \
        AND (c.relkind IN ('r', 'p', 'S') OR (c.relkind = 'f' AND $1)) \
+       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend x WHERE x.classid = 'pg_catalog.pg_class'::pg_catalog.regclass \
+         AND x.objid = c.oid AND x.deptype = 'e') \
        AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%' \
        AND (NOT pg_catalog.has_schema_privilege(n.oid, 'USAGE') \
          OR (c.relkind = 'S' AND NOT pg_catalog.has_sequence_privilege(c.oid, 'SELECT')) \
          OR (c.relkind <> 'S' AND NOT pg_catalog.has_table_privilege(c.oid, 'SELECT')) \
-         OR (c.relkind IN ('r', 'p') AND c.relrowsecurity AND NOT pg_catalog.pg_has_role(c.relowner, 'USAGE') \
-             AND NOT (SELECT rolbypassrls FROM me))) \
+         OR (c.relkind = 'r' AND c.relrowsecurity \
+             AND (NOT pg_catalog.pg_has_role(c.relowner, 'USAGE') OR c.relforcerowsecurity) \
+             AND NOT (SELECT rolbypassrls FROM me)) \
+         OR (c.relkind = 'S' AND t.oid IS NOT NULL \
+             AND NOT (pg_catalog.has_schema_privilege(tn.oid, 'USAGE') AND pg_catalog.has_table_privilege(t.oid, 'SELECT')))) \
      ORDER BY 1, 2";
 
 /// How many large objects the user can't read: pg_dump stops at the

@@ -9470,7 +9470,13 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
          CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$; \
          CREATE TABLE open_t (id serial, v text); INSERT INTO open_t (v) VALUES ('a'); \
-         CREATE TABLE closed_t (id int); CREATE VIEW closed_v AS SELECT * FROM closed_t; \
+         CREATE TABLE closed_t (id serial); CREATE VIEW closed_v AS SELECT * FROM closed_t; \
+         GRANT SELECT ON SEQUENCE closed_t_id_seq TO pgman_lim; \
+         CREATE TABLE rls_part (id int) PARTITION BY LIST (id); \
+         CREATE TABLE rls_part_1 PARTITION OF rls_part FOR VALUES IN (1); \
+         ALTER TABLE rls_part ENABLE ROW LEVEL SECURITY; GRANT SELECT ON rls_part, rls_part_1 TO pgman_lim; \
+         CREATE TABLE forced (id int); ALTER TABLE forced OWNER TO pgman_lim; \
+         ALTER TABLE forced ENABLE ROW LEVEL SECURITY; ALTER TABLE forced FORCE ROW LEVEL SECURITY; \
          CREATE SCHEMA hidden; CREATE TABLE hidden.h (id int); \
          CREATE TABLE rls_t (id int); ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY; \
          SELECT lo_create(0); \
@@ -9500,7 +9506,9 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success());
     for want in [
-        "3 object(s) (3 tables; ",
+        "5 object(s) (4 tables, 1 sequence; ",
+        "public.forced",
+        "its table is left out",
         "no SELECT",
         "no USAGE on its schema",
         "row-level security",
@@ -9512,6 +9520,10 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
         assert!(stderr.contains(want), "{want}: {stderr}");
     }
     assert!(!stderr.contains("closed_v"), "a view isn't read: {stderr}");
+    assert!(
+        !stderr.contains("rls_part"),
+        "a partitioned parent's policy doesn't stop pg_dump: {stderr}"
+    );
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
 
     let o = dump(&["--skip-unreadable", "--format", "plain"]);
@@ -9521,7 +9533,7 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
     );
     assert!(o.status.success(), "{stderr}");
     assert!(
-        stdout.contains("note: left out 3 object(s) pgman_lim can't read"),
+        stdout.contains("note: left out 5 object(s) pgman_lim can't read"),
         "{stdout}"
     );
     assert!(
@@ -9530,6 +9542,14 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
     );
     let sql = std::fs::read_to_string(out.join("x.dump")).unwrap();
     assert!(sql.contains("CREATE TABLE public.open_t"), "{sql}");
+    assert!(
+        sql.contains("CREATE TABLE public.rls_part_1"),
+        "the leaf is kept: {sql}"
+    );
+    assert!(
+        !sql.contains("closed_t_id_seq"),
+        "its table's sequence goes with it"
+    );
     assert!(
         sql.contains("CREATE VIEW public.closed_v"),
         "the view's definition is kept"
