@@ -23,6 +23,9 @@ pub enum Kind {
     Dump,
     Restore,
     Delete,
+    /// An event a newer pgman writes: kept, not understood.
+    #[serde(other)]
+    Other,
 }
 
 /// One line of the journal. Which fields are set depends on `event`.
@@ -305,11 +308,13 @@ mod tests {
             .append(true)
             .open(dir.join(FILE))
             .unwrap()
-            .write_all(b"not json\n{\"v\":1}\n")
+            .write_all(b"not json\n{\"v\":1}\n{\"v\":2,\"event\":\"rules_confirmed\",\"ts\":5}\n")
             .unwrap();
         let (events, bad) = read_in(&dir);
-        assert_eq!(events, vec![e, d]);
-        assert_eq!(bad, 2);
+        assert_eq!(bad, 2, "a newer pgman's event isn't a bad line");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[..2], [e, d]);
+        assert_eq!(events[2].event, Some(Kind::Other));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

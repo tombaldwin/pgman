@@ -27,7 +27,7 @@ shows it), or the dump's file (its -latest link too).
 
   list     the copies still on disk (--all: deleted ones too), and dump
            files in this directory the journal doesn't know (taken
-           before v0.4, or by hand)
+           by an older pgman, or by hand)
   show     one copy in full
   rm       delete a copy's file, and its -latest link (pointed at the
            newest copy left, when there is one); asks first unless --yes
@@ -400,7 +400,7 @@ pub fn render_list(
         }
     }
     if !untracked.is_empty() {
-        out.push_str("\nnot in the journal (taken before v0.4, or by hand):\n");
+        out.push_str("\nnot in the journal (taken by an older pgman, or by hand):\n");
         for f in untracked {
             out.push_str(&format!("  {}\n", f.display()));
         }
@@ -825,7 +825,7 @@ pub fn run_cli(cmd: &Cmd) -> Result<(), String> {
                 render_show(&c, present(&c.file), now, ticket_url.as_deref())
             ),
             Target::Untracked(p) => println!(
-                "{} isn't in the journal: taken before v0.4, or by hand",
+                "{} isn't in the journal: taken by an older pgman, or by hand",
                 p.display()
             ),
         },
