@@ -1043,6 +1043,19 @@ pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
     if let Some(why) = archive::manifest_problem(&m) {
         return Err(why);
     }
+    // header.json is what the archive says it is at a glance (copies
+    // lists it): the manifest's copy of it, which it must match.
+    let header: Header = std::fs::read_to_string(dir.join(archive::HEADER))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| format!("{}: no readable {}", dir.display(), archive::HEADER))?;
+    if header != m.header {
+        return Err(format!(
+            "{}: {} disagrees with the manifest: the archive was changed; nothing restored",
+            dir.display(),
+            archive::HEADER
+        ));
+    }
     let check = |file: PathBuf, want: &str| -> Result<(), String> {
         let got = archive::sha256_file(&file)?;
         if got != want {
@@ -1064,6 +1077,57 @@ pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_archive_whose_header_disagrees_is_refused() {
+        let dir =
+            std::env::temp_dir().join(format!("pgman-header-{}.pgman-dump", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("data")).unwrap();
+        std::fs::write(dir.join(archive::SCHEMA), b"schema").unwrap();
+        let header = Header {
+            format: archive::FORMAT,
+            pgman: "0.4.0".into(),
+            copy: "c".into(),
+            label: "production/ledger".into(),
+            env: Some("production".into()),
+            database: "ledger".into(),
+            created: 0,
+            masked: true,
+            protected: true,
+        };
+        let m = Manifest {
+            header: header.clone(),
+            schema_sha256: archive::sha256(b"schema"),
+            tables: vec![],
+            large_objects: false,
+            rules: "defaults".into(),
+            key: "fresh".into(),
+            words: 1,
+            sequences: vec![],
+        };
+        std::fs::write(
+            dir.join(archive::MANIFEST),
+            serde_json::to_string(&m).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(archive::HEADER),
+            serde_json::to_string(&header).unwrap(),
+        )
+        .unwrap();
+        assert!(checked_manifest(&dir).is_ok());
+        let mut changed = header;
+        changed.masked = false;
+        std::fs::write(
+            dir.join(archive::HEADER),
+            serde_json::to_string(&changed).unwrap(),
+        )
+        .unwrap();
+        let e = checked_manifest(&dir).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(e.contains("disagrees with the manifest"), "{e}");
+    }
 
     #[test]
     fn exclude_patterns_read_as_pg_dump_reads_them() {
