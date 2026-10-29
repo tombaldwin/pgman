@@ -344,6 +344,9 @@ impl Server {
             &crate::dump::place_dir(Some(&out), &self.cwd),
             kind,
             policy.protected,
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .as_deref(),
         )?;
         // A masked dump uses committed rules the operator has confirmed,
         // and the question says what they keep.

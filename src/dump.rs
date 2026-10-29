@@ -1030,7 +1030,9 @@ pub fn default_dir() -> PathBuf {
 /// The sync service `path` is inside, if it is one pgman knows: a copy
 /// there leaves the machine on its own. Pure.
 pub fn synced(path: &Path) -> Option<&'static str> {
-    let p = path.to_string_lossy();
+    // With a slash after it, so the folder itself matches, not only
+    // what is in it.
+    let p = format!("{}/", path.to_string_lossy());
     [
         ("/Library/Mobile Documents/", "iCloud Drive"),
         ("/iCloud Drive/", "iCloud Drive"),
@@ -1041,21 +1043,38 @@ pub fn synced(path: &Path) -> Option<&'static str> {
         ("/Dropbox/", "Dropbox"),
         ("/OneDrive", "OneDrive"),
         ("/Google Drive/", "Google Drive"),
+        ("/Nextcloud/", "Nextcloud"),
     ]
     .iter()
     .find(|(needle, _)| p.contains(needle))
     .map(|(_, name)| *name)
 }
 
+/// Whether `dir` is in `home`'s Desktop or Documents while iCloud syncs
+/// them ("Desktop & Documents Folders"): they stay where they are, and
+/// iCloud Drive holds them too. Reads the filesystem.
+pub fn icloud_desktop(dir: &Path, home: &Path) -> bool {
+    let cloud = home.join("Library/Mobile Documents/com~apple~CloudDocs");
+    ["Desktop", "Documents"]
+        .iter()
+        .any(|f| dir.starts_with(home.join(f)) && cloud.join(f).is_dir())
+}
+
 /// Where a dump of `kind` from a target (`protected` or not) may be
 /// written: a raw copy of a protected target never into a synced folder;
-/// anything else there with a warning. Pure.
+/// anything else there with a warning. Reads the filesystem (for
+/// iCloud's Desktop & Documents in `home`).
 pub fn place_problem(
     dir: &Path,
     kind: crate::policy::Kind,
     protected: bool,
+    home: Option<&Path>,
 ) -> Result<Option<String>, String> {
-    let Some(service) = synced(dir) else {
+    let service = synced(dir).or_else(|| {
+        home.filter(|h| icloud_desktop(dir, h))
+            .map(|_| "iCloud Drive (Desktop & Documents)")
+    });
+    let Some(service) = service else {
         return Ok(None);
     };
     if protected && kind == crate::policy::Kind::Raw {
@@ -1236,10 +1255,12 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         .clone()
         .unwrap_or_else(|| resolved.label.clone());
     let gate = crate::policy::gate(&policy, kind, via, &name)?;
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     let place_note = place_problem(
         &place_dir(opts.out.as_deref(), &cwd),
         kind,
         policy.protected,
+        home.as_deref(),
     )?;
     if gate.typed.is_some() || gate.unattended {
         eprintln!("pgman dump: {}", raw_warning(&name, &resolved.protection()));
@@ -1765,24 +1786,58 @@ mod tests {
         assert_eq!(synced(dropbox), Some("Dropbox"));
         assert_eq!(synced(Path::new("/Users/dev/Dropbox/x")), Some("Dropbox"));
         assert_eq!(
+            synced(Path::new("/Users/dev/Dropbox")),
+            Some("Dropbox"),
+            "the folder itself"
+        );
+        assert_eq!(
+            synced(Path::new("/Users/dev/Nextcloud/x")),
+            Some("Nextcloud")
+        );
+        assert_eq!(
             synced(Path::new("/Users/dev/.local/share/pgman/dumps")),
             None
         );
-        let e = place_problem(icloud, Kind::Raw, true).unwrap_err();
+        let e = place_problem(icloud, Kind::Raw, true, None).unwrap_err();
         assert!(
             e.contains("iCloud Drive") && e.contains("isn't written there"),
             "{e}"
         );
-        let w = place_problem(dropbox, Kind::Masked, true).unwrap().unwrap();
+        let w = place_problem(dropbox, Kind::Masked, true, None)
+            .unwrap()
+            .unwrap();
         assert!(w.contains("copied off this machine"), "{w}");
         assert!(
-            place_problem(icloud, Kind::Raw, false).unwrap().is_some(),
+            place_problem(icloud, Kind::Raw, false, None)
+                .unwrap()
+                .is_some(),
             "a warning"
         );
         assert_eq!(
-            place_problem(Path::new("/tmp/x"), Kind::Raw, true),
+            place_problem(Path::new("/tmp/x"), Kind::Raw, true, None),
             Ok(None)
         );
+    }
+
+    #[test]
+    fn icloud_desktop_and_documents_are_synced_when_icloud_holds_them() {
+        let home = std::env::temp_dir().join(format!("pgman-icloud-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("Documents/work")).unwrap();
+        let dir = home.join("Documents/work");
+        assert!(
+            !icloud_desktop(&dir, &home),
+            "iCloud doesn't hold Documents"
+        );
+        std::fs::create_dir_all(
+            home.join("Library/Mobile Documents/com~apple~CloudDocs/Documents"),
+        )
+        .unwrap();
+        assert!(icloud_desktop(&dir, &home));
+        assert!(!icloud_desktop(&home.join("src"), &home), "elsewhere");
+        let e = place_problem(&dir, crate::policy::Kind::Raw, true, Some(&home)).unwrap_err();
+        assert!(e.contains("Desktop & Documents"), "{e}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
