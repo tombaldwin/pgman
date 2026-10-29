@@ -914,6 +914,33 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             }
         }
     }
+    // What a joined group must keep as one: unique if any member is (so
+    // every member's fake carries the same suffix), NOT NULL if any is (so
+    // a NULLed group is hashed, or the referencing side's empty value
+    // references nothing), and its integer types (a hash differs by them).
+    #[derive(Default)]
+    struct Joined {
+        members: usize,
+        unique: bool,
+        not_null: bool,
+        ints: Vec<String>,
+    }
+    let mut joined: HashMap<(String, String), Joined> = HashMap::new();
+    for t in catalog.tables.iter().filter(|t| t.has_rows()) {
+        for c in t.columns.iter().filter(|c| !c.generated) {
+            let g = joined
+                .entry(groups.find(&(t.qualified(), c.name.clone())))
+                .or_default();
+            g.members += 1;
+            g.unique |= c.unique;
+            g.not_null |= c.ty.not_null;
+            if matches!(c.ty.base.as_str(), "int2" | "int4" | "int8")
+                && !g.ints.contains(&c.ty.base)
+            {
+                g.ints.push(c.ty.base.clone());
+            }
+        }
+    }
     let mut tables = Vec::new();
     for t in catalog.tables.iter().filter(|t| t.has_rows()) {
         let q = t.qualified();
@@ -924,12 +951,28 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 .get(&key)
                 .cloned()
                 .unwrap_or((Rule::Keep, Origin::Plain));
-            let fit = fit_of.get(&groups.find(&key)).copied();
-            check(t, c, &rule, &origin, &mut problems);
-            // NULL where it must stay unique and can't be NULL: a hash, so
-            // every row still differs.
-            if rule == Rule::Null && c.unique && c.ty.not_null {
+            let root = groups.find(&key);
+            let fit = fit_of.get(&root).copied();
+            let g = &joined[&root];
+            let unique = c.unique || g.unique;
+            check(t, c, &rule, &origin, unique, fit, &mut problems);
+            // NULL where it must stay unique and can't be NULL — or where a
+            // join can't be NULL: a hash, so every row still differs and
+            // every reference still finds its row.
+            if rule == Rule::Null
+                && hashable(&c.ty.base)
+                && c.ty.array_of.is_none()
+                && ((c.unique && c.ty.not_null) || (g.members > 1 && g.not_null))
+            {
                 rule = Rule::Hash;
+            }
+            if rule == Rule::Hash && g.ints.len() > 1 {
+                problems.push(format!(
+                    "{q}.{} is joined to columns of other integer types ({}), and a hash comes \
+                     out differently in each: keep it, or give the columns one type",
+                    c.name,
+                    g.ints.join(", ")
+                ));
             }
             columns.push(Decision {
                 column: c.name.clone(),
@@ -937,7 +980,7 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 origin,
                 fit,
                 not_null: c.ty.not_null,
-                unique: c.unique,
+                unique,
                 base: c.ty.base.clone(),
                 enum_first: c.ty.enum_first.clone(),
                 array: c.ty.array_of.is_some(),
@@ -959,9 +1002,47 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
 }
 
 /// What `rule` can't do to `c` of `t`, added to `problems`. Pure.
-fn check(t: &Table, c: &Column, rule: &Rule, origin: &Origin, problems: &mut Vec<String>) {
+fn hashable(base: &str) -> bool {
+    text_like(base)
+        || matches!(
+            base,
+            "int2" | "int4" | "int8" | "uuid" | "numeric" | "bytea"
+        )
+}
+
+/// What `rule` can't do to `c` of `t` — which must stay `unique` (it, or
+/// a column joined to it) and fit `fit` characters — added to
+/// `problems`. Pure.
+fn check(
+    t: &Table,
+    c: &Column,
+    rule: &Rule,
+    origin: &Origin,
+    unique: bool,
+    fit: Option<usize>,
+    problems: &mut Vec<String>,
+) {
     let at = format!("{}.{}", t.qualified(), c.name);
     let base = c.ty.base.as_str();
+    // The shortest a unique masked value can be and still differ from
+    // every other: a hash's 16 hex digits, a name's 8-digit tag after a
+    // letter, an email's tag@example.test, an IPv6 documentation address.
+    let shortest = match rule {
+        Rule::Hash if text_like(base) => Some(16),
+        Rule::Name(_) => Some(10),
+        Rule::Email => Some(29),
+        Rule::Ip if text_like(base) => Some(29),
+        _ => None,
+    };
+    if let (true, Some(need), Some(n)) = (unique, shortest, fit) {
+        if n < need {
+            problems.push(format!(
+                "{at} must stay unique and takes {n} characters; {} needs {need} to keep values \
+                 apart: keep it, or widen the column",
+                rule.name()
+            ));
+        }
+    }
     if c.ty.array_of.is_some() && !matches!(rule, Rule::Keep | Rule::Null | Rule::Fixed(_)) {
         problems.push(format!(
             "{at} is an array: {} makes one value, not an array of them. Null it, or keep it",
@@ -1010,13 +1091,7 @@ fn check(t: &Table, c: &Column, rule: &Rule, origin: &Origin, problems: &mut Vec
     if *rule == Rule::Ip && !(text_like(base) || matches!(base, "inet" | "cidr")) {
         problems.push(format!("{at} is {}: ip can't apply", c.ty.display));
     }
-    if *rule == Rule::Hash
-        && !(text_like(base)
-            || matches!(
-                base,
-                "int2" | "int4" | "int8" | "uuid" | "numeric" | "bytea"
-            ))
-    {
+    if *rule == Rule::Hash && !hashable(base) {
         problems.push(format!("{at} is {}: hash can't apply", c.ty.display));
     }
     if *rule == Rule::Null && c.ty.not_null && origin == &Origin::Rules && c.unique {
@@ -1509,6 +1584,117 @@ mod tests {
         assert!(
             all.contains("public.people.code takes 3 characters"),
             "{all}"
+        );
+    }
+
+    fn joined(parent: (&str, Column), child: (&str, Column)) -> Catalog {
+        let (pcol, ccol) = (parent.1.name.clone(), child.1.name.clone());
+        let mut child_t = table(child.0, vec![c("id", "int4", None), child.1]);
+        child_t.foreign_keys.push(ForeignKey {
+            columns: vec![ccol],
+            ref_table: format!("public.{}", parent.0),
+            ref_columns: vec![pcol],
+        });
+        Catalog {
+            tables: vec![
+                table(parent.0, vec![c("id", "int4", None), parent.1]),
+                child_t,
+            ],
+            large_objects: 0,
+        }
+    }
+
+    #[test]
+    fn a_joined_group_is_unique_and_not_null_together() {
+        // A unique username and the posts that reference it: both carry
+        // the suffix, or no post finds its user.
+        let mut username = c("username", "varchar", Some(100));
+        username.unique = true;
+        let cat = joined(
+            ("users", username),
+            ("posts", c("username", "varchar", Some(100))),
+        );
+        let p = plan(&cat, &RuleSet::default());
+        let (u, f) = (
+            &p.table("public.users").unwrap().columns[1],
+            &p.table("public.posts").unwrap().columns[1],
+        );
+        assert_eq!((u.unique, f.unique), (true, true));
+        // A NULLed key that can't be NULL on the referencing side: both
+        // hashed, so each reference still finds its row.
+        let mut nino = c("nino", "varchar", Some(9));
+        nino.unique = true;
+        nino.ty.not_null = true;
+        let mut claim = c("nino", "varchar", Some(9));
+        claim.ty.not_null = true;
+        let p = plan(
+            &joined(("people", nino), ("claims", claim)),
+            &RuleSet::default(),
+        );
+        assert_eq!(
+            p.table("public.people").unwrap().columns[1].rule,
+            Rule::Hash
+        );
+        assert_eq!(
+            p.table("public.claims").unwrap().columns[1].rule,
+            Rule::Hash
+        );
+        // Nullable on both sides: NULL is fine.
+        let mut nino = c("nino", "varchar", Some(9));
+        nino.unique = true;
+        let p = plan(
+            &joined(("people", nino), ("claims", c("nino", "varchar", Some(9)))),
+            &RuleSet::default(),
+        );
+        assert_eq!(
+            p.table("public.claims").unwrap().columns[1].rule,
+            Rule::Null
+        );
+    }
+
+    #[test]
+    fn a_unique_column_too_short_to_keep_values_apart_is_a_problem() {
+        let mut email = c("email", "varchar", Some(20));
+        email.unique = true;
+        let cat = Catalog {
+            tables: vec![table("users", vec![c("id", "int4", None), email])],
+            large_objects: 0,
+        };
+        let p = plan(&cat, &RuleSet::default());
+        assert!(
+            p.problems
+                .iter()
+                .any(|m| m.contains("public.users.email must stay unique and takes 20 characters")),
+            "{:?}",
+            p.problems
+        );
+        // Long enough: no problem.
+        let mut email = c("email", "varchar", Some(100));
+        email.unique = true;
+        let cat = Catalog {
+            tables: vec![table("users", vec![c("id", "int4", None), email])],
+            large_objects: 0,
+        };
+        assert!(plan(&cat, &RuleSet::default()).problems.is_empty());
+    }
+
+    #[test]
+    fn a_hash_across_integer_types_is_a_problem() {
+        let cat = joined(
+            ("accounts", c("legacy_no", "int8", None)),
+            ("ledger", c("legacy_no", "int4", None)),
+        );
+        let p = plan(
+            &cat,
+            &parse("version = 1\n[tables.accounts]\nlegacy_no = \"hash\"\n"),
+        );
+        assert!(
+            p.problems
+                .iter()
+                .any(|m| m.contains("other integer types (int4, int8)")
+                    || m.contains("other integer types (int8, int4)")),
+            "{:?}",
+            p.problems
         );
     }
 

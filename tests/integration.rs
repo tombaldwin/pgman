@@ -9677,7 +9677,8 @@ fn a_masked_copy_holds_no_canary_anywhere() {
 
 /// A column under a UNIQUE constraint stays unique through masking: two
 /// thousand usernames become fake names, which repeat, so they must be
-/// made distinct — and the copy's unique index must build. (A
+/// made distinct — and the copy's unique index must build, and the posts
+/// referencing them still join. (A
 /// constraint's index depends on the constraint, not its column, and the
 /// catalog once missed it.)
 #[cfg(unix)]
@@ -9706,7 +9707,10 @@ fn a_unique_constraint_stays_unique_through_a_masked_copy() {
             .await
             .batch_execute(
                 "CREATE TABLE users (id serial PRIMARY KEY, username varchar(100) NOT NULL UNIQUE); \
-                 INSERT INTO users (username) SELECT 'user' || g FROM generate_series(1, 2000) g;",
+                 CREATE TABLE posts (id serial PRIMARY KEY, \
+                   username varchar(100) REFERENCES users(username)); \
+                 INSERT INTO users (username) SELECT 'user' || g FROM generate_series(1, 2000) g; \
+                 INSERT INTO posts (username) SELECT 'user' || g FROM generate_series(1, 300) g;",
             )
             .await
             .unwrap();
@@ -9747,6 +9751,14 @@ fn a_unique_constraint_stays_unique_through_a_masked_copy() {
     )
     .unwrap();
     assert_eq!(index[0].get::<_, i64>(0), 1);
+    // And what references it still finds it: the posts' usernames took
+    // the same suffix.
+    let joined = on(
+        &copy,
+        "SELECT count(*) FROM posts p JOIN users u ON u.username = p.username",
+    )
+    .unwrap();
+    assert_eq!(joined[0].get::<_, i64>(0), 300, "{said}");
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }

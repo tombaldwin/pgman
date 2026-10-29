@@ -141,9 +141,9 @@ impl Masker {
             Rule::Password(given) => password(given, &text),
             Rule::Hash => self.hash(d, v),
             Rule::Email => self.email(v, d.fit),
-            Rule::Name(part) => self.name(*part, v, d.unique),
+            Rule::Name(part) => self.name(*part, v, d.unique, d.fit),
             Rule::Phone => self.phone(&text, d.unique),
-            Rule::Ip => self.ip(&text, v),
+            Rule::Ip => self.ip(&text, v, d.unique),
             Rule::Postcode => postcode(&text),
             Rule::Year => year(&text),
             Rule::DateShift(days) => {
@@ -210,7 +210,9 @@ impl Masker {
         }
     }
 
-    fn name(&self, part: NamePart, v: &[u8], unique: bool) -> String {
+    /// A fake name; where the column must stay unique, with a tag from
+    /// the hash after it, the name shortened (never the tag) to `fit`.
+    fn name(&self, part: NamePart, v: &[u8], unique: bool, fit: Option<usize>) -> String {
         let first = self.pick("name.first", v, FIRST_NAMES);
         let last = self.pick("name.last", v, LAST_NAMES);
         let base = match part {
@@ -219,7 +221,9 @@ impl Masker {
             NamePart::Full => format!("{first} {last}"),
         };
         if unique {
-            format!("{base} {}", self.hex("name", v, 8))
+            let room = fit.map_or(usize::MAX, |n| n.saturating_sub(9).max(1));
+            let base: String = base.chars().take(room).collect();
+            format!("{} {}", base.trim_end(), self.hex("name", v, 8))
         } else {
             base
         }
@@ -269,14 +273,16 @@ impl Masker {
         }
     }
 
-    /// An address in a documentation range, keeping a `/prefix`.
-    fn ip(&self, text: &str, v: &[u8]) -> String {
+    /// An address in a documentation range, keeping a `/prefix`. IPv4's
+    /// ranges hold 762 addresses, so where the column must stay unique a
+    /// bare address becomes an IPv6 one in 2001:db8::/32.
+    fn ip(&self, text: &str, v: &[u8], unique: bool) -> String {
         let m = self.mac("ip", v);
         let (addr, suffix) = match text.split_once('/') {
             Some((a, p)) => (a, format!("/{p}")),
             None => (text, String::new()),
         };
-        if addr.contains(':') {
+        if addr.contains(':') || (unique && suffix.is_empty()) {
             format!(
                 "2001:db8:{:x}:{:x}::{:x}{suffix}",
                 u16::from_le_bytes([m[0], m[1]]),
@@ -516,6 +522,22 @@ mod tests {
             "{ip}"
         );
         assert!(run(&d(Rule::Ip, "inet"), "10.0.0.0/8").ends_with("/8"));
+        // 762 IPv4 documentation addresses can't keep a unique column
+        // apart; IPv6's range can.
+        let mut u = d(Rule::Ip, "inet");
+        u.unique = true;
+        assert!(run(&u, "81.2.69.160").starts_with("2001:db8:"));
+        // A unique name shortened to fit keeps its tag.
+        let mut u = d(Rule::Name(NamePart::Full), "varchar");
+        u.unique = true;
+        u.fit = Some(14);
+        let short = run(&u, "Alice Smith");
+        assert!(short.chars().count() <= 14, "{short}");
+        assert_eq!(
+            short.rsplit(' ').next().unwrap().len(),
+            8,
+            "the tag survives: {short}"
+        );
         assert!(run(&d(Rule::Ip, "inet"), "2a00:1450::1").starts_with("2001:db8:"));
         assert_eq!(postcode("sw1a 1aa"), "SW1A");
         assert_eq!(postcode("EC1A1BB"), "EC1A");
