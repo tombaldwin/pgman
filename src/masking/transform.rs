@@ -165,6 +165,16 @@ impl Masker {
             .to_string()
     }
 
+    /// `n` decimal digits from the hash.
+    fn digits(&self, purpose: &str, v: &[u8], n: usize) -> String {
+        self.mac(purpose, v)
+            .iter()
+            .flat_map(|b| [b % 10, (b / 10) % 10])
+            .take(n)
+            .map(|d| char::from(b'0' + d))
+            .collect()
+    }
+
     fn pick(&self, purpose: &str, v: &[u8], list: &[&str]) -> String {
         let m = self.mac(purpose, v);
         let n = u64::from_le_bytes(m[..8].try_into().unwrap_or([0; 8]));
@@ -232,8 +242,17 @@ impl Masker {
     /// The input's shape — its `+`, spaces and punctuation, its length,
     /// its first two digits — with the other digits from the hash; a UK
     /// number in Ofcom's drama ranges where the column needn't be unique,
-    /// so no masked number is anyone's.
+    /// so no masked number is anyone's. A value with letters in it
+    /// ("mum: 07…", "ask for Alice") isn't a number's shape to keep: it
+    /// becomes a bare UK mobile number.
     fn phone(&self, text: &str, unique: bool) -> String {
+        if text.chars().any(char::is_alphabetic) {
+            return if unique {
+                format!("07{}", self.digits("phone", text.as_bytes(), 9))
+            } else {
+                format!("07700900{}", self.digits("phone", text.as_bytes(), 3))
+            };
+        }
         let digits: String = text.chars().filter(char::is_ascii_digit).collect();
         let m = self.mac("phone", text.as_bytes());
         let mut pool = m.iter().flat_map(|b| [b % 10, (b / 10) % 10]).cycle();
@@ -501,6 +520,17 @@ mod tests {
             !run(&u, "07911 123456").starts_with("07700 900"),
             "unique: hashed digits"
         );
+        // Letters aren't a number's shape: nothing of them survives.
+        for given in ["ask for Alice on 07911 123456", "N/A"] {
+            let out = run(&p, given);
+            assert!(out.chars().all(|c| c.is_ascii_digit()), "{given}: {out}");
+            assert!(out.starts_with("07700900") && out.len() == 11, "{out}");
+            let out = run(&u, given);
+            assert!(
+                out.chars().all(|c| c.is_ascii_digit()) && out.len() == 11,
+                "{out}"
+            );
+        }
     }
 
     #[test]
