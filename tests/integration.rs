@@ -11620,3 +11620,55 @@ fn the_schema_wizard_skips_an_extensions_schemas() {
             .unwrap();
     });
 }
+
+/// A masked plan stops at a TimescaleDB hypertable, whose compressed
+/// rows a masked copy would leave out. The compose server has no
+/// TimescaleDB: a scratch database with its catalog table stands in.
+#[test]
+fn a_masked_plan_stops_at_a_timescaledb_hypertable() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = it_name("hyper");
+        let admin = raw("pgman_test").await;
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+        ] {
+            admin.batch_execute(&sql).await.unwrap();
+        }
+        let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+        raw(&db)
+            .await
+            .batch_execute("CREATE TABLE metrics (at timestamptz, v float8)")
+            .await
+            .unwrap();
+        let plan = |catalog| {
+            pgman::masking::classify::plan(&catalog, &pgman::masking::rules::RuleSet::default())
+        };
+        let client = probe_client(&dsn).await;
+        let before = plan(pgman::query::masking::catalog(&client).await.unwrap());
+        assert!(before.problems.is_empty(), "{:?}", before.problems);
+        raw(&db)
+            .await
+            .batch_execute(
+                "CREATE SCHEMA _timescaledb_catalog; \
+                 CREATE TABLE _timescaledb_catalog.hypertable (schema_name name, table_name name); \
+                 INSERT INTO _timescaledb_catalog.hypertable VALUES \
+                   ('public', 'metrics'), ('_timescaledb_internal', '_compressed_hypertable_2')",
+            )
+            .await
+            .unwrap();
+        let after = plan(pgman::query::masking::catalog(&client).await.unwrap());
+        assert_eq!(after.problems.len(), 1, "{:?}", after.problems);
+        assert!(
+            after.problems[0].starts_with("public.metrics is a TimescaleDB hypertable"),
+            "{:?}",
+            after.problems
+        );
+        drop(client);
+        admin
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
+            .await
+            .unwrap();
+    });
+}

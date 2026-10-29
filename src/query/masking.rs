@@ -176,14 +176,46 @@ pub async fn catalog(client: &tokio_postgres::Client) -> Result<Catalog, String>
         .await
         .map_err(|e| fail("large objects", e))?
         .get(0);
-    Ok(catalog::build(
+    let mut catalog = catalog::build(
         &tables,
         &columns,
         &types,
         &keys,
         &partition_keys,
         large_objects,
-    ))
+    );
+    catalog.hypertables = hypertables(client)
+        .await
+        .map_err(|e| fail("hypertables", e))?;
+    Ok(catalog)
+}
+
+/// TimescaleDB's hypertables, `schema.name`, without its own internal
+/// ones (a compressed hypertable's); none without the extension.
+async fn hypertables(
+    client: &tokio_postgres::Client,
+) -> Result<Vec<String>, tokio_postgres::Error> {
+    let installed: bool = client
+        .query_one(
+            "SELECT pg_catalog.to_regclass('_timescaledb_catalog.hypertable') IS NOT NULL",
+            &[],
+        )
+        .await?
+        .get(0);
+    if !installed {
+        return Ok(Vec::new());
+    }
+    Ok(client
+        .query(
+            "SELECT schema_name::text || '.' || table_name::text \
+             FROM _timescaledb_catalog.hypertable \
+             WHERE schema_name::text NOT LIKE '\\_timescaledb%' ORDER BY 1",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect())
 }
 
 /// Start the one transaction a masked dump reads in, and export its

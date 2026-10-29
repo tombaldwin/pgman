@@ -808,6 +808,13 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
     for problem in rules.unknown(catalog) {
         problems.push(problem);
     }
+    for h in &catalog.hypertables {
+        problems.push(format!(
+            "{h} is a TimescaleDB hypertable, which pgman can't mask yet: the copy would \
+             come back a plain table, without the rows of its compressed chunks. \
+             --schema-only copies its shape, or a raw dump where the environment allows one"
+        ));
+    }
     for t in catalog.tables.iter().filter(|t| t.has_rows()) {
         let q = t.qualified();
         let chain = rules_chain(catalog, rules, t);
@@ -1361,6 +1368,22 @@ mod tests {
     }
 
     #[test]
+    fn a_hypertable_stops_the_plan() {
+        let cat = Catalog {
+            tables: vec![table("metrics", vec![c("v", "float8", None)])],
+            hypertables: vec!["public.metrics".into()],
+            ..Default::default()
+        };
+        let p = plan(&cat, &RuleSet::default());
+        assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
+        assert!(
+            p.problems[0].starts_with("public.metrics is a TimescaleDB hypertable"),
+            "{:?}",
+            p.problems
+        );
+    }
+
+    #[test]
     fn an_array_of_personal_values_is_nulled_not_transformed() {
         let mut emails = c("emails", "varchar", Some(100));
         emails.ty.array_of = Some("varchar".into());
@@ -1377,6 +1400,7 @@ mod tests {
         let cat = Catalog {
             tables: vec![table("people", vec![emails])],
             large_objects: 0,
+            ..Default::default()
         };
         let p = plan(
             &cat,
@@ -1496,6 +1520,7 @@ mod tests {
         let cat = Catalog {
             tables: vec![customers, orders],
             large_objects: 0,
+            ..Default::default()
         };
         let p = plan(&cat, &RuleSet::default());
         let email = &p.table("public.customers").unwrap().columns[1];
@@ -1555,6 +1580,7 @@ mod tests {
                 ),
             ],
             large_objects: 0,
+            ..Default::default()
         };
         let p = plan(&cat, &RuleSet::default());
         let fly = p.table("public.flyway_schema_history").unwrap();
@@ -1593,6 +1619,7 @@ mod tests {
         let cat = Catalog {
             tables: vec![t, g],
             large_objects: 0,
+            ..Default::default()
         };
         let p = plan(
             &cat,
@@ -1633,6 +1660,7 @@ mod tests {
                 child_t,
             ],
             large_objects: 0,
+            ..Default::default()
         }
     }
 
@@ -1691,6 +1719,7 @@ mod tests {
         let cat = Catalog {
             tables: vec![table("users", vec![c("id", "int4", None), email])],
             large_objects: 0,
+            ..Default::default()
         };
         let p = plan(&cat, &RuleSet::default());
         assert!(
@@ -1706,6 +1735,7 @@ mod tests {
         let cat = Catalog {
             tables: vec![table("users", vec![c("id", "int4", None), email])],
             large_objects: 0,
+            ..Default::default()
         };
         assert!(plan(&cat, &RuleSet::default()).problems.is_empty());
     }
@@ -1753,6 +1783,7 @@ mod tests {
         let cat = Catalog {
             tables: vec![parent, part, customer, aud],
             large_objects: 0,
+            ..Default::default()
         };
         let p = plan(
             &cat,
@@ -1800,6 +1831,7 @@ mod tests {
         let cat = Catalog {
             tables: vec![table("t", vec![col])],
             large_objects: 0,
+            ..Default::default()
         };
         let p = plan(&cat, &RuleSet::default());
         assert_eq!(p.tables[0].columns[0].rule, Rule::Hash);

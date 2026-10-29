@@ -145,6 +145,9 @@ impl Table {
 pub struct Catalog {
     pub tables: Vec<Table>,
     pub large_objects: i64,
+    /// TimescaleDB's hypertables, `schema.name`: rows a masked copy
+    /// can't carry yet (a compressed chunk's are opaque).
+    pub hypertables: Vec<String>,
 }
 
 impl Catalog {
@@ -300,6 +303,7 @@ pub fn build(
     Catalog {
         tables: out,
         large_objects,
+        hypertables: Vec::new(),
     }
 }
 

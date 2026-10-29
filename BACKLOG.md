@@ -10,10 +10,15 @@ window: PLAN.md — an item lives in exactly one of the two.
 Each tried in docker against 0.4.0: CLI dump/restore (plain and
 masked), MCP, and the TUI's panels.
 
-- **TimescaleDB: a masked restore loses the hypertables.** Every row
-  comes back, but `_timescaledb_catalog.hypertable` is empty, so
-  `metrics` is a plain table afterwards (a plain dump keeps it). The
-  product page leaves TimescaleDB unnamed until this is fixed.
+- **TimescaleDB: masked copies of hypertables.** Refused for now (the
+  plan names each hypertable). Masking them as they are lost the
+  hypertable (it came back a plain table with chunk children) and every
+  row of a compressed chunk (opaque `compressed_data`, NULLed). Real
+  support: leave the chunks out, record each hypertable's dimensions,
+  `create_hypertable` on restore before the rows go in, and read the
+  rows through the hypertable (decompressed). Compression settings,
+  continuous aggregates and policies would need recreating too. The
+  product page leaves TimescaleDB unnamed until then.
 - **CockroachDB: only queries work.** pg_dump, snapshot export,
   `pg_blocking_pids`, `EXPLAIN (FORMAT JSON)` and
   `pg_postmaster_start_time` are all refused. Not a target; but when the

@@ -469,6 +469,7 @@ mod tests {
                 parent: None,
             }],
             large_objects: 0,
+            ..Default::default()
         };
         let set = parse("[tables.customers]\nemial = \"email\"\n[tables.custmers]\nx = \"keep\"\n")
             .unwrap();

@@ -283,6 +283,10 @@ the people in it. No rules file is needed for the first one.
   than being dumped in part). It works on a standby, where a sequence
   reads up to 32 ahead of the primary's (the WAL logs them in batches):
   a restored copy's next ids skip a few, as after a crash.
+- **TimescaleDB.** A database with hypertables isn't masked yet: the
+  copy would come back with plain tables, without the rows of compressed
+  chunks, so the plan stops and names them. `--schema-only` copies the
+  shape.
 - **The archive** is a directory, `production-ledger-<time>.pgman-dump`:
   a header, a manifest with every file's checksum, the schema, and each
   table's masked rows. Only `pgman restore` reads it: checksums first,
