@@ -2112,6 +2112,7 @@ dependencies = [
  "ratatui",
  "rcgen",
  "reqwest",
+ "ring",
  "rustls",
  "rustls-native-certs",
  "serde",

@@ -8,4 +8,6 @@
 
 pub mod catalog;
 pub mod classify;
+pub mod copytext;
 pub mod rules;
+pub mod transform;
