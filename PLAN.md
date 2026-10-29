@@ -64,6 +64,14 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 
 ## Window — after v0.3.0
 
+### v0.4.1 released (2026-10-29)
+
+Compatibility fixes from checking pgman against PostgreSQL 10–17,
+YugabyteDB, TimescaleDB, PostGIS and Supabase in docker: slow queries
+on 12, masked dumps on 10 and 11, restores into YugabyteDB, extension
+schemas out of the lint, masked dumps refusing TimescaleDB hypertables,
+and LINT101's index column. Released on Tom's "release".
+
 ### 0. v0.3.1 released (2026-10-28)
 
 The Homebrew formula depends on libpq and its wrapper names it in
