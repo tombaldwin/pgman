@@ -10117,6 +10117,16 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         said.contains("deleted") && said.contains("now points at"),
         "{said}"
     );
+    assert!(
+        said.contains(&format!("dropped {copy} on")),
+        "the database restored from it: {said}"
+    );
+    assert!(on(
+        "pgman_test",
+        &format!("SELECT 1 FROM pg_database WHERE datname = '{copy}'")
+    )
+    .unwrap()
+    .is_empty());
     assert!(!std::path::Path::new(&raw_file).exists());
     assert_eq!(
         std::fs::read_link(&latest).unwrap().to_string_lossy(),

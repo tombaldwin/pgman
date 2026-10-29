@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 pub const USAGE: &str = "\
 usage: pgman copies [list] [--all]
        pgman copies show <copy>
-       pgman copies rm <copy> [--yes]
+       pgman copies rm <copy> [--yes] [--terminate]
        pgman copies report [--since YYYY-MM-DD] [--format text|markdown|json]
 
 Every dump pgman has taken on this machine, from its journal
@@ -29,8 +29,11 @@ shows it), or the dump's file (its -latest link too).
            files in this directory the journal doesn't know (taken
            by an older pgman, or by hand)
   show     one copy in full
-  rm       delete a copy's file, and its -latest link (pointed at the
-           newest copy left, when there is one); asks first unless --yes
+  rm       delete a copy's file, its -latest link (pointed at the newest
+           copy left, when there is one), and every database pgman restored
+           from it — only a local, unprotected database whose comment names
+           this copy (--terminate ends sessions on it first); asks first
+           unless --yes
   report   the whole account, oldest first, for a ticket or a reviewer
 
   pgman copies
@@ -45,6 +48,8 @@ pub struct Restored {
     pub database: String,
     /// The restore's target as named, to reach it again.
     pub target: Option<String>,
+    /// When `pgman copies rm` dropped it.
+    pub dropped: Option<u64>,
 }
 
 /// One dump, as the journal tells it.
@@ -119,12 +124,26 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
                         server: e.into_server.clone().unwrap_or_default(),
                         database: e.into_database.clone().unwrap_or_default(),
                         target: e.into_target.clone(),
+                        dropped: None,
                     });
                 }
             }
             Some(Kind::Delete) => {
                 if let Some(c) = out.iter_mut().find(|c| &c.id == id) {
-                    c.deleted = Some((e.ts, e.why.clone().unwrap_or_else(|| "by hand".into())));
+                    match &e.into_database {
+                        // A database restored from it, dropped.
+                        Some(db) => {
+                            for r in c.restores.iter_mut().filter(|r| {
+                                &r.database == db && Some(&r.server) == e.into_server.as_ref()
+                            }) {
+                                r.dropped.get_or_insert(e.ts);
+                            }
+                        }
+                        None => {
+                            c.deleted =
+                                Some((e.ts, e.why.clone().unwrap_or_else(|| "by hand".into())))
+                        }
+                    }
                 }
             }
             _ => {}
@@ -188,9 +207,9 @@ pub fn raw_protected_at<'a>(copies: &'a [Copy], server: &str, database: &str) ->
     copies.iter().rev().find(|c| {
         c.protected
             && c.mode == "raw"
-            && c.restores
-                .iter()
-                .any(|r| r.database == database && server_key(&r.server) == key)
+            && c.restores.iter().any(|r| {
+                r.dropped.is_none() && r.database == database && server_key(&r.server) == key
+            })
     })
 }
 
@@ -495,10 +514,13 @@ pub fn render_show(c: &Copy, present: bool, now: u64, ticket_url: Option<&str>) 
     }
     for r in &c.restores {
         out.push(format!(
-            "restored  into {} on {}, {}",
+            "restored  into {} on {}, {}{}",
             r.database,
             r.server,
-            when(r.ts)
+            when(r.ts),
+            r.dropped
+                .map(|d| format!("; dropped {}", when(d)))
+                .unwrap_or_default()
         ));
     }
     if let Some((ts, why)) = &c.deleted {
@@ -554,10 +576,13 @@ pub fn render_report(
             .iter()
             .map(|r| {
                 format!(
-                    "restored into {} on {} {}",
+                    "restored into {} on {} {}{}",
                     r.database,
                     r.server,
-                    when(r.ts)
+                    when(r.ts),
+                    r.dropped
+                        .map(|d| format!(", dropped {}", when(d)))
+                        .unwrap_or_default()
                 )
             })
             .collect();
@@ -643,10 +668,19 @@ pub fn parse_date(s: &str) -> Result<u64, String> {
 /// Parsed `pgman copies` arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
-    List { all: bool },
+    List {
+        all: bool,
+    },
     Show(String),
-    Rm { copy: String, yes: bool },
-    Report { since: u64, format: Format },
+    Rm {
+        copy: String,
+        yes: bool,
+        terminate: bool,
+    },
+    Report {
+        since: u64,
+        format: Format,
+    },
 }
 
 /// Parse the arguments after `pgman copies`. Pure.
@@ -674,10 +708,16 @@ pub fn parse_cli(args: &[String]) -> Result<Cmd, String> {
         Some("show") => Ok(Cmd::Show(one("show", &rest)?)),
         Some("rm") => {
             let yes = rest.contains(&"--yes");
-            let left: Vec<&str> = rest.iter().copied().filter(|a| *a != "--yes").collect();
+            let terminate = rest.contains(&"--terminate");
+            let left: Vec<&str> = rest
+                .iter()
+                .copied()
+                .filter(|a| *a != "--yes" && *a != "--terminate")
+                .collect();
             Ok(Cmd::Rm {
                 copy: one("rm", &left)?,
                 yes,
+                terminate,
             })
         }
         Some("report") => {
@@ -847,8 +887,87 @@ pub fn fix_latest(copies: &[Copy], gone: &Copy) -> Option<String> {
     }
 }
 
+/// Whether a database restored from copy `copy` may be dropped: the
+/// target it was restored to isn't protected, is on this machine, and
+/// the database's comment (`comment_copy`, what pgman wrote at restore)
+/// names this copy — so a database of the same name made since, or a
+/// developer's own, is never dropped. Pure.
+pub fn may_drop(
+    copy: &str,
+    database: &str,
+    protected: bool,
+    local: bool,
+    comment_copy: Option<&str>,
+) -> Result<(), String> {
+    if protected {
+        return Err(format!(
+            "{database} is on a protected target: never dropped"
+        ));
+    }
+    if !local {
+        return Err(format!("{database} isn't on this machine: not dropped"));
+    }
+    match comment_copy {
+        Some(c) if c == copy => Ok(()),
+        Some(_) => Err(format!(
+            "{database}'s comment names another copy: restored again since, kept"
+        )),
+        None => Err(format!(
+            "{database} doesn't say it is this copy (no comment from pgman): kept"
+        )),
+    }
+}
+
+/// Drop `database` (restored from `copy` through `target`) if
+/// [`may_drop`] says so; what happened.
+async fn drop_restored(
+    copy: &str,
+    target: &str,
+    database: &str,
+    terminate: bool,
+) -> Result<String, String> {
+    let t = target.to_string();
+    let resolved = tokio::task::spawn_blocking(move || {
+        crate::inventory::target::resolve(&t, crate::inventory::target::Want::Primary)
+    })
+    .await
+    .map_err(|e| format!("resolve task failed: {e}"))??;
+    if resolved.protected || !resolved.is_local() {
+        may_drop(
+            copy,
+            database,
+            resolved.protected,
+            resolved.is_local(),
+            None,
+        )?;
+    }
+    let opened = crate::pgtool::open(&resolved).await?;
+    let mut dsn = opened.dsn.clone();
+    dsn.dbname = "postgres".into();
+    let client = crate::conn::connect_via_writable(dsn, opened.via, 10_000).await?;
+    if !crate::query::server::database_exists(&client, database).await? {
+        return Ok(format!("{database} was already gone"));
+    }
+    let named = crate::query::masking::provenance_copy(&client, database).await?;
+    may_drop(copy, database, false, true, named.as_deref())?;
+    let sessions = crate::query::server::sessions_on(&client, database).await?;
+    if !sessions.is_empty() {
+        if !terminate {
+            return Err(format!(
+                "{database} has {} session(s) connected: close them, or --terminate",
+                sessions.len()
+            ));
+        }
+        for s in &sessions {
+            crate::conn::terminate_backend(&client, s.pid).await?;
+        }
+    }
+    crate::query::server::drop_database(&client, database).await?;
+    Ok(format!("dropped {database} on {}", resolved.server))
+}
+
 /// Run `pgman copies`, printing the result.
-pub fn run_cli(cmd: &Cmd) -> Result<(), String> {
+pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
     let dir = journal::dir();
     let (events, bad) = journal::read_in(&dir);
     let copies = registry(&events);
@@ -895,7 +1014,11 @@ pub fn run_cli(cmd: &Cmd) -> Result<(), String> {
                 render_report(&copies, *since, *format, ticket_url.as_deref())
             );
         }
-        Cmd::Rm { copy, yes } => {
+        Cmd::Rm {
+            copy,
+            yes,
+            terminate,
+        } => {
             let target = find(&copies, copy)?;
             let (file, known) = match &target {
                 Target::Known(c) => {
@@ -906,44 +1029,83 @@ pub fn run_cli(cmd: &Cmd) -> Result<(), String> {
                 }
                 Target::Untracked(p) => (p.clone(), None),
             };
-            if !present(&file) {
-                if let Some(c) = &known {
-                    // Gone already (deleted by hand): record it, so the
-                    // account says so.
-                    let mut e = Event::new(Kind::Delete, now, &journal::machine_id());
-                    e.copy = Some(c.id.clone());
-                    e.file = Some(file.display().to_string());
-                    e.why = Some("already gone from disk".into());
-                    let _ = journal::append(&e);
-                    if let Some(n) = crate::journal_send::flush().note() {
-                        eprintln!("pgman copies: {n}");
-                    }
-                    println!(
-                        "{} was already gone; the journal now says copy {} is deleted",
-                        file.display(),
-                        c.short()
-                    );
-                    return Ok(());
-                }
+            let databases: Vec<Restored> = known
+                .as_ref()
+                .map(|c| {
+                    c.restores
+                        .iter()
+                        .filter(|r| r.dropped.is_none())
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            let on_disk = present(&file);
+            if !on_disk && known.is_none() {
                 return Err(format!("{} isn't there", file.display()));
             }
             if !yes {
-                let size = crate::pgtool::size_of(crate::pgtool::path_size(&file));
-                let prompt = format!("delete {} ({size})? [y/N] ", file.display());
+                let mut what = Vec::new();
+                if on_disk {
+                    what.push(format!(
+                        "{} ({})",
+                        file.display(),
+                        crate::pgtool::size_of(crate::pgtool::path_size(&file))
+                    ));
+                }
+                for r in &databases {
+                    what.push(format!("the database {} on {}", r.database, r.server));
+                }
+                let prompt = format!("delete {}? [y/N] ", what.join(", and "));
                 if !crate::pgtool::confirm_cli(&prompt, "y")? {
                     return Err("not confirmed; nothing deleted".to_string());
                 }
             }
-            delete_dump(&file)?;
+            let mut warn = None;
+            if on_disk {
+                delete_dump(&file)?;
+                println!("deleted {}", file.display());
+            } else {
+                println!("{} was already gone", file.display());
+            }
             let mut e = Event::new(Kind::Delete, now, &journal::machine_id());
             e.copy = known.as_ref().map(|c| c.id.clone());
             e.file = Some(file.display().to_string());
-            e.why = Some("by hand".into());
-            let warn = journal::append(&e);
-            println!("deleted {}", file.display());
+            e.why = Some(
+                if on_disk {
+                    "by hand"
+                } else {
+                    "already gone from disk"
+                }
+                .into(),
+            );
+            warn = warn.or(journal::append(&e));
             if let Some(c) = &known {
-                if let Some(l) = fix_latest(&copies, c) {
-                    println!("{l}");
+                if on_disk {
+                    if let Some(l) = fix_latest(&copies, c) {
+                        println!("{l}");
+                    }
+                }
+                for r in &databases {
+                    let Some(target) = &r.target else {
+                        println!(
+                            "{} on {}: restored by an older pgman, which didn't record how to reach it; drop it yourself",
+                            r.database, r.server
+                        );
+                        continue;
+                    };
+                    match drop_restored(&c.id, target, &r.database, *terminate).await {
+                        Ok(said) => {
+                            println!("{said}");
+                            let mut e =
+                                Event::new(Kind::Delete, journal::now(), &journal::machine_id());
+                            e.copy = Some(c.id.clone());
+                            e.into_server = Some(r.server.clone());
+                            e.into_database = Some(r.database.clone());
+                            e.why = Some("by hand".into());
+                            warn = warn.or(journal::append(&e));
+                        }
+                        Err(why) => println!("kept: {why}"),
+                    }
                 }
             }
             if let Some(w) = warn {
@@ -1084,6 +1246,75 @@ mod tests {
         assert!(by_prefix(&copies, "abc").unwrap_err().contains("four"));
         assert!(by_prefix(&copies, "ffff").unwrap_err().contains("no copy"));
         assert!(by_prefix(&copies, "zzzz").unwrap_err().contains("four"));
+    }
+
+    #[test]
+    fn only_a_local_unprotected_database_that_names_its_copy_is_dropped() {
+        assert_eq!(
+            may_drop("c1", "ledger_dev", false, true, Some("c1")),
+            Ok(())
+        );
+        for (protected, local, named, says) in [
+            (true, true, Some("c1"), "protected"),
+            (false, false, Some("c1"), "isn't on this machine"),
+            (false, true, Some("c2"), "another copy"),
+            (false, true, None, "doesn't say"),
+        ] {
+            let e = may_drop("c1", "ledger_dev", protected, local, named).unwrap_err();
+            assert!(e.contains(says), "{e}");
+        }
+    }
+
+    #[test]
+    fn a_raw_protected_copy_is_known_by_where_it_was_restored_until_dropped() {
+        let mut d = dump_event("c1", 1, "production/ledger", "/d/a.dump");
+        d.protected = true;
+        let mut r = Event::new(Kind::Restore, 2, "m");
+        r.copy = Some("c1".into());
+        r.into_server = Some("127.0.0.1:55432".into());
+        r.into_database = Some("ledger_raw".into());
+        let c = registry(&[d.clone(), r.clone()]);
+        assert!(
+            raw_protected_at(&c, "localhost:55432", "ledger_raw").is_some(),
+            "localhost is 127.0.0.1"
+        );
+        assert!(raw_protected_at(&c, "127.0.0.1:55433", "ledger_raw").is_none());
+        assert!(raw_protected_at(&c, "127.0.0.1:55432", "other").is_none());
+        let mut masked = d.clone();
+        masked.mode = Some("masked".into());
+        assert!(raw_protected_at(
+            &registry(&[masked, r.clone()]),
+            "127.0.0.1:55432",
+            "ledger_raw"
+        )
+        .is_none());
+        let mut gone = Event::new(Kind::Delete, 3, "m");
+        gone.copy = Some("c1".into());
+        gone.into_server = r.into_server.clone();
+        gone.into_database = r.into_database.clone();
+        assert!(
+            raw_protected_at(&registry(&[d, r, gone]), "127.0.0.1:55432", "ledger_raw").is_none()
+        );
+    }
+
+    #[test]
+    fn a_dropped_database_leaves_the_copys_restores() {
+        let d = dump_event("c1", 1, "p", "/d/a.dump");
+        let mut r = Event::new(Kind::Restore, 2, "m");
+        r.copy = Some("c1".into());
+        r.into_server = Some("127.0.0.1:55432".into());
+        r.into_database = Some("ledger_dev".into());
+        let mut gone = Event::new(Kind::Delete, 3, "m");
+        gone.copy = Some("c1".into());
+        gone.into_server = Some("127.0.0.1:55432".into());
+        gone.into_database = Some("ledger_dev".into());
+        let c = registry(&[d, r, gone]);
+        assert_eq!(
+            c[0].restores[0].dropped,
+            Some(3),
+            "kept in the account, as dropped"
+        );
+        assert!(c[0].deleted.is_none(), "the file is another matter");
     }
 
     #[test]
@@ -1232,7 +1463,8 @@ mod tests {
             parse_cli(&args(&["rm", "--yes", "3f9a"])),
             Ok(Cmd::Rm {
                 copy: "3f9a".into(),
-                yes: true
+                yes: true,
+                terminate: false
             })
         );
         assert!(parse_cli(&args(&["rm"])).is_err());

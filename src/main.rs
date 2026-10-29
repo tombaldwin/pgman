@@ -309,7 +309,7 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(2);
             }
         };
-        if let Err(e) = pgman::copies::run_cli(&cmd) {
+        if let Err(e) = pgman::copies::run_cli(&cmd).await {
             eprintln!("pgman copies: {e}");
             std::process::exit(1);
         }
