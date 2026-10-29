@@ -193,7 +193,15 @@ pub fn paths(
     let base = crate::dump::slug(label);
     let (file, latest) = match out {
         Some(p) if !out_is_dir => {
-            if !p.to_string_lossy().ends_with(archive::EXTENSION) {
+            let text = p.to_string_lossy();
+            if text.ends_with('/') || (!p.exists() && p.extension().is_none()) {
+                return Err(format!(
+                    "{}: no such directory; create it, or name the dump …{}",
+                    p.display(),
+                    archive::EXTENSION
+                ));
+            }
+            if !text.ends_with(archive::EXTENSION) {
                 return Err(format!(
                     "{}: a masked dump is a directory named …{}; name one, or a directory to put it in",
                     p.display(),
@@ -1184,6 +1192,15 @@ mod tests {
             .unwrap_err()
             .contains("….pgman-dump"));
         assert!(paths("p", Some(Path::new("x/copy.pgman-dump")), false, 0, 1).is_ok());
+        // A directory that isn't there is said to be missing.
+        for missing in ["../no-such-dir/", "no-such-dir"] {
+            assert!(
+                paths("p", Some(Path::new(missing)), false, 0, 1)
+                    .unwrap_err()
+                    .contains("no such directory"),
+                "{missing}"
+            );
+        }
     }
 
     #[test]
