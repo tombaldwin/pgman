@@ -9675,6 +9675,82 @@ fn a_masked_copy_holds_no_canary_anywhere() {
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }
 
+/// A column under a UNIQUE constraint stays unique through masking: two
+/// thousand usernames become fake names, which repeat, so they must be
+/// made distinct — and the copy's unique index must build. (A
+/// constraint's index depends on the constraint, not its column, and the
+/// catalog once missed it.)
+#[cfg(unix)]
+#[test]
+fn a_unique_constraint_stays_unique_through_a_masked_copy() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, copy) = (it_name("uniq"), it_name("uniqcopy"));
+    let (home, out) = dump_home("uniq");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"uniq\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        raw(&src)
+            .await
+            .batch_execute(
+                "CREATE TABLE users (id serial PRIMARY KEY, username varchar(100) NOT NULL UNIQUE); \
+                 INSERT INTO users (username) SELECT 'user' || g FROM generate_series(1, 2000) g;",
+            )
+            .await
+            .unwrap();
+    });
+    let dumped = pgman_in(&home, &out, &["dump", "uniq", ".", "--masked"]);
+    let mut said = String::from_utf8_lossy(&dumped.stdout).into_owned();
+    said.push_str(&String::from_utf8_lossy(&dumped.stderr));
+    assert!(dumped.status.success(), "{said}");
+    let archive = out.join("uniq-latest.pgman-dump");
+    let restored = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "local",
+            "--as",
+            &copy,
+            "--create",
+            "--yes",
+        ],
+    );
+    said.push_str(&String::from_utf8_lossy(&restored.stdout));
+    said.push_str(&String::from_utf8_lossy(&restored.stderr));
+    assert!(restored.status.success(), "{said}");
+    let counts = on(
+        &copy,
+        "SELECT count(*), count(DISTINCT username), \
+                count(*) FILTER (WHERE username LIKE 'user%') FROM users",
+    )
+    .unwrap();
+    let (rows, distinct, real): (i64, i64, i64) =
+        (counts[0].get(0), counts[0].get(1), counts[0].get(2));
+    assert_eq!((rows, distinct, real), (2000, 2000, 0), "{said}");
+    let index = on(
+        &copy,
+        "SELECT count(*) FROM pg_indexes WHERE indexname = 'users_username_key'",
+    )
+    .unwrap();
+    assert_eq!(index[0].get::<_, i64>(0), 1);
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+}
+
 /// What an agent may have of a protected environment: a masked copy,
 /// with rules the operator has committed and confirmed — never an
 /// uncommitted or unconfirmed rules file, and never a raw copy: a

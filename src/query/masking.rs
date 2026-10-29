@@ -44,17 +44,22 @@ const TYPES_SQL: &str = "\
     FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
     WHERE t.typtype <> 'p'";
 
-/// Primary and foreign keys from pg_constraint; every unique index —
-/// expression and partial ones too — by the columns it depends on.
+/// Primary and foreign keys from pg_constraint; every other unique
+/// index — a UNIQUE constraint's, expression and partial ones too — by
+/// its key columns and the columns its expressions depend on. (A
+/// constraint's index depends on the constraint, not on its columns, so
+/// pg_depend alone misses it.)
 const KEYS_SQL: &str = "\
     SELECT conrelid::int8, contype::text, conkey, confrelid::int8, confkey \
     FROM pg_catalog.pg_constraint WHERE contype IN ('p', 'f') \
     UNION ALL \
-    SELECT i.indrelid::int8, 'u', array_agg(DISTINCT d.refobjsubid)::int2[], NULL::int8, NULL::int2[] \
-    FROM pg_catalog.pg_index i \
-    JOIN pg_catalog.pg_depend d ON d.classid = 'pg_catalog.pg_class'::regclass \
-         AND d.objid = i.indexrelid AND d.refobjid = i.indrelid AND d.refobjsubid > 0 \
-    WHERE i.indisunique GROUP BY i.indexrelid, i.indrelid";
+    SELECT i.indrelid::int8, 'u', \
+           ARRAY(SELECT k FROM unnest(i.indkey::int2[]) k WHERE k > 0 \
+                 UNION SELECT d.refobjsubid::int2 FROM pg_catalog.pg_depend d \
+                 WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = i.indexrelid \
+                   AND d.refobjid = i.indrelid AND d.refobjsubid > 0 ORDER BY 1)::int2[], \
+           NULL::int8, NULL::int2[] \
+    FROM pg_catalog.pg_index i WHERE i.indisunique AND NOT i.indisprimary";
 
 const PARTITION_KEYS_SQL: &str =
     "SELECT partrelid::int8, partattrs::int2[] FROM pg_catalog.pg_partitioned_table";
