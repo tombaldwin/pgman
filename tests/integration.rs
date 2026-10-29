@@ -265,6 +265,35 @@ fn no_earlier_runs_test_database_survives_the_start_of_a_run() {
     assert!(left.is_empty(), "left by an earlier run: {left:?}");
 }
 
+/// Wait until the standby has replayed everything the primary had
+/// written when this was called, or fail saying so: a test that reads
+/// on the standby what it just made on the primary would otherwise race
+/// replay, and fail as "does not exist".
+async fn standby_caught_up() {
+    let lsn: String = probe_client(DSN)
+        .await
+        .query_one("SELECT pg_current_wal_lsn()::text", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let standby = probe_client(STANDBY_DSN).await;
+    for _ in 0..1200 {
+        let caught: bool = standby
+            .query_one(
+                &format!("SELECT pg_last_wal_replay_lsn() >= '{lsn}'::pg_lsn"),
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        if caught {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the standby hadn't replayed up to {lsn} after 120 s");
+}
+
 /// A read-only probe connection to `dsn`.
 async fn probe_client(dsn: &str) -> std::sync::Arc<tokio_postgres::Client> {
     pgman::conn::connect_via(pgman::conn::Dsn::parse(dsn).unwrap(), None, 10_000)
@@ -10358,16 +10387,9 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
          source = { kind = \"static\", connections = [\"prod-db\"] }\n",
     )
     .unwrap();
-    // The standby has the database once it has replayed it.
-    for _ in 0..50 {
-        if pgman_in(&home, &out, &["masking", "check", "production"])
-            .status
-            .success()
-        {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
+    // The standby has the database once it has replayed it: the other
+    // tests' CREATE DATABASEs can keep it behind for a while.
+    rt.block_on(standby_caught_up());
     // A rules file in a git repository: the server's working directory.
     let git = |args: &[&str]| {
         assert!(std::process::Command::new("git")
