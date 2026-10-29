@@ -43,6 +43,8 @@ pub struct Restored {
     pub ts: u64,
     pub server: String,
     pub database: String,
+    /// The restore's target as named, to reach it again.
+    pub target: Option<String>,
 }
 
 /// One dump, as the journal tells it.
@@ -116,6 +118,7 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
                         ts: e.ts,
                         server: e.into_server.clone().unwrap_or_default(),
                         database: e.into_database.clone().unwrap_or_default(),
+                        target: e.into_target.clone(),
                     });
                 }
             }
@@ -158,6 +161,37 @@ pub fn by_prefix<'a>(copies: &'a [Copy], prefix: &str) -> Result<&'a Copy, Strin
             hits.len()
         )),
     }
+}
+
+/// `host:port` as a key: lower case, this machine's names as one. Pure.
+fn server_key(server: &str) -> String {
+    let s = server.to_ascii_lowercase();
+    let (host, port) = match s.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+            (h.to_string(), p.to_string())
+        }
+        _ => (s.clone(), "5432".to_string()),
+    };
+    let host = if crate::inventory::target::is_local_host(&host) {
+        "localhost".to_string()
+    } else {
+        host
+    };
+    format!("{host}:{port}")
+}
+
+/// The raw copy of a protected target restored into `database` on
+/// `server` (`host:port`), if the journal says one is there: a database
+/// an agent mustn't read. Pure.
+pub fn raw_protected_at<'a>(copies: &'a [Copy], server: &str, database: &str) -> Option<&'a Copy> {
+    let key = server_key(server);
+    copies.iter().rev().find(|c| {
+        c.protected
+            && c.mode == "raw"
+            && c.restores
+                .iter()
+                .any(|r| r.database == database && server_key(&r.server) == key)
+    })
 }
 
 /// The last reason given for a dump of `label`, to offer again. Pure.

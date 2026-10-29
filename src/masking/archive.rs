@@ -32,6 +32,9 @@ pub struct Header {
     pub database: String,
     pub created: u64,
     pub masked: bool,
+    /// Taken from a protected target.
+    #[serde(default)]
+    pub protected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +283,7 @@ mod tests {
                 database: "d".into(),
                 created: 0,
                 masked: true,
+                protected: true,
             },
             schema_sha256: String::new(),
             tables: vec![TableEntry {

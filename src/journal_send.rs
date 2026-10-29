@@ -107,6 +107,7 @@ pub fn outgoing(e: &Event, by: Option<&str>) -> Value {
             obj.insert("latest".into(), json!(base_name(l)));
         }
         obj.remove("into_server");
+        obj.remove("into_target");
         if let Some(by) = by {
             obj.insert("by".into(), json!(by));
         }

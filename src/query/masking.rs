@@ -290,6 +290,7 @@ pub async fn write_provenance(
     database: &str,
     copy: &str,
     masked: bool,
+    protected: bool,
     source: &str,
     expires: Option<u64>,
 ) -> Result<(), String> {
@@ -299,7 +300,8 @@ pub async fn write_provenance(
         .batch_execute(
             "CREATE SCHEMA IF NOT EXISTS pgman; \
              CREATE TABLE IF NOT EXISTS pgman.provenance (\
-               copy text NOT NULL, masked boolean NOT NULL, source text NOT NULL, \
+               copy text NOT NULL, masked boolean NOT NULL, protected boolean NOT NULL, \
+               source text NOT NULL, \
                restored timestamptz NOT NULL DEFAULT now(), expires timestamptz, \
                pgman text NOT NULL)",
         )
@@ -308,11 +310,12 @@ pub async fn write_provenance(
     let expires = expires.map(|e| e as f64);
     client
         .execute(
-            "INSERT INTO pgman.provenance (copy, masked, source, expires, pgman) \
-             VALUES ($1, $2, $3, to_timestamp($4), $5)",
+            "INSERT INTO pgman.provenance (copy, masked, protected, source, expires, pgman) \
+             VALUES ($1, $2, $3, $4, to_timestamp($5), $6)",
             &[
                 &copy,
                 &masked,
+                &protected,
                 &source,
                 &expires,
                 &env!("CARGO_PKG_VERSION"),
@@ -321,8 +324,9 @@ pub async fn write_provenance(
         .await
         .map_err(fail)?;
     let comment = format!(
-        "pgman copy {copy} ({}, from {source})",
-        if masked { "masked" } else { "raw" }
+        "pgman copy {copy} ({}{}, from {source})",
+        if masked { "masked" } else { "raw" },
+        if protected { ", protected" } else { "" }
     );
     client
         .batch_execute(&format!(
@@ -386,6 +390,20 @@ pub async fn set_sequence(
         .await
         .map(|_| ())
         .map_err(|e| format!("could not set sequence {schema}.{name}: {}", message(&e)))
+}
+
+/// A database's comment, if it has one and it can be read.
+pub async fn comment(client: &tokio_postgres::Client, database: &str) -> Option<String> {
+    client
+        .query_opt(
+            "SELECT pg_catalog.shobj_description(d.oid, 'pg_database') \
+             FROM pg_catalog.pg_database d WHERE d.datname = $1",
+            &[&database],
+        )
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.get(0))
 }
 
 /// The copy id a database's comment names, if pgman wrote it.

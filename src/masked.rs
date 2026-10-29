@@ -183,6 +183,7 @@ pub async fn run(
     resolved: Resolved,
     copy: &str,
     cwd: &Path,
+    agent: bool,
     say: &(dyn Fn(String) + Send + Sync),
 ) -> Result<Done, String> {
     if opts.format != crate::dump::Format::Custom {
@@ -207,6 +208,19 @@ pub async fn run(
         Some(f) => archive::sha256_file(f)?,
         None => "defaults".to_string(),
     };
+    let mut unconfirmed = None;
+    if let Some(f) = &rules.file {
+        if agent {
+            if let Some(why) = agent_rules_problem(f, &rules_digest) {
+                return Err(why);
+            }
+        } else {
+            let (r, d) = (rules.clone(), rules_digest.clone());
+            unconfirmed = tokio::task::spawn_blocking(move || confirm_rules_cli(&r, &d))
+                .await
+                .map_err(|e| format!("prompt task failed: {e}"))??;
+        }
+    }
     say(format!(
         "{} — {}, masked by {}",
         resolved.label,
@@ -337,6 +351,7 @@ pub async fn run(
         database: resolved.database.clone(),
         created: now,
         masked: true,
+        protected: resolved.protected,
     };
     let manifest = Manifest {
         header: header.clone(),
@@ -387,6 +402,7 @@ pub async fn run(
         crate::masking::transform::TEST_PASSWORD
     ));
     notes.extend(pre.notes);
+    notes.extend(unconfirmed);
     let mut latest = None;
     if let Some(l) = &p.latest {
         match crate::dump::point_latest(l, &p.file) {
@@ -643,6 +659,123 @@ pub async fn load(
         crate::query::masking::set_sequence(client, schema, name, *value, *called).await?;
     }
     Ok(notes)
+}
+
+/// Where confirmed rules files' digests are kept.
+fn confirmed_file() -> PathBuf {
+    crate::journal::dir().join("masking.confirmed")
+}
+
+/// Whether `digest` (a rules file's sha256) is one the operator has
+/// confirmed at a terminal. Reads the data directory.
+pub fn confirmed(digest: &str) -> bool {
+    std::fs::read_to_string(confirmed_file())
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.split_whitespace().next() == Some(digest))
+}
+
+/// Record `digest` of `file` as confirmed. Writes the data directory.
+pub fn confirm(digest: &str, file: &Path) -> Result<(), String> {
+    let path = confirmed_file();
+    crate::util::ensure_private_dir(&crate::journal::dir()).map_err(|e| e.to_string())?;
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    text.push_str(&format!("{digest}  {}\n", file.display()));
+    crate::util::write_private(&path, &text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Why the rules file at `file` can't be used by an agent, if it can't:
+/// it must be committed, as it is, and confirmed at a terminal — so an
+/// agent that edits it (to keep a column) can't use the edit until the
+/// operator has seen it. Reads git and the data directory.
+pub fn agent_rules_problem(file: &Path, digest: &str) -> Option<String> {
+    let dir = file.parent().unwrap_or(Path::new("."));
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .arg(file)
+            .current_dir(dir)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+    };
+    let tracked = git(&["ls-files", "--error-unmatch", "--"]).is_ok_and(|o| o.status.success());
+    let clean = git(&["status", "--porcelain", "--"])
+        .is_ok_and(|o| o.status.success() && o.stdout.is_empty());
+    if !tracked || !clean {
+        return Some(format!(
+            "{} isn't committed as it is: an agent's dump uses committed rules only. Commit it, then \
+             run pgman dump --masked at a terminal once to confirm it",
+            file.display()
+        ));
+    }
+    if !confirmed(digest) {
+        return Some(format!(
+            "{} hasn't been confirmed at a terminal: run pgman dump <target> --masked there once, \
+             which shows what it keeps and asks",
+            file.display()
+        ));
+    }
+    None
+}
+
+/// At a terminal, a rules file not yet confirmed: what it loosens, and a
+/// yes to use it (recorded, so an agent may then). Without a terminal it
+/// is used, unrecorded, and the result says so.
+pub fn confirm_rules_cli(
+    rules: &crate::masking::rules::RuleSet,
+    digest: &str,
+) -> Result<Option<String>, String> {
+    use std::io::IsTerminal;
+    let Some(file) = &rules.file else {
+        return Ok(None);
+    };
+    if confirmed(digest) {
+        return Ok(None);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Ok(Some(format!(
+            "{} isn't confirmed at a terminal yet: an agent can't use it until it is",
+            file.display()
+        )));
+    }
+    let loose = crate::masking::rules::loosening(rules);
+    eprintln!(
+        "pgman dump: {} is new or changed since you last confirmed it.{}",
+        file.display(),
+        if loose.is_empty() {
+            " It masks no less than the defaults.".to_string()
+        } else {
+            format!(
+                " What it keeps that the defaults would mask:\n  {}",
+                loose.join("\n  ")
+            )
+        }
+    );
+    if !crate::pgtool::confirm_cli("use these rules? [y/N] ", "y")? {
+        return Err("rules not confirmed; nothing dumped".into());
+    }
+    confirm(digest, file)?;
+    Ok(None)
+}
+
+/// Where an agent's masked dump goes: `file` (a `.pgman-dump` name or an
+/// existing directory, inside `cwd`), or `cwd`. Reads the filesystem.
+pub fn agent_out(cwd: &Path, file: Option<&str>) -> Result<PathBuf, String> {
+    let Some(rel) = file else {
+        return crate::mcp::dumps::inside(cwd, ".", true);
+    };
+    let p = crate::mcp::dumps::inside(cwd, rel, false)?;
+    if p.is_dir() && !rel.ends_with(archive::EXTENSION) {
+        return crate::mcp::dumps::inside(cwd, rel, true);
+    }
+    if !rel.ends_with(archive::EXTENSION) {
+        return Err(format!(
+            "{rel:?}: a masked dump is a directory named …{} (or name a directory to put it in)",
+            archive::EXTENSION
+        ));
+    }
+    Ok(p)
 }
 
 /// Whether `path` is a masked dump: a directory with pgman's header.

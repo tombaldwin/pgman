@@ -300,6 +300,42 @@ pub fn parse(text: &str) -> Result<RuleSet, String> {
     Ok(set)
 }
 
+/// What in `set` masks less than the defaults would: each `keep` (with
+/// its reason), the `[classify]` words that aren't personal, large
+/// objects kept. What a confirmation shows. Pure.
+pub fn loosening(set: &RuleSet) -> Vec<String> {
+    let mut out = Vec::new();
+    for t in &set.tables {
+        for c in t.columns.iter().chain(t.every.as_ref()) {
+            if c.rule == Rule::Keep {
+                out.push(format!(
+                    "{}.{} kept{}",
+                    t.key,
+                    c.column,
+                    c.reason
+                        .as_deref()
+                        .map(|r| format!(": {r}"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+    }
+    if !set.not_personal.is_empty() {
+        out.push(format!(
+            "not personal here: {}{}",
+            set.not_personal.join(", "),
+            set.classify_reason
+                .as_deref()
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default()
+        ));
+    }
+    if set.large_objects_kept {
+        out.push("large objects kept".to_string());
+    }
+    out
+}
+
 /// `.pgman/masking/<database>.toml` above `start`, if there is one.
 /// Reads the filesystem.
 pub fn locate(start: &Path, database: &str) -> Option<PathBuf> {
@@ -355,6 +391,25 @@ mod tests {
         assert_eq!(audit.rows, Some(Rows::Drop));
         assert_eq!(audit.qualified(), "audit.events");
         assert_eq!(c.qualified(), "public.customers");
+    }
+
+    #[test]
+    fn what_loosens_is_listed() {
+        let set = parse(
+            "large_objects = \"keep\"\n[classify]\nnot_personal = [\"memo\"]\nreason = \"codes\"\n\
+             [tables.customers]\nnotes = { rule = \"keep\", reason = \"reviewed\" }\nemail = \"hash\"\n\"*\" = \"keep\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            loosening(&set),
+            [
+                "customers.notes kept: reviewed",
+                "customers.* kept",
+                "not personal here: memo (codes)",
+                "large objects kept"
+            ]
+        );
+        assert!(loosening(&RuleSet::default()).is_empty());
     }
 
     #[test]

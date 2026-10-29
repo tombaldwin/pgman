@@ -9666,6 +9666,296 @@ fn a_masked_copy_holds_no_canary_anywhere() {
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }
 
+/// What an agent may have of a protected environment: a masked copy,
+/// with rules the operator has committed and confirmed — never an
+/// uncommitted or unconfirmed rules file, and never a raw copy: a
+/// database restored from a raw dump of a protected environment is
+/// refused to every MCP tool, by the journal and, with the journal gone,
+/// by the database's own comment.
+#[cfg(unix)]
+#[test]
+fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
+    use std::io::{BufRead, Write};
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, masked_copy, raw_copy) = (it_name("agentsrc"), it_name("agentm"), it_name("agentr"));
+    let (home, out) = dump_home("agent");
+    for db in [&masked_copy, &raw_copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        raw(&src)
+            .await
+            .batch_execute(
+                "CREATE TABLE customers (id serial PRIMARY KEY, email varchar(100) NOT NULL, notes text); \
+                 INSERT INTO customers (email, notes) VALUES ('canary-agent@leak.test', 'canary-agent-notes')",
+            )
+            .await
+            .unwrap();
+    });
+    // "production" is on the standby, so the primary is a fine place to
+    // restore to; the copies' connections are how the agent names them.
+    let url = |port: u16, db: &str| {
+        format!("postgres://pgman_test@127.0.0.1:{port}/{db}?sslmode=disable")
+    };
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"prod-db\"\nurl = \"{}\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"{}\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"masked-copy\"\nurl = \"{}\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"raw-copy\"\nurl = \"{}\"\npassword_env = \"IT_PW\"\n",
+            url(55433, &src),
+            url(55432, "pgman_test"),
+            url(55432, &masked_copy),
+            url(55432, &raw_copy),
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"production\"\ndump = \"unmasked\"\nunattended = true\n\
+         source = { kind = \"static\", connections = [\"prod-db\"] }\n",
+    )
+    .unwrap();
+    // The standby has the database once it has replayed it.
+    for _ in 0..50 {
+        if pgman_in(&home, &out, &["masking", "check", "production"])
+            .status
+            .success()
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    // A rules file in a git repository: the server's working directory.
+    let git = |args: &[&str]| {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&out)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.test")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.test")
+            .output()
+            .unwrap()
+            .status
+            .success());
+    };
+    git(&["init", "-q"]);
+    std::fs::create_dir_all(out.join(".pgman/masking")).unwrap();
+    let rules = out.join(format!(".pgman/masking/{src}.toml"));
+    std::fs::write(&rules, "version = 1\n").unwrap();
+
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("IT_PW", "pgman_test")
+        .current_dir(&out)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let mut call =
+        |id: u64, tool: &str, args: serde_json::Value, answer: Option<serde_json::Value>| {
+            writeln!(stdin, "{}", tool_call(id, tool, args)).unwrap();
+            let mut frame = next();
+            let mut message = String::new();
+            if frame["method"] == "elicitation/create" {
+                message = frame["params"]["message"].as_str().unwrap().to_string();
+                let a = answer.clone().expect("a question was asked");
+                writeln!(
+                    stdin,
+                    "{}",
+                    serde_json::json!({"jsonrpc": "2.0", "id": frame["id"], "result": a})
+                )
+                .unwrap();
+                frame = next();
+            }
+            let (text, is_error) = reply(&[frame], id);
+            (text, is_error, message)
+        };
+    let yes = || {
+        Some(
+            serde_json::json!({"action": "accept", "content": {"dump": true, "reason": "APP-7 agent copy"}}),
+        )
+    };
+
+    // The operator allows raw copies at a terminal; an agent still gets
+    // none.
+    let (t, err, _) = call(
+        21,
+        "dump",
+        serde_json::json!({"target": "production"}),
+        None,
+    );
+    assert!(err && t.contains("dumped masked or schema only"), "{t}");
+    let masked = serde_json::json!({"target": "production", "masked": true});
+    let (t, err, _) = call(2, "dump", masked.clone(), None);
+    assert!(err && t.contains("isn't committed"), "{t}");
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "rules"]);
+    let (t, err, _) = call(3, "dump", masked.clone(), None);
+    assert!(
+        err && t.contains("hasn't been confirmed at a terminal"),
+        "{t}"
+    );
+    // The operator confirms it (at a terminal, the dump asks and records).
+    let digest = pgman::masking::archive::sha256_file(&rules).unwrap();
+    std::fs::create_dir_all(home.join(".local/share/pgman")).unwrap();
+    std::fs::write(
+        home.join(".local/share/pgman/masking.confirmed"),
+        format!("{digest}  {}\n", rules.display()),
+    )
+    .unwrap();
+    let (t, err, message) = call(4, "dump", masked.clone(), yes());
+    assert!(!err, "{t}");
+    assert!(message.contains("committed, confirmed"), "{message}");
+    let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+    let file = v["file"].as_str().unwrap().to_string();
+    assert!(file.ends_with(".pgman-dump"), "{file}");
+    let rel = std::path::Path::new(&file)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let restore_yes = Some(serde_json::json!({"action": "accept", "content": {"restore": true}}));
+    let (t, err, _) = call(
+        5,
+        "restore",
+        serde_json::json!({"file": rel, "target": "local", "as": masked_copy, "create": true}),
+        restore_yes.clone(),
+    );
+    assert!(!err, "{t}");
+    let (t, err, _) = call(
+        6,
+        "query",
+        serde_json::json!({"connection": "masked-copy", "sql": "SELECT email, notes FROM customers"}),
+        None,
+    );
+    assert!(!err, "{t}");
+    assert!(
+        !t.contains("canary-agent"),
+        "the agent sees masked rows: {t}"
+    );
+
+    // A raw copy, taken and restored by the operator.
+    let dumped = pgman_in(
+        &home,
+        &out,
+        &[
+            "dump",
+            "production",
+            "--unmasked",
+            "--reason",
+            "APP-8",
+            "--",
+            "--exclude-table=pgman_*",
+        ],
+    );
+    assert!(
+        dumped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dumped.stderr)
+    );
+    let raw_file = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|x| x == "dump") && !p.is_symlink())
+        .unwrap();
+    let restored = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            raw_file.to_str().unwrap(),
+            "local",
+            "--as",
+            &raw_copy,
+            "--create",
+            "--yes",
+        ],
+    );
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    let (t, err, _) = call(
+        7,
+        "query",
+        serde_json::json!({"connection": "raw-copy", "sql": "SELECT email FROM customers"}),
+        None,
+    );
+    assert!(
+        err && t.contains("raw copy of a protected environment"),
+        "{t}"
+    );
+    assert!(!t.contains("canary-agent"), "{t}");
+    // Each check stands alone: with the database's comment cleared, the
+    // journal says so; with the journal gone, the comment does.
+    let comment: String = on(
+        "pgman_test",
+        &format!("SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = '{raw_copy}'"),
+    )
+    .unwrap()[0]
+        .get(0);
+    on(
+        "pgman_test",
+        &format!("COMMENT ON DATABASE {raw_copy} IS NULL"),
+    )
+    .unwrap();
+    let (t, err, _) = call(
+        71,
+        "query",
+        serde_json::json!({"connection": "raw-copy", "sql": "SELECT email FROM customers"}),
+        None,
+    );
+    assert!(
+        err && t.contains("raw copy of a protected environment"),
+        "{t}"
+    );
+    on(
+        "pgman_test",
+        &format!(
+            "COMMENT ON DATABASE {raw_copy} IS '{}'",
+            comment.replace('\'', "''")
+        ),
+    )
+    .unwrap();
+    // With the journal gone, the database's own comment still says so.
+    std::fs::remove_file(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let (t, err, _) = call(
+        8,
+        "query",
+        serde_json::json!({"connection": "raw-copy", "sql": "SELECT email FROM customers"}),
+        None,
+    );
+    assert!(
+        err && t.contains("raw copy of a protected environment"),
+        "{t}"
+    );
+    drop(stdin);
+    let _ = child.wait();
+    for db in [&masked_copy, &raw_copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+}
+
 /// pg_dump options leaving out what the other tests make and drop in
 /// `pgman_test` while they run: a whole-database dump otherwise fails
 /// when one of them goes mid-dump.

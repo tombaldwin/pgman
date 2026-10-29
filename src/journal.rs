@@ -80,6 +80,10 @@ pub struct Event {
     pub into_server: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub into_database: Option<String>,
+    /// The restore's target as named (`local`, a URL without its
+    /// password), to reach it again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub into_target: Option<String>,
     /// Why something was deleted: `by hand`, `expired`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,

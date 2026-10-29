@@ -36,7 +36,8 @@ pub fn tool_entries() -> Vec<Value> {
                     "file": {"type": "string", "description": "Relative to the working directory: a name ending .dump, or an existing directory. Default: a timestamped name in the working directory."},
                     "primary": {"type": "boolean", "description": "Take it from the primary even when the environment has a replica."},
                     "skip_unreadable": {"type": "boolean", "description": "Leave out what the dump's user can't read (named in the result) instead of refusing. Ask the operator first: the copy is then incomplete."},
-                    "schema_only": {"type": "boolean", "description": "The structure alone, no rows. Required for a protected environment."},
+                    "schema_only": {"type": "boolean", "description": "The structure alone, no rows."},
+                    "masked": {"type": "boolean", "description": "Every row, with what looks personal replaced (pgman's own archive, a .pgman-dump directory, which restore takes). A protected environment is dumped masked unless schema_only."},
                     "reason": {"type": "string", "description": "A suggested reason (a ticket id), shown to the operator, who gives the one recorded."}
                 },
                 "required": ["target"],
@@ -264,11 +265,11 @@ impl Server {
     pub(super) async fn tool_dump(&self, args: &Value) -> Result<String, String> {
         self.refuse_side_effects("dump")?;
         let target = arg_string(args, "target")?.ok_or("target is required")?;
-        let out = dump_out(&self.cwd, arg_string(args, "file")?.as_deref())?;
+        let file = arg_string(args, "file")?;
         let suggested = arg_string(args, "reason")?;
-        let opts = crate::dump::Opts {
+        let mut opts = crate::dump::Opts {
             target: target.clone(),
-            out: Some(out.clone()),
+            out: None,
             primary: arg_bool(args, "primary"),
             format: crate::dump::Format::Custom,
             pg_bin: None,
@@ -278,7 +279,7 @@ impl Server {
             schema_only: arg_bool(args, "schema_only"),
             reason: None,
             ticket: None,
-            masked: None,
+            masked: arg_bool(args, "masked").then_some(true),
             masking: None,
         };
         let resolved = crate::dump::resolve(&opts).await?;
@@ -306,6 +307,43 @@ impl Server {
             .clone()
             .unwrap_or_else(|| resolved.label.clone());
         let gate = crate::policy::gate(&policy, kind, crate::policy::Via::Mcp, &name)?;
+        let masked = kind == crate::policy::Kind::Masked;
+        let out = if masked {
+            crate::masked::agent_out(&self.cwd, file.as_deref())?
+        } else {
+            dump_out(&self.cwd, file.as_deref())?
+        };
+        opts.out = Some(out.clone());
+        // A masked dump uses committed rules the operator has confirmed,
+        // and the question says what they keep.
+        let rules_note = if masked {
+            let (cwd, db) = (self.cwd.clone(), resolved.database.clone());
+            let rules =
+                tokio::task::spawn_blocking(move || crate::masking::rules::find(&cwd, &db, None))
+                    .await
+                    .map_err(|e| format!("rules task failed: {e}"))??;
+            match &rules.file {
+                Some(f) => {
+                    let digest = crate::masking::archive::sha256_file(f)?;
+                    if let Some(why) = crate::masked::agent_rules_problem(f, &digest) {
+                        return Err(why);
+                    }
+                    let loose = crate::masking::rules::loosening(&rules);
+                    format!(
+                        " Masked by the defaults and {} (committed, confirmed){}.",
+                        f.display(),
+                        if loose.is_empty() {
+                            ", which keeps nothing the defaults mask".to_string()
+                        } else {
+                            format!(", which keeps: {}", loose.join("; "))
+                        }
+                    )
+                }
+                None => " Masked by pgman's defaults (no rules file).".to_string(),
+            }
+        } else {
+            String::new()
+        };
         // By what it is, not how it was named: `live` and `live/ledger`
         // are one decline.
         let server = resolved.server.clone();
@@ -320,7 +358,10 @@ impl Server {
             .as_deref()
             .and_then(|b| crate::copies::ticket_in(b, &keys));
         let offer = suggested.as_deref().or(branch_ticket.as_deref());
-        let message = dump_question(&resolved, &out, opts.schema_only);
+        let message = format!(
+            "{}{rules_note}",
+            dump_question(&resolved, &out, opts.schema_only)
+        );
         let answer = self
             .elicit(&message, dump_schema(gate.reason, offer))
             .await?;
@@ -359,12 +400,12 @@ impl Server {
         let env = resolved.environment.clone();
         let database = resolved.database.clone();
         let label = resolved.label.clone();
-        let result = crate::dump::run(
-            &opts,
-            resolved,
-            &|line| tracing::info!(target: "pgman::mcp", "dump: {line}"),
-        )
-        .await;
+        let say = |line: String| tracing::info!(target: "pgman::mcp", "dump: {line}");
+        let result = if masked {
+            crate::masked::run(&opts, resolved, &entry.copy, &self.cwd, true, &say).await
+        } else {
+            crate::dump::run(&opts, resolved, &say).await
+        };
         let warn = crate::dump::journal_dump(&entry, env.as_deref(), &database, &label, &result);
         let unsent = crate::journal_send::flush_note().await;
         let mut done = result?;
@@ -433,8 +474,11 @@ impl Server {
         }
         tracing::info!(target: "pgman::mcp", database = %database, "restore confirmed");
         let mut done = ready.execute().await?;
-        done.notes
-            .extend(crate::restore::journal_restore(&opts.file, &done));
+        done.notes.extend(crate::restore::journal_restore(
+            &opts.file,
+            &opts.target,
+            &done,
+        ));
         done.notes.extend(crate::journal_send::flush_note().await);
         let harmless = done.reported.iter().filter(|e| e.harmless).count();
         Ok(json!({

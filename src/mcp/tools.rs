@@ -516,6 +516,17 @@ impl Server {
         let (entries, _) = connections::load(&self.cwd, self.opts.project_connections);
         let entry = pick_entry(&entries, name, tool)?;
         let dsn = entry.dsn.clone().ok_or("no DSN")?;
+        let (events, _) = crate::journal::read_in(&crate::journal::dir());
+        let copies = crate::copies::registry(&events);
+        if crate::copies::raw_protected_at(
+            &copies,
+            &conn::host_port(&dsn.host, dsn.port),
+            &dsn.dbname,
+        )
+        .is_some()
+        {
+            return Err(raw_copy_refusal(name));
+        }
         let safety = read_only_safety(merged_safety(
             crate::safety::SafetyConfig::load_personal().0,
             &self.cwd,
@@ -557,10 +568,49 @@ pub(super) struct Target {
     pub role: connections::Role,
 }
 
+/// [`connect_any`], refused when the database says it is a raw copy of a
+/// protected environment (pgman wrote so in its comment at restore): an
+/// agent reads masked copies, never raw ones. The journal is asked
+/// first, in [`Server::prepare`]; this catches a copy the journal lost.
+async fn connect(
+    name: &str,
+    target: Target,
+    tunnels: &crate::tunnel::TunnelCache,
+) -> Result<
+    (
+        std::sync::Arc<tokio_postgres::Client>,
+        Option<crate::tunnel::SshTunnel>,
+    ),
+    String,
+> {
+    let db = target.dsn.dbname.clone();
+    let (client, tunnel) = connect_any(name, target, tunnels).await?;
+    if let Some(comment) = crate::query::masking::comment(&client, &db).await {
+        if raw_protected_comment(&comment) {
+            return Err(raw_copy_refusal(name));
+        }
+    }
+    Ok((client, tunnel))
+}
+
+/// Whether a database comment [`crate::query::masking::write_provenance`]
+/// wrote says a raw copy of a protected target. Pure.
+pub fn raw_protected_comment(comment: &str) -> bool {
+    comment.starts_with("pgman copy ") && comment.contains("(raw, protected")
+}
+
+fn raw_copy_refusal(name: &str) -> String {
+    format!(
+        "connection '{name}' is a raw copy of a protected environment (restored by pgman): its \
+         rows are real people's, and an agent reads masked copies only. Restore a masked dump \
+         for the agent instead (pgman dump <target> --masked)"
+    )
+}
+
 /// Open `target` read-only, reading its secret first when it names one.
 /// Notices and notifications are dropped: a one-shot call has nowhere to
 /// show them.
-async fn connect(
+async fn connect_any(
     name: &str,
     mut target: Target,
     tunnels: &crate::tunnel::TunnelCache,

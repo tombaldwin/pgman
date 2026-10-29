@@ -1115,7 +1115,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let label = resolved.label.clone();
     let say = |line: String| eprintln!("pgman dump: {line}");
     let mut result = if kind == crate::policy::Kind::Masked {
-        crate::masked::run(opts, resolved, &entry.copy, &cwd, &say).await
+        crate::masked::run(opts, resolved, &entry.copy, &cwd, false, &say).await
     } else {
         run(opts, resolved, &say).await
     };

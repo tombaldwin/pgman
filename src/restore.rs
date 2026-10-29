@@ -543,7 +543,8 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         }
     }
     let mut done = ready.execute().await?;
-    done.notes.extend(journal_restore(&opts.file, &done));
+    done.notes
+        .extend(journal_restore(&opts.file, &opts.target, &done));
     done.notes.extend(crate::journal_send::flush_note().await);
     Ok(done)
 }
@@ -551,7 +552,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
 /// Record a restore of `file` in the journal, against the copy the
 /// journal knows it as (if any). What to add to the notes when the
 /// journal couldn't be written.
-pub fn journal_restore(file: &Path, done: &Done) -> Option<String> {
+pub fn journal_restore(file: &Path, target: &str, done: &Done) -> Option<String> {
     use crate::journal::{Event, Kind};
     let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     let (events, _) = crate::journal::read_in(&crate::journal::dir());
@@ -565,6 +566,8 @@ pub fn journal_restore(file: &Path, done: &Done) -> Option<String> {
     e.file = Some(file.display().to_string());
     e.into_server = Some(done.server.clone());
     e.into_database = Some(done.database.clone());
+    // How to reach it again (pgman copies rm), never with a password.
+    e.into_target = Some(crate::conn::redact_url(target));
     crate::journal::append(&e)
 }
 
@@ -699,17 +702,38 @@ impl Ready {
                 (errors, text)
             }
         };
-        if let Some(m) = &archive {
-            let target = crate::conn::connect_via_writable(dsn.clone(), opened.via, 10_000).await?;
-            let source = m.header.label.clone();
-            let expires = None;
-            if let Err(e) = crate::query::masking::write_provenance(
-                &target,
-                &database,
-                &m.header.copy,
+        // Where the copy came from, inside it: from the archive's header,
+        // or from the journal for a dump it knows.
+        let origin = match &archive {
+            Some(m) => Some((
+                m.header.copy.clone(),
                 m.header.masked,
-                &source,
-                expires,
+                m.header.protected,
+                m.header.label.clone(),
+                None,
+            )),
+            None => {
+                let file = opts
+                    .file
+                    .canonicalize()
+                    .unwrap_or_else(|_| opts.file.clone());
+                let (events, _) = crate::journal::read_in(&crate::journal::dir());
+                let copies = crate::copies::registry(&events);
+                crate::copies::by_file(&copies, &file).map(|c| {
+                    (
+                        c.id.clone(),
+                        c.mode == "masked",
+                        c.protected,
+                        c.label.clone(),
+                        c.expires,
+                    )
+                })
+            }
+        };
+        if let Some((copy, masked, protected, source, expires)) = origin {
+            let target = crate::conn::connect_via_writable(dsn.clone(), opened.via, 10_000).await?;
+            if let Err(e) = crate::query::masking::write_provenance(
+                &target, &database, &copy, masked, protected, &source, expires,
             )
             .await
             {
