@@ -130,6 +130,7 @@ pub fn manifest_problem(m: &Manifest) -> Option<String> {
 pub fn summary(plan: &Plan) -> Vec<String> {
     let mut by_rule: Vec<(&'static str, Vec<String>)> = Vec::new();
     let mut nulled = Vec::new();
+    let mut kept = Vec::new();
     let mut drops = Vec::new();
     for t in &plan.tables {
         if t.drop_rows {
@@ -147,6 +148,8 @@ pub fn summary(plan: &Plan) -> Vec<String> {
                 _ => at,
             };
             match &d.rule {
+                // What a reviewer wants to see: the rules file's keeps.
+                Rule::Keep if d.origin == Origin::Rules => kept.push(at),
                 Rule::Keep => {}
                 Rule::Null => nulled.push(at),
                 r => match by_rule.iter_mut().find(|(n, _)| *n == r.name()) {
@@ -174,8 +177,18 @@ pub fn summary(plan: &Plan) -> Vec<String> {
                 .to_string(),
         );
     }
+    if !kept.is_empty() {
+        out.push(format!("  kept       {} (the rules file)", kept.join(", ")));
+    }
     if !drops.is_empty() {
         out.push(format!("  no rows    {}", drops.join(", ")));
+    }
+    if masked == 0 && plan.tables.iter().any(|t| !t.drop_rows) {
+        out.push(
+            "  warning: nothing was masked — every column is kept as it is; pgman masking show \
+             <target> says why"
+                .to_string(),
+        );
     }
     if !plan.large_objects {
         out.push(
@@ -269,6 +282,26 @@ mod tests {
             "{s}"
         );
         assert!(s.contains("large objects left out"), "{s}");
+        assert!(!s.contains("nothing was masked"), "{s}");
+        // The rules file's keeps are listed; a copy with nothing masked
+        // says so.
+        let kept = Plan {
+            tables: vec![TablePlan {
+                table: "public.customers".into(),
+                drop_rows: false,
+                drop_why: None,
+                columns: vec![dec("notes", Rule::Keep, Origin::Rules)],
+                primary_key: vec![],
+            }],
+            large_objects: true,
+            problems: vec![],
+        };
+        let s = summary(&kept).join("\n");
+        assert!(
+            s.contains("kept       public.customers.notes (the rules file)"),
+            "{s}"
+        );
+        assert!(s.contains("warning: nothing was masked"), "{s}");
     }
 
     #[test]
