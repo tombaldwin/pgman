@@ -63,7 +63,10 @@ typing the environment's name.
   out; comments on tables and columns: left out.
 
 Everything else is kept as it is: amounts, dates (other than birth),
-statuses, codes, identifiers internal to the application.
+statuses, codes, identifiers internal to the application. The names
+pgman recognises are English, and the identifiers British (NI and NHS
+numbers, sort codes); a schema in another language, or with other
+countries' identifiers, needs them named in its rules file.
 
 A team can change this for its own schema in a rules file committed to
 its repository. Keeping a column the defaults would mask needs a written
@@ -98,12 +101,18 @@ A raw copy (every row as it is) of a protected environment needs:
 - a folder outside iCloud Drive, Dropbox, OneDrive and Google Drive.
 
 A coding agent working through pgman's MCP server can never take one,
-and every MCP tool refuses to read a database restored from one.
+nor restore one (nor any dump this machine's pgman didn't take), and
+every MCP tool refuses to read a database restored from one. A copy of
+the file is still the same copy (pgman knows it by its contents), and
+a copy of a database restored from one is treated as a copy of the
+original.
 
 ## The life of a copy
 
 - **Private.** Dump files are readable by the developer alone, written
-  to pgman's own directory by default, and excluded from Time Machine.
+  to pgman's own directory by default, never into a synced folder
+  (iCloud Drive, Dropbox, OneDrive, Google Drive, Nextcloud) for a raw
+  copy, and excluded from Time Machine.
   pgman warns when the disk isn't encrypted (FileVault off). Encrypting
   dump files is planned, not built: until it is, a copy on disk is
   protected by the machine's own disk encryption.

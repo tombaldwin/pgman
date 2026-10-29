@@ -73,6 +73,21 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - `environments.toml` has new keys (`dump`, `dump_ttl`, `dump_reason`,
   `unattended`): an older pgman reading a file that uses them refuses
   it as unknown keys.
+- MCP's `restore` takes a masked dump, or a dump this machine's pgman
+  took; a dump the journal doesn't know, or a raw copy of a protected
+  environment (copied or moved too: each dump's fingerprint is
+  recorded), is refused, yours to restore at a terminal.
+- A restore that fails part-way is journaled, and the database it made
+  is marked as the copy's from the moment it exists.
+- A dump of a database restored from a raw copy of a protected
+  environment is treated as a dump of that environment.
+
+### Fixed
+
+- `pgman … | head` (any command whose reader goes away early) ends
+  quietly instead of aborting.
+- `pgman restore` into a protected environment of replicas only says it
+  is protected, not to name or add its primary.
 
 ## [0.3.1] — 2026-10-28
 

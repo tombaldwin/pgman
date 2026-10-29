@@ -22,6 +22,17 @@ note.
 - **`pgman copies prune`**: everything past its expiry, confirming each
   database.
 - **The TUI's expired-copies flag** in the header.
+- **The rules digest in the dump's journal event** (and whether it was
+  confirmed), so the account says which rules masked a copy. From the
+  review panel, 2026-10-29.
+- **Words for `value`, `data`, `metadata`.** A bounded `varchar` named
+  so is kept, judged by its name; the panel found one holding personal
+  data. Decide whether they are free text by default.
+- **Non-English and non-UK vocabulary**: `nom`, `prenom`, `telefon`,
+  PESEL, CPF, BSN… A preset per language or country, chosen in the rules
+  file. (privacy.md says the words are English and British.)
+- **A unique integer under `hash`** can collide (a keyed hash modulo the
+  type's range); a keyed permutation would keep it unique.
 
 ### Environments overview, like ebman's main screen (Tom, 2026-10-19)
 One table of every database in an environment, replicas included, each

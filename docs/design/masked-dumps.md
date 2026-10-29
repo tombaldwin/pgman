@@ -304,9 +304,10 @@ suffix doesn't fit.
 2. `pg_dump -Fc --snapshot=<that snapshot> --exclude-table-data='*.*'
    --no-comments`: the schema, every sequence's value and the large
    objects, **no table rows and no comments**. String literals in column
-   defaults, CHECKs, view bodies, policies and function bodies are
+   defaults, CHECKs, view bodies, policies and function bodies are to be
    scanned and reported in the summary (they are schema, kept as they
-   are; a team that finds a personal value there fixes the schema).
+   are; a team that finds a personal value there fixes the schema) — not
+   built yet: see "Phase 2a as built".
 3. Each table's rows (leaves for partitioned and inherited tables, `FROM
    ONLY`; stored generated columns left out; foreign tables skipped unless
    `--include-foreign-data`) through `COPY (SELECT …) TO STDOUT` in the
@@ -432,8 +433,9 @@ one command and the record writes itself.
   removed or repointed, never followed) and, from 2a, the databases pgman
   restored from it — **only** databases pgman itself created, whose
   provenance carries the same dump id, on a local server, never a
-  protected one (restore's guards, run again at drop time), after the
-  database names are typed. Connected sessions are listed and need
+  protected one (restore's guards, run again at drop time), after a
+  `[y/N]` naming the file and each database (as built; typing each
+  name was the plan). Connected sessions are listed and need
   `--terminate`, as `restore --clean` does. A server that can't be reached
   keeps its entry, and pgman says so. Never over MCP. `pgman copies prune`
   does the same for everything past its expiry, confirming each database.
@@ -695,6 +697,20 @@ What shipped, and where it differs from the plan above:
 - **Provenance** is written for archives and for raw dumps the journal
   knows; its comment says raw/masked and protected, which MCP's refusal
   reads when the journal has lost the copy.
+- **After the review panel** (2026-10-29): UNIQUE constraints seen (a
+  constraint's index depends on the constraint, not its columns); a
+  joined group unique and NOT NULL together; code-like last words
+  (`_code`, `_status`, `_id`) no longer hide postcodes and identifiers;
+  people's tables by their last word and `<whose>_name`; arrays NULLed;
+  the rules file reaching partitions, children and `_aud` tables; the
+  `--exclude-*` options applied to rows and sequences; an unconfirmed
+  loosening rules file refused without a terminal; a dump of a raw
+  protected copy treated as protected; dumps fingerprinted, so a copied
+  raw dump is known, and MCP restoring only masked or known dumps; a
+  failed restore marked and journaled; restores streamed, stoppable,
+  redacted live; Ctrl-C stopping a masked dump; Time Machine excluded
+  by the attribute, not tmutil's ten seconds; the same placement steps
+  for MCP dumps; a `.gitignore` in every archive.
 - **Not built in 2a** (open in BACKLOG.md): the literal scan of the schema
   (defaults, view bodies), the operator's own fake login, the
   classifier's summary in the MCP confirmation, `copies prune`, the TUI

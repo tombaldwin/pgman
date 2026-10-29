@@ -154,6 +154,15 @@ pgman restore <FILE> <target> [--as NAME] [--create] [--clean] [--terminate]
   have (`SET transaction_timeout = 0` from pg_dump 17 into a 16 server);
   those are counted as harmless. Any other error makes `pgman restore`
   exit with status 1, so a script can tell the copy is incomplete.
+- **A dump is code.** pg_restore runs the schema in the dump as it is:
+  restore only what you or pgman took, or someone you'd let run SQL as
+  you. A masked archive's checksums catch damage, not someone who
+  rewrote it and its manifest.
+- **Recorded, even half done.** A restore of a dump the journal knows —
+  by its path, or by its fingerprint when it was copied or moved — is
+  recorded against that copy, and the database's comment names it from
+  the moment the database exists, so one that fails part-way is still
+  marked and `pgman copies rm` still finds it.
 
 Takes custom, directory and tar dumps. It doesn't take a plain SQL dump
 (`--format plain`): run that with `psql` yourself, `psql -d DATABASE -f
@@ -236,23 +245,29 @@ the people in it. No rules file is needed for the first one.
   | --- | --- |
   | email, login | a unique fake, `firstname.lastname.<hash>@example.test` (shortened to fit) |
   | first, last, full name (a bare `name` on a people's table) | a fake name |
-  | phone, mobile | the same shape with other digits; a UK number in Ofcom's drama ranges |
+  | phone, mobile | the same shape with other digits; a UK number in Ofcom's drama ranges (a value with letters in it, a bare number) |
   | postcode | its district (`SW1A 1AA` → `SW1A`) |
   | date of birth | its year, still a date |
-  | IP address | an address in a documentation range |
+  | IP address | an address in a documentation range (IPv6's, where the column must stay unique) |
   | password | the test password `pgman-test`, hashed as the value was (bcrypt, Spring's `{bcrypt}` and `{noop}`) |
   | someone's id elsewhere (`stripe_customer_id`) | a keyed hash |
   | secrets, tokens, sessions; special-category data (health, ethnicity, religion, gender…); identifiers and pay; addresses; free text by name (`notes`, `description`, …); `text`, `json`, `bytea` and types pgman doesn't know | NULL |
   | everything else | kept |
 
-  Where NULL can't be stored it is the type's empty value (`''`, `{}`,
-  `false`, an enum's first label). A column that references another
-  takes its rule, so joins still join; every column joined that way fits
-  the shortest of them. Flyway's and Liquibase's history are kept, Spring
-  Session and OAuth token tables are dumped empty, an Envers `_aud` table
-  is masked as its base table is. Large objects are left out.
-- **The summary names every masked column**, by rule, and every NULLed
-  one, so nothing is lost without saying.
+  An array of any of these is NULLed. Where NULL can't be stored it is
+  the type's empty value (`''`, `{}`, `false`, an enum's first label),
+  or a hash where the column must stay unique or a reference to it
+  can't be NULL. A column that references another takes its rule, so
+  joins still join; every column joined that way fits the shortest of
+  them, and is unique if one of them is (a unique name gets a tag, kept
+  when it is shortened). Flyway's and Liquibase's history are kept,
+  Spring Session and OAuth token tables are dumped empty, an Envers
+  `_aud` table is masked as its base table is. Large objects are left
+  out. The words are English, and the identifiers British (NI number,
+  NHS number, sort code): name your own in `[classify]`.
+- **The summary names every masked column**, by rule, every NULLed one,
+  and every one the rules file kept, so nothing is lost or kept without
+  saying; a copy with nothing masked says that too.
 - **The key.** Values are replaced by a keyed hash, with a key made for
   this copy and thrown away: within the copy the same email always
   becomes the same fake (joins hold), and nothing outside it can be
@@ -262,15 +277,20 @@ the people in it. No rules file is needed for the first one.
   rows and no comments), every sequence's value and each table's rows
   are read in one repeatable-read snapshot, with no statement timeout,
   and row security off (a table you may only see part of fails rather
-  than being dumped in part). It works on a standby.
+  than being dumped in part). It works on a standby, where a sequence
+  reads up to 32 ahead of the primary's (the WAL logs them in batches):
+  a restored copy's next ids skip a few, as after a crash.
 - **The archive** is a directory, `production-ledger-<time>.pgman-dump`:
   a header, a manifest with every file's checksum, the schema, and each
   table's masked rows. Only `pgman restore` reads it: checksums first,
   then the tables, the rows, the sequences, and last the keys and
   indexes, so foreign keys are checked on the masked rows. pg_restore's
-  errors have the row's values taken out. After `--` only options that
-  leave things out are taken (`--exclude-table`, `--exclude-schema`,
-  `--exclude-table-data`).
+  errors have the row's values taken out, `--verbose` too. After `--`
+  only options that leave things out are taken (`--exclude-table`,
+  `--exclude-schema`, `--exclude-table-data`, and their
+  `-and-children` forms), and what they leave out is left out of the
+  rows and sequences as well as the schema. It carries a `.gitignore`,
+  so a dump in a work tree isn't committed.
 - **Where it came from.** A restored copy says so: a `pgman.provenance`
   table in its own schema (out of the application's sight; a Flyway
   clean of `public` leaves it), and the database's comment.
@@ -302,10 +322,14 @@ rows = "drop"
 Rules: `keep`, `null`, `fixed` (with `value`), `password`, `hash`,
 `email`, `name`, `first_name`, `last_name`, `phone`, `ip`, `postcode`,
 `year`, `date.shift` (with `days`, keyed by the row's primary key); `"*"`
-for every column a table's block doesn't name. Keeping what the defaults
-would mask needs a `reason`. What can't be stored is refused before
-anything is read: a lossy rule on a unique column, a fixed value too
-long, a partition key moved, a `NOT NULL` type with no empty value.
+for every column a table's block doesn't name. A partitioned or parent
+table's block reaches its partitions and children (theirs win where
+they have one), and a base table's reaches its `_aud` table. Keeping
+what the defaults would mask needs a `reason`. What can't be stored is
+refused before anything is read: a lossy rule on a unique column, a
+unique column too short to keep masked values apart, a fixed value too
+long, a partition key moved, a `NOT NULL` type with no empty value, a
+transformer on an array.
 
 - `pgman masking show <target>` lists every column's rule and why,
   NULLed ones first, each with the line that keeps it.
@@ -315,17 +339,26 @@ long, a partition key moved, a `NOT NULL` type with no empty value.
   against an empty migrated database.
 - **A new or changed rules file is confirmed at a terminal.** The first
   masked dump with it shows what it keeps that the defaults would mask,
-  and asks; an agent's dump (MCP) uses it only when it is committed, as
-  it is, and was confirmed so.
+  and asks. Without a terminal (CI, a script, an agent's shell) one that
+  keeps something is refused until it has been confirmed, unless the
+  environment is `unattended`; an agent's dump (MCP) uses it only when
+  it is committed, as it is, and was confirmed so. A confirmation is for
+  that file: the same rules under another database's name are asked
+  about again.
 
 ## Where dumps go
 
 With no FILE, a dump goes to pgman's dump directory,
 `~/.local/share/pgman/dumps`, readable by you alone. A raw dump of a
-protected target is refused in a synced folder (iCloud Drive, Dropbox,
-OneDrive, Google Drive); anything else written there says it leaves the
-machine. Every dump is excluded from Time Machine, and a protected one
-says so when FileVault is off.
+protected target is refused in a synced folder (iCloud Drive, with
+Desktop and Documents when iCloud holds them, Dropbox, OneDrive, Google
+Drive, Nextcloud); anything else written there says it leaves the
+machine. Every dump, from the command line or an agent, is excluded from
+Time Machine, and a protected one says so when FileVault is off.
+
+A dump of a database pgman restored from a raw copy of a protected
+environment is a dump of that environment: masked by default, raw only
+as the original allows.
 
 ## `pgman copies`
 
@@ -350,13 +383,14 @@ secrets.
 - `pgman copies show <copy>` gives one in full, with where it was
   restored. A copy is named by the start of its id, or by its file (its
   `-latest` link too).
-- `pgman copies rm <copy>` deletes the file (asking first, unless
-  `--yes`), records the deletion, and points the `-latest` link at the
+- `pgman copies rm <copy>` deletes the file (asking first, `[y/N]`,
+  unless `--yes`), records the deletion, and points the `-latest` link at the
   newest copy left, or removes it. A link where the dump was is never
   followed. A copy already deleted by hand is recorded as gone. It also
   drops each database pgman restored from it — only one on this machine,
   not protected, whose comment names this copy, so one made since under
-  the same name is kept and said so; sessions on it need `--terminate`.
+  the same name is kept and said so (unless someone gave it that comment
+  too); sessions on it need `--terminate`.
 - `pgman copies report` is the whole account, oldest first: what was
   taken, why, where it was restored, and when it was deleted. `--format
   markdown` pastes into a ticket; `--format json` is for a script.
@@ -423,7 +457,9 @@ when the environment asks for one (the agent may suggest it; the one
 recorded is yours). A protected environment is dumped masked (or schema
 only) over MCP, with your committed, confirmed rules: its raw copy is
 yours to take, at a terminal. And every MCP tool refuses a database
-restored from a raw dump of a protected environment. An agent can refresh
+restored from a raw dump of a protected environment; `restore` takes a
+masked dump, or a dump this machine's pgman took (not a raw copy of a
+protected environment), never one from elsewhere. An agent can refresh
 its own local copy (`restore` with `as`) without ever holding the
 environment's credentials. Its files stay in the server's working
 directory, and `restore` has no `--allow-remote`. See [mcp.md](mcp.md).
