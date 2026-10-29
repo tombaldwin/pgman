@@ -404,7 +404,7 @@ pub fn redact(line: &str) -> String {
             break;
         };
         out.replace_range(start..end, "…");
-        from = start + 1;
+        from = start + "…".len();
     }
     out
 }
@@ -982,6 +982,23 @@ fn ellipsize(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redact_takes_the_values_out_of_keys_and_rows() {
+        assert_eq!(
+            redact("DETAIL:  Key (code)=(canary-77) is duplicated."),
+            "DETAIL:  Key (code)=(…) is duplicated."
+        );
+        assert_eq!(
+            redact("DETAIL:  Key (a, b)=(1, x) already exists; Key (c)=(2)"),
+            "DETAIL:  Key (a, b)=(…) already exists; Key (c)=(…)"
+        );
+        assert_eq!(
+            redact("DETAIL:  Failing row contains (1, canary, null)."),
+            "DETAIL:  Failing row contains (…)."
+        );
+        assert_eq!(redact("no values here"), "no values here");
+    }
     use crate::query::server::Session;
 
     fn args(s: &[&str]) -> Vec<String> {
