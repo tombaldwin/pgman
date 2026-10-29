@@ -273,6 +273,7 @@ const PHONE: &[&str] = &[
     "fax",
     "msisdn",
     "cell",
+    "mob",
 ];
 const FIRST: &[&str] = &[
     "first name",
@@ -280,6 +281,9 @@ const FIRST: &[&str] = &[
     "given name",
     "forename",
     "forenames",
+    "fname",
+    "givenname",
+    "given names",
 ];
 const LAST: &[&str] = &[
     "last name",
@@ -287,12 +291,15 @@ const LAST: &[&str] = &[
     "surname",
     "family name",
     "maiden name",
+    "lname",
 ];
 const FULL: &[&str] = &[
     "full name",
     "fullname",
     "display name",
     "middle name",
+    "middlename",
+    "initials",
     "nickname",
     "nick name",
     "user name",
@@ -332,6 +339,34 @@ const PEOPLE: &[&str] = &[
     "candidates",
     "driver",
     "drivers",
+    "profile",
+    "profiles",
+];
+/// Whose name a `<word>_name` column holds, beside [`PEOPLE`]:
+/// `account_holder_name`, `recipient_name`, `billing_name`.
+const HOLDER: &[&str] = &[
+    "holder",
+    "cardholder",
+    "payee",
+    "payer",
+    "recipient",
+    "sender",
+    "guest",
+    "passenger",
+    "beneficiary",
+    "tenant",
+    "owner",
+    "signatory",
+    "guardian",
+    "parent",
+    "spouse",
+    "partner",
+    "kin",
+    "witness",
+    "referee",
+    "billing",
+    "shipping",
+    "delivery",
 ];
 const IDENTIFIER: &[&str] = &[
     "ssn",
@@ -362,7 +397,7 @@ const IDENTIFIER: &[&str] = &[
 ];
 const ADDRESS: &[&str] = &[
     "address", "street", "city", "town", "county", "line1", "line2", "line3", "house", "flat",
-    "building", "locality",
+    "building", "locality", "addr",
 ];
 const POSTCODE: &[&str] = &[
     "postcode",
@@ -372,7 +407,7 @@ const POSTCODE: &[&str] = &[
     "zip",
     "zipcode",
 ];
-const BIRTH: &[&str] = &["dob", "birth", "birthday", "birthdate"];
+const BIRTH: &[&str] = &["dob", "birth", "birthday", "birthdate", "born"];
 const AGE: &[&str] = &["age"];
 const NETWORK: &[&str] = &[
     "ip",
@@ -416,6 +451,8 @@ const FAMILY: &[&str] = &[
     "dependants",
     "dependents",
     "spouse",
+    "next of kin",
+    "emergency contact",
 ];
 const FREE_TEXT: &[&str] = &[
     "note",
@@ -439,6 +476,7 @@ const FREE_TEXT: &[&str] = &[
     "feedback",
     "text",
     "content",
+    "payload",
 ];
 /// Who did it: a staff member's name or email in an audit column.
 const ACTOR_LAST: &[&str] = &["by"];
@@ -578,9 +616,17 @@ pub fn default_rule(
         if any(&w, LAST) {
             return (Rule::Name(NamePart::Last), why("a last name, by name"));
         }
-        if any(&w, FULL)
-            || (matches!(col.name.as_str(), "name" | "title") && PEOPLE.contains(&table_name))
-        {
+        // A people's table by its last word too: app_user, tbl_customer.
+        let table_words = words(table_name);
+        let peoples = PEOPLE.contains(&table_name)
+            || table_words
+                .last()
+                .is_some_and(|t| PEOPLE.contains(&t.as_str()));
+        let whose = last == "name"
+            && w.len() >= 2
+            && (PEOPLE.contains(&w[w.len() - 2].as_str())
+                || HOLDER.contains(&w[w.len() - 2].as_str()));
+        if any(&w, FULL) || whose || (matches!(col.name.as_str(), "name" | "title") && peoples) {
             return (Rule::Name(NamePart::Full), why("a person's name, by name"));
         }
     }
@@ -1177,6 +1223,40 @@ mod tests {
             Rule::Name(NamePart::Full)
         );
         assert_eq!(rule("books", "title", "varchar", Some(200)), Rule::Keep);
+        for table in ["app_user", "tbl_customer", "UserProfile", "user_account"] {
+            assert_eq!(
+                rule(table, "name", "varchar", Some(255)),
+                Rule::Name(NamePart::Full),
+                "{table}"
+            );
+        }
+        assert_eq!(rule("user_role", "name", "varchar", Some(64)), Rule::Keep);
+    }
+
+    #[test]
+    fn whose_name_and_the_usual_abbreviations() {
+        for (name, want) in [
+            ("employee_name", Rule::Name(NamePart::Full)),
+            ("patient_name", Rule::Name(NamePart::Full)),
+            ("account_holder_name", Rule::Name(NamePart::Full)),
+            ("cardholder_name", Rule::Name(NamePart::Full)),
+            ("billing_name", Rule::Name(NamePart::Full)),
+            ("fname", Rule::Name(NamePart::First)),
+            ("lname", Rule::Name(NamePart::Last)),
+            ("middlename", Rule::Name(NamePart::Full)),
+            ("initials", Rule::Name(NamePart::Full)),
+            ("mob", Rule::Phone),
+            ("addr1", Rule::Null),
+            ("born_on", Rule::Null),
+            ("next_of_kin", Rule::Null),
+            ("emergency_contact", Rule::Null),
+            ("payload", Rule::Null),
+        ] {
+            assert_eq!(rule("t", name, "varchar", Some(255)), want, "{name}");
+        }
+        for name in ["product_name", "company_name", "file_name"] {
+            assert_eq!(rule("t", name, "varchar", Some(255)), Rule::Keep, "{name}");
+        }
     }
 
     #[test]
