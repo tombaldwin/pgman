@@ -540,6 +540,11 @@ pub async fn run(
         sequences,
     };
     let written = (|| -> Result<(), String> {
+        // In a work tree (an agent's dumps land in the project), git
+        // leaves it out: `git add -A` doesn't push a copy of production.
+        private_file(&p.partial.join(".gitignore"))?
+            .write_all(b"# A pgman dump: never committed.\n*\n")
+            .map_err(|e| format!(".gitignore: {e}"))?;
         let mut h = private_file(&p.partial.join(archive::HEADER))?;
         h.write_all(
             serde_json::to_string_pretty(&header)

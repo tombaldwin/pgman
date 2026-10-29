@@ -10464,7 +10464,16 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     let v: serde_json::Value = serde_json::from_str(&t).unwrap();
     let file = v["file"].as_str().unwrap().to_string();
     assert!(file.ends_with(".pgman-dump"), "{file}");
-    // Kept out of Time Machine (on macOS), as a dump at the command line.
+    // In the work tree, but git leaves it out, and (on macOS) so does
+    // Time Machine, as for a dump at the command line.
+    let status = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(&out)
+        .output()
+        .unwrap();
+    let untracked = String::from_utf8_lossy(&status.stdout).into_owned();
+    // (The -latest link may show: a name, no rows.)
+    assert!(!untracked.contains(".pgman-dump/"), "{untracked}");
     #[cfg(target_os = "macos")]
     {
         let x = std::process::Command::new("/usr/bin/xattr")
