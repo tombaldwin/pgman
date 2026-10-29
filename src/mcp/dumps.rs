@@ -364,8 +364,10 @@ impl Server {
         )
         .await;
         let warn = crate::dump::journal_dump(&entry, env.as_deref(), &database, &label, &result);
+        let unsent = crate::journal_send::flush_note().await;
         let mut done = result?;
         done.notes.extend(warn);
+        done.notes.extend(unsent);
         Ok(json!({
             "file": done.file.display().to_string(),
             "latest": done.latest.as_ref().map(|l| l.display().to_string()),
@@ -428,8 +430,10 @@ impl Server {
             ));
         }
         tracing::info!(target: "pgman::mcp", database = %database, "restore confirmed");
-        let done = ready.execute().await?;
-        let _ = crate::restore::journal_restore(&opts.file, &done);
+        let mut done = ready.execute().await?;
+        done.notes
+            .extend(crate::restore::journal_restore(&opts.file, &done));
+        done.notes.extend(crate::journal_send::flush_note().await);
         let harmless = done.reported.iter().filter(|e| e.harmless).count();
         Ok(json!({
             "database": done.database,

@@ -1,6 +1,6 @@
 # Design: masked dumps, and the life of a copy
 
-Status: **proposal, third draft; phase 1 built (2026-10-28), the rest not.** First draft 2026-10-28,
+Status: **proposal, third draft; phases 1 and 1b built (2026-10-28/29), the rest not.** First draft 2026-10-28,
 reviewed the same day by a four-reviewer panel (privacy and compliance,
 security, DBA and feasibility, developer experience) and revised with
 Tom's decisions; the second draft was reviewed again by the same four and
@@ -667,6 +667,22 @@ What shipped, and where it differs from the plan above:
   and after each dump; the TUI header flag waits for the copies view.
 - Untracked dumps are found in the working directory; the dump directory
   comes with 2a.
+
+### Phase 1b as built
+
+- `src/journal_send.rs`: `journal = { group, region?, profile? }` on the
+  environment (region and profile default to an `rds` source's, its
+  `account` is checked first). After each event, and on `pgman copies`,
+  pending events go out with `aws logs put-log-events`, one stream per
+  machine id, in batches of 50 spanning under a day.
+- `by` is the IAM ARN of the sender, read with `sts get-caller-identity`
+  when the events are sent, not when they happened; the local journal
+  still records no identity.
+- What has been sent is recorded in `journal.sent` in the data directory
+  (not the cache, so clearing the cache doesn't resend everything).
+- Events more than 13 days old when a group is first set are left out:
+  CloudWatch refuses events older than 14 days, and one in a batch would
+  hold up every later one.
 
 ## Decided
 

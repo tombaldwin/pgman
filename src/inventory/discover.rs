@@ -481,6 +481,7 @@ pub fn propose(
             dump_ttl: None,
             dump_reason: None,
             unattended: false,
+            journal: None,
             };
             Proposal {
                 covered_by: covering(&name, existing),

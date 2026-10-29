@@ -512,6 +512,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     }
     let mut done = ready.execute().await?;
     done.notes.extend(journal_restore(&opts.file, &done));
+    done.notes.extend(crate::journal_send::flush_note().await);
     Ok(done)
 }
 

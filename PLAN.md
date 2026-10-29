@@ -95,7 +95,14 @@ the typed name and reason for protected dumps, `--schema-only`,
 `--reason`, `--ticket` (from the branch), MCP protected dumps schema
 only, the journal (`src/journal.rs`) and `pgman copies` list, show, rm,
 report (`src/copies.rs`). The design note's "Phase 1 as built" says
-where it differs. Next: phase 1b, the journal to CloudWatch.
+where it differs.
+
+Phase 1b built 2026-10-29, unreleased: the journal to CloudWatch
+(`src/journal_send.rs`). Next: phase 2a, masking itself (the classifier,
+defaults and presets, the data path and archive, restore, provenance,
+`copies rm` for databases, `masking show`/`check`, the leak test,
+`docs/privacy.md`), about 9 days; 1 and 1b could ship as a release
+first.
 
 ### 2. Waiting on Tom
 

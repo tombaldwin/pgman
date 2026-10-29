@@ -381,7 +381,9 @@ nothing — when its name contains `prod`. A protected environment is
 confirmed by typing its name; `protected = false` turns that off.
 What a dump of an environment may be — and what it asks first — is set
 by `dump`, `dump_ttl`, `dump_reason` and `unattended`: see [the dump
-policy](dump-restore.md#the-dump-policy).
+policy](dump-restore.md#the-dump-policy). `journal = { group = … }`
+sends the record of its copies to CloudWatch: see [the journal in
+CloudWatch](dump-restore.md#the-journal-in-cloudwatch).
 
 ### From the command line: `pgman apply`
 

@@ -1095,9 +1095,11 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let label = resolved.label.clone();
     let mut result = run(opts, resolved, &|line| eprintln!("pgman dump: {line}")).await;
     let warn = journal_dump(&entry, env.as_deref(), &database, &label, &result);
+    let unsent = crate::journal_send::flush_note().await;
     if let Ok(done) = &mut result {
         done.copy = Some(entry.copy.clone());
         done.notes.extend(warn);
+        done.notes.extend(unsent);
         done.notes.extend(expired_note(&entry.copy));
     }
     result

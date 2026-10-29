@@ -107,6 +107,22 @@ pub struct Environment {
     /// operator's own file.
     #[serde(default)]
     pub unattended: bool,
+    /// Where this environment's journal events also go: a CloudWatch Logs
+    /// group in its AWS account ([`crate::journal_send`]).
+    #[serde(default)]
+    pub journal: Option<JournalTarget>,
+}
+
+/// `journal = { group = "/pgman/dumps", region = "eu-west-2", profile = "…" }`:
+/// region and profile default to an `rds` source's own.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalTarget {
+    pub group: String,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// `version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }`
@@ -308,6 +324,19 @@ impl Source {
 }
 
 impl Environment {
+    /// Where the journal's events for this environment are sent: the
+    /// `journal` block's region and profile, else the source's; the
+    /// source's account, checked before anything is sent.
+    pub fn journal_scope(&self) -> AwsScope {
+        let source = self.source.scope().unwrap_or_default();
+        let j = self.journal.as_ref();
+        AwsScope {
+            region: j.and_then(|j| j.region.clone()).or(source.region),
+            profile: j.and_then(|j| j.profile.clone()).or(source.profile),
+            account: source.account,
+        }
+    }
+
     /// The dump fields, for [`crate::policy::effective`].
     pub fn dump_settings(&self) -> crate::policy::EnvSettings {
         crate::policy::EnvSettings {
@@ -367,6 +396,17 @@ impl Environment {
         }
         if let Some(t) = &self.dump_ttl {
             crate::policy::parse_ttl(t)?;
+        }
+        if let Some(j) = &self.journal {
+            if !crate::aws_cli::plain_arg(&j.group, "._-/#", 512) {
+                return Err(format!(
+                    "journal.group {:?} is not a CloudWatch Logs group name",
+                    j.group
+                ));
+            }
+            self.journal_scope()
+                .validate()
+                .map_err(|e| format!("journal: {e}"))?;
         }
         if let Some(v) = &self.version_table {
             crate::query::patches::applied_ids_sql(&v.config())
@@ -1056,6 +1096,7 @@ source = { kind = "static", connections = ["ledger-local"] }
             dump_ttl: None,
             dump_reason: None,
             unattended: false,
+            journal: None,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);
@@ -1539,6 +1580,41 @@ sslmode = "require"
             ..v.clone()
         };
         assert!(every.applies_to("anything"), "empty means every database");
+    }
+
+    #[test]
+    fn a_journal_group_takes_the_sources_scope_unless_it_names_its_own() {
+        let rds = parse_config(
+            "[[environments]]\nname = \"production\"\njournal = { group = \"/pgman/dumps\" }\n\
+             source = { kind = \"rds\", instances = [\"p\"], region = \"eu-west-2\", profile = \"prod\", account = \"210987654321\" }\n",
+        )
+        .unwrap();
+        let scope = rds[0].journal_scope();
+        assert_eq!(scope.region.as_deref(), Some("eu-west-2"));
+        assert_eq!(scope.profile.as_deref(), Some("prod"));
+        assert_eq!(scope.account.as_deref(), Some("210987654321"));
+        let own = parse_config(
+            "[[environments]]\nname = \"production\"\njournal = { group = \"/pgman/dumps\", region = \"us-east-1\", profile = \"logs\" }\n\
+             source = { kind = \"static\", connections = [\"x\"] }\n",
+        )
+        .unwrap();
+        let scope = own[0].journal_scope();
+        assert_eq!(scope.region.as_deref(), Some("us-east-1"));
+        assert_eq!(scope.profile.as_deref(), Some("logs"));
+        assert_eq!(scope.account, None);
+        for bad in [
+            "journal = { group = \"--debug\" }",
+            "journal = { group = \"has space\" }",
+            "journal = { group = \"/g\", region = \"-x\" }",
+            "journal = { group = \"/g\", stream = \"s\" }",
+            "dump_ttl = \"soon\"",
+            "dump = \"sometimes\"",
+        ] {
+            let text = format!(
+                "[[environments]]\nname = \"p\"\n{bad}\nsource = {{ kind = \"static\", connections = [\"x\"] }}\n"
+            );
+            assert!(parse_config(&text).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -249,6 +249,49 @@ secrets.
 
 A database restored from a copy isn't dropped by `rm` yet.
 
+### The journal in CloudWatch
+
+The journal on your machine is your own record. For a client's
+environment you can also send each event to a CloudWatch Logs group in
+its AWS account, where the client keeps it:
+
+```toml
+[[environments]]
+name = "production"
+journal = { group = "/pgman/dumps" }
+# region and profile default to an rds source's own; otherwise name them:
+# journal = { group = "/pgman/dumps", region = "eu-west-2", profile = "prod" }
+```
+
+After each dump, restore and deletion of that environment's copies,
+pgman sends what is new with your `aws` CLI: one log stream per machine
+(a random id, not its name), each event as JSON with `by` set to the IAM
+identity that sent it. What leaves your machine is less than the local
+line: the dump file's name without its path (which holds your user
+name), no server address, no data and no secrets. When the source names
+an `account`, the credentials must be for it, or nothing is sent.
+
+A send that fails (expired SSO, no permission) never fails the dump:
+the result says how many events are waiting and why, and the next `pgman
+dump` or `pgman copies` sends them. Each event is sent once
+(`journal.sent`, beside the journal, records which). Events more than
+13 days old when the group is first set aren't sent: CloudWatch refuses
+them.
+
+Developers need only this, on the group:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutLogEvents"],
+  "Resource": "arn:aws:logs:*:123456789012:log-group:/pgman/dumps:*"
+}
+```
+
+No `logs:Delete*` and no `logs:PutRetentionPolicy`: what reaches the
+group can't be removed by whoever sent it. The group's retention (a year
+or two is usual) and who may read it are the client's settings.
+
 ## A local copy, end to end
 
 ```sh

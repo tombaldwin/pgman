@@ -833,6 +833,13 @@ pub fn run_cli(cmd: &Cmd) -> Result<(), String> {
             if bad == 1 { "is" } else { "are" }
         );
     }
+    // What an earlier command couldn't send goes now (a no-op without a
+    // journal group); rm sends its own deletion below.
+    if !matches!(cmd, Cmd::Rm { .. }) {
+        if let Some(n) = crate::journal_send::flush().note() {
+            eprintln!("pgman copies: {n}");
+        }
+    }
     match cmd {
         Cmd::List { all } => {
             let loose = untracked(&cwd, &copies);
@@ -874,6 +881,9 @@ pub fn run_cli(cmd: &Cmd) -> Result<(), String> {
                     e.file = Some(file.display().to_string());
                     e.why = Some("already gone from disk".into());
                     let _ = journal::append(&e);
+                    if let Some(n) = crate::journal_send::flush().note() {
+                        eprintln!("pgman copies: {n}");
+                    }
                     println!(
                         "{} was already gone; the journal now says copy {} is deleted",
                         file.display(),
@@ -904,6 +914,9 @@ pub fn run_cli(cmd: &Cmd) -> Result<(), String> {
             }
             if let Some(w) = warn {
                 eprintln!("pgman copies: {w}");
+            }
+            if let Some(n) = crate::journal_send::flush().note() {
+                eprintln!("pgman copies: {n}");
             }
         }
     }

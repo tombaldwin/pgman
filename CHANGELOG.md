@@ -19,6 +19,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   and `unattended`. A project's `.pgman/pgman.toml` can lower an
   environment's (`[dumps.environments.<name>] dump = "schema"`), never
   raise it.
+- `journal = { group = "/pgman/dumps" }` on an environment sends the
+  journal's events for its copies to that CloudWatch Logs group with the
+  `aws` CLI, as the IAM identity that sent them: file names without
+  paths, no server addresses. A send that fails never fails the dump and
+  is retried by the next `pgman dump` or `pgman copies`; each event is
+  sent once.
 - `pgman dump --schema-only`, `--reason` and `--ticket`. The reason
   prompt offers the ticket in the branch's name (`feature/APP-101-…`),
   else the last reason given; `[dumps] ticket_url` links tickets in

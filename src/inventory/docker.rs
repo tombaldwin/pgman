@@ -268,6 +268,7 @@ mod tests {
             dump_ttl: None,
             dump_reason: None,
             unattended: false,
+            journal: None,
         }
     }
 

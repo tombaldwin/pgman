@@ -9733,6 +9733,135 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
 }
 
+/// An environment with `journal = { group = … }` sends its journal
+/// events to CloudWatch through the aws CLI (a fake one here, recording
+/// its calls): after the dump, with the sender's ARN, the file's name
+/// and not its path, no server address. A send that fails doesn't fail
+/// the dump; the event waits, is sent by the next `pgman copies`, and
+/// only once.
+#[cfg(unix)]
+#[test]
+fn journal_events_go_to_cloudwatch_and_wait_when_they_cant() {
+    use std::os::unix::fs::PermissionsExt;
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (home, out) = dump_home("cloudwatch");
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"production\"\njournal = { group = \"/pgman/dumps\", region = \"eu-west-2\" }\n\
+         source = { kind = \"static\", connections = [\"local-replica\"] }\n",
+    )
+    .unwrap();
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = home.join("aws.log");
+    let state = home.join("aws-state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(
+        bin.join("aws"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$2\" in\n\
+             get-caller-identity) echo arn:aws:sts::123456789012:assumed-role/dev/ava ;;\n\
+             create-log-stream) if [ -f {st}/stream ]; then echo 'An error occurred (ResourceAlreadyExistsException)' >&2; exit 254; fi; touch {st}/stream ;;\n\
+             put-log-events) if [ -f {st}/deny ]; then echo 'An error occurred (AccessDeniedException)' >&2; exit 254; fi; echo '{{}}' ;;\n\
+             esac\n",
+            log = log.display(),
+            st = state.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("aws"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let run = |args: &[&str]| {
+        let o = pgman_in_env(&home, &out, &[("PATH", &path)], args);
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let calls = || std::fs::read_to_string(&log).unwrap_or_default();
+
+    std::fs::write(state.join("deny"), "").unwrap();
+    let (code, said, err) = run(&[
+        "dump",
+        "production",
+        "--schema-only",
+        "--ticket",
+        "APP-7",
+        "--",
+        OTHERS_TABLES,
+        OTHERS_SCHEMAS,
+    ]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        said.contains("1 journal event is not yet in CloudWatch")
+            && said.contains("AccessDeniedException"),
+        "{said}"
+    );
+    assert!(
+        out.read_dir().unwrap().count() >= 2,
+        "the dump is there all the same"
+    );
+
+    std::fs::remove_file(state.join("deny")).unwrap();
+    let (code, _, err) = run(&["copies"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(!err.contains("not yet in CloudWatch"), "{err}");
+    let sent = calls();
+    let puts: Vec<&str> = sent
+        .lines()
+        .filter(|l| l.starts_with("logs put-log-events"))
+        .collect();
+    assert_eq!(puts.len(), 2, "one refused, one sent: {sent}");
+    let put = puts[1];
+    assert!(
+        put.contains("--log-group-name /pgman/dumps --log-stream-name m-"),
+        "{put}"
+    );
+    assert!(put.contains("--region eu-west-2"), "{put}");
+    assert!(
+        put.contains("APP-7") && put.contains("assumed-role/dev/ava"),
+        "{put}"
+    );
+    assert!(
+        put.contains("production-pgman_test-"),
+        "the file's name: {put}"
+    );
+    assert!(
+        !put.contains(&out.display().to_string()) && !put.contains("127.0.0.1"),
+        "no path, no server: {put}"
+    );
+
+    // Sent once: nothing new, no call.
+    let before = calls().lines().count();
+    let (code, _, _) = run(&["copies"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(calls().lines().count(), before, "{}", calls());
+
+    // A delete goes straight away, under its dump's environment.
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let first: serde_json::Value = serde_json::from_str(journal.lines().next().unwrap()).unwrap();
+    let id = first["copy"].as_str().unwrap()[..8].to_string();
+    let (code, _, err) = run(&["copies", "rm", &id, "--yes"]);
+    assert_eq!(code, Some(0), "{err}");
+    let last = calls();
+    let last_put = last
+        .lines()
+        .rfind(|l| l.starts_with("logs put-log-events"))
+        .unwrap();
+    assert!(
+        last_put.contains("\\\"event\\\":\\\"delete\\\""),
+        "{last_put}"
+    );
+}
+
 /// A dump whose user can't read everything is refused before pg_dump
 /// starts, naming what; with --skip-unreadable it leaves exactly those
 /// out and says so, and what it can read is in the dump. What pg_dump

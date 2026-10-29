@@ -22,6 +22,7 @@ pub use tui_common::font_probe;
 pub mod grid;
 pub mod inventory;
 pub mod journal;
+pub mod journal_send;
 pub mod mcp;
 pub mod pgtool;
 pub mod policy;
