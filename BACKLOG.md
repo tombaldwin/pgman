@@ -14,17 +14,6 @@ masked), MCP, and the TUI's panels.
   comes back, but `_timescaledb_catalog.hypertable` is empty, so
   `metrics` is a plain table afterwards (a plain dump keeps it). The
   product page leaves TimescaleDB unnamed until this is fixed.
-- **TimescaleDB: the schema wizard and `schema_lint` list dozens of
-  `_timescaledb_*` internal tables.** Leave out extension-owned schemas.
-- **YugabyteDB: every restore reports one error** (`server
-  "yb_global_views_server" already exists`, Yugabyte's own object),
-  and pgman then says "the database wasn't empty. --clean replaces it
-  instead", which is wrong. Rows all load.
-- **PostgreSQL 10 and 11: masking fails** with `function
-  pg_catalog.pg_partition_root(oid) does not exist` (PG12+). Either
-  fall back for older servers or say "masked dumps need PostgreSQL 12".
-- **PostgreSQL 12: slow queries fail** with `column "total_exec_time"
-  does not exist` (PG13 renamed `total_time`). Use the old column on 12.
 - **CockroachDB: only queries work.** pg_dump, snapshot export,
   `pg_blocking_pids`, `EXPLAIN (FORMAT JSON)` and
   `pg_postmaster_start_time` are all refused. Not a target; but when the

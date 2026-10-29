@@ -6,6 +6,18 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Slow queries work on PostgreSQL 12, which names `pg_stat_statements`'
+  times `total_time` and `mean_time`.
+- Masked dumps work on PostgreSQL 10 and 11.
+- A restore into a database it created counts "already exists" from
+  the new database's template as harmless and names it, instead of
+  saying the database wasn't empty: every restore into YugabyteDB
+  exited 1 for its own foreign server.
+- The schema wizard and `schema_lint` leave alone what is in a schema
+  an extension made, such as TimescaleDB's chunks.
+
 ## [0.4.0] — 2026-10-29
 
 ### Added
