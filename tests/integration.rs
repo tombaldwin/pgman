@@ -9534,6 +9534,12 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     );
 }
 
+/// pg_dump options leaving out what the other tests make and drop in
+/// `pgman_test` while they run: a whole-database dump otherwise fails
+/// when one of them goes mid-dump.
+const OTHERS_TABLES: &str = "--exclude-table=pgman_it_*";
+const OTHERS_SCHEMAS: &str = "--exclude-schema=pgman_it_*";
+
 /// A protected environment's dump policy at the command line: with no
 /// terminal a raw dump is refused unless the operator's own file says
 /// `unattended = true`, a schema dump needs a reason, a project's cap
@@ -9586,13 +9592,30 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     );
     assert!(files().is_empty(), "{:?}", files());
 
-    let (code, said, err) = run(&["dump", "production", "--schema-only", "--ticket", "APP-7"]);
+    let (code, said, err) = run(&[
+        "dump",
+        "production",
+        "--schema-only",
+        "--ticket",
+        "APP-7",
+        "--",
+        OTHERS_TABLES,
+        OTHERS_SCHEMAS,
+    ]);
     assert_eq!(code, Some(0), "{err}");
     assert!(said.contains("in the journal: pgman copies"), "{said}");
     // The stamp is to the second: the next dump gets its own name.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     std::fs::write(&envs_path, format!("{base}unattended = true\n")).unwrap();
-    let (code, _, err) = run(&["dump", "production", "--reason", "APP-8 nightly refresh"]);
+    let (code, _, err) = run(&[
+        "dump",
+        "production",
+        "--reason",
+        "APP-8 nightly refresh",
+        "--",
+        OTHERS_TABLES,
+        OTHERS_SCHEMAS,
+    ]);
     assert_eq!(code, Some(0), "{err}");
     assert!(err.contains("This is a raw copy"), "{err}");
     assert_eq!(files().len(), 3, "two dumps and the link: {:?}", files());
