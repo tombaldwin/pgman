@@ -397,7 +397,7 @@ const IDENTIFIER: &[&str] = &[
     "vat number",
 ];
 const ADDRESS: &[&str] = &[
-    "address", "street", "city", "town", "county", "line1", "line2", "line3", "house", "flat",
+    "address", "street", "city", "town", "county", "line 1", "line 2", "line 3", "house", "flat",
     "building", "locality", "addr",
 ];
 const POSTCODE: &[&str] = &[
@@ -478,6 +478,7 @@ const FREE_TEXT: &[&str] = &[
     "text",
     "content",
     "payload",
+    "subject",
 ];
 /// Who did it: a staff member's name or email in an audit column.
 const ACTOR_LAST: &[&str] = &["by"];
@@ -1408,6 +1409,10 @@ mod tests {
             ("next_of_kin", Rule::Null),
             ("emergency_contact", Rule::Null),
             ("payload", Rule::Null),
+            ("line1", Rule::Null),
+            ("line_2", Rule::Null),
+            ("addressLine3", Rule::Null),
+            ("subject", Rule::Null),
         ] {
             assert_eq!(rule("t", name, "varchar", Some(255)), want, "{name}");
         }
