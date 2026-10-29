@@ -876,11 +876,25 @@ fn confirmed_file() -> PathBuf {
 
 /// Whether `digest` (a rules file's sha256) is one the operator has
 /// confirmed at a terminal. Reads the data directory.
-pub fn confirmed(digest: &str) -> bool {
-    std::fs::read_to_string(confirmed_file())
-        .unwrap_or_default()
-        .lines()
-        .any(|l| l.split_whitespace().next() == Some(digest))
+pub fn confirmed(digest: &str, file: &Path) -> bool {
+    confirmed_in(
+        &std::fs::read_to_string(confirmed_file()).unwrap_or_default(),
+        digest,
+        file,
+    )
+}
+
+/// Whether `text` (the confirmed list: `digest  path` lines) holds
+/// `digest` for `file` — the file too, since its name says which
+/// database it is for: the same rules confirmed for one database aren't
+/// for another. Reads the filesystem, to compare paths.
+pub fn confirmed_in(text: &str, digest: &str, file: &Path) -> bool {
+    let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let want = real(file);
+    text.lines().any(|l| {
+        l.split_once("  ")
+            .is_some_and(|(d, p)| d == digest && real(Path::new(p)) == want)
+    })
 }
 
 /// Record `digest` of `file` as confirmed. Writes the data directory.
@@ -888,6 +902,7 @@ pub fn confirm(digest: &str, file: &Path) -> Result<(), String> {
     let path = confirmed_file();
     crate::util::ensure_private_dir(&crate::journal::dir()).map_err(|e| e.to_string())?;
     let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     text.push_str(&format!("{digest}  {}\n", file.display()));
     crate::util::write_private(&path, &text).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -917,7 +932,7 @@ pub fn agent_rules_problem(file: &Path, digest: &str) -> Option<String> {
             file.display()
         ));
     }
-    if !confirmed(digest) {
+    if !confirmed(digest, file) {
         return Some(format!(
             "{} hasn't been confirmed at a terminal: run pgman dump <target> --masked there once, \
              which shows what it keeps and asks",
@@ -940,7 +955,7 @@ pub fn confirm_rules_cli(
     let Some(file) = &rules.file else {
         return Ok(None);
     };
-    if confirmed(digest) {
+    if confirmed(digest, file) {
         return Ok(None);
     }
     let loose = crate::masking::rules::loosening(rules);
@@ -1098,6 +1113,24 @@ mod tests {
             !x.sequence("public", "events_id_seq", Some(("public", "events"))),
             "rows only: the sequence stays"
         );
+    }
+
+    #[test]
+    fn a_confirmation_is_for_the_file_it_was_given() {
+        let dir = std::env::temp_dir().join(format!("pgman-confirm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (ledger, other) = (dir.join("ledger.toml"), dir.join("other.toml"));
+        std::fs::write(&ledger, "version = 1\n").unwrap();
+        std::fs::write(&other, "version = 1\n").unwrap();
+        let list = format!("abc123  {}\n", ledger.display());
+        assert!(confirmed_in(&list, "abc123", &ledger));
+        assert!(
+            !confirmed_in(&list, "abc123", &other),
+            "the same bytes, another database"
+        );
+        assert!(!confirmed_in(&list, "def456", &ledger), "another digest");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
