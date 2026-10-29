@@ -264,9 +264,10 @@ const FLAG_LAST: &[&str] = &[
 /// `order_status` — but can be the thing itself: `postal_code`,
 /// `sort_code`, `marital_status`, `tax_id`.
 const VALUE_LAST: &[&str] = &["code", "status", "state", "id"];
-const EMAIL: &[&str] = &["email", "mail", "login"];
+const EMAIL: &[&str] = &["email", "emails", "mail", "login"];
 const PHONE: &[&str] = &[
     "phone",
+    "phones",
     "mobile",
     "tel",
     "telephone",
@@ -551,6 +552,24 @@ fn plain_type(base: &str, category: &str) -> bool {
 /// The default for `col` of `table` (named `table_name`, an Envers `_aud`
 /// table's base), from its name and type. Pure.
 pub fn default_rule(
+    table_name: &str,
+    col: &Column,
+    extra_personal: &[String],
+    extra_plain: &[String],
+) -> (Rule, Origin) {
+    let (rule, origin) = by_name_and_type(table_name, col, extra_personal, extra_plain);
+    // A transformer makes one value, not an array of them.
+    if col.ty.array_of.is_some() && !matches!(rule, Rule::Keep | Rule::Null) {
+        let why = match origin {
+            Origin::Default(w) => format!("{w}, in an array"),
+            _ => "in an array".to_string(),
+        };
+        return (Rule::Null, Origin::Default(why));
+    }
+    (rule, origin)
+}
+
+fn by_name_and_type(
     table_name: &str,
     col: &Column,
     extra_personal: &[String],
@@ -943,6 +962,12 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
 fn check(t: &Table, c: &Column, rule: &Rule, origin: &Origin, problems: &mut Vec<String>) {
     let at = format!("{}.{}", t.qualified(), c.name);
     let base = c.ty.base.as_str();
+    if c.ty.array_of.is_some() && !matches!(rule, Rule::Keep | Rule::Null | Rule::Fixed(_)) {
+        problems.push(format!(
+            "{at} is an array: {} makes one value, not an array of them. Null it, or keep it",
+            rule.name()
+        ));
+    }
     if c.unique && rule.lossy() {
         problems.push(format!(
             "{at} must stay unique, and {} can make two values one: use hash, or keep",
@@ -1231,6 +1256,37 @@ mod tests {
             );
         }
         assert_eq!(rule("user_role", "name", "varchar", Some(64)), Rule::Keep);
+    }
+
+    #[test]
+    fn an_array_of_personal_values_is_nulled_not_transformed() {
+        let mut emails = c("emails", "varchar", Some(100));
+        emails.ty.array_of = Some("varchar".into());
+        let (rule, why) = default_rule("t", &emails, &[], &[]);
+        assert_eq!(rule, Rule::Null);
+        assert_eq!(
+            why,
+            Origin::Default("an email address, by name, in an array".into())
+        );
+        let mut tags = c("tags", "varchar", Some(100));
+        tags.ty.array_of = Some("varchar".into());
+        assert_eq!(default_rule("t", &tags, &[], &[]).0, Rule::Keep);
+        // And the rules file can't ask for one.
+        let cat = Catalog {
+            tables: vec![table("people", vec![emails])],
+            large_objects: 0,
+        };
+        let p = plan(
+            &cat,
+            &parse("version = 1\n[tables.people]\nemails = \"email\"\n"),
+        );
+        assert!(
+            p.problems
+                .iter()
+                .any(|m| m.contains("public.people.emails is an array")),
+            "{:?}",
+            p.problems
+        );
     }
 
     #[test]
