@@ -26,8 +26,8 @@ it expires, where it was restored, and whether it is still there.
 shows it), or the dump's file (its -latest link too).
 
   list     the copies still on disk (--all: deleted ones too), and dump
-           files in this directory the journal doesn't know (taken
-           by an older pgman, or by hand)
+           files here and in pgman's dump directory the journal doesn't
+           know (taken by an older pgman, or by hand)
   show     one copy in full
   rm       delete a copy's file, its -latest link (pointed at the newest
            copy left, when there is one), and every database pgman restored
@@ -315,7 +315,7 @@ pub fn dump_named(name: &str) -> bool {
     let Some((stem, ext)) = name.rsplit_once('.') else {
         return false;
     };
-    if !["dump", "sql", "dir", "tar"].contains(&ext) {
+    if !["dump", "sql", "dir", "tar", "pgman-dump"].contains(&ext) {
         return false;
     }
     let Some((_, stamp)) = stem.rsplit_once('-') else {
@@ -837,9 +837,10 @@ pub fn delete_dump(file: &Path) -> Result<(), String> {
         ));
     }
     if m.is_dir() {
-        if !file.join("toc.dat").is_file() {
+        if !file.join("toc.dat").is_file() && !crate::masked::is_archive(file) {
             return Err(format!(
-                "{} is a directory without pg_dump's toc.dat; nothing deleted",
+                "{} is a directory that is neither pg_dump's (toc.dat) nor a masked dump \
+                 (header.json, manifest.json); nothing deleted",
                 file.display()
             ));
         }
@@ -995,7 +996,11 @@ pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
     }
     match cmd {
         Cmd::List { all } => {
-            let loose = untracked(&cwd, &copies);
+            let mut loose = untracked(&cwd, &copies);
+            let dir = crate::dump::default_dir();
+            if dir != cwd {
+                loose.extend(untracked(&dir, &copies));
+            }
             println!("{}", render_list(&copies, &loose, &present, *all, now));
         }
         Cmd::Show(arg) => match find(&copies, arg)? {
@@ -1321,6 +1326,7 @@ mod tests {
     fn dump_names_are_recognised() {
         assert!(dump_named("staging-ledger-20261028T140322Z.dump"));
         assert!(dump_named("x-20261028T140322Z.dir"));
+        assert!(dump_named("x-20261028T140322Z.pgman-dump"));
         assert!(!dump_named("staging-ledger-latest.dump"));
         assert!(!dump_named("staging-ledger-20261028T140322Z.txt"));
         assert!(!dump_named("notes.dump"));
@@ -1547,10 +1553,17 @@ mod tests {
         // A directory that isn't a dump isn't deleted.
         let notdump = dir.join("q-20261004T000000Z.dir");
         std::fs::create_dir(&notdump).unwrap();
-        assert!(delete_dump(&notdump).unwrap_err().contains("toc.dat"));
+        assert!(delete_dump(&notdump).unwrap_err().contains("neither"));
         std::fs::write(notdump.join("toc.dat"), "").unwrap();
         delete_dump(&notdump).unwrap();
         assert!(!notdump.exists());
+        let archive = dir.join("r-20261005T000000Z.pgman-dump");
+        std::fs::create_dir_all(archive.join("data")).unwrap();
+        assert!(delete_dump(&archive).is_err(), "not yet a masked dump");
+        std::fs::write(archive.join("header.json"), "{}").unwrap();
+        std::fs::write(archive.join("manifest.json"), "{}").unwrap();
+        delete_dump(&archive).unwrap();
+        assert!(!archive.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
