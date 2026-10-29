@@ -17,6 +17,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   exited 1 for its own foreign server.
 - The schema wizard and `schema_lint` leave alone what is in a schema
   an extension made, such as TimescaleDB's chunks.
+- The schema wizard's "foreign key without an index" (LINT101) no
+  longer flags a key whose column leads an index: it read the index's
+  second column.
 
 ## [0.4.0] — 2026-10-29
 

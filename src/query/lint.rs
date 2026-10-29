@@ -277,6 +277,9 @@ fn name_convention(name: &str) -> Convention {
 /// the practically-useful definition, since a `WHERE fk_a = ?`
 /// lookup needs `fk_a` to be the leading column of some index to
 /// benefit. Detecting the full `(a, b)` shape is a stretch goal.
+/// `indkey` is an int2vector, numbered from 0: `indkey[0]` is the
+/// leading column (cast to `int[]`, it keeps that numbering, so `[1]`
+/// would be the second).
 pub const FK_WITHOUT_INDEX_SQL: &str = "\
 SELECT \
     nsp.nspname AS schema, \
@@ -295,7 +298,7 @@ WHERE c.contype = 'f' \
   AND NOT EXISTS ( \
     SELECT 1 FROM pg_index i \
     WHERE i.indrelid = c.conrelid \
-      AND (i.indkey::int[])[1] = c.conkey[1] \
+      AND i.indkey[0] = c.conkey[1] \
   ) \
 ORDER BY 1, 2, 3";
 

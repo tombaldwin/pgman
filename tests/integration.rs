@@ -11575,6 +11575,8 @@ fn the_schema_wizard_skips_an_extensions_schemas() {
                  CREATE TABLE team.\"Loose\" (k int, v int); \
                  CREATE TABLE team.parent (k int PRIMARY KEY); \
                  CREATE TABLE team.child (k int REFERENCES team.parent); \
+                 CREATE TABLE team.indexed (k int REFERENCES team.parent); \
+                 CREATE INDEX ON team.indexed (k); \
                  ALTER EXTENSION plpgsql ADD SCHEMA ext_own",
             )
             .await
@@ -11604,6 +11606,13 @@ fn the_schema_wizard_skips_an_extensions_schemas() {
                 "{want}: {objects:#?}"
             );
         }
+        // A foreign key whose column leads an index is covered.
+        assert!(
+            !objects
+                .iter()
+                .any(|o| o.starts_with("LINT101 team.indexed")),
+            "{objects:#?}"
+        );
         drop(client);
         admin
             .batch_execute(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
