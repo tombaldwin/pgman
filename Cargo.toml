@@ -93,6 +93,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # inline where the migration replaced them.
 tui-common = { package = "tb-tui-common", version = "0.2.2" }
 
+# SIGPIPE back to its default at start (main.rs): `pgman … | head`
+# ends quietly instead of panicking (an abort, with panic = "abort").
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Deferred — added as the milestones that need them land (see BACKLOG.md):
 #   M2  deadpool-postgres                      — connection pool for interactive queries
 #   M1.5 serde_yaml                            — creds/spring.rs application.yml

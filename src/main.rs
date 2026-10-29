@@ -207,6 +207,15 @@ fn cli_flag_takes_value(name: &str) -> bool {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Rust ignores SIGPIPE, so a write to a closed pipe (`pgman copies |
+    // head`) is an error, and println!'s panic is an abort here. The
+    // default ends the process quietly, as any command-line tool does.
+    #[cfg(unix)]
+    // SAFETY: at the start of main, before anything writes; SIG_DFL is a
+    // valid disposition for SIGPIPE, and children reset theirs anyway.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     // `pgman mcp serve` is a sub-command the flat flag set can't express
     // (clap would read `mcp` as the positional DSN). stdout belongs to
     // the protocol, so diagnostics go to the rolling log file.

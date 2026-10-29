@@ -477,3 +477,32 @@ fn log_over_64mb_is_refused_before_being_read() {
     assert!(stderr.contains("is 65 MB"), "got: {stderr}");
     assert!(stderr.contains("64 MB"), "got: {stderr}");
 }
+
+/// `pgman … | head`: a reader that goes away early ends pgman quietly
+/// (SIGPIPE, as any command-line tool), not with println!'s panic — an
+/// abort in a release build. The reader here goes before a byte is read.
+#[cfg(unix)]
+#[test]
+fn a_closed_pipe_ends_pgman_quietly() {
+    use std::os::unix::process::ExitStatusExt;
+    let home = std::env::temp_dir().join(format!("pgman-pipe-home-{}", std::process::id()));
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_pgman"))
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args(["dump", "--help"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(
+        out.status.success() || out.status.signal() == Some(13),
+        "{:?}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
