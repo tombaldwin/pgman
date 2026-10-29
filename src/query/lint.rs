@@ -54,6 +54,13 @@ pub struct Finding {
 /// high → low severity then by object name for deterministic
 /// ordering across runs.
 pub fn run_all(cache: &SchemaCache) -> Vec<Finding> {
+    let owned;
+    let cache = if cache.extension_schemas.is_empty() {
+        cache
+    } else {
+        owned = without_extension_schemas(cache);
+        &owned
+    };
     let mut out: Vec<Finding> = Vec::new();
     out.extend(tables_without_pk_or_unique(cache));
     out.extend(mixed_case_identifiers(cache));
@@ -66,6 +73,17 @@ pub fn run_all(cache: &SchemaCache) -> Vec<Finding> {
             .then_with(|| a.object.cmp(&b.object))
     });
     out
+}
+
+/// `cache` without what is in an extension's schemas: TimescaleDB's
+/// chunks and catalog are its own design, not the team's to fix. Pure.
+fn without_extension_schemas(cache: &SchemaCache) -> SchemaCache {
+    let ours = |schema: &str| !cache.extension_schemas.contains(schema);
+    let mut c = cache.clone();
+    c.schemas.retain(|s| ours(s));
+    c.tables.retain(|t| ours(&t.schema));
+    c.columns_by_table.retain(|(s, _), _| ours(s));
+    c
 }
 
 /// LINT001 — tables with no PRIMARY KEY or UNIQUE constraint.
@@ -273,6 +291,7 @@ JOIN pg_class rel ON rel.oid = c.conrelid \
 JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace \
 WHERE c.contype = 'f' \
   AND nsp.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_namespace'::regclass AND e.objid = nsp.oid AND e.deptype = 'e') \
   AND NOT EXISTS ( \
     SELECT 1 FROM pg_index i \
     WHERE i.indrelid = c.conrelid \
@@ -301,6 +320,7 @@ WHERE s.idx_scan = 0 \
   AND NOT i.indisunique \
   AND NOT i.indisprimary \
   AND nsp.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_namespace'::regclass AND e.objid = nsp.oid AND e.deptype = 'e') \
 ORDER BY 1, 2, 3";
 
 /// Catalog query for LINT103 (overlapping indexes — same
@@ -319,6 +339,7 @@ JOIN pg_class irel ON irel.oid = i.indexrelid \
 JOIN pg_class rel ON rel.oid = i.indrelid \
 JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace \
 WHERE nsp.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_namespace'::regclass AND e.objid = nsp.oid AND e.deptype = 'e') \
 GROUP BY nsp.nspname, rel.relname, rel.oid, i.indkey \
 HAVING count(*) > 1 \
 ORDER BY 1, 2";
@@ -339,6 +360,7 @@ FROM pg_stat_user_tables s \
 WHERE s.n_live_tup >= 1000 \
   AND s.n_dead_tup::float / GREATEST(s.n_live_tup, 1) > 0.20 \
   AND s.schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e JOIN pg_catalog.pg_namespace en ON en.oid = e.objid WHERE e.classid = 'pg_catalog.pg_namespace'::regclass AND en.nspname = s.schemaname AND e.deptype = 'e') \
 ORDER BY s.n_dead_tup::float / GREATEST(s.n_live_tup, 1) DESC";
 
 /// Catalog query for LINT105 (tables without a COMMENT). Style
@@ -352,6 +374,7 @@ FROM pg_class c \
 JOIN pg_namespace n ON n.oid = c.relnamespace \
 WHERE c.relkind = 'r' \
   AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_namespace'::regclass AND e.objid = n.oid AND e.deptype = 'e') \
   AND obj_description(c.oid, 'pg_class') IS NULL \
 ORDER BY 1, 2";
 
@@ -374,6 +397,7 @@ WHERE rel.relkind = 'r' \
   AND NOT a.attisdropped \
   AND t.typname IN ('timestamp', 'timestamptz') \
   AND nsp.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_namespace'::regclass AND e.objid = nsp.oid AND e.deptype = 'e') \
 GROUP BY nsp.nspname \
 HAVING count(*) FILTER (WHERE t.typname = 'timestamp') > 0 \
    AND count(*) FILTER (WHERE t.typname = 'timestamptz') > 0 \
@@ -399,6 +423,7 @@ WHERE d.classid = 'pg_catalog.pg_class'::regclass \
   AND d.deptype IN ('a', 'i') \
   AND NOT c.relispartition \
   AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_namespace'::regclass AND e.objid = n.oid AND e.deptype = 'e') \
   AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint p \
                    WHERE p.conrelid = c.oid AND p.contype = 'p' AND a.attnum = ANY (p.conkey)) \
   AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index x \

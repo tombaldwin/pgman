@@ -856,6 +856,7 @@ pub(super) fn schema_cache() -> SchemaCache {
             .filter(|r| matches!(r.kind, Kind::View { .. }))
             .map(key)
             .collect(),
+        extension_schemas: Default::default(),
         primary_keys: RELATIONS
             .iter()
             .filter_map(|r| {

@@ -134,6 +134,10 @@ pub struct SchemaCache {
     /// foreign tables, keyed `(schema, name)`: relations that can carry
     /// no primary key, so the schema wizard doesn't ask them for one.
     pub views: std::collections::HashSet<(String, String)>,
+    /// Schemas an extension made (TimescaleDB's `_timescaledb_internal`
+    /// and the like): the extension's, so the schema wizard leaves what
+    /// is in them alone.
+    pub extension_schemas: std::collections::HashSet<String>,
     /// Each table's primary-key columns in key order, keyed `(schema,
     /// table)`. No entry: the table has no primary key (or the fetch
     /// failed). Cell editing and the result diff key rows on these.
@@ -434,7 +438,10 @@ impl SchemaCache {
 pub const SCHEMA_SQL: &str = "\
 SELECT n.nspname, c.relname, c.relkind, a.attname, \
        format_type(a.atttypid, a.atttypmod), \
-       a.attnotnull, c.oid, a.attnum \
+       a.attnotnull, c.oid, a.attnum, \
+       EXISTS (SELECT 1 FROM pg_catalog.pg_depend e \
+               WHERE e.classid = 'pg_catalog.pg_namespace'::regclass \
+                 AND e.objid = n.oid AND e.deptype = 'e') \
 FROM pg_catalog.pg_class c \
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
 LEFT JOIN pg_catalog.pg_attribute a \
@@ -712,6 +719,9 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         let not_null: bool = row.try_get(5).unwrap_or(false);
         let oid: Option<u32> = row.try_get(6).ok();
         let attnum: Option<i16> = row.try_get(7).ok().flatten();
+        if row.try_get::<_, bool>(8).unwrap_or(false) {
+            cache.extension_schemas.insert(schema.clone());
+        }
         seen_schemas.insert(schema.clone());
         let key = (schema.clone(), name.clone());
         if last_relation.as_ref() != Some(&key) {

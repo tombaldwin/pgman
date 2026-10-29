@@ -11548,3 +11548,66 @@ async fn slow_queries_read_pg_stat_statements_before_and_after_pg13() {
         );
     }
 }
+
+/// The schema wizard leaves alone what is in a schema an extension made
+/// (TimescaleDB's `_timescaledb_internal` chunks were dozens of
+/// findings). `ALTER EXTENSION plpgsql ADD SCHEMA` makes one without
+/// installing anything, in a scratch database.
+#[test]
+fn the_schema_wizard_skips_an_extensions_schemas() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = it_name("extlint");
+        let admin = raw("pgman_test").await;
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+        ] {
+            admin.batch_execute(&sql).await.unwrap();
+        }
+        raw(&db)
+            .await
+            .batch_execute(
+                "CREATE SCHEMA ext_own; CREATE SCHEMA team; \
+                 CREATE TABLE ext_own.\"Chunk\" (k int, v int); \
+                 CREATE TABLE ext_own.parent (k int PRIMARY KEY); \
+                 CREATE TABLE ext_own.child (k int REFERENCES ext_own.parent); \
+                 CREATE TABLE team.\"Loose\" (k int, v int); \
+                 CREATE TABLE team.parent (k int PRIMARY KEY); \
+                 CREATE TABLE team.child (k int REFERENCES team.parent); \
+                 ALTER EXTENSION plpgsql ADD SCHEMA ext_own",
+            )
+            .await
+            .unwrap();
+        let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+        let client = probe_client(&dsn).await;
+        let cache = pgman::query::schema::fetch(&client).await;
+        assert!(
+            cache.extension_schemas.contains("ext_own"),
+            "{:?}",
+            cache.extension_schemas
+        );
+        let mut found = pgman::query::lint::run_all(&cache);
+        found.extend(pgman::query::lint::fetch_live(&client).await.unwrap());
+        let objects: Vec<String> = found
+            .iter()
+            .map(|f| format!("{} {}", f.code, f.object))
+            .collect();
+        assert!(
+            !objects.iter().any(|o| o.contains("ext_own")),
+            "{objects:#?}"
+        );
+        // The team's own schema, the same shapes, is still looked at.
+        for want in ["LINT001 team.Loose", "team.child"] {
+            assert!(
+                objects.iter().any(|o| o.contains(want)),
+                "{want}: {objects:#?}"
+            );
+        }
+        drop(client);
+        admin
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
+            .await
+            .unwrap();
+    });
+}
