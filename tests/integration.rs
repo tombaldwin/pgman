@@ -9534,6 +9534,140 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     );
 }
 
+/// The leak test. A database seeded with canary values — in columns the
+/// defaults mask by name (an email, a name, a phone, free text in a
+/// varchar(255)), by type (jsonb), followed through a foreign key, and in
+/// a comment — is dumped masked and restored. No canary may be anywhere
+/// pgman wrote or said: the archive's rows and its schema (as SQL), the
+/// restored database (as SQL), the journal, pgman's log, stdout and
+/// stderr. Breaking a transformer must make it fail.
+#[cfg(unix)]
+#[test]
+fn a_masked_copy_holds_no_canary_anywhere() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, copy) = (it_name("leak"), it_name("leakcopy"));
+    let (home, out) = dump_home("leak");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"leaky\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    let canaries = [
+        "canary-7f3a@leak.test",
+        "Zebedeecanary",
+        "Quuxcanary",
+        "07911 424242",
+        "canary-notes-77",
+        "canary-json-88",
+        "canary-comment-99",
+    ];
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        raw(&src)
+            .await
+            .batch_execute(
+                "CREATE TABLE customers (id serial PRIMARY KEY, email varchar(100) UNIQUE NOT NULL, \
+                   first_name varchar(255), last_name varchar(255), phone varchar(30), \
+                   notes varchar(255), status varchar(255)); \
+                 CREATE TABLE orders (id serial PRIMARY KEY, \
+                   customer_email varchar(100) REFERENCES customers(email), payload jsonb NOT NULL); \
+                 COMMENT ON TABLE customers IS 'canary-comment-99'; \
+                 INSERT INTO customers (email, first_name, last_name, phone, notes, status) VALUES \
+                   ('canary-7f3a@leak.test', 'Zebedeecanary', 'Quuxcanary', '07911 424242', \
+                    'canary-notes-77', 'active'), \
+                   ('plain@leak.test', 'Ann', 'Bee', '07911 000000', 'nothing', 'active'); \
+                 INSERT INTO orders (customer_email, payload) VALUES \
+                   ('canary-7f3a@leak.test', '{\"note\": \"canary-json-88\"}'), \
+                   ('plain@leak.test', '{}');",
+            )
+            .await
+            .unwrap();
+    });
+    let dumped = pgman_in(&home, &out, &["dump", "leaky", "--masked", "--verbose"]);
+    let mut said = String::from_utf8_lossy(&dumped.stdout).into_owned();
+    said.push_str(&String::from_utf8_lossy(&dumped.stderr));
+    assert!(dumped.status.success(), "{said}");
+    let archive = out.join("leaky-latest.pgman-dump");
+    let restored = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "local",
+            "--as",
+            &copy,
+            "--create",
+            "--yes",
+        ],
+    );
+    said.push_str(&String::from_utf8_lossy(&restored.stdout));
+    said.push_str(&String::from_utf8_lossy(&restored.stderr));
+    assert!(restored.status.success(), "{said}");
+
+    // Everything pgman wrote or said, as text.
+    let mut haystack = said.clone();
+    let real = std::fs::canonicalize(&archive).unwrap();
+    for e in std::fs::read_dir(real.join("data")).unwrap() {
+        let mut gz = flate2::read::GzDecoder::new(std::fs::File::open(e.unwrap().path()).unwrap());
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut gz, &mut text).unwrap();
+        haystack.push_str(&text);
+    }
+    for f in ["header.json", "manifest.json"] {
+        haystack.push_str(&std::fs::read_to_string(real.join(f)).unwrap());
+    }
+    let pg_restore = pgman::pgtool::find_tool("pg_restore", None).unwrap();
+    let schema_sql = std::process::Command::new(&pg_restore)
+        .args(["-f", "-"])
+        .arg(real.join("schema.dump"))
+        .output()
+        .unwrap();
+    haystack.push_str(&String::from_utf8_lossy(&schema_sql.stdout));
+    let pg_dump = pgman::pgtool::find_tool("pg_dump", None).unwrap();
+    let copy_sql = std::process::Command::new(&pg_dump)
+        .env("PGPASSWORD", "pgman_test")
+        .args([
+            "-h",
+            "127.0.0.1",
+            "-p",
+            "55432",
+            "-U",
+            "pgman_test",
+            "-d",
+            &copy,
+        ])
+        .output()
+        .unwrap();
+    assert!(copy_sql.status.success());
+    let copy_text = String::from_utf8_lossy(&copy_sql.stdout).into_owned();
+    haystack.push_str(&copy_text);
+    for f in [".local/share/pgman/journal.jsonl", ".cache/pgman/pgman.log"] {
+        haystack.push_str(&std::fs::read_to_string(home.join(f)).unwrap_or_default());
+    }
+    for c in canaries {
+        assert!(!haystack.contains(c), "{c} leaked:\n{haystack}");
+    }
+    // And the copy is a working one: both rows, the join held.
+    let joined = on(
+        &copy,
+        "SELECT count(*) FROM orders o JOIN customers c ON c.email = o.customer_email",
+    )
+    .unwrap();
+    assert_eq!(joined[0].get::<_, i64>(0), 2);
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+}
+
 /// pg_dump options leaving out what the other tests make and drop in
 /// `pgman_test` while they run: a whole-database dump otherwise fails
 /// when one of them goes mid-dump.
