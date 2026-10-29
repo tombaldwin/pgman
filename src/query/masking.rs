@@ -266,12 +266,14 @@ pub fn copy_in_sql(table: &str, columns: &[String]) -> String {
     )
 }
 
-/// Load rows (COPY text, as `chunks`) into a restored table with `sql`
-/// ([`copy_in_sql`]); how many rows the server took.
+/// Load rows (COPY text, as `chunks`, read as they are needed) into a
+/// restored table with `sql` ([`copy_in_sql`]); how many rows the server
+/// took. A chunk that is an error ends it with that error, and the COPY
+/// is abandoned.
 pub async fn copy_in(
     client: &tokio_postgres::Client,
     sql: &str,
-    chunks: impl Iterator<Item = Vec<u8>>,
+    chunks: impl Iterator<Item = Result<Vec<u8>, String>>,
 ) -> Result<u64, String> {
     use futures::SinkExt;
     let sink = client
@@ -280,7 +282,7 @@ pub async fn copy_in(
         .map_err(|e| format!("could not load the rows: {}", message(&e)))?;
     futures::pin_mut!(sink);
     for c in chunks {
-        sink.send(std::io::Cursor::new(c))
+        sink.send(std::io::Cursor::new(c?))
             .await
             .map_err(|e| format!("could not load the rows: {}", message(&e)))?;
     }

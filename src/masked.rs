@@ -806,6 +806,7 @@ pub async fn load(
     client: &tokio_postgres::Client,
     dir: &Path,
     m: &Manifest,
+    stop: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<String>, String> {
     use std::io::Read;
     let mut notes = Vec::new();
@@ -813,22 +814,35 @@ pub async fn load(
         let path = dir.join("data").join(&t.file);
         let f = std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut gz = flate2::read::GzDecoder::new(std::io::BufReader::new(f));
-        let mut chunks = Vec::new();
-        loop {
-            let mut buf = vec![0u8; 1 << 16];
-            let n = gz
-                .read(&mut buf)
-                .map_err(|e| format!("{}: {e}", path.display()))?;
-            if n == 0 {
-                break;
+        // Read as COPY takes them, a chunk at a time: a table's rows are
+        // never all in memory, however big (or however a tampered file
+        // decompresses).
+        let mut done = false;
+        let chunks = std::iter::from_fn(|| {
+            if done {
+                return None;
             }
-            buf.truncate(n);
-            chunks.push(buf);
-        }
+            if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                done = true;
+                return Some(Err(pgtool::STOPPED.to_string()));
+            }
+            let mut buf = vec![0u8; 1 << 16];
+            match gz.read(&mut buf) {
+                Ok(0) => None,
+                Ok(n) => {
+                    buf.truncate(n);
+                    Some(Ok(buf))
+                }
+                Err(e) => {
+                    done = true;
+                    Some(Err(format!("{}: {e}", path.display())))
+                }
+            }
+        });
         let sql = crate::query::masking::copy_in_sql(&t.table, &t.columns);
-        let rows = crate::query::masking::copy_in(client, &sql, chunks.into_iter())
+        let rows = crate::query::masking::copy_in(client, &sql, chunks)
             .await
-            .map_err(|e| format!("{}: {e}", t.table))?;
+            .map_err(|e| format!("{}: {}", t.table, crate::restore::redact(&e)))?;
         if rows != t.rows {
             notes.push(format!(
                 "{}: {rows} rows loaded, {} dumped",

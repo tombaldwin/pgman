@@ -74,6 +74,9 @@ pub struct Opts {
     pub pg_bin: Option<PathBuf>,
     pub verbose: bool,
     pub extra: Vec<String>,
+    /// Ctrl-C stops loading a masked dump's rows: the command line's, not
+    /// the MCP server's, where listening would take Ctrl-C from it.
+    pub interruptible: bool,
 }
 
 /// pg_restore's short options that take a value.
@@ -532,6 +535,10 @@ async fn admin(
 
 /// Run a restore. Progress and the question go to stderr.
 pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
+    let opts = &Opts {
+        interruptible: true,
+        ..opts.clone()
+    };
     let ready = prepare(opts, &|line| eprintln!("pgman restore: {line}")).await?;
     if !opts.yes {
         let (prompt, accept) = ready.question();
@@ -695,6 +702,15 @@ impl Ready {
         drop(client);
         tracing::info!(target: "pgman::restore", database = %database, server = %server, prepare = ?plan.prepare, "pg_restore starting");
 
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher = opts.interruptible.then(|| {
+            let stop = stop.clone();
+            tokio::spawn(async move {
+                pgtool::interrupted().await;
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        });
+        let _abort = AbortOnDrop(watcher);
         let mut dsn = opened.dsn.clone();
         dsn.dbname = database.clone();
         let conninfo = pgtool::conninfo(&dsn, opened.via, "pgman-restore", have);
@@ -754,7 +770,7 @@ impl Ready {
                             crate::conn::connect_via_writable(dsn.clone(), opened.via, 10_000)
                                 .await?;
                         notes.extend(
-                            crate::masked::load(&target, &opts.file, m)
+                            crate::masked::load(&target, &opts.file, m, &stop)
                                 .await
                                 .map_err(|e| format!("{e}\n  {database} is part-restored"))?,
                         );
@@ -782,6 +798,17 @@ impl Ready {
             reported: restore_errors(&errors_text),
             notes,
         })
+    }
+}
+
+/// Ends the Ctrl-C watcher however execute returns.
+struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(w) = &self.0 {
+            w.abort();
+        }
     }
 }
 

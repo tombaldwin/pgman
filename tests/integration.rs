@@ -10199,6 +10199,109 @@ fn a_failed_restore_is_marked_journaled_and_redacted() {
     }
 }
 
+/// A masked restore stopped while it loads rows (SIGTERM, as Ctrl-C)
+/// stops soon after, says so, and journals the restore as not done.
+#[cfg(unix)]
+#[test]
+fn a_masked_restore_stops_when_signalled() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, copy) = (it_name("rstop"), it_name("rstopcopy"));
+    let (home, out) = dump_home("rstop");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    for db in [&copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    on(
+        &src,
+        "CREATE TABLE events AS SELECT g AS id, 'some text for the row ' || g AS label \
+         FROM generate_series(1, 500000) g",
+    )
+    .unwrap();
+    let dumped = pgman_in(&home, &out, &["dump", "src", ".", "--masked"]);
+    assert!(
+        dumped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dumped.stderr)
+    );
+    let archive = std::fs::canonicalize(out.join("src-latest.pgman-dump")).unwrap();
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("IT_PW", "pgman_test")
+        .current_dir(&out)
+        .args([
+            "restore",
+            archive.to_str().unwrap(),
+            "local",
+            "--as",
+            &copy,
+            "--create",
+            "--yes",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Wait for the rows to be going in.
+    let loading = || {
+        on(
+            "pgman_test",
+            &format!(
+                "SELECT count(*) FROM pg_stat_progress_copy p JOIN pg_database d ON d.oid = p.datid \
+                 WHERE d.datname = '{copy}' AND p.command = 'COPY FROM'"
+            ),
+        )
+        .map(|r| r[0].get::<_, i64>(0) > 0)
+        .unwrap_or(false)
+    };
+    let start = std::time::Instant::now();
+    while !loading() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "the restore never started loading rows"
+        );
+        assert!(child.try_wait().unwrap().is_none(), "it finished first");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    let stopped = std::time::Instant::now();
+    let done = child.wait_with_output().unwrap();
+    let said = String::from_utf8_lossy(&done.stderr).into_owned();
+    assert!(!done.status.success(), "{said}");
+    assert!(
+        stopped.elapsed() < std::time::Duration::from_secs(5),
+        "it ran on for {:?}: {said}",
+        stopped.elapsed()
+    );
+    assert!(said.contains("stopped"), "{said}");
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let last: serde_json::Value = serde_json::from_str(journal.lines().last().unwrap()).unwrap();
+    assert_eq!(
+        (last["event"].as_str(), last["ok"].as_bool()),
+        (Some("restore"), Some(false)),
+        "{last}"
+    );
+    for db in [&copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+}
+
 /// What an agent may have of a protected environment: a masked copy,
 /// with rules the operator has committed and confirmed — never an
 /// uncommitted or unconfirmed rules file, and never a raw copy: a
