@@ -446,8 +446,25 @@ pub struct RestoreError {
     pub command: Option<String>,
     /// A setting the dump's newer pg_dump writes that this server
     /// doesn't have (`SET transaction_timeout = 0` from pg_dump 17+ into
-    /// a 16): nothing is lost.
+    /// a 16): nothing is lost. Or [`RestoreError::template`].
     pub harmless: bool,
+    /// An object the database this restore created already had, from
+    /// its template: YugabyteDB puts a foreign server in every database,
+    /// and a site's template1 may carry an extension or a function. The
+    /// object is there; pg_restore only couldn't make it again.
+    pub template: bool,
+}
+
+/// Mark the "already exists" errors of a restore into a database it
+/// created as [`RestoreError::template`]: a new database has nothing in
+/// it but what its template gave it. Pure.
+pub fn from_template(errors: &mut [RestoreError]) {
+    for e in errors {
+        if !e.harmless && e.message.contains("already exists") {
+            e.harmless = true;
+            e.template = true;
+        }
+    }
 }
 
 /// The errors in pg_restore's stderr `tail`, in order. Pure.
@@ -470,6 +487,7 @@ pub fn restore_errors(tail: &str) -> Vec<RestoreError> {
             message: msg.trim().to_string(),
             command,
             harmless,
+            template: false,
         });
     }
     out
@@ -791,11 +809,15 @@ impl Ready {
         }
         drop(opened);
         tracing::info!(target: "pgman::restore", database = %database, errors = ?errors, "pg_restore done");
+        let mut reported = restore_errors(&errors_text);
+        if plan.prepare != Prepare::Existing {
+            from_template(&mut reported);
+        }
         Ok(Done {
             database,
             server,
             errors,
-            reported: restore_errors(&errors_text),
+            reported,
             notes,
         })
     }
@@ -991,7 +1013,17 @@ const LISTED: usize = 12;
 
 /// What `pgman restore` prints when it finishes. Pure.
 pub fn render(done: &Done) -> String {
-    let harmless = done.reported.iter().any(|e| e.harmless);
+    let harmless = done.reported.iter().any(|e| e.harmless && !e.template);
+    let template: Vec<&str> = done
+        .reported
+        .iter()
+        .filter(|e| e.template)
+        .map(|e| {
+            e.message
+                .trim_start_matches("could not execute query: ERROR:")
+                .trim()
+        })
+        .collect();
     let real = done.real_errors();
     let ignored = if harmless {
         " (a newer pg_dump's SET of a setting this server doesn't have: ignored)"
@@ -1041,6 +1073,12 @@ pub fn render(done: &Done) -> String {
         }
         s
     };
+    if !template.is_empty() {
+        out.push_str(&format!(
+            "\nalready in the new database, from its template (left as they were): {}",
+            template.join("; ")
+        ));
+    }
     for n in &done.notes {
         out.push_str(&format!("\nnote: {n}"));
     }
@@ -1372,6 +1410,7 @@ mod tests {
             message: format!("could not execute query: ERROR:  relation \"t{i}\" already exists"),
             command: Some(format!("CREATE TABLE public.t{i} (id int);")),
             harmless: false,
+            template: false,
         };
         let reported: Vec<RestoreError> = (0..30).map(exists).collect();
         let d = Done {
@@ -1389,6 +1428,48 @@ mod tests {
         );
         assert!(r.contains("… and 18 more"), "{r}");
         assert_eq!(r.matches("already exists").count(), LISTED + 1, "{r}");
+    }
+
+    #[test]
+    fn what_a_new_database_had_from_its_template_is_no_error() {
+        // YugabyteDB's every restore into a new database: its template
+        // already has the foreign server the dump makes again.
+        let text = "pg_restore: error: could not execute query: ERROR:  server \
+                    \"yb_global_views_server\" already exists\n\
+                    Command was: CREATE SERVER yb_global_views_server FOREIGN DATA WRAPPER postgres_fdw;\n\
+                    pg_restore: error: could not execute query: ERROR:  permission denied for schema x\n\
+                    Command was: CREATE TABLE x.t (id int);\n";
+        let mut reported = restore_errors(text);
+        from_template(&mut reported);
+        let d = Done {
+            database: "ledger".into(),
+            server: "localhost:5433".into(),
+            errors: Some(2),
+            reported: reported.clone(),
+            notes: Vec::new(),
+        };
+        assert_eq!(d.real_errors(), 1);
+        let r = render(&d);
+        assert!(r.contains("with 1 error(s)"), "{r}");
+        assert!(!r.contains("wasn't empty"), "{r}");
+        assert!(
+            r.contains(
+                "already in the new database, from its template (left as they were): server \
+                 \"yb_global_views_server\" already exists"
+            ),
+            "{r}"
+        );
+        assert!(!r.contains("newer pg_dump"), "{r}");
+        // Into a database that was there already, the same error is real.
+        let mut existing = restore_errors(text);
+        existing.truncate(1);
+        let d = Done {
+            reported: existing,
+            errors: Some(1),
+            ..d
+        };
+        assert_eq!(d.real_errors(), 1);
+        assert!(render(&d).contains("wasn't empty"));
     }
 
     #[test]

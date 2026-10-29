@@ -152,7 +152,10 @@ pgman restore <FILE> <target> [--as NAME] [--create] [--clean] [--terminate]
 - **Errors.** pg_restore goes past errors and counts them; pgman lists
   them. A dump from a newer pg_dump sets settings an older server doesn't
   have (`SET transaction_timeout = 0` from pg_dump 17 into a 16 server);
-  those are counted as harmless. Any other error makes `pgman restore`
+  those are counted as harmless. So is "already exists" in a database
+  the restore created, since it can only come from the new database's
+  template (YugabyteDB puts a foreign server in every database): pgman
+  names them and leaves them as they were. Any other error makes `pgman restore`
   exit with status 1, so a script can tell the copy is incomplete.
 - **A dump is code.** pg_restore runs the schema in the dump as it is:
   restore only what you or pgman took, or someone you'd let run SQL as
