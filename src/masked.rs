@@ -513,6 +513,96 @@ async fn write_archive(r: ArchiveRun<'_>) -> Result<Vec<TableEntry>, String> {
     Ok(entries)
 }
 
+pub const MASKING_USAGE: &str = "\
+usage: pgman masking show <target> [--masking FILE]
+       pgman masking check <target> [--masking FILE] [--strict]
+
+What a masked dump of <target> does to each column, read from its
+catalog alone (no rows): the built-in defaults, framework presets, and
+.pgman/masking/<database>.toml found from here (or --masking FILE).
+
+  show    every column's rule and why, NULLed ones first, each with the
+          line to put in the rules file to keep it
+  check   whether the plan can go as it is: a rule that can't be stored
+          (a fixed value too long, a lossy rule on a unique column, a
+          NOT NULL type with no empty value), a rule naming something the
+          database doesn't have. Exit 1 when not. --strict also wants
+          every column the defaults mask decided in the rules file.
+          Runs against an empty migrated database too, as in CI.";
+
+/// Parsed `pgman masking` arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaskingCmd {
+    pub check: bool,
+    pub target: String,
+    pub masking: Option<PathBuf>,
+    pub strict: bool,
+}
+
+/// Parse the arguments after `pgman masking`. Pure.
+pub fn parse_masking(args: &[String]) -> Result<MaskingCmd, String> {
+    let mut it = args.iter();
+    let check = match it.next().map(String::as_str) {
+        Some("show") => false,
+        Some("check") => true,
+        Some(other) => {
+            return Err(format!(
+                "unknown masking command {other:?}\n\n{MASKING_USAGE}"
+            ))
+        }
+        None => return Err(MASKING_USAGE.to_string()),
+    };
+    let (mut target, mut masking, mut strict) = (None, None, false);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--masking" => {
+                masking = Some(PathBuf::from(it.next().ok_or("--masking needs a file")?))
+            }
+            "--strict" if check => strict = true,
+            o if o.starts_with('-') => {
+                return Err(format!("unknown option {o:?}\n\n{MASKING_USAGE}"))
+            }
+            o if target.is_none() => target = Some(o.to_string()),
+            o => return Err(format!("unexpected argument {o:?}\n\n{MASKING_USAGE}")),
+        }
+    }
+    Ok(MaskingCmd {
+        check,
+        target: target
+            .ok_or_else(|| format!("which database? name a target\n\n{MASKING_USAGE}"))?,
+        masking,
+        strict,
+    })
+}
+
+/// `pgman masking show|check`: the plan, from the catalog. What to print,
+/// and whether it passed.
+pub async fn masking_cli(cmd: &MaskingCmd) -> Result<(String, bool), String> {
+    let text = cmd.target.clone();
+    let resolved = tokio::task::spawn_blocking(move || {
+        crate::inventory::target::resolve(&text, crate::inventory::target::Want::PreferReplica)
+    })
+    .await
+    .map_err(|e| format!("resolve task failed: {e}"))??;
+    let cwd = std::env::current_dir().map_err(|e| format!("the current directory: {e}"))?;
+    let rules = crate::masking::rules::find(&cwd, &resolved.database, cmd.masking.as_deref())?;
+    let opened = pgtool::open(&resolved).await?;
+    let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000)
+        .await
+        .map_err(|e| pgtool::explain_connect(e, &resolved))?;
+    let catalog = crate::query::masking::catalog(&client).await?;
+    let plan = classify::plan(&catalog, &rules);
+    let file = rules.file.as_ref().map(|f| f.display().to_string());
+    Ok(if cmd.check {
+        crate::masking::report::check(&plan, cmd.strict)
+    } else {
+        (
+            crate::masking::report::show(&plan, file.as_deref()),
+            plan.problems.is_empty(),
+        )
+    })
+}
+
 /// Load a checked archive's rows into a restored database (its tables
 /// made, their keys not yet), then set its sequences. What to note.
 pub async fn load(
@@ -592,6 +682,34 @@ pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn masking_commands_parse() {
+        let a = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_masking(&a(&[
+                "check",
+                "production",
+                "--strict",
+                "--masking",
+                "m.toml"
+            ])),
+            Ok(MaskingCmd {
+                check: true,
+                target: "production".into(),
+                masking: Some(PathBuf::from("m.toml")),
+                strict: true
+            })
+        );
+        assert!(
+            parse_masking(&a(&["show", "p", "--strict"])).is_err(),
+            "--strict is check's"
+        );
+        assert!(parse_masking(&a(&["show"]))
+            .unwrap_err()
+            .contains("name a target"));
+        assert!(parse_masking(&a(&["frob", "p"])).is_err());
+    }
 
     #[test]
     fn only_options_that_leave_things_out_pass() {

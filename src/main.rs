@@ -16,7 +16,7 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (beta)",
-    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman dump <target> [FILE]\n       pgman restore <FILE> <target>\n       pgman copies [show|rm|report]\n       pgman run <target> <FILE>\n       pgman apply <target>\n       pgman env discover [--save]\n       pgman mcp serve",
+    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman dump <target> [FILE]\n       pgman restore <FILE> <target>\n       pgman copies [show|rm|report]\n       pgman masking show|check <target>\n       pgman run <target> <FILE>\n       pgman apply <target>\n       pgman env discover [--save]\n       pgman mcp serve",
     after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nDump and restore: `pgman dump <target> [FILE]`, `pgman restore <FILE> <target>`, the copies taken: `pgman copies`; see docs/dump-restore.md.\nScripts and patches: `pgman run <target> <FILE>` (docs/run.md), `pgman apply <target>` (docs/environments.md).\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches, dump and restore ask you first); see docs/mcp.md."
 )]
 struct Cli {
@@ -115,7 +115,7 @@ struct Cli {
 
 /// The words that start a sub-command rather than name a DSN.
 const SUBCOMMANDS: &[&str] = &[
-    "query", "env", "mcp", "dump", "restore", "copies", "run", "apply",
+    "query", "env", "mcp", "dump", "restore", "copies", "masking", "run", "apply",
 ];
 
 /// `argv` with a sub-command that follows global options moved to the
@@ -166,7 +166,7 @@ fn unknown_command(word: &str) -> Option<String> {
         .filter(|(d, c)| *d <= 2 && *d < c.len())
         .min();
     Some(format!(
-        "pgman: unknown command {word:?}{}. Commands: dump, restore, copies, run, apply, query, env, mcp; \
+        "pgman: unknown command {word:?}{}. Commands: dump, restore, copies, masking, run, apply, query, env, mcp; \
          a DSN starts postgres:// — pgman --help",
         near.map(|(_, c)| format!(" (did you mean {c}?)"))
             .unwrap_or_default()
@@ -262,6 +262,34 @@ async fn main() -> anyhow::Result<()> {
             Ok(done) => println!("{}", pgman::dump::render(&done)),
             Err(e) => {
                 eprintln!("pgman dump: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    if argv.get(1).map(String::as_str) == Some("masking") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", pgman::masked::MASKING_USAGE);
+            return Ok(());
+        }
+        init_logging();
+        let cmd = match pgman::masked::parse_masking(&argv[2..]) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        };
+        match pgman::masked::masking_cli(&cmd).await {
+            Ok((out, ok)) => {
+                println!("{out}");
+                if !ok {
+                    std::process::exit(1);
+                }
+            }
+            Err(e) => {
+                eprintln!("pgman masking: {e}");
                 std::process::exit(1);
             }
         }
