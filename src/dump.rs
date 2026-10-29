@@ -1013,6 +1013,7 @@ pub fn journal_dump(
                 l.display().to_string()
             });
             e.bytes = Some(done.bytes);
+            e.print = crate::copies::fingerprint(&file);
             e.expires = Some(now.saturating_add(entry.ttl_secs));
         }
         Err(_) => e.ok = Some(false),

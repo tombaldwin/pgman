@@ -69,6 +69,10 @@ pub struct Event {
     pub latest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
+    /// The dump's fingerprint ([`crate::copies::fingerprint`]), to know
+    /// it again copied or moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print: Option<String>,
     /// When the copy expires, unix seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires: Option<u64>,

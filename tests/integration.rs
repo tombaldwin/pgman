@@ -10179,6 +10179,20 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         ),
     )
     .unwrap();
+    // A raw dump copied into the work tree is still what it was (its
+    // fingerprint says so), and one the journal doesn't know at all
+    // could be anything: an agent restores neither.
+    std::fs::copy(&raw_file, out.join("copy.dump")).unwrap();
+    let (t, err, _) = call(
+        10,
+        "restore",
+        serde_json::json!({"file": "copy.dump", "target": "local", "as": format!("{raw_copy}x"), "create": true}),
+        restore_yes.clone(),
+    );
+    assert!(
+        err && t.contains("raw copy of a protected environment"),
+        "{t}"
+    );
     // With the journal gone, the database's own comment still says so.
     std::fs::remove_file(home.join(".local/share/pgman/journal.jsonl")).unwrap();
     let (t, err, _) = call(
@@ -10208,9 +10222,40 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         (Some("masked"), Some(true)),
         "{last}"
     );
+    let pg_dump = pgman::pgtool::find_tool("pg_dump", None).unwrap();
+    assert!(std::process::Command::new(&pg_dump)
+        .env("PGPASSWORD", "pgman_test")
+        .args([
+            "-h",
+            "127.0.0.1",
+            "-p",
+            "55432",
+            "-U",
+            "pgman_test",
+            "-Fc",
+            "-f"
+        ])
+        .arg(out.join("theirs.dump"))
+        .arg(&src)
+        .status()
+        .unwrap()
+        .success());
+    let (t, err, _) = call(
+        11,
+        "restore",
+        serde_json::json!({"file": "theirs.dump", "target": "local", "as": format!("{raw_copy}y"), "create": true}),
+        restore_yes.clone(),
+    );
+    assert!(err && t.contains("journal doesn't know"), "{t}");
     drop(stdin);
     let _ = child.wait();
-    for db in [&masked_copy, &raw_copy, &src] {
+    for db in [
+        masked_copy.clone(),
+        raw_copy.clone(),
+        format!("{raw_copy}x"),
+        format!("{raw_copy}y"),
+        src.clone(),
+    ] {
         let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
     }
 }

@@ -66,6 +66,31 @@ pub fn tool_entries() -> Vec<Value> {
     ]
 }
 
+/// Why an agent may not restore `rel` (not a masked archive), given what
+/// the journal knows of it — `(protected, mode)` — if anything: a dump
+/// from elsewhere could be anyone's raw copy, and a raw copy of a
+/// protected environment is never an agent's. Pure.
+pub fn agent_restore_problem(
+    rel: &str,
+    target: &str,
+    known: Option<(bool, String)>,
+) -> Option<String> {
+    match known {
+        None => Some(format!(
+            "{rel} is a dump this machine's journal doesn't know (from elsewhere, or not taken \
+             with pgman), so it could be a raw copy of anything: an agent restores masked dumps \
+             and dumps pgman took here. The operator can restore it at a terminal: pgman restore \
+             {rel} {target}"
+        )),
+        Some((true, mode)) if mode == "raw" => Some(format!(
+            "{rel} is a raw copy of a protected environment: its rows are real people's, and an \
+             agent restores masked copies only. Take a masked dump for the agent instead (pgman \
+             dump <target> --masked)"
+        )),
+        Some(_) => None,
+    }
+}
+
 /// `rel` under `cwd`, or why it may not be used: it must be relative,
 /// with no `..`, and — once symlinks are followed — still inside `cwd`.
 /// `must_exist`: the path itself is resolved (a file to read); otherwise
@@ -429,6 +454,19 @@ impl Server {
         let rel = arg_string(args, "file")?.ok_or("file is required")?;
         let target = arg_string(args, "target")?.ok_or("target is required")?;
         let file = inside(&self.cwd, &rel, true)?;
+        if !crate::masked::is_archive(&file) {
+            let f = file.clone();
+            let known = tokio::task::spawn_blocking(move || {
+                let (events, _) = crate::journal::read_in(&crate::journal::dir());
+                let copies = crate::copies::registry(&events);
+                crate::copies::of_file(&copies, &f).map(|c| (c.protected, c.mode.clone()))
+            })
+            .await
+            .map_err(|e| format!("journal task failed: {e}"))?;
+            if let Some(why) = agent_restore_problem(&rel, &target, known) {
+                return Err(why);
+            }
+        }
         let as_name = arg_string(args, "as")?;
         if let Some(n) = &as_name {
             crate::restore::check_name(n)?;

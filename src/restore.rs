@@ -562,7 +562,7 @@ pub fn journal_restore(file: &Path, target: &str, done: &Done) -> Option<String>
         crate::journal::now(),
         &crate::journal::machine_id(),
     );
-    e.copy = crate::copies::by_file(&copies, &file).map(|c| c.id.clone());
+    e.copy = crate::copies::of_file(&copies, &file).map(|c| c.id.clone());
     e.file = Some(file.display().to_string());
     e.into_server = Some(done.server.clone());
     e.into_database = Some(done.database.clone());
@@ -719,7 +719,7 @@ impl Ready {
                     .unwrap_or_else(|_| opts.file.clone());
                 let (events, _) = crate::journal::read_in(&crate::journal::dir());
                 let copies = crate::copies::registry(&events);
-                crate::copies::by_file(&copies, &file).map(|c| {
+                crate::copies::of_file(&copies, &file).map(|c| {
                     (
                         c.id.clone(),
                         c.mode == "masked",

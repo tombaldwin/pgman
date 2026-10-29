@@ -68,6 +68,8 @@ pub struct Copy {
     pub file: PathBuf,
     pub latest: Option<PathBuf>,
     pub bytes: u64,
+    /// Its fingerprint, when the dump recorded one.
+    pub print: Option<String>,
     pub expires: Option<u64>,
     /// When it was deleted, and why.
     pub deleted: Option<(u64, String)>,
@@ -112,6 +114,7 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
                     file: PathBuf::from(file),
                     latest: e.latest.as_ref().map(PathBuf::from),
                     bytes: e.bytes.unwrap_or(0),
+                    print: e.print.clone(),
                     expires: e.expires,
                     deleted: None,
                     restores: Vec::new(),
@@ -150,6 +153,63 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
         }
     }
     out
+}
+
+/// How much of each end of a dump [`fingerprint`] reads.
+const PRINT_SPAN: u64 = 1 << 20;
+
+/// A dump's fingerprint: the sha256 of its size and its first and last
+/// mebibyte — enough to know a copied or moved dump again, quick on a
+/// big one. A directory-format dump by its `toc.dat`, a masked archive
+/// by its manifest. Reads the file.
+pub fn fingerprint(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let file = if path.is_dir() {
+        [crate::masking::archive::MANIFEST, "toc.dat"]
+            .iter()
+            .map(|f| path.join(f))
+            .find(|p| p.is_file())?
+    } else {
+        path.to_path_buf()
+    };
+    let mut f = std::fs::File::open(&file).ok()?;
+    let size = f.metadata().ok()?.len();
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    ctx.update(&size.to_le_bytes());
+    let mut buf = Vec::new();
+    (&mut f).take(PRINT_SPAN).read_to_end(&mut buf).ok()?;
+    if size > PRINT_SPAN {
+        f.seek(SeekFrom::Start(
+            size.saturating_sub(PRINT_SPAN).max(PRINT_SPAN),
+        ))
+        .ok()?;
+        f.read_to_end(&mut buf).ok()?;
+    }
+    ctx.update(&buf);
+    Some(
+        ctx.finish()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    )
+}
+
+/// The copy `file` is: by its recorded path, or — copied, moved, or a
+/// hard link — by its fingerprint. Reads the file only when the path
+/// doesn't say.
+pub fn of_file<'a>(copies: &'a [Copy], file: &Path) -> Option<&'a Copy> {
+    if let Some(c) = by_file(copies, file) {
+        return Some(c);
+    }
+    if !copies.iter().any(|c| c.print.is_some()) {
+        return None;
+    }
+    let print = fingerprint(file)?;
+    copies
+        .iter()
+        .rev()
+        .find(|c| c.print.as_deref() == Some(print.as_str()))
 }
 
 /// The copy `file` is, by its recorded path. Pure.
@@ -1236,6 +1296,36 @@ mod tests {
             by_file(&copies, Path::new("/d/a.dump")).is_none(),
             "deleted"
         );
+    }
+
+    /// A raw dump copied elsewhere is still the copy it was: by its
+    /// fingerprint, which a different dump doesn't share.
+    #[test]
+    fn a_copied_dump_is_known_by_its_fingerprint() {
+        let dir = std::env::temp_dir().join(format!("pgman-copies-print-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b, other) = (
+            dir.join("a.dump"),
+            dir.join("copy.dump"),
+            dir.join("o.dump"),
+        );
+        // Bigger than both spans, so the tail is read too.
+        let mut body = vec![7u8; (3 * PRINT_SPAN) as usize];
+        std::fs::write(&a, &body).unwrap();
+        std::fs::copy(&a, &b).unwrap();
+        *body.last_mut().unwrap() = 8;
+        std::fs::write(&other, &body).unwrap();
+        let mut e = dump_event("aaaa1111", 1, "production/ledger", a.to_str().unwrap());
+        e.print = fingerprint(&a);
+        let copies = registry(&[e]);
+        assert_eq!(of_file(&copies, &a).unwrap().id, "aaaa1111");
+        assert_eq!(of_file(&copies, &b).unwrap().id, "aaaa1111", "copied");
+        assert!(
+            of_file(&copies, &other).is_none(),
+            "only its last byte differs"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
