@@ -837,9 +837,23 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
         return Err(format!("{}: no such file", opts.file.display()));
     }
     let text = opts.target.clone();
-    let resolved = tokio::task::spawn_blocking(move || target::resolve(&text, Want::Primary))
-        .await
-        .map_err(|e| format!("resolve task failed: {e}"))??;
+    let resolved = tokio::task::spawn_blocking(move || {
+        target::resolve(&text, Want::Primary).map_err(|e| {
+            // A protected target is refused as protected, not argued
+            // about: "it lists only replicas, name the primary" invites
+            // the operator to add one.
+            match target::resolve(&text, Want::PreferReplica) {
+                Ok(t) if t.protected => format!(
+                    "{} is protected ({}); pgman never restores into a protected database",
+                    t.label,
+                    t.protection()
+                ),
+                _ => e,
+            }
+        })
+    })
+    .await
+    .map_err(|e| format!("resolve task failed: {e}"))??;
     let database = opts
         .as_name
         .clone()

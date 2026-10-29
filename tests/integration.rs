@@ -10749,6 +10749,19 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         f
     };
 
+    // A restore into it is refused as protected — not as "it lists only
+    // replicas", which invites adding the primary.
+    std::fs::write(out.join("any.dump"), b"").unwrap();
+    for into in ["production", "policy-replica"] {
+        let (code, _, err) = run(&["restore", "any.dump", into, "--yes"]);
+        assert_eq!(code, Some(1), "{err}");
+        assert!(
+            err.contains("never restores into a protected database"),
+            "{into}: {err}"
+        );
+    }
+    std::fs::remove_file(out.join("any.dump")).unwrap();
+
     // Protected: masked by default, raw only once the operator says so.
     let (code, _, err) = run(&["dump", "production", ".", "--unmasked", "--reason", "APP-6"]);
     assert_eq!(code, Some(1), "{err}");
