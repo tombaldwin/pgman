@@ -88,9 +88,11 @@ impl Kind {
 }
 
 /// What a dump is when nothing asks: what the policy allows, the most
-/// of it. Pure.
+/// of it — but a protected environment's is masked even where a raw copy
+/// is allowed: that takes `--unmasked`. Pure.
 pub fn default_kind(policy: &Policy) -> Kind {
     match policy.dump {
+        DumpMode::Unmasked if policy.protected => Kind::Masked,
         DumpMode::Unmasked | DumpMode::Never => Kind::Raw,
         DumpMode::Masked => Kind::Masked,
         DumpMode::Schema => Kind::Schema,
@@ -445,6 +447,13 @@ mod tests {
         assert!(gate(&schema, Kind::Masked, Via::Terminal, "x").is_err());
         assert_eq!(default_kind(&masked), Kind::Masked);
         assert_eq!(default_kind(&schema), Kind::Schema);
+        // Allowing a raw copy of a protected environment doesn't make it
+        // the default; an unprotected one's default is raw.
+        let allowed =
+            effective(true, Some(&settings(Some(DumpMode::Unmasked), false)), None).unwrap();
+        assert_eq!(default_kind(&allowed), Kind::Masked);
+        let open = effective(false, None, None).unwrap();
+        assert_eq!(default_kind(&open), Kind::Raw);
         let capped = effective(
             false,
             None,
