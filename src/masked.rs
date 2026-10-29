@@ -52,6 +52,134 @@ pub fn passthrough_problem(extra: &[String]) -> Option<String> {
     None
 }
 
+/// What the `--exclude-*` options after `--` leave out, as pg_dump reads
+/// them: patterns of tables (with their children, for the
+/// `-and-children` forms), of tables whose rows only are left out, and
+/// of schemas.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Excludes {
+    tables: Vec<(String, bool)>,
+    rows: Vec<(String, bool)>,
+    schemas: Vec<String>,
+}
+
+impl Excludes {
+    /// From `extra`, already checked by [`passthrough_problem`]. Pure.
+    pub fn parse(extra: &[String]) -> Excludes {
+        let mut out = Excludes::default();
+        let mut it = extra.iter();
+        while let Some(a) = it.next() {
+            let (name, value) = match a.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_string())),
+                None => (a.as_str(), None),
+            };
+            let Some(value) = value.or_else(|| it.next().cloned()) else {
+                break;
+            };
+            match name {
+                "--exclude-table" | "-T" => out.tables.push((value, false)),
+                "--exclude-table-and-children" => out.tables.push((value, true)),
+                "--exclude-table-data" => out.rows.push((value, false)),
+                "--exclude-table-data-and-children" => out.rows.push((value, true)),
+                "--exclude-schema" | "-N" => out.schemas.push(value),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Whether `schema.name` is left out by `patterns`, itself or (where
+    /// a pattern says so) as a child of a table in `ancestors`. Pure.
+    fn hit(
+        patterns: &[(String, bool)],
+        schema: &str,
+        name: &str,
+        ancestors: &[(String, String)],
+    ) -> bool {
+        patterns.iter().any(|(p, children)| {
+            pattern_matches(p, schema, name)
+                || (*children && ancestors.iter().any(|(s, n)| pattern_matches(p, s, n)))
+        })
+    }
+
+    /// Whether the table's rows are left out: its schema, the table, or
+    /// its rows excluded. `ancestors` are what it is a partition or child
+    /// of, nearest first. Pure.
+    pub fn rows_of(&self, schema: &str, name: &str, ancestors: &[(String, String)]) -> bool {
+        self.schemas.iter().any(|p| part_matches(p, schema))
+            || Excludes::hit(&self.tables, schema, name, ancestors)
+            || Excludes::hit(&self.rows, schema, name, ancestors)
+    }
+
+    /// Whether a sequence is left out: by its schema or as a table
+    /// pattern (pg_dump's -T leaves out sequences too), or with the
+    /// table that owns it, `owner`. Pure.
+    pub fn sequence(&self, schema: &str, name: &str, owner: Option<(&str, &str)>) -> bool {
+        self.schemas.iter().any(|p| part_matches(p, schema))
+            || Excludes::hit(&self.tables, schema, name, &[])
+            || owner.is_some_and(|(s, t)| {
+                self.schemas.iter().any(|p| part_matches(p, s))
+                    || Excludes::hit(&self.tables, s, t, &[])
+            })
+    }
+}
+
+/// Whether pg_dump's pattern `pattern` (`name` or `schema.name`; `*` and
+/// `?` wildcards; double quotes keep case and dots) matches. An
+/// unqualified pattern matches the name in any schema. Pure.
+pub fn pattern_matches(pattern: &str, schema: &str, name: &str) -> bool {
+    let parts = split_pattern(pattern);
+    match parts.as_slice() {
+        [n] => glob(n, name),
+        [s, n] => glob(s, schema) && glob(n, name),
+        // database.schema.name: the database is this one.
+        [_, s, n] => glob(s, schema) && glob(n, name),
+        _ => false,
+    }
+}
+
+fn part_matches(pattern: &str, value: &str) -> bool {
+    matches!(split_pattern(pattern).as_slice(), [p] if glob(p, value))
+}
+
+/// A pattern's dot-separated parts, each as (char, literal) pairs:
+/// unquoted letters folded to lower case, `*`/`?` wildcards unless
+/// quoted. Pure.
+fn split_pattern(pattern: &str) -> Vec<Vec<(char, bool)>> {
+    let mut parts = vec![Vec::new()];
+    let mut quoted = false;
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                parts.last_mut().unwrap().push(('"', true));
+            }
+            '"' => quoted = !quoted,
+            '.' if !quoted => parts.push(Vec::new()),
+            c if quoted => parts.last_mut().unwrap().push((c, true)),
+            c => parts
+                .last_mut()
+                .unwrap()
+                .extend(c.to_lowercase().map(|l| (l, false))),
+        }
+    }
+    parts
+}
+
+fn glob(p: &[(char, bool)], s: &str) -> bool {
+    let s: Vec<char> = s.chars().collect();
+    fn go(p: &[(char, bool)], s: &[char]) -> bool {
+        match p.first() {
+            None => s.is_empty(),
+            Some(('*', false)) => (0..=s.len()).any(|i| go(&p[1..], &s[i..])),
+            Some(('?', false)) => !s.is_empty() && go(&p[1..], &s[1..]),
+            Some((c, _)) => s.first() == Some(c) && go(&p[1..], &s[1..]),
+        }
+    }
+    go(p, &s)
+}
+
 /// Where a masked dump of `label` taken at `unix_secs` goes, given FILE
 /// (`out`): a directory to put it in, or the archive's own name (ending
 /// `.pgman-dump`). Pure.
@@ -302,10 +430,27 @@ pub async fn run(
     let catalog = crate::query::masking::catalog(&client).await?;
     let plan = classify::plan(&catalog, &rules);
     refuse_plan(&plan)?;
+    // What the -- --exclude-* options leave out, pg_dump leaves out of
+    // the schema and pgman out of the rows and sequences.
+    let excludes = Excludes::parse(&opts.extra);
+    let left_out = |q: &str| -> bool {
+        let Some(t) = catalog.table(q) else {
+            return false;
+        };
+        let mut ancestors = Vec::new();
+        let mut at = t.parent.clone();
+        while let Some(p) = at.take().filter(|_| ancestors.len() < 16) {
+            if let Some(pt) = catalog.table(&p) {
+                ancestors.push((pt.schema.clone(), pt.name.clone()));
+                at = pt.parent.clone();
+            }
+        }
+        excludes.rows_of(&t.schema, &t.name, &ancestors)
+    };
     let copied: Vec<&classify::TablePlan> = plan
         .tables
         .iter()
-        .filter(|t| !t.drop_rows && !skipped.contains(&t.table))
+        .filter(|t| !t.drop_rows && !skipped.contains(&t.table) && !left_out(&t.table))
         .collect();
     let to_lock: Vec<(String, String)> = copied
         .iter()
@@ -316,7 +461,18 @@ pub async fn run(
         })
         .collect();
     crate::query::masking::lock(&client, &to_lock).await?;
-    let sequences = crate::query::masking::sequences(&client).await?;
+    let owners = crate::query::masking::sequence_owners(&client).await?;
+    let sequences: Vec<_> = crate::query::masking::sequences(&client)
+        .await?
+        .into_iter()
+        .filter(|(schema, name, _, _)| {
+            let owner = owners
+                .iter()
+                .find(|o| &o.0 == schema && &o.1 == name)
+                .map(|o| (o.2.as_str(), o.3.as_str()));
+            !excludes.sequence(schema, name, owner)
+        })
+        .collect();
 
     crate::dump::create_partial(&p.partial, crate::dump::Format::Directory)?;
     let made = crate::dump::identity(&p.partial);
@@ -866,6 +1022,56 @@ pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exclude_patterns_read_as_pg_dump_reads_them() {
+        assert!(pattern_matches("weird", "public", "weird"));
+        assert!(pattern_matches("public.weird", "public", "weird"));
+        assert!(!pattern_matches("other.weird", "public", "weird"));
+        assert!(pattern_matches("public.audit_*", "public", "audit_2026"));
+        assert!(
+            pattern_matches("Weird", "public", "weird"),
+            "unquoted folds"
+        );
+        assert!(
+            !pattern_matches("\"Weird\"", "public", "weird"),
+            "quoted keeps case"
+        );
+        assert!(
+            pattern_matches("\"a.b\"", "public", "a.b"),
+            "a quoted dot is a name's"
+        );
+        assert!(pattern_matches("t?", "public", "t1"));
+        assert!(!pattern_matches("t?", "public", "t12"));
+        let x = Excludes::parse(&[
+            "--exclude-table=public.weird".to_string(),
+            "-N".to_string(),
+            "scratch".to_string(),
+            "--exclude-table-data-and-children=events".to_string(),
+            "--exclude-extension=postgis".to_string(),
+        ]);
+        assert!(x.rows_of("public", "weird", &[]));
+        assert!(x.rows_of("scratch", "anything", &[]));
+        assert!(x.rows_of(
+            "public",
+            "events_2026",
+            &[("public".into(), "events".into())]
+        ));
+        assert!(!x.rows_of("public", "orders", &[]));
+        assert!(
+            x.sequence("public", "weird", None),
+            "-T takes sequences too"
+        );
+        assert!(x.sequence("scratch", "junk_id_seq", None));
+        assert!(
+            x.sequence("public", "weird_id_seq", Some(("public", "weird"))),
+            "with the table that owns it"
+        );
+        assert!(
+            !x.sequence("public", "events_id_seq", Some(("public", "events"))),
+            "rows only: the sequence stays"
+        );
+    }
 
     #[test]
     fn an_unconfirmed_loosening_rules_file_needs_a_terminal() {

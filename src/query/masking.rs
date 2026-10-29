@@ -382,6 +382,31 @@ pub async fn sequences(
     Ok(out)
 }
 
+/// Each sequence a table owns (a serial's, an identity's): the
+/// sequence's schema and name, the table's schema and name. pg_dump
+/// leaves it out with its table.
+pub async fn sequence_owners(
+    client: &tokio_postgres::Client,
+) -> Result<Vec<(String, String, String, String)>, String> {
+    Ok(client
+        .query(
+            "SELECT sn.nspname::text, s.relname::text, tn.nspname::text, t.relname::text \
+             FROM pg_catalog.pg_depend d \
+             JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S' \
+             JOIN pg_catalog.pg_namespace sn ON sn.oid = s.relnamespace \
+             JOIN pg_catalog.pg_class t ON t.oid = d.refobjid \
+             JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace \
+             WHERE d.classid = 'pg_catalog.pg_class'::regclass \
+               AND d.refclassid = 'pg_catalog.pg_class'::regclass AND d.deptype IN ('a', 'i')",
+            &[],
+        )
+        .await
+        .map_err(|e| format!("could not read which tables own sequences: {}", message(&e)))?
+        .iter()
+        .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
+        .collect())
+}
+
 /// Set a restored sequence as it was.
 pub async fn set_sequence(
     client: &tokio_postgres::Client,

@@ -9979,6 +9979,102 @@ fn the_rules_reach_partitions_children_and_audit_tables_in_a_real_catalog() {
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }
 
+/// `-- --exclude-table` and `--exclude-schema` leave a table out of a
+/// masked dump's rows and sequences as well as its schema: nothing of
+/// it reaches the disk, and the restore doesn't trip on it. (They once
+/// reached pg_dump only: the rows were written anyway, and the restore
+/// failed on a table that wasn't there.)
+#[cfg(unix)]
+#[test]
+fn a_masked_dump_leaves_out_what_the_excludes_say() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, copy) = (it_name("excl"), it_name("exclcopy"));
+    let (home, out) = dump_home("excl");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    for db in [&copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        raw(&src)
+            .await
+            .batch_execute(
+                "CREATE TABLE kept (id serial PRIMARY KEY, label varchar(20)); \
+                 CREATE TABLE weird (id serial PRIMARY KEY, label varchar(20)); \
+                 CREATE SCHEMA scratch; \
+                 CREATE TABLE scratch.junk (id serial PRIMARY KEY, label varchar(20)); \
+                 INSERT INTO kept (label) VALUES ('fine'); \
+                 INSERT INTO weird (label) VALUES ('canary-excl-1'); \
+                 INSERT INTO scratch.junk (label) VALUES ('canary-excl-2');",
+            )
+            .await
+            .unwrap();
+    });
+    let dumped = pgman_in(
+        &home,
+        &out,
+        &[
+            "dump",
+            "src",
+            ".",
+            "--masked",
+            "--",
+            "--exclude-table=public.weird",
+            "--exclude-schema=scratch",
+        ],
+    );
+    let said = String::from_utf8_lossy(&dumped.stderr).into_owned();
+    assert!(dumped.status.success(), "{said}");
+    let archive = std::fs::canonicalize(out.join("src-latest.pgman-dump")).unwrap();
+    let manifest = std::fs::read_to_string(archive.join("manifest.json")).unwrap();
+    assert!(
+        !manifest.contains("weird") && !manifest.contains("junk"),
+        "{manifest}"
+    );
+    for e in std::fs::read_dir(archive.join("data")).unwrap() {
+        let mut gz = flate2::read::GzDecoder::new(std::fs::File::open(e.unwrap().path()).unwrap());
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut gz, &mut text).unwrap();
+        assert!(!text.contains("canary-excl"), "{text}");
+    }
+    let restored = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "local",
+            "--as",
+            &copy,
+            "--create",
+            "--yes",
+        ],
+    );
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    assert_eq!(
+        on(&copy, "SELECT count(*) FROM kept").unwrap()[0].get::<_, i64>(0),
+        1
+    );
+    for db in [&copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+}
+
 /// What an agent may have of a protected environment: a masked copy,
 /// with rules the operator has committed and confirmed — never an
 /// uncommitted or unconfirmed rules file, and never a raw copy: a
