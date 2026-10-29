@@ -184,6 +184,7 @@ pub async fn run(
     copy: &str,
     cwd: &Path,
     agent: bool,
+    unattended: bool,
     say: &(dyn Fn(String) + Send + Sync),
 ) -> Result<Done, String> {
     if opts.format != crate::dump::Format::Custom {
@@ -216,9 +217,10 @@ pub async fn run(
             }
         } else {
             let (r, d) = (rules.clone(), rules_digest.clone());
-            unconfirmed = tokio::task::spawn_blocking(move || confirm_rules_cli(&r, &d))
-                .await
-                .map_err(|e| format!("prompt task failed: {e}"))??;
+            unconfirmed =
+                tokio::task::spawn_blocking(move || confirm_rules_cli(&r, &d, unattended))
+                    .await
+                    .map_err(|e| format!("prompt task failed: {e}"))??;
         }
     }
     say(format!(
@@ -744,10 +746,12 @@ pub fn agent_rules_problem(file: &Path, digest: &str) -> Option<String> {
 
 /// At a terminal, a rules file not yet confirmed: what it loosens, and a
 /// yes to use it (recorded, so an agent may then). Without a terminal it
-/// is used, unrecorded, and the result says so.
+/// is used only if it masks no less than the defaults, or the operator
+/// set `unattended` for the environment; the result says so.
 pub fn confirm_rules_cli(
     rules: &crate::masking::rules::RuleSet,
     digest: &str,
+    unattended: bool,
 ) -> Result<Option<String>, String> {
     use std::io::IsTerminal;
     let Some(file) = &rules.file else {
@@ -756,13 +760,10 @@ pub fn confirm_rules_cli(
     if confirmed(digest) {
         return Ok(None);
     }
-    if !std::io::stdin().is_terminal() {
-        return Ok(Some(format!(
-            "{} isn't confirmed at a terminal yet: an agent can't use it until it is",
-            file.display()
-        )));
-    }
     let loose = crate::masking::rules::loosening(rules);
+    if !std::io::stdin().is_terminal() {
+        return unconfirmed_without_terminal(&file.display().to_string(), &loose, unattended);
+    }
     eprintln!(
         "pgman dump: {} is new or changed since you last confirmed it.{}",
         file.display(),
@@ -780,6 +781,33 @@ pub fn confirm_rules_cli(
     }
     confirm(digest, file)?;
     Ok(None)
+}
+
+/// A rules file nobody has confirmed, with no terminal to ask on: used
+/// when it keeps nothing the defaults would mask (with a note), or when
+/// the operator set `unattended` for the environment; otherwise refused,
+/// since what it keeps is a raw copy of those columns. Pure.
+pub fn unconfirmed_without_terminal(
+    file: &str,
+    loose: &[String],
+    unattended: bool,
+) -> Result<Option<String>, String> {
+    if loose.is_empty() {
+        return Ok(Some(format!(
+            "{file} isn't confirmed at a terminal yet: an agent can't use it until it is"
+        )));
+    }
+    if unattended {
+        return Ok(Some(format!(
+            "{file} isn't confirmed, and is used because this environment is unattended; it keeps:\n  {}",
+            loose.join("\n  ")
+        )));
+    }
+    Err(format!(
+        "{file} is new or changed since it was confirmed, and keeps what the defaults would mask:\n  {}\n\
+         a rules file like that is confirmed at a terminal first: run this dump at one. Nothing dumped",
+        loose.join("\n  ")
+    ))
 }
 
 /// Where an agent's masked dump goes: `file` (a `.pgman-dump` name or an
@@ -838,6 +866,28 @@ pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unconfirmed_loosening_rules_file_needs_a_terminal() {
+        let f = ".pgman/masking/ledger.toml";
+        // Masks no less than the defaults: used, with a note.
+        assert!(unconfirmed_without_terminal(f, &[], false)
+            .unwrap()
+            .unwrap()
+            .contains("isn't confirmed"));
+        // Keeps a column: refused, saying what it keeps.
+        let keeps = vec!["customers.notes kept: needed".to_string()];
+        let e = unconfirmed_without_terminal(f, &keeps, false).unwrap_err();
+        assert!(
+            e.contains("customers.notes kept") && e.contains("Nothing dumped"),
+            "{e}"
+        );
+        // Unless the operator said this environment runs unattended.
+        assert!(unconfirmed_without_terminal(f, &keeps, true)
+            .unwrap()
+            .unwrap()
+            .contains("unattended"));
+    }
 
     #[test]
     fn masking_commands_parse() {

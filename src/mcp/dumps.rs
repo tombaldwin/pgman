@@ -402,7 +402,7 @@ impl Server {
         let label = resolved.label.clone();
         let say = |line: String| tracing::info!(target: "pgman::mcp", "dump: {line}");
         let result = if masked {
-            crate::masked::run(&opts, resolved, &entry.copy, &self.cwd, true, &say).await
+            crate::masked::run(&opts, resolved, &entry.copy, &self.cwd, true, false, &say).await
         } else {
             crate::dump::run(&opts, resolved, &say).await
         };

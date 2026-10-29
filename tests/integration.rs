@@ -9846,6 +9846,67 @@ fn a_masked_dump_stops_when_signalled() {
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }
 
+/// A rules file that keeps a column the defaults would mask, never
+/// confirmed, is refused with no terminal to confirm it on — a script or
+/// an agent's shell can't take what is, for those columns, a raw copy —
+/// while one that masks no less than the defaults is used.
+#[cfg(unix)]
+#[test]
+fn an_unconfirmed_rules_file_that_keeps_columns_needs_a_terminal() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let src = it_name("unconf");
+    let (home, out) = dump_home("unconf");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    on(
+        &src,
+        "CREATE TABLE customers (id int PRIMARY KEY, notes varchar(200))",
+    )
+    .unwrap();
+    std::fs::create_dir_all(out.join(".pgman/masking")).unwrap();
+    let rules = out.join(format!(".pgman/masking/{src}.toml"));
+    std::fs::write(
+        &rules,
+        "version = 1\n[tables.customers]\nnotes = { rule = \"keep\", reason = \"support needs them\" }\n",
+    )
+    .unwrap();
+    let refused = pgman_in(&home, &out, &["dump", "src", ".", "--masked"]);
+    let said = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(!refused.status.success(), "{said}");
+    assert!(
+        said.contains("customers.notes kept") && said.contains("Nothing dumped"),
+        "{said}"
+    );
+    assert!(
+        !std::fs::read_dir(&out)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains("pgman-dump")),
+        "nothing written"
+    );
+    std::fs::write(
+        &rules,
+        "version = 1\n[tables.customers]\nnotes = \"null\"\n",
+    )
+    .unwrap();
+    let used = pgman_in(&home, &out, &["dump", "src", ".", "--masked"]);
+    let mut said = String::from_utf8_lossy(&used.stdout).into_owned();
+    said.push_str(&String::from_utf8_lossy(&used.stderr));
+    assert!(used.status.success(), "{said}");
+    assert!(said.contains("isn't confirmed"), "{said}");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+}
+
 /// What an agent may have of a protected environment: a masked copy,
 /// with rules the operator has committed and confirmed — never an
 /// uncommitted or unconfirmed rules file, and never a raw copy: a
