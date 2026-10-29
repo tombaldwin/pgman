@@ -35,7 +35,7 @@ pub fn show(plan: &Plan, rules_file: Option<&str>) -> String {
         for d in cols {
             let why = match &d.origin {
                 Origin::Default(w) => w.clone(),
-                Origin::Preset(w) => format!("{w}'s preset"),
+                Origin::Preset(w) => format!("the preset for {w}"),
                 Origin::Rules => "the rules file".to_string(),
                 Origin::Follows(c) => format!("references {c}"),
                 Origin::Plain => "nothing personal about it".to_string(),
