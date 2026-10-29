@@ -4,7 +4,7 @@
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#install)
 
-A k9s-style terminal UI for PostgreSQL 12 and newer, wherever it runs:
+A k9s-style terminal UI for PostgreSQL 10 and newer, wherever it runs:
 every database in every environment on one screen, guarded queries,
 safe migrations, masked copies of production, and logs turned back into
 runnable SQL (Postgres server logs, Hibernate logs and pasted JDBC,
