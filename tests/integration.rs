@@ -10075,6 +10075,129 @@ fn a_masked_dump_leaves_out_what_the_excludes_say() {
     }
 }
 
+/// A restore that fails part-way still leaves the database marked and
+/// journaled — the comment written before a row goes in, the restore
+/// event recorded as not done — so an agent's tools refuse it as they
+/// would the whole, and `copies rm` finds it. And a restore's errors
+/// carry no value. Here tampered archives
+/// (checksums redone): one with a duplicate key, whose primary key
+/// fails to build; one whose rows don't fit the table.
+#[cfg(unix)]
+#[test]
+fn a_failed_restore_is_marked_journaled_and_redacted() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, copy) = (it_name("failr"), it_name("failrcopy"));
+    let (home, out) = dump_home("failr");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    for db in [&copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    on(&src, "CREATE TABLE t (code varchar(20) PRIMARY KEY)").unwrap();
+    on(&src, "INSERT INTO t VALUES ('a'), ('b')").unwrap();
+    let dumped = pgman_in(&home, &out, &["dump", "src", ".", "--masked"]);
+    assert!(
+        dumped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dumped.stderr)
+    );
+    let archive = std::fs::canonicalize(out.join("src-latest.pgman-dump")).unwrap();
+    // The rows replaced, and the checksum redone to match.
+    let tamper = |rows: &[u8]| {
+        let data = archive.join("data/0001.copy.gz");
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut gz, rows).unwrap();
+        std::fs::write(&data, gz.finish().unwrap()).unwrap();
+        let manifest_path = archive.join("manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["tables"][0]["sha256"] =
+            serde_json::Value::String(pgman::masking::archive::sha256_file(&data).unwrap());
+        std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    };
+    let restore = || {
+        let r = pgman_in(
+            &home,
+            &out,
+            &[
+                "restore",
+                archive.to_str().unwrap(),
+                "local",
+                "--as",
+                &copy,
+                "--create",
+                "--yes",
+            ],
+        );
+        let mut said = String::from_utf8_lossy(&r.stdout).into_owned();
+        said.push_str(&String::from_utf8_lossy(&r.stderr));
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
+        (r.status.success(), said)
+    };
+    tamper(b"canary-dup-77\ncanary-dup-77\n");
+    let (_, said) = restore();
+    assert!(said.contains("t_pkey"), "{said}");
+    assert!(
+        !said.contains("canary-dup-77"),
+        "a value in the output: {said}"
+    );
+
+    tamper(b"a\tcanary-extra-78\n");
+    let r = pgman_in(
+        &home,
+        &out,
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "local",
+            "--as",
+            &copy,
+            "--create",
+            "--yes",
+        ],
+    );
+    let said = String::from_utf8_lossy(&r.stderr).into_owned();
+    assert!(!r.status.success(), "{said}");
+    assert!(said.contains("part-restored"), "{said}");
+    assert!(!said.contains("canary-extra-78"), "{said}");
+    let comment: Option<String> = on(
+        "pgman_test",
+        &format!("SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = '{copy}'"),
+    )
+    .unwrap()[0]
+        .get(0);
+    assert!(
+        comment
+            .as_deref()
+            .is_some_and(|c| c.starts_with("pgman copy ")),
+        "{comment:?}"
+    );
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let last: serde_json::Value = serde_json::from_str(journal.lines().last().unwrap()).unwrap();
+    assert_eq!(
+        (
+            last["event"].as_str(),
+            last["into_database"].as_str(),
+            last["ok"].as_bool()
+        ),
+        (Some("restore"), Some(copy.as_str()), Some(false)),
+        "{last}"
+    );
+    for db in [&copy, &src] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+}
+
 /// What an agent may have of a protected environment: a masked copy,
 /// with rules the operator has committed and confirmed — never an
 /// uncommitted or unconfirmed rules file, and never a raw copy: a

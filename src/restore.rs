@@ -542,17 +542,38 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
             return Err("not confirmed; nothing changed".to_string());
         }
     }
-    let mut done = ready.execute().await?;
-    done.notes
-        .extend(journal_restore(&opts.file, &opts.target, &done));
+    let (server, database) = (ready.server().to_string(), ready.plan.database.clone());
+    let mut done = match ready.execute().await {
+        Ok(done) => done,
+        // Part-restored is still restored: journaled, so copies rm finds
+        // it and an agent's tools refuse it as they would the whole.
+        Err(e) => {
+            let _ = journal_restore(&opts.file, &opts.target, &server, &database, false);
+            return Err(e);
+        }
+    };
+    done.notes.extend(journal_restore(
+        &opts.file,
+        &opts.target,
+        &done.server,
+        &done.database,
+        true,
+    ));
     done.notes.extend(crate::journal_send::flush_note().await);
     Ok(done)
 }
 
-/// Record a restore of `file` in the journal, against the copy the
-/// journal knows it as (if any). What to add to the notes when the
-/// journal couldn't be written.
-pub fn journal_restore(file: &Path, target: &str, done: &Done) -> Option<String> {
+/// Record a restore of `file` into `database` on `server` in the
+/// journal, against the copy the journal knows it as (if any); `ok`
+/// false for one that failed part-way. What to add to the notes when
+/// the journal couldn't be written.
+pub fn journal_restore(
+    file: &Path,
+    target: &str,
+    server: &str,
+    database: &str,
+    ok: bool,
+) -> Option<String> {
     use crate::journal::{Event, Kind};
     let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     let (events, _) = crate::journal::read_in(&crate::journal::dir());
@@ -564,8 +585,9 @@ pub fn journal_restore(file: &Path, target: &str, done: &Done) -> Option<String>
     );
     e.copy = crate::copies::of_file(&copies, &file).map(|c| c.id.clone());
     e.file = Some(file.display().to_string());
-    e.into_server = Some(done.server.clone());
-    e.into_database = Some(done.database.clone());
+    e.into_server = Some(server.to_string());
+    e.into_database = Some(database.to_string());
+    e.ok = (!ok).then_some(false);
     // How to reach it again (pgman copies rm), never with a password.
     e.into_target = Some(crate::conn::redact_url(target));
     crate::journal::append(&e)
@@ -629,6 +651,45 @@ impl Ready {
             Prepare::Replace => {
                 drop_again_and_again(&client, &database).await?;
                 crate::query::server::create_database(&client, &database).await?;
+            }
+        }
+        // Where the copy came from, inside it: from the archive's header,
+        // or from the journal for a dump it knows.
+        let origin = match &archive {
+            Some(m) => Some((
+                m.header.copy.clone(),
+                m.header.masked,
+                m.header.protected,
+                m.header.label.clone(),
+                None,
+            )),
+            None => {
+                let file = opts
+                    .file
+                    .canonicalize()
+                    .unwrap_or_else(|_| opts.file.clone());
+                let (events, _) = crate::journal::read_in(&crate::journal::dir());
+                let copies = crate::copies::registry(&events);
+                crate::copies::of_file(&copies, &file).map(|c| {
+                    (
+                        c.id.clone(),
+                        c.mode == "masked",
+                        c.protected,
+                        c.label.clone(),
+                        c.expires,
+                    )
+                })
+            }
+        };
+        // Marked before a row goes in: a restore that fails part-way still
+        // leaves a database an agent's tools refuse, if it's a raw copy.
+        if let Some((copy, masked, protected, source, _)) = &origin {
+            if let Err(e) = crate::query::masking::write_comment(
+                &client, &database, copy, *masked, *protected, source,
+            )
+            .await
+            {
+                notes.push(e);
             }
         }
         drop(client);
@@ -700,34 +761,6 @@ impl Ready {
                     }
                 }
                 (errors, text)
-            }
-        };
-        // Where the copy came from, inside it: from the archive's header,
-        // or from the journal for a dump it knows.
-        let origin = match &archive {
-            Some(m) => Some((
-                m.header.copy.clone(),
-                m.header.masked,
-                m.header.protected,
-                m.header.label.clone(),
-                None,
-            )),
-            None => {
-                let file = opts
-                    .file
-                    .canonicalize()
-                    .unwrap_or_else(|_| opts.file.clone());
-                let (events, _) = crate::journal::read_in(&crate::journal::dir());
-                let copies = crate::copies::registry(&events);
-                crate::copies::of_file(&copies, &file).map(|c| {
-                    (
-                        c.id.clone(),
-                        c.mode == "masked",
-                        c.protected,
-                        c.label.clone(),
-                        c.expires,
-                    )
-                })
             }
         };
         if let Some((copy, masked, protected, source, expires)) = origin {

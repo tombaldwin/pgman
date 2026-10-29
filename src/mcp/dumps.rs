@@ -512,11 +512,26 @@ impl Server {
             ));
         }
         tracing::info!(target: "pgman::mcp", database = %database, "restore confirmed");
-        let mut done = ready.execute().await?;
+        let (server, database) = (ready.server().to_string(), ready.plan.database.clone());
+        let mut done = match ready.execute().await {
+            Ok(done) => done,
+            Err(e) => {
+                let _ = crate::restore::journal_restore(
+                    &opts.file,
+                    &opts.target,
+                    &server,
+                    &database,
+                    false,
+                );
+                return Err(e);
+            }
+        };
         done.notes.extend(crate::restore::journal_restore(
             &opts.file,
             &opts.target,
-            &done,
+            &done.server,
+            &done.database,
+            true,
         ));
         done.notes.extend(crate::journal_send::flush_note().await);
         let harmless = done.reported.iter().filter(|e| e.harmless).count();

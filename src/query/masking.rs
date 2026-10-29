@@ -331,6 +331,21 @@ pub async fn write_provenance(
         )
         .await
         .map_err(fail)?;
+    write_comment(client, database, copy, masked, protected, source).await
+}
+
+/// The database's comment naming the copy it was restored from — what
+/// an MCP tool reads to refuse a raw copy. Written as soon as the
+/// database exists, so a restore that fails part-way leaves it marked.
+/// `client` may be connected to any database on the server.
+pub async fn write_comment(
+    client: &tokio_postgres::Client,
+    database: &str,
+    copy: &str,
+    masked: bool,
+    protected: bool,
+    source: &str,
+) -> Result<(), String> {
     let comment = format!(
         "pgman copy {copy} ({}{}, from {source})",
         if masked { "masked" } else { "raw" },
@@ -343,7 +358,7 @@ pub async fn write_provenance(
             comment.replace('\'', "''")
         ))
         .await
-        .map_err(fail)
+        .map_err(|e| format!("could not record the copy's origin: {}", message(&e)))
 }
 
 /// Every sequence's state, in the dump's snapshot: pg_dump's data section
