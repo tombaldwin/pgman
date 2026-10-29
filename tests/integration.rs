@@ -10036,15 +10036,15 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         )
     };
 
-    // The operator allows raw copies at a terminal; an agent still gets
-    // none.
+    // The operator allows raw copies at a terminal; an agent's dump is
+    // still masked (and so wants the rules committed).
     let (t, err, _) = call(
         21,
         "dump",
         serde_json::json!({"target": "production"}),
         None,
     );
-    assert!(err && t.contains("dumped masked or schema only"), "{t}");
+    assert!(err && t.contains("isn't committed"), "{t}");
     let masked = serde_json::json!({"target": "production", "masked": true});
     let (t, err, _) = call(2, "dump", masked.clone(), None);
     assert!(err && t.contains("isn't committed"), "{t}");
