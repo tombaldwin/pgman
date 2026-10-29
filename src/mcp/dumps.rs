@@ -282,10 +282,11 @@ impl Server {
             masked: arg_bool(args, "masked").then_some(true),
             masking: None,
         };
-        let resolved = crate::dump::resolve(&opts).await?;
+        let mut resolved = crate::dump::resolve(&opts).await?;
         if let Some(why) = agent_tunnel(&target, &resolved) {
             return Err(why);
         }
+        crate::dump::inherit_raw_protection(&mut resolved).await;
         let (policy, dumps, branch) = {
             let resolved = resolved.clone();
             let cwd = self.cwd.clone();

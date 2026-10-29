@@ -1155,12 +1155,50 @@ pub fn expired_note(except: &str) -> Option<String> {
     })
 }
 
+/// Mark `resolved` protected when it is a database pgman restored from a
+/// raw dump of a protected environment — by the journal, or by the
+/// database's own comment — so a copy of it is treated as a copy of the
+/// original: masked by default, raw only as the original allows. Reads
+/// the journal; connects when the journal doesn't say.
+pub async fn inherit_raw_protection(resolved: &mut crate::inventory::target::Resolved) {
+    if resolved.protected {
+        return;
+    }
+    let server = crate::conn::host_port(&resolved.connect.dsn.host, resolved.connect.dsn.port);
+    let (events, _) = crate::journal::read_in(&crate::journal::dir());
+    let copies = crate::copies::registry(&events);
+    let by_journal = crate::copies::raw_protected_at(&copies, &server, &resolved.database)
+        .map(|c| format!("it is a raw copy of {}, restored by pgman", c.label));
+    let why = match by_journal {
+        Some(why) => Some(why),
+        None => raw_copy_comment(resolved)
+            .await
+            .map(|_| "its comment says it is a raw copy of a protected environment".into()),
+    };
+    if let Some(why) = why {
+        resolved.protected = true;
+        resolved.protected_why = Some(why);
+    }
+}
+
+/// The database's comment, when it says a raw protected copy.
+async fn raw_copy_comment(resolved: &crate::inventory::target::Resolved) -> Option<String> {
+    let opened = pgtool::open(resolved).await.ok()?;
+    let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 10_000)
+        .await
+        .ok()?;
+    crate::query::masking::comment(&client, &resolved.database)
+        .await
+        .filter(|c| crate::mcp::tools::raw_protected_comment(c))
+}
+
 /// Run a dump at the command line: the policy's gate (the typed name,
 /// the reason) asked on the terminal, the dump, the journal. Progress
 /// goes to stderr; the result is what to print.
 pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     use std::io::IsTerminal;
-    let resolved = resolve(opts).await?;
+    let mut resolved = resolve(opts).await?;
+    inherit_raw_protection(&mut resolved).await;
     let cwd = std::env::current_dir().map_err(|e| format!("the current directory: {e}"))?;
     let (policy, dumps, branch, copies) = {
         let resolved = resolved.clone();

@@ -10191,6 +10191,23 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         err && t.contains("raw copy of a protected environment"),
         "{t}"
     );
+    // Nor can it launder one through a dump of its own: a dump of the raw
+    // copy is a dump of a protected environment, so masked — by the
+    // comment alone, the journal gone.
+    let (t, err, _) = call(9, "dump", serde_json::json!({"target": "raw-copy"}), yes());
+    assert!(!err, "{t}");
+    let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+    assert!(
+        v["file"].as_str().unwrap().ends_with(".pgman-dump"),
+        "masked, not raw: {t}"
+    );
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let last: serde_json::Value = serde_json::from_str(journal.lines().last().unwrap()).unwrap();
+    assert_eq!(
+        (last["mode"].as_str(), last["protected"].as_bool()),
+        (Some("masked"), Some(true)),
+        "{last}"
+    );
     drop(stdin);
     let _ = child.wait();
     for db in [&masked_copy, &raw_copy, &src] {
