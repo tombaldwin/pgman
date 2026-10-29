@@ -33,12 +33,19 @@ pub const PGSS_MISSING: &str =
 
 /// The SQL we issue to populate the panel. The leading comment
 /// tags the query so it can be filtered out of its own result on
-/// the next refresh.
+/// the next refresh. The times are read through `to_jsonb` because
+/// PostgreSQL 13 renamed `total_time` and `mean_time` to
+/// `total_exec_time` and `mean_exec_time`: naming either column
+/// fails on the other side of the rename.
 pub const PANEL_SQL: &str = "/* pgman:slow */ \
-SELECT query, calls, total_exec_time, mean_exec_time, rows \
-FROM pg_stat_statements \
-WHERE query NOT LIKE '/* pgman:%' \
-ORDER BY total_exec_time DESC NULLS LAST \
+SELECT query, calls, \
+coalesce(j->>'total_exec_time', j->>'total_time')::float8 AS total_exec_time, \
+coalesce(j->>'mean_exec_time', j->>'mean_time')::float8 AS mean_exec_time, \
+rows \
+FROM (SELECT s.query, s.calls, s.rows, pg_catalog.to_jsonb(s) AS j \
+FROM pg_stat_statements s \
+WHERE s.query NOT LIKE '/* pgman:%') t \
+ORDER BY 3 DESC NULLS LAST \
 LIMIT 50";
 
 /// Parse the result Grid into typed rows. Column order matches

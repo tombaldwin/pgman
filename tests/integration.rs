@@ -11509,3 +11509,42 @@ fn pgman_pg_bin_names_the_tools_and_pg_bin_wins() {
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(stderr.contains("(--pg-bin: "), "{stderr}");
 }
+
+/// The slow-queries panel reads `pg_stat_statements` on both sides of
+/// PostgreSQL 13's rename (`total_time` → `total_exec_time`). The
+/// compose server has no pg_stat_statements, so a temporary table of
+/// that name, which the session finds first, stands in for each
+/// version's view.
+#[tokio::test]
+async fn slow_queries_read_pg_stat_statements_before_and_after_pg13() {
+    let c = raw_client().await;
+    for (what, times) in [
+        ("12", "total_time float8, mean_time float8"),
+        ("13", "total_exec_time float8, mean_exec_time float8"),
+    ] {
+        c.batch_execute(&format!(
+            "DROP TABLE IF EXISTS pg_temp.pg_stat_statements; \
+             CREATE TEMP TABLE pg_stat_statements (query text, calls int8, {times}, rows int8); \
+             INSERT INTO pg_temp.pg_stat_statements VALUES \
+               ('SELECT quick', 9, 1.5, 0.5, 9), ('SELECT slow', 3, 900.5, 300.25, 30), \
+               ('/* pgman:slow */ SELECT itself', 1, 5000, 5000, 1)"
+        ))
+        .await
+        .unwrap();
+        let grid = pgman::conn::run_query(&c, pgman::query::slow_queries::PANEL_SQL)
+            .await
+            .unwrap_or_else(|e| panic!("PostgreSQL {what}'s columns: {e}"));
+        let got: Vec<(String, i64, f64, f64)> = pgman::query::slow_queries::parse(&grid)
+            .into_iter()
+            .map(|r| (r.query, r.calls, r.total_ms, r.mean_ms))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("SELECT slow".to_string(), 3, 900.5, 300.25),
+                ("SELECT quick".to_string(), 9, 1.5, 0.5)
+            ],
+            "PostgreSQL {what}'s columns"
+        );
+    }
+}
