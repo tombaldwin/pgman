@@ -556,13 +556,13 @@ pub async fn run_tool_cli(
     cmd: tokio::process::Command,
     echo: bool,
 ) -> Result<(std::process::ExitStatus, Tail), String> {
-    run_tool_cli_shown(cmd, echo, |l| l.to_string()).await
+    run_tool_shown_cli(cmd, echo, |l| l.to_string()).await
 }
 
 /// [`run_tool_cli`], each echoed line passed through `shown` first (a
 /// restore's, with values redacted). The tail keeps the lines as they
 /// were.
-pub async fn run_tool_cli_shown(
+pub async fn run_tool_shown_cli(
     mut cmd: tokio::process::Command,
     echo: bool,
     shown: impl Fn(&str) -> String,

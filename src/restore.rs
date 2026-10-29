@@ -825,7 +825,7 @@ async fn run_pg_restore(
     pgtool::set_child_env(&mut cmd, password);
     // --verbose shows pg_restore's lines as they come: a failing key or
     // row is redacted there as in the summary.
-    pgtool::run_tool_cli_shown(cmd, verbose, redact)
+    pgtool::run_tool_shown_cli(cmd, verbose, redact)
         .await
         .map_err(|e| format!("pg_restore {e}; {database} is part-restored"))
 }
