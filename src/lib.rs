@@ -23,6 +23,7 @@ pub mod grid;
 pub mod inventory;
 pub mod journal;
 pub mod journal_send;
+pub mod masked;
 pub mod masking;
 pub mod mcp;
 pub mod pgtool;

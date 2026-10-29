@@ -278,6 +278,8 @@ impl Server {
             schema_only: arg_bool(args, "schema_only"),
             reason: None,
             ticket: None,
+            masked: None,
+            masking: None,
         };
         let resolved = crate::dump::resolve(&opts).await?;
         if let Some(why) = agent_tunnel(&target, &resolved) {
@@ -298,7 +300,7 @@ impl Server {
             .await
             .map_err(|e| format!("policy task failed: {e}"))??
         };
-        let kind = crate::dump::kind(&opts);
+        let kind = crate::dump::kind(&opts, crate::policy::default_kind(&policy));
         let name = resolved
             .environment
             .clone()

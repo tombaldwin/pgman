@@ -69,6 +69,8 @@ pub struct Policy {
 pub enum Kind {
     /// Every row, as it is.
     Raw,
+    /// Every row, what looks personal replaced ([`crate::masked`]).
+    Masked,
     /// The schema alone.
     Schema,
 }
@@ -77,8 +79,19 @@ impl Kind {
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::Raw => "raw",
+            Kind::Masked => "masked",
             Kind::Schema => "schema",
         }
+    }
+}
+
+/// What a dump is when nothing asks: what the policy allows, the most
+/// of it. Pure.
+pub fn default_kind(policy: &Policy) -> Kind {
+    match policy.dump {
+        DumpMode::Unmasked | DumpMode::Never => Kind::Raw,
+        DumpMode::Masked => Kind::Masked,
+        DumpMode::Schema => Kind::Schema,
     }
 }
 
@@ -180,7 +193,7 @@ pub fn gate(policy: &Policy, kind: Kind, via: Via, name: &str) -> Result<Gate, S
     };
     match (policy.dump, kind) {
         (DumpMode::Never, _) => return Err(format!("{name} is never dumped: {}", set())),
-        (DumpMode::Schema, Kind::Raw) => {
+        (DumpMode::Schema, Kind::Raw | Kind::Masked) => {
             return Err(format!(
                 "{name} is dumped schema only ({}): pass --schema-only",
                 set()
@@ -188,8 +201,8 @@ pub fn gate(policy: &Policy, kind: Kind, via: Via, name: &str) -> Result<Gate, S
         }
         (DumpMode::Masked, Kind::Raw) => {
             return Err(format!(
-                "{name} is dumped masked ({}), and pgman can't mask yet: pass --schema-only \
-                 for the structure alone",
+                "{name} is dumped masked ({}): leave out --unmasked for a masked copy, or pass \
+                 --schema-only for the structure alone",
                 set()
             ))
         }
@@ -204,9 +217,8 @@ pub fn gate(policy: &Policy, kind: Kind, via: Via, name: &str) -> Result<Gate, S
             unattended: false,
         }),
         (true, Via::Mcp) => Err(format!(
-            "{name} is protected, and over MCP a protected database is dumped schema only \
-             until pgman can mask: pass schema_only, or ask the operator to run pgman dump \
-             at a terminal"
+            "{name} is protected, and over MCP a protected database is dumped masked or schema \
+             only: pass masked or schema_only, or ask the operator for a raw copy at a terminal"
         )),
         (true, Via::Terminal) => Ok(Gate {
             typed: Some(name.to_string()),
@@ -354,7 +366,7 @@ mod tests {
         let on = settings(None, true);
         let p = effective(true, Some(&on), None).unwrap();
         let e = gate(&p, Kind::Raw, Via::Mcp, "production").unwrap_err();
-        assert!(e.contains("schema only"), "{e}");
+        assert!(e.contains("masked or schema only"), "{e}");
         let g = gate(&p, Kind::Schema, Via::Mcp, "production").unwrap();
         assert_eq!(g.typed, None);
         assert!(g.reason);
@@ -401,7 +413,13 @@ mod tests {
         let masked = effective(true, Some(&settings(Some(DumpMode::Masked), true)), None).unwrap();
         assert!(gate(&masked, Kind::Raw, Via::NoTerminal, "x")
             .unwrap_err()
-            .contains("can't mask yet"));
+            .contains("leave out --unmasked"));
+        let g = gate(&masked, Kind::Masked, Via::NoTerminal, "x").unwrap();
+        assert_eq!(g.typed, None, "a masked dump never takes the typed name");
+        assert!(gate(&masked, Kind::Masked, Via::Mcp, "x").is_ok());
+        assert!(gate(&schema, Kind::Masked, Via::Terminal, "x").is_err());
+        assert_eq!(default_kind(&masked), Kind::Masked);
+        assert_eq!(default_kind(&schema), Kind::Schema);
         let capped = effective(
             false,
             None,

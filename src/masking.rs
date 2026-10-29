@@ -6,6 +6,7 @@
 //! transformers, the COPY text format, the archive's manifest; the
 //! database side is [`crate::query::masking`].
 
+pub mod archive;
 pub mod catalog;
 pub mod classify;
 pub mod copytext;

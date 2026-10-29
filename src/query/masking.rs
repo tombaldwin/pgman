@@ -153,3 +153,296 @@ pub async fn catalog(client: &tokio_postgres::Client) -> Result<Catalog, String>
         large_objects,
     ))
 }
+
+/// Start the one transaction a masked dump reads in, and export its
+/// snapshot for pg_dump: repeatable read and read-only, no timeouts (a
+/// dump takes as long as it takes; RDS parameter groups often set
+/// them), and row security off, so a table the user may see only part
+/// of fails loudly rather than being dumped in part. Works on a standby.
+pub async fn begin_snapshot(client: &tokio_postgres::Client) -> Result<String, String> {
+    client
+        .batch_execute(
+            "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; \
+             SET LOCAL statement_timeout = 0; SET LOCAL lock_timeout = 0; \
+             SET LOCAL idle_in_transaction_session_timeout = 0; SET LOCAL row_security = off",
+        )
+        .await
+        .map_err(|e| format!("could not start the dump's transaction: {}", message(&e)))?;
+    client
+        .query_one("SELECT pg_catalog.pg_export_snapshot()", &[])
+        .await
+        .map(|r| r.get(0))
+        .map_err(|e| format!("could not export the dump's snapshot: {}", message(&e)))
+}
+
+/// `"schema"."name"`, quoted. Pure.
+pub fn quoted(schema: &str, name: &str) -> String {
+    let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    format!("{}.{}", q(schema), q(name))
+}
+
+/// Lock `tables` as pg_dump does (ACCESS SHARE), so a table altered or
+/// dropped mid-dump fails it rather than leaving schema and rows apart.
+pub async fn lock(
+    client: &tokio_postgres::Client,
+    tables: &[(String, String)],
+) -> Result<(), String> {
+    for chunk in tables.chunks(200) {
+        let list: Vec<String> = chunk.iter().map(|(s, n)| quoted(s, n)).collect();
+        client
+            .batch_execute(&format!(
+                "LOCK TABLE ONLY {} IN ACCESS SHARE MODE",
+                list.join(", ")
+            ))
+            .await
+            .map_err(|e| format!("could not lock the tables to dump: {}", message(&e)))?;
+    }
+    Ok(())
+}
+
+/// The `COPY … TO STDOUT` that reads `columns` of a table's own rows —
+/// `NULL` in place of each `nulled` one, so its values never leave the
+/// server. Pure.
+pub fn copy_out_sql(schema: &str, name: &str, columns: &[(String, bool)]) -> String {
+    let list: Vec<String> = columns
+        .iter()
+        .map(|(c, nulled)| {
+            if *nulled {
+                "NULL".to_string()
+            } else {
+                format!("\"{}\"", c.replace('"', "\"\""))
+            }
+        })
+        .collect();
+    format!(
+        "COPY (SELECT {} FROM ONLY {}) TO STDOUT",
+        if list.is_empty() {
+            "NULL".to_string()
+        } else {
+            list.join(", ")
+        },
+        quoted(schema, name)
+    )
+}
+
+/// Rows out, in COPY's text format: a stream of chunks.
+pub async fn copy_out(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<tokio_postgres::CopyOutStream, String> {
+    client
+        .copy_out(sql)
+        .await
+        .map_err(|e| format!("could not read the rows: {}", message(&e)))
+}
+
+/// End the dump's transaction (it only read).
+pub async fn end(client: &tokio_postgres::Client) -> Result<(), String> {
+    client
+        .batch_execute("COMMIT")
+        .await
+        .map_err(|e| format!("could not end the dump's transaction: {}", message(&e)))
+}
+
+/// `COPY … FROM STDIN` into `columns` of a restored table. Pure.
+pub fn copy_in_sql(table: &str, columns: &[String]) -> String {
+    let (schema, name) = table.split_once('.').unwrap_or(("public", table));
+    let list: Vec<String> = columns
+        .iter()
+        .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
+        .collect();
+    format!(
+        "COPY {} ({}) FROM STDIN",
+        quoted(schema, name),
+        list.join(", ")
+    )
+}
+
+/// Load rows (COPY text, as `chunks`) into a restored table with `sql`
+/// ([`copy_in_sql`]); how many rows the server took.
+pub async fn copy_in(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    chunks: impl Iterator<Item = Vec<u8>>,
+) -> Result<u64, String> {
+    use futures::SinkExt;
+    let sink = client
+        .copy_in::<_, std::io::Cursor<Vec<u8>>>(sql)
+        .await
+        .map_err(|e| format!("could not load the rows: {}", message(&e)))?;
+    futures::pin_mut!(sink);
+    for c in chunks {
+        sink.send(std::io::Cursor::new(c))
+            .await
+            .map_err(|e| format!("could not load the rows: {}", message(&e)))?;
+    }
+    sink.finish()
+        .await
+        .map_err(|e| format!("could not load the rows: {}", message(&e)))
+}
+
+/// Record where a restored copy came from, inside it: a `pgman.provenance`
+/// row (its own schema, out of the application's sight and out of a
+/// Flyway clean of `public`) and the database's comment, which survives
+/// anything short of dropping it.
+pub async fn write_provenance(
+    client: &tokio_postgres::Client,
+    database: &str,
+    copy: &str,
+    masked: bool,
+    source: &str,
+    expires: Option<u64>,
+) -> Result<(), String> {
+    let fail =
+        |e: tokio_postgres::Error| format!("could not record the copy's origin: {}", message(&e));
+    client
+        .batch_execute(
+            "CREATE SCHEMA IF NOT EXISTS pgman; \
+             CREATE TABLE IF NOT EXISTS pgman.provenance (\
+               copy text NOT NULL, masked boolean NOT NULL, source text NOT NULL, \
+               restored timestamptz NOT NULL DEFAULT now(), expires timestamptz, \
+               pgman text NOT NULL)",
+        )
+        .await
+        .map_err(fail)?;
+    let expires = expires.map(|e| e as f64);
+    client
+        .execute(
+            "INSERT INTO pgman.provenance (copy, masked, source, expires, pgman) \
+             VALUES ($1, $2, $3, to_timestamp($4), $5)",
+            &[
+                &copy,
+                &masked,
+                &source,
+                &expires,
+                &env!("CARGO_PKG_VERSION"),
+            ],
+        )
+        .await
+        .map_err(fail)?;
+    let comment = format!(
+        "pgman copy {copy} ({}, from {source})",
+        if masked { "masked" } else { "raw" }
+    );
+    client
+        .batch_execute(&format!(
+            "COMMENT ON DATABASE \"{}\" IS '{}'",
+            database.replace('"', "\"\""),
+            comment.replace('\'', "''")
+        ))
+        .await
+        .map_err(fail)
+}
+
+/// Every sequence's state, in the dump's snapshot: pg_dump's data section
+/// would carry it, and the no-rows archive leaves it out with the rows.
+pub async fn sequences(
+    client: &tokio_postgres::Client,
+) -> Result<Vec<(String, String, i64, bool)>, String> {
+    let names = client
+        .query(
+            &format!(
+                "SELECT n.nspname::text, c.relname::text \
+                 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE c.relkind = 'S' AND {USER_RELATIONS} \
+                   AND CASE WHEN c.relkind = 'S' THEN pg_catalog.has_sequence_privilege(c.oid, 'SELECT') END \
+                 ORDER BY 1, 2"
+            ),
+            &[],
+        )
+        .await
+        .map_err(|e| format!("could not list the sequences: {}", message(&e)))?;
+    let mut out = Vec::new();
+    for r in names {
+        let (schema, name): (String, String) = (r.get(0), r.get(1));
+        let row = client
+            .query_one(
+                &format!(
+                    "SELECT last_value, is_called FROM {}",
+                    quoted(&schema, &name)
+                ),
+                &[],
+            )
+            .await
+            .map_err(|e| format!("could not read sequence {schema}.{name}: {}", message(&e)))?;
+        out.push((schema, name, row.get(0), row.get(1)));
+    }
+    Ok(out)
+}
+
+/// Set a restored sequence as it was.
+pub async fn set_sequence(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    name: &str,
+    value: i64,
+    called: bool,
+) -> Result<(), String> {
+    client
+        .execute(
+            "SELECT pg_catalog.setval($1::text::regclass, $2, $3)",
+            &[&quoted(schema, name), &value, &called],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("could not set sequence {schema}.{name}: {}", message(&e)))
+}
+
+/// The copy id a database's comment names, if pgman wrote it.
+pub async fn provenance_copy(
+    client: &tokio_postgres::Client,
+    database: &str,
+) -> Result<Option<String>, String> {
+    let row = client
+        .query_opt(
+            "SELECT pg_catalog.shobj_description(d.oid, 'pg_database') \
+             FROM pg_catalog.pg_database d WHERE d.datname = $1",
+            &[&database],
+        )
+        .await
+        .map_err(|e| format!("could not read {database}'s comment: {}", message(&e)))?;
+    let comment: Option<String> = row.and_then(|r| r.get(0));
+    Ok(comment.as_deref().and_then(parse_comment))
+}
+
+/// The copy id in a comment [`write_provenance`] wrote. Pure.
+pub fn parse_comment(comment: &str) -> Option<String> {
+    let rest = comment.strip_prefix("pgman copy ")?;
+    let id: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit() || *c == '-')
+        .collect();
+    (id.len() == 36).then_some(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_sql_quotes_and_nulls() {
+        assert_eq!(
+            copy_out_sql(
+                "public",
+                "cust\"omers",
+                &[("id".into(), false), ("email".into(), true)]
+            ),
+            "COPY (SELECT \"id\", NULL FROM ONLY \"public\".\"cust\"\"omers\") TO STDOUT"
+        );
+        assert_eq!(
+            copy_in_sql("app.orders", &["id".into(), "a\"b".into()]),
+            "COPY \"app\".\"orders\" (\"id\", \"a\"\"b\") FROM STDIN"
+        );
+    }
+
+    #[test]
+    fn a_provenance_comment_names_its_copy() {
+        let id = "3f9a1c2e-0000-4000-8000-000000000001";
+        assert_eq!(
+            parse_comment(&format!("pgman copy {id} (masked, from production/ledger)")).as_deref(),
+            Some(id)
+        );
+        assert_eq!(parse_comment("pgman copy 3f9a (raw)"), None);
+        assert_eq!(parse_comment("someone's own comment"), None);
+    }
+}

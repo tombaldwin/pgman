@@ -377,6 +377,38 @@ pub fn parse_archive(listing: &str) -> Archive {
     a
 }
 
+/// The pg_restore command line for one section of a masked archive's
+/// schema (`file`), into `conninfo`. Pure.
+pub fn section_args(conninfo: &str, opts: &Opts, file: &Path, section: &str) -> Vec<String> {
+    let mut a = pg_restore_args(conninfo, opts);
+    a.pop();
+    a.push(format!("--section={section}"));
+    a.push(file.display().to_string());
+    a
+}
+
+/// A pg_restore error line with the row's values taken out: a constraint
+/// that fails prints the offending key (`Key (email)=(…)`) and row
+/// (`Failing row contains (…)`), and a restore's output goes to the
+/// terminal, the log, and an agent. Pure.
+pub fn redact(line: &str) -> String {
+    let mut out = line.to_string();
+    if let Some(i) = out.find("Failing row contains (") {
+        out.truncate(i + "Failing row contains (".len());
+        out.push_str("…).");
+    }
+    let mut from = 0;
+    while let Some(k) = out[from..].find(")=(") {
+        let start = from + k + 3;
+        let Some(end) = out[start..].find(')').map(|e| start + e) else {
+            break;
+        };
+        out.replace_range(start..end, "…");
+        from = start + 1;
+    }
+    out
+}
+
 /// The pg_restore command line, into `conninfo`. Pure.
 pub fn pg_restore_args(conninfo: &str, opts: &Opts) -> Vec<String> {
     let mut args = vec![format!("--dbname={conninfo}"), "--no-password".to_string()];
@@ -548,6 +580,8 @@ pub struct Ready {
     server: String,
     pub plan: Plan,
     notes: Vec<String>,
+    /// A masked dump: its checked manifest.
+    archive: Option<crate::masking::archive::Manifest>,
 }
 
 impl Ready {
@@ -571,7 +605,8 @@ impl Ready {
             client,
             server,
             plan,
-            notes,
+            mut notes,
+            archive,
         } = self;
         let database = plan.database.clone();
         // Listed again: someone may have connected while the operator
@@ -601,22 +636,87 @@ impl Ready {
         let conninfo = pgtool::conninfo(&dsn, opened.via, "pgman-restore", have);
         // Not pgtool::private_command: pg_restore reads files, it makes
         // none. Anything that writes one must go through it (umask 077).
-        let mut cmd = tokio::process::Command::new(&tool);
-        cmd.args(pg_restore_args(&conninfo, &opts));
-        pgtool::set_child_env(&mut cmd, opened.password());
-        let (status, tail) = pgtool::run_tool_cli(cmd, opts.verbose)
+        let run = |args: Vec<String>| {
+            run_pg_restore(&tool, args, opened.password(), opts.verbose, &database)
+        };
+        let (errors, errors_text) = match &archive {
+            None => {
+                let (status, tail) = run(pg_restore_args(&conninfo, &opts)).await?;
+                let errors_text = tail.errors();
+                let tail = tail.text();
+                let errors = ignored_errors(&tail);
+                if !status.success() && errors.is_none() {
+                    return Err(format!(
+                        "{}\n  {database} may be part-restored",
+                        crate::dump::last_error(&tail)
+                            .unwrap_or("pg_restore failed with no message")
+                    ));
+                }
+                (errors, errors_text)
+            }
+            Some(m) => {
+                let schema = opts.file.join(crate::masking::archive::SCHEMA);
+                let mut errors: Option<u64> = None;
+                let mut text = String::new();
+                for (section, then) in [("pre-data", true), ("data", false), ("post-data", false)] {
+                    let (status, tail) =
+                        run(section_args(&conninfo, &opts, &schema, section)).await?;
+                    let t = tail.text();
+                    if let Some(n) = ignored_errors(&t) {
+                        *errors.get_or_insert(0) += n;
+                    }
+                    if !status.success() && ignored_errors(&t).is_none() {
+                        return Err(format!(
+                            "{}\n  {database} may be part-restored",
+                            redact(
+                                crate::dump::last_error(&t)
+                                    .unwrap_or("pg_restore failed with no message")
+                            )
+                        ));
+                    }
+                    text.push_str(
+                        &tail
+                            .errors()
+                            .lines()
+                            .map(redact)
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    );
+                    text.push('\n');
+                    // The rows go in between the tables and their keys:
+                    // what post-data checks is the masked rows.
+                    if then {
+                        let target =
+                            crate::conn::connect_via_writable(dsn.clone(), opened.via, 10_000)
+                                .await?;
+                        notes.extend(
+                            crate::masked::load(&target, &opts.file, m)
+                                .await
+                                .map_err(|e| format!("{e}\n  {database} is part-restored"))?,
+                        );
+                    }
+                }
+                (errors, text)
+            }
+        };
+        if let Some(m) = &archive {
+            let target = crate::conn::connect_via_writable(dsn.clone(), opened.via, 10_000).await?;
+            let source = m.header.label.clone();
+            let expires = None;
+            if let Err(e) = crate::query::masking::write_provenance(
+                &target,
+                &database,
+                &m.header.copy,
+                m.header.masked,
+                &source,
+                expires,
+            )
             .await
-            .map_err(|e| format!("pg_restore {e}; {database} is part-restored"))?;
-        drop(opened);
-        let errors_text = tail.errors();
-        let tail = tail.text();
-        let errors = ignored_errors(&tail);
-        if !status.success() && errors.is_none() {
-            return Err(format!(
-                "{}\n  {database} may be part-restored",
-                crate::dump::last_error(&tail).unwrap_or("pg_restore failed with no message")
-            ));
+            {
+                notes.push(e);
+            }
         }
+        drop(opened);
         tracing::info!(target: "pgman::restore", database = %database, errors = ?errors, "pg_restore done");
         Ok(Done {
             database,
@@ -626,6 +726,22 @@ impl Ready {
             notes,
         })
     }
+}
+
+/// Run pg_restore with `args`.
+async fn run_pg_restore(
+    tool: &Path,
+    args: Vec<String>,
+    password: Option<&str>,
+    verbose: bool,
+    database: &str,
+) -> Result<(std::process::ExitStatus, pgtool::Tail), String> {
+    let mut cmd = tokio::process::Command::new(tool);
+    cmd.args(args);
+    pgtool::set_child_env(&mut cmd, password);
+    pgtool::run_tool_cli(cmd, verbose)
+        .await
+        .map_err(|e| format!("pg_restore {e}; {database} is part-restored"))
 }
 
 /// Everything up to the question: refuse what can't be restored into,
@@ -647,9 +763,23 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     }
     let (tool, found_in) = pgtool::find_tool_from("pg_restore", opts.pg_bin.as_deref())?;
     let have = pgtool::tool_version(&tool)?;
+    let masked = if crate::masked::is_archive(&opts.file) {
+        let dir = opts.file.clone();
+        Some(
+            tokio::task::spawn_blocking(move || crate::masked::checked_manifest(&dir))
+                .await
+                .map_err(|e| format!("checksum task failed: {e}"))??,
+        )
+    } else {
+        None
+    };
+    let listed = match &masked {
+        Some(_) => opts.file.join(crate::masking::archive::SCHEMA),
+        None => opts.file.clone(),
+    };
     let listing = tokio::process::Command::new(&tool)
         .arg("--list")
-        .arg(&opts.file)
+        .arg(&listed)
         .env_clear()
         .output()
         .await
@@ -718,6 +848,7 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
         server,
         plan,
         notes,
+        archive: masked,
     })
 }
 

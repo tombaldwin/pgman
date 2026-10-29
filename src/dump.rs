@@ -126,6 +126,10 @@ pub struct Opts {
     pub reason: Option<String>,
     /// The ticket, as given with `--ticket`.
     pub ticket: Option<String>,
+    /// `--masked` / `--unmasked`, when asked for: else the policy's.
+    pub masked: Option<bool>,
+    /// `--masking FILE`: the rules, in place of the project's.
+    pub masking: Option<PathBuf>,
 }
 
 /// Parse the arguments after `pgman dump`. Pure.
@@ -139,6 +143,8 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
     let mut schema_only = false;
     let mut reason = None;
     let mut ticket = None;
+    let mut masked = None;
+    let mut masking = None;
     let mut extra = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -157,6 +163,9 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
             "--schema-only" => schema_only = true,
             "--reason" => reason = Some(value("--reason")?),
             "--ticket" => ticket = Some(value("--ticket")?),
+            "--masked" => masked = Some(true),
+            "--unmasked" => masked = Some(false),
+            "--masking" => masking = Some(PathBuf::from(value("--masking")?)),
             "--verbose" | "-v" => verbose = true,
             "--format" => format = Format::parse(&value("--format")?)?,
             "--pg-bin" => pg_bin = Some(PathBuf::from(value("--pg-bin")?)),
@@ -191,6 +200,8 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
         schema_only,
         reason,
         ticket,
+        masked,
+        masking,
     })
 }
 
@@ -221,13 +232,22 @@ pub fn brings_data(extra: &[String]) -> bool {
 
 /// What `opts` dumps: the schema alone (`--schema-only`, or pg_dump's
 /// own `--schema-only` / `-s` after `--`, with nothing there asking for
-/// rows), else every row. Pure.
-pub fn kind(opts: &Opts) -> crate::policy::Kind {
+/// rows), masked (`--masked`), raw (`--unmasked`), else `default` — the
+/// policy's ([`crate::policy::default_kind`]). Pure.
+pub fn kind(opts: &Opts, default: crate::policy::Kind) -> crate::policy::Kind {
+    use crate::policy::Kind;
     let asked = opts.schema_only || opts.extra.iter().any(|a| a == "--schema-only" || a == "-s");
-    if asked && !brings_data(&opts.extra) {
-        crate::policy::Kind::Schema
-    } else {
-        crate::policy::Kind::Raw
+    if asked {
+        return if brings_data(&opts.extra) {
+            Kind::Raw
+        } else {
+            Kind::Schema
+        };
+    }
+    match opts.masked {
+        Some(true) => Kind::Masked,
+        Some(false) => Kind::Raw,
+        None => default,
     }
 }
 
@@ -675,7 +695,7 @@ pub fn create_partial(partial: &Path, format: Format) -> Result<Option<std::fs::
 
 /// What `path` is, not followed if a link: its device and inode, so a
 /// swap shows. `None` when it can't be read.
-fn identity(path: &Path) -> Option<(u64, u64, bool)> {
+pub(crate) fn identity(path: &Path) -> Option<(u64, u64, bool)> {
     let m = std::fs::symlink_metadata(path).ok()?;
     #[cfg(unix)]
     {
@@ -690,7 +710,7 @@ fn identity(path: &Path) -> Option<(u64, u64, bool)> {
 
 /// Remove what a failed dump left: a file, or a directory format's
 /// directory.
-fn remove_partial(p: &Path) {
+pub(crate) fn remove_partial(p: &Path) {
     let _ = if p.is_dir() {
         std::fs::remove_dir_all(p)
     } else {
@@ -700,7 +720,7 @@ fn remove_partial(p: &Path) {
 
 /// Move the finished dump into place: a file is renamed over whatever
 /// was there; a directory replaces an old one only once it is aside.
-fn commit(partial: &Path, file: &Path) -> Result<(), String> {
+pub(crate) fn commit(partial: &Path, file: &Path) -> Result<(), String> {
     if partial.is_file() {
         std::fs::File::open(partial)
             .and_then(|f| f.sync_all())
@@ -1043,7 +1063,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     } else {
         crate::policy::Via::NoTerminal
     };
-    let kind = kind(opts);
+    let kind = kind(opts, crate::policy::default_kind(&policy));
     let name = resolved
         .environment
         .clone()
@@ -1093,7 +1113,12 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let env = resolved.environment.clone();
     let database = resolved.database.clone();
     let label = resolved.label.clone();
-    let mut result = run(opts, resolved, &|line| eprintln!("pgman dump: {line}")).await;
+    let say = |line: String| eprintln!("pgman dump: {line}");
+    let mut result = if kind == crate::policy::Kind::Masked {
+        crate::masked::run(opts, resolved, &entry.copy, &cwd, &say).await
+    } else {
+        run(opts, resolved, &say).await
+    };
     let warn = journal_dump(&entry, env.as_deref(), &database, &label, &result);
     let unsent = crate::journal_send::flush_note().await;
     if let Ok(done) = &mut result {
@@ -1356,14 +1381,32 @@ mod tests {
         o
     }
 
+    fn kind_of(o: &Opts) -> crate::policy::Kind {
+        kind(o, crate::policy::Kind::Raw)
+    }
+
+    #[test]
+    fn a_dump_is_masked_raw_or_schema_as_asked_else_as_the_policy_says() {
+        use crate::policy::Kind;
+        let mut o = opts(false, &[]);
+        assert_eq!(kind(&o, Kind::Masked), Kind::Masked);
+        assert_eq!(kind(&o, Kind::Schema), Kind::Schema);
+        o.masked = Some(false);
+        assert_eq!(kind(&o, Kind::Masked), Kind::Raw);
+        o.masked = Some(true);
+        assert_eq!(kind(&o, Kind::Raw), Kind::Masked);
+        o.schema_only = true;
+        assert_eq!(kind(&o, Kind::Raw), Kind::Schema, "--schema-only wins");
+    }
+
     #[test]
     fn a_dump_is_schema_only_when_nothing_asks_for_rows() {
         use crate::policy::Kind;
-        assert_eq!(kind(&opts(false, &[])), Kind::Raw);
-        assert_eq!(kind(&opts(true, &[])), Kind::Schema);
-        assert_eq!(kind(&opts(false, &["--schema-only"])), Kind::Schema);
-        assert_eq!(kind(&opts(false, &["-s"])), Kind::Schema);
-        assert_eq!(kind(&opts(true, &["-n", "app"])), Kind::Schema);
+        assert_eq!(kind_of(&opts(false, &[])), Kind::Raw);
+        assert_eq!(kind_of(&opts(true, &[])), Kind::Schema);
+        assert_eq!(kind_of(&opts(false, &["--schema-only"])), Kind::Schema);
+        assert_eq!(kind_of(&opts(false, &["-s"])), Kind::Schema);
+        assert_eq!(kind_of(&opts(true, &["-n", "app"])), Kind::Schema);
         for rows in [
             &["--data-only"][..],
             &["-a"],
@@ -1376,12 +1419,12 @@ mod tests {
             &["--blobs"],
             &["--include-foreign-data=srv"],
         ] {
-            assert_eq!(kind(&opts(true, rows)), Kind::Raw, "{rows:?}");
+            assert_eq!(kind_of(&opts(true, rows)), Kind::Raw, "{rows:?}");
         }
         // A value isn't an option: `-t a` names a table called a.
-        assert_eq!(kind(&opts(true, &["-t", "a"])), Kind::Schema);
+        assert_eq!(kind_of(&opts(true, &["-t", "a"])), Kind::Schema);
         // pg_dump's --schema is -n, not --schema-only.
-        assert_eq!(kind(&opts(false, &["--schema=app"])), Kind::Raw);
+        assert_eq!(kind_of(&opts(false, &["--schema=app"])), Kind::Raw);
         let args = pg_dump_args("x", &opts(true, &[]), Path::new("p"));
         assert!(args.contains(&"--schema-only".to_string()), "{args:?}");
         let args = pg_dump_args("x", &opts(false, &[]), Path::new("p"));
