@@ -13,10 +13,18 @@ const USER_RELATIONS: &str = "\
     AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
         WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')";
 
+/// A partition's root is its topmost ancestor that isn't itself a
+/// partition, walked up pg_inherits (`pg_partition_root` would say the
+/// same, from PostgreSQL 12 only).
 fn tables_sql() -> String {
     format!(
         "SELECT c.oid::int8, n.nspname::text, c.relname::text, c.relkind::text, \
-                CASE WHEN c.relispartition THEN pg_catalog.pg_partition_root(c.oid)::int8 END, \
+                CASE WHEN c.relispartition THEN ( \
+                  WITH RECURSIVE up(oid) AS ( \
+                    SELECT i.inhparent FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid \
+                    UNION SELECT i.inhparent FROM pg_catalog.pg_inherits i JOIN up ON i.inhrelid = up.oid) \
+                  SELECT u.oid::int8 FROM up u JOIN pg_catalog.pg_class p ON p.oid = u.oid \
+                  WHERE NOT p.relispartition LIMIT 1) END, \
                 (SELECT i.inhparent::int8 FROM pg_catalog.pg_inherits i \
                   WHERE i.inhrelid = c.oid ORDER BY i.inhseqno LIMIT 1) \
          FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
@@ -25,10 +33,18 @@ fn tables_sql() -> String {
     )
 }
 
-fn columns_sql() -> String {
+/// `attgenerated` is PostgreSQL 12's: before it (`version_num` under
+/// 120000) there are no generated columns, and the column isn't there
+/// to read.
+fn columns_sql(version_num: i64) -> String {
+    let generated = if version_num >= 120000 {
+        "a.attgenerated::text"
+    } else {
+        "''::text"
+    };
     format!(
         "SELECT a.attrelid::int8, a.attnum, a.attname::text, a.atttypid::int8, a.atttypmod, \
-                a.attnotnull, a.attgenerated::text, \
+                a.attnotnull, {generated}, \
                 pg_catalog.format_type(a.atttypid, a.atttypmod) \
          FROM pg_catalog.pg_attribute a \
          JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
@@ -93,8 +109,16 @@ pub async fn catalog(client: &tokio_postgres::Client) -> Result<Catalog, String>
             parent: r.get(5),
         })
         .collect();
+    let version_num: i64 = client
+        .query_one(
+            "SELECT pg_catalog.current_setting('server_version_num')::int8",
+            &[],
+        )
+        .await
+        .map_err(|e| fail("version", e))?
+        .get(0);
     let columns: Vec<RawColumn> = client
-        .query(&columns_sql(), &[])
+        .query(&columns_sql(version_num), &[])
         .await
         .map_err(|e| fail("columns", e))?
         .iter()
@@ -486,6 +510,17 @@ pub fn parse_comment(comment: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_catalog_reads_nothing_older_servers_lack() {
+        // PostgreSQL 10 and 11 have neither; masking failed there with
+        // "function pg_catalog.pg_partition_root(oid) does not exist".
+        for sql in [tables_sql(), columns_sql(110000)] {
+            assert!(!sql.contains("pg_partition_root"), "{sql}");
+            assert!(!sql.contains("attgenerated"), "{sql}");
+        }
+        assert!(columns_sql(120000).contains("a.attgenerated::text"));
+    }
 
     #[test]
     fn copy_sql_quotes_and_nulls() {
