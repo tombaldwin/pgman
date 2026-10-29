@@ -1011,6 +1011,95 @@ pub fn journal_dump(
     crate::journal::append(&e)
 }
 
+/// pgman's dump directory, where a dump goes when FILE isn't given:
+/// readable by its owner alone, out of synced folders.
+pub fn default_dir() -> PathBuf {
+    crate::util::data_dir().join("dumps")
+}
+
+/// The sync service `path` is inside, if it is one pgman knows: a copy
+/// there leaves the machine on its own. Pure.
+pub fn synced(path: &Path) -> Option<&'static str> {
+    let p = path.to_string_lossy();
+    [
+        ("/Library/Mobile Documents/", "iCloud Drive"),
+        ("/iCloud Drive/", "iCloud Drive"),
+        ("/Library/CloudStorage/Dropbox", "Dropbox"),
+        ("/Library/CloudStorage/OneDrive", "OneDrive"),
+        ("/Library/CloudStorage/GoogleDrive", "Google Drive"),
+        ("/Library/CloudStorage/", "a cloud storage folder"),
+        ("/Dropbox/", "Dropbox"),
+        ("/OneDrive", "OneDrive"),
+        ("/Google Drive/", "Google Drive"),
+    ]
+    .iter()
+    .find(|(needle, _)| p.contains(needle))
+    .map(|(_, name)| *name)
+}
+
+/// Where a dump of `kind` from a target (`protected` or not) may be
+/// written: a raw copy of a protected target never into a synced folder;
+/// anything else there with a warning. Pure.
+pub fn place_problem(
+    dir: &Path,
+    kind: crate::policy::Kind,
+    protected: bool,
+) -> Result<Option<String>, String> {
+    let Some(service) = synced(dir) else {
+        return Ok(None);
+    };
+    if protected && kind == crate::policy::Kind::Raw {
+        return Err(format!(
+            "{} is in {service}, which copies it off this machine: a raw copy of a protected \
+             target isn't written there. Name a folder outside it, or leave out FILE for pgman's \
+             dump directory",
+            dir.display()
+        ));
+    }
+    Ok(Some(format!(
+        "{} is in {service}: the dump is copied off this machine",
+        dir.display()
+    )))
+}
+
+/// Keep `path` out of Time Machine's backups, where a deleted dump would
+/// live on (macOS; elsewhere nothing). Runs tmutil.
+pub fn exclude_from_backups(path: &Path) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("tmutil")
+            .arg("addexclusion")
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = path;
+}
+
+/// A note when the disk isn't encrypted (macOS FileVault off). Runs
+/// fdesetup.
+pub fn disk_note() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("fdesetup")
+            .arg("status")
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.contains("FileVault is Off").then(|| {
+            "FileVault is off: this disk isn't encrypted, and a lost laptop is a lost copy"
+                .to_string()
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
 /// Copies past their expiry still on disk, for a note after a dump.
 /// Reads the journal.
 pub fn expired_note(except: &str) -> Option<String> {
@@ -1058,6 +1147,14 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         .map_err(|e| format!("policy task failed: {e}"))??
     };
     let tty = std::io::stdin().is_terminal();
+    // With no FILE, pgman's own directory: private, out of synced folders.
+    let mut opts = opts.clone();
+    if opts.out.is_none() {
+        let dir = default_dir();
+        crate::util::ensure_private_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        opts.out = Some(dir);
+    }
+    let opts = &opts;
     let via = if tty {
         crate::policy::Via::Terminal
     } else {
@@ -1069,6 +1166,13 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         .clone()
         .unwrap_or_else(|| resolved.label.clone());
     let gate = crate::policy::gate(&policy, kind, via, &name)?;
+    let place_dir = match opts.out.as_deref() {
+        Some(o) if o.is_dir() => o.to_path_buf(),
+        Some(o) => o.parent().map(Path::to_path_buf).unwrap_or_default(),
+        None => cwd.clone(),
+    };
+    let place_dir = place_dir.canonicalize().unwrap_or(place_dir);
+    let place_note = place_problem(&place_dir, kind, policy.protected)?;
     if gate.typed.is_some() || gate.unattended {
         eprintln!("pgman dump: {}", raw_warning(&name, &resolved.protection()));
     }
@@ -1122,6 +1226,11 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let warn = journal_dump(&entry, env.as_deref(), &database, &label, &result);
     let unsent = crate::journal_send::flush_note().await;
     if let Ok(done) = &mut result {
+        exclude_from_backups(&done.file);
+        done.notes.extend(place_note);
+        if policy.protected {
+            done.notes.extend(disk_note());
+        }
         done.copy = Some(entry.copy.clone());
         done.notes.extend(warn);
         done.notes.extend(unsent);
@@ -1512,6 +1621,35 @@ mod tests {
                 Some(ask)
             ),
             Ok((Some("checking totals".into()), None))
+        );
+    }
+
+    #[test]
+    fn synced_folders_take_no_raw_protected_copy() {
+        use crate::policy::Kind;
+        let icloud = Path::new("/Users/dev/Library/Mobile Documents/com~apple~CloudDocs/dumps");
+        let dropbox = Path::new("/Users/dev/Library/CloudStorage/Dropbox/work");
+        assert_eq!(synced(icloud), Some("iCloud Drive"));
+        assert_eq!(synced(dropbox), Some("Dropbox"));
+        assert_eq!(synced(Path::new("/Users/dev/Dropbox/x")), Some("Dropbox"));
+        assert_eq!(
+            synced(Path::new("/Users/dev/.local/share/pgman/dumps")),
+            None
+        );
+        let e = place_problem(icloud, Kind::Raw, true).unwrap_err();
+        assert!(
+            e.contains("iCloud Drive") && e.contains("isn't written there"),
+            "{e}"
+        );
+        let w = place_problem(dropbox, Kind::Masked, true).unwrap().unwrap();
+        assert!(w.contains("copied off this machine"), "{w}");
+        assert!(
+            place_problem(icloud, Kind::Raw, false).unwrap().is_some(),
+            "a warning"
+        );
+        assert_eq!(
+            place_problem(Path::new("/tmp/x"), Kind::Raw, true),
+            Ok(None)
         );
     }
 

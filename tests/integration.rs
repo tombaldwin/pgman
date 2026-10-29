@@ -8322,7 +8322,8 @@ fn have_pg_dump() -> bool {
 }
 
 /// A dump of an environment comes from its replica, says so, is private
-/// to its owner, and gets a `-latest` link; pg_restore reads it.
+/// to its owner, goes to pgman's dump directory when no FILE is given,
+/// and gets a `-latest` link; pg_restore reads it.
 #[cfg(unix)]
 #[test]
 fn a_dump_comes_from_the_replica_and_is_private() {
@@ -8384,7 +8385,11 @@ fn a_dump_comes_from_the_replica_and_is_private() {
         "{stderr}"
     );
     assert!(stderr.contains("(standby)"), "{stderr}");
-    let files: Vec<String> = std::fs::read_dir(&out)
+    // With no FILE: pgman's own directory, readable by its owner alone.
+    let dir = home.join(".local/share/pgman/dumps");
+    let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(dir_mode, 0o700);
+    let files: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
@@ -8397,12 +8402,12 @@ fn a_dump_comes_from_the_replica_and_is_private() {
         2,
         "the dump and its link, no partial: {files:?}"
     );
-    let link = out.join("staging-pgman_test-latest.dump");
+    let link = dir.join("staging-pgman_test-latest.dump");
     assert_eq!(
         std::fs::read_link(&link).unwrap(),
         std::path::PathBuf::from(dump)
     );
-    let mode = std::fs::metadata(out.join(dump))
+    let mode = std::fs::metadata(dir.join(dump))
         .unwrap()
         .permissions()
         .mode()
@@ -9590,7 +9595,11 @@ fn a_masked_copy_holds_no_canary_anywhere() {
             .await
             .unwrap();
     });
-    let dumped = pgman_in(&home, &out, &["dump", "leaky", "--masked", "--verbose"]);
+    let dumped = pgman_in(
+        &home,
+        &out,
+        &["dump", "leaky", ".", "--masked", "--verbose"],
+    );
     let mut said = String::from_utf8_lossy(&dumped.stdout).into_owned();
     said.push_str(&String::from_utf8_lossy(&dumped.stderr));
     assert!(dumped.status.success(), "{said}");
@@ -9860,6 +9869,7 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         &[
             "dump",
             "production",
+            ".",
             "--unmasked",
             "--reason",
             "APP-8",
@@ -9978,8 +9988,36 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     }
     let (home, out) = dump_home("policy");
     let envs_path = home.join(".config/pgman/environments.toml");
-    // The standby: restoring into the primary isn't into the protected server.
-    let base = "[[environments]]\nname = \"production\"\nsource = { kind = \"static\", connections = [\"local-replica\"] }\n";
+    // Its own database, on the standby: a whole-database dump of the
+    // shared one races the other tests' DDL, and restoring into the
+    // primary isn't into the protected server.
+    let db = it_name("policydb");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    on("pgman_test", &format!("CREATE DATABASE {db}")).unwrap();
+    on(&db, "CREATE TABLE t (id serial PRIMARY KEY, note text)").unwrap();
+    on(&db, "INSERT INTO t (note) VALUES ('x')").unwrap();
+    let mut conns = std::fs::read_to_string(home.join(".config/pgman/connections.toml")).unwrap();
+    conns.push_str(&format!(
+        "[[connections]]\nname = \"policy-replica\"\nurl = \"postgres://pgman_test@127.0.0.1:55433/{db}?sslmode=disable\"\npassword_env = \"IT_PW\"\nrole = \"replica\"\n"
+    ));
+    std::fs::write(home.join(".config/pgman/connections.toml"), conns).unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let started = std::time::Instant::now();
+    while rt.block_on(async {
+        let dsn =
+            format!("host=127.0.0.1 port=55433 user=pgman_test password=pgman_test dbname={db}");
+        match tokio_postgres::connect(&dsn, tokio_postgres::NoTls).await {
+            Ok((c, conn)) => {
+                tokio::spawn(conn);
+                c.query("SELECT 1 FROM t", &[]).await.is_err()
+            }
+            Err(_) => true,
+        }
+    }) {
+        assert!(started.elapsed().as_secs() < 30, "never replicated");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let base = "[[environments]]\nname = \"production\"\nsource = { kind = \"static\", connections = [\"policy-replica\"] }\n";
     std::fs::write(&envs_path, base).unwrap();
     let copy = it_name("policycopy");
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
@@ -10001,20 +10039,20 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     };
 
     // Protected: masked by default, raw only once the operator says so.
-    let (code, _, err) = run(&["dump", "production", "--unmasked", "--reason", "APP-6"]);
+    let (code, _, err) = run(&["dump", "production", ".", "--unmasked", "--reason", "APP-6"]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
         err.contains("leave out --unmasked") && err.contains("dump = \"unmasked\" on production"),
         "{err}"
     );
     std::fs::write(&envs_path, format!("{base}dump = \"unmasked\"\n")).unwrap();
-    let (code, _, err) = run(&["dump", "production"]);
+    let (code, _, err) = run(&["dump", "production", "."]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
         err.contains("no terminal") && err.contains("unattended = true"),
         "{err}"
     );
-    let (code, _, err) = run(&["dump", "production", "--schema-only"]);
+    let (code, _, err) = run(&["dump", "production", ".", "--schema-only"]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
         err.contains("takes a reason") && err.contains("--ticket"),
@@ -10025,6 +10063,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     let (code, said, err) = run(&[
         "dump",
         "production",
+        ".",
         "--schema-only",
         "--ticket",
         "APP-7",
@@ -10044,6 +10083,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     let (code, _, err) = run(&[
         "dump",
         "production",
+        ".",
         "--reason",
         "APP-8 nightly refresh",
         "--",
@@ -10103,7 +10143,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         "{said}"
     );
 
-    let latest = out.join("production-pgman_test-latest.dump");
+    let latest = out.join(format!("production-{db}-latest.dump"));
     assert_eq!(
         std::fs::read_link(&latest).unwrap().to_string_lossy(),
         std::path::Path::new(&raw_file)
@@ -10157,7 +10197,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         "[dumps.environments.production]\ndump = \"schema\"\n",
     )
     .unwrap();
-    let (code, _, err) = run(&["dump", "production", "--unmasked", "--reason", "APP-9"]);
+    let (code, _, err) = run(&["dump", "production", ".", "--unmasked", "--reason", "APP-9"]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
         err.contains("caps production at dump = \"schema\""),
@@ -10168,13 +10208,14 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         "[dumps.environments.production]\ndump = \"some\"\n",
     )
     .unwrap();
-    let (code, _, err) = run(&["dump", "production", "--reason", "APP-9"]);
+    let (code, _, err) = run(&["dump", "production", ".", "--reason", "APP-9"]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
         err.contains("can't be read") && err.contains("fix it first"),
         "{err}"
     );
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy}"));
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
 }
 
 /// An environment with `journal = { group = … }` sends its journal
@@ -10236,6 +10277,7 @@ fn journal_events_go_to_cloudwatch_and_wait_when_they_cant() {
     let (code, said, err) = run(&[
         "dump",
         "production",
+        ".",
         "--schema-only",
         "--ticket",
         "APP-7",
