@@ -5,6 +5,33 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### Postgres-compatible databases — from a compatibility run (2026-10-29)
+
+Each tried in docker against 0.4.0: CLI dump/restore (plain and
+masked), MCP, and the TUI's panels.
+
+- **TimescaleDB: a masked restore loses the hypertables.** Every row
+  comes back, but `_timescaledb_catalog.hypertable` is empty, so
+  `metrics` is a plain table afterwards (a plain dump keeps it). The
+  product page leaves TimescaleDB unnamed until this is fixed.
+- **TimescaleDB: the schema wizard and `schema_lint` list dozens of
+  `_timescaledb_*` internal tables.** Leave out extension-owned schemas.
+- **YugabyteDB: every restore reports one error** (`server
+  "yb_global_views_server" already exists`, Yugabyte's own object),
+  and pgman then says "the database wasn't empty. --clean replaces it
+  instead", which is wrong. Rows all load.
+- **PostgreSQL 10 and 11: masking fails** with `function
+  pg_catalog.pg_partition_root(oid) does not exist` (PG12+). Either
+  fall back for older servers or say "masked dumps need PostgreSQL 12".
+- **PostgreSQL 12: slow queries fail** with `column "total_exec_time"
+  does not exist` (PG13 renamed `total_time`). Use the old column on 12.
+- **CockroachDB: only queries work.** pg_dump, snapshot export,
+  `pg_blocking_pids`, `EXPLAIN (FORMAT JSON)` and
+  `pg_postmaster_start_time` are all refused. Not a target; but when the
+  sessions panel fails to open there, the next `q` quits pgman, because
+  nothing opened for `q` to close. That part is a bug anywhere a panel
+  fails to open.
+
 ### Masked dumps — left from phase 2a (2026-10-29)
 What the design note's section 2–9 asks for that 2a didn't build; the
 later phases (2b encryption, 3 screens, 4 sampled validate, 5 the rest
