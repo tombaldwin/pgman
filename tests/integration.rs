@@ -9486,7 +9486,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     );
     assert!(t.contains("declined a dump of live"), "{t}");
     let t = refused(61, "dump", serde_json::json!({"target": url(&prod)}));
-    assert!(t.contains("dumped schema only"), "{t}");
+    assert!(t.contains("dumped masked or schema only"), "{t}");
     let t = refused(
         7,
         "dump",
@@ -9713,7 +9713,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         "[dumps.environments.production]\ndump = \"schema\"\n",
     )
     .unwrap();
-    let (code, _, err) = run(&["dump", "production", "--reason", "APP-9"]);
+    let (code, _, err) = run(&["dump", "production", "--unmasked", "--reason", "APP-9"]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
         err.contains("caps production at dump = \"schema\""),
