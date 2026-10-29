@@ -1236,13 +1236,11 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         .clone()
         .unwrap_or_else(|| resolved.label.clone());
     let gate = crate::policy::gate(&policy, kind, via, &name)?;
-    let place_dir = match opts.out.as_deref() {
-        Some(o) if o.is_dir() => o.to_path_buf(),
-        Some(o) => o.parent().map(Path::to_path_buf).unwrap_or_default(),
-        None => cwd.clone(),
-    };
-    let place_dir = place_dir.canonicalize().unwrap_or(place_dir);
-    let place_note = place_problem(&place_dir, kind, policy.protected)?;
+    let place_note = place_problem(
+        &place_dir(opts.out.as_deref(), &cwd),
+        kind,
+        policy.protected,
+    )?;
     if gate.typed.is_some() || gate.unattended {
         eprintln!("pgman dump: {}", raw_warning(&name, &resolved.protection()));
     }
@@ -1305,17 +1303,43 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let warn = journal_dump(&entry, env.as_deref(), &database, &label, &result);
     let unsent = crate::journal_send::flush_note().await;
     if let Ok(done) = &mut result {
-        exclude_from_backups(&done.file);
-        done.notes.extend(place_note);
-        if policy.protected {
-            done.notes.extend(disk_note());
-        }
+        placed(done, place_note, policy.protected);
         done.copy = Some(entry.copy.clone());
         done.notes.extend(warn);
         done.notes.extend(unsent);
         done.notes.extend(expired_note(&entry.copy));
     }
     result
+}
+
+/// The directory a dump to `out` lands in, for [`place_problem`]: `out`
+/// itself when it is one, else its parent; `cwd` with none. Reads the
+/// filesystem.
+pub fn place_dir(out: Option<&Path>, cwd: &Path) -> PathBuf {
+    let dir = match out {
+        Some(o)
+            if o.is_dir()
+                && !o
+                    .to_string_lossy()
+                    .ends_with(crate::masking::archive::EXTENSION) =>
+        {
+            o.to_path_buf()
+        }
+        Some(o) => o.parent().map(Path::to_path_buf).unwrap_or_default(),
+        None => cwd.to_path_buf(),
+    };
+    dir.canonicalize().unwrap_or(dir)
+}
+
+/// After a dump, wherever it was asked from: kept out of Time Machine,
+/// and the notes on where it is (`place_note`, from [`place_problem`])
+/// and, for a protected target, the disk's encryption.
+pub fn placed(done: &mut Done, place_note: Option<String>, protected: bool) {
+    exclude_from_backups(&done.file);
+    done.notes.extend(place_note);
+    if protected {
+        done.notes.extend(disk_note());
+    }
 }
 
 /// The database `opts` names, for a dump: its replica unless

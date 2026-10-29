@@ -340,6 +340,11 @@ impl Server {
             dump_out(&self.cwd, file.as_deref())?
         };
         opts.out = Some(out.clone());
+        let place_note = crate::dump::place_problem(
+            &crate::dump::place_dir(Some(&out), &self.cwd),
+            kind,
+            policy.protected,
+        )?;
         // A masked dump uses committed rules the operator has confirmed,
         // and the question says what they keep.
         let rules_note = if masked {
@@ -435,6 +440,7 @@ impl Server {
         let warn = crate::dump::journal_dump(&entry, env.as_deref(), &database, &label, &result);
         let unsent = crate::journal_send::flush_note().await;
         let mut done = result?;
+        crate::dump::placed(&mut done, place_note, policy.protected);
         done.notes.extend(warn);
         done.notes.extend(unsent);
         Ok(json!({

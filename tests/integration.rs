@@ -10464,6 +10464,19 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     let v: serde_json::Value = serde_json::from_str(&t).unwrap();
     let file = v["file"].as_str().unwrap().to_string();
     assert!(file.ends_with(".pgman-dump"), "{file}");
+    // Kept out of Time Machine (on macOS), as a dump at the command line.
+    #[cfg(target_os = "macos")]
+    {
+        let x = std::process::Command::new("/usr/bin/xattr")
+            .args([
+                "-p",
+                "com.apple.metadata:com_apple_backup_excludeItem",
+                &file,
+            ])
+            .output()
+            .unwrap();
+        assert!(x.status.success(), "not excluded from Time Machine: {file}");
+    }
     let rel = std::path::Path::new(&file)
         .file_name()
         .unwrap()
