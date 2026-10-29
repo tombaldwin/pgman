@@ -9677,7 +9677,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         said.contains("| production | schema, protected |"),
         "{said}"
     );
-    assert!(said.contains("APP-8: APP-8 nightly refresh"), "{said}");
+    assert!(said.contains("| APP-8 nightly refresh |"), "{said}");
     assert!(
         said.contains(&format!("restored into {copy}")) && said.contains("(by hand)"),
         "{said}"

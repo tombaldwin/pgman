@@ -241,11 +241,12 @@ pub fn read_reason(
     Ok((reason, ticket))
 }
 
-/// The current git branch under `cwd`, if it is in a repository. Runs
+/// The current git branch under `cwd`, if it is in a repository and on
+/// one — a new repository's first branch, with no commit yet, too. Runs
 /// git.
 pub fn git_branch(cwd: &Path) -> Option<String> {
     let out = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .args(["symbolic-ref", "--short", "-q", "HEAD"])
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -294,13 +295,24 @@ fn relative(ts: u64, now: u64) -> String {
     let text = match d {
         d if d < 3_600 => format!("{} min", d / 60),
         d if d < 2 * 86_400 => format!("{} h", d / 3_600),
-        d => format!("{} days", d / 86_400),
+        // To the nearest day: a copy kept 14 days is "in 14 days" when
+        // it is taken, not 13 and some hours.
+        d => format!("{} days", (d + 43_200) / 86_400),
     };
     if future {
         format!("in {text}")
     } else {
         format!("{text} ago")
     }
+}
+
+/// The ticket, else the reason, for a column. Pure.
+fn why_short(c: &Copy) -> String {
+    c.ticket
+        .as_deref()
+        .or(c.reason.as_deref())
+        .unwrap_or("-")
+        .to_string()
 }
 
 /// Where a copy stands: deleted, gone from disk, expired, or kept.
@@ -335,7 +347,7 @@ pub fn render_list(
         }
         out.push('\n');
     } else {
-        let rows: Vec<[String; 7]> = shown
+        let rows: Vec<[String; 8]> = shown
             .iter()
             .map(|c| {
                 [
@@ -353,11 +365,14 @@ pub fn render_list(
                         None => "-".into(),
                     },
                     status(c, present(&c.file), now).to_string(),
+                    why_short(c),
                 ]
             })
             .collect();
-        let head = ["ID", "TAKEN", "TARGET", "KIND", "SIZE", "EXPIRES", "STATUS"];
-        let width: Vec<usize> = (0..7)
+        let head = [
+            "ID", "TAKEN", "TARGET", "KIND", "SIZE", "EXPIRES", "STATUS", "WHY",
+        ];
+        let width: Vec<usize> = (0..8)
             .map(|i| {
                 rows.iter()
                     .map(|r| crate::ui::display_width(&r[i]))
@@ -379,12 +394,9 @@ pub fn render_list(
         };
         out.push_str(&line(&head));
         out.push('\n');
-        for (c, r) in shown.iter().zip(&rows) {
+        for r in &rows {
             let cells: Vec<&str> = r.iter().map(String::as_str).collect();
             out.push_str(&line(&cells));
-            if let Some(why) = c.ticket.as_deref().or(c.reason.as_deref()) {
-                out.push_str(&format!("  {why}"));
-            }
             out.push('\n');
         }
         let expired = shown
@@ -487,8 +499,15 @@ pub fn render_report(
                 _ => t.clone(),
             });
         match (t, &c.reason) {
-            // The ticket alone was the reason: once is enough.
-            (Some(t), Some(r)) if Some(r.trim()) == c.ticket.as_deref() => t,
+            // The reason names the ticket already: once is enough, as
+            // a link where there is one.
+            (Some(t), Some(r)) if c.ticket.as_deref().is_some_and(|k| r.contains(k)) => {
+                match c.ticket.as_deref() {
+                    Some(k) if r.trim() == k => t,
+                    Some(k) => r.replacen(k, &t, 1),
+                    None => r.clone(),
+                }
+            }
             (Some(t), Some(r)) => format!("{t}: {r}"),
             (Some(t), None) => t,
             (None, Some(r)) => r.clone(),
@@ -1031,6 +1050,37 @@ mod tests {
     }
 
     #[test]
+    fn times_are_said_to_the_nearest_day() {
+        assert_eq!(relative(100, 100), "just now");
+        assert_eq!(relative(100 + 14 * 86_400, 100 + 30), "in 14 days");
+        assert_eq!(relative(100, 100 + 3 * 86_400), "3 days ago");
+        assert_eq!(relative(100, 100 + 30 * 60), "30 min ago");
+    }
+
+    #[test]
+    fn the_branch_is_read_before_the_first_commit() {
+        let dir = scratch("branch");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+        // No git on this machine: nothing to read a branch with.
+        if !git(&["init", "-q", "-b", "feature/APP-4-x"]) {
+            return;
+        }
+        assert_eq!(git_branch(&dir).as_deref(), Some("feature/APP-4-x"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            git_branch(&std::env::temp_dir().join("pgman-no-such-dir")),
+            None
+        );
+    }
+
+    #[test]
     fn dates_parse_to_the_start_of_the_day() {
         assert_eq!(parse_date("1970-01-01"), Ok(0));
         assert_eq!(parse_date("2026-10-28"), Ok(1_793_145_600));
@@ -1097,6 +1147,27 @@ mod tests {
         assert!(md.contains("deleted 2026-10-29 00:00Z (by hand)"), "{md}");
         let text = render_report(&copies, 0, Format::Text, None);
         assert!(text.contains("— APP-1\n"), "{text}");
+        let mut b = dump_event("bbbb2222", 1_793_145_600, "staging/ledger", "/d/b.dump");
+        b.ticket = Some("APP-2".into());
+        b.reason = Some("APP-2 nightly refresh".into());
+        let mut c = dump_event("cccc3333", 1_793_145_600, "staging/ledger", "/d/c.dump");
+        c.ticket = Some("APP-3".into());
+        c.reason = Some("totals".into());
+        let both = registry(&[b, c]);
+        let md = render_report(
+            &both,
+            0,
+            Format::Markdown,
+            Some("https://jira.example/browse/{ticket}"),
+        );
+        assert!(
+            md.contains("| [APP-2](https://jira.example/browse/APP-2) nightly refresh |"),
+            "the ticket once, as a link: {md}"
+        );
+        assert!(
+            md.contains("| [APP-3](https://jira.example/browse/APP-3): totals |"),
+            "{md}"
+        );
         assert_eq!(
             render_report(&copies, 1_793_145_601, Format::Text, None),
             "no copies in that time"
