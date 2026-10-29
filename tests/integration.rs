@@ -10757,7 +10757,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         "{err}"
     );
     std::fs::write(&envs_path, format!("{base}dump = \"unmasked\"\n")).unwrap();
-    let (code, _, err) = run(&["dump", "production", "."]);
+    let (code, _, err) = run(&["dump", "production", ".", "--unmasked"]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
         err.contains("no terminal") && err.contains("unattended = true"),
@@ -10795,6 +10795,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         "dump",
         "production",
         ".",
+        "--unmasked",
         "--reason",
         "APP-8 nightly refresh",
         "--",
