@@ -1,4 +1,4 @@
-# Homebrew formula for pgman — k9s-style Postgres TUI for Java/AWS shops.
+# Homebrew formula for pgman — k9s-style terminal UI for PostgreSQL.
 #
 # This in-repo copy is for `brew install --formula ./Formula/pgman.rb`
 # (local-checkout install). The canonical user-facing install path will
@@ -11,7 +11,7 @@
 # file and the tap's Formula/pgman.rb in one go, creating the tap entry if
 # it doesn't exist yet.
 class Pgman < Formula
-  desc "k9s-style Postgres TUI for Java/AWS shops"
+  desc "k9s-style terminal UI for PostgreSQL"
   homepage "https://github.com/tombaldwin/pgman"
   version "0.4.0"
   license "MIT OR Apache-2.0"

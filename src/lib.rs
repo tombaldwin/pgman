@@ -1,4 +1,4 @@
-//! pgman — a k9s-style Postgres TUI for Java / AWS shops.
+//! pgman — a k9s-style terminal UI for PostgreSQL.
 //!
 //! The crate is split lib + bin: this library holds the testable logic, and
 //! `main.rs` is a thin binary. See `CLAUDE.md` for working rules and

@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 285
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X · released YYYY-MM-DD ───────────────────────────╮╭──────────────────────────────────╮
@@ -18,7 +17,7 @@ expression: dump(&buf)
 ╰─────────────────────────│                                              │─────────────────────────╯
 ╭[ ◆ result ◆ ]───────────│   pgman X.X.X · beta · released YYYY-MM-DD   │─────────────────────────╮
 │(no rows)                │       installed via a standalone binary      │                         │
-│                         │   k9s-style Postgres TUI for Java/AWS shops  │                         │
+│                         │     k9s-style terminal UI for PostgreSQL     │                         │
 │                         │                server: pg 16.0               │                         │
 │                         │                                              │                         │
 │                         │       by Tom Baldwin / Polymorphism Ltd      │                         │

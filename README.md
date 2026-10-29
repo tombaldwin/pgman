@@ -4,10 +4,13 @@
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#install)
 
-A k9s-style Postgres TUI aimed at Java / AWS shops. Where psql, pgcli, and
-DataGrip stop at the database, pgman also turns Hibernate logs, Postgres
-server logs, and pasted JDBC into runnable SQL, offline and with zero
-application changes — with N+1 detection built in. Sibling project to
+A k9s-style terminal UI for PostgreSQL 12 and newer, wherever it runs:
+every database in every environment on one screen, guarded queries,
+safe migrations, masked copies of production, and logs turned back into
+runnable SQL (Postgres server logs, Hibernate logs and pasted JDBC,
+offline, with N+1 detection). Teams on AWS or the JVM get extras: RDS
+and Aurora discovery, Secrets Manager, bastions, and connections from
+Spring and IntelliJ. Sibling project to
 [`ebman`](https://github.com/tombaldwin/ebman).
 
 > ### ⚠️ Beta

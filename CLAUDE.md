@@ -4,7 +4,7 @@ This file is read by Claude Code (and similar agents) on session start. Follow i
 
 ## What this project is
 
-`pgman` is a Rust + ratatui TUI for PostgreSQL, aimed at Java / AWS shops.
+`pgman` is a Rust + ratatui TUI for PostgreSQL, with extras for Java / AWS shops.
 Sibling to `ebman` (AWS Elastic Beanstalk TUI). Source under `src/`. Backlog in
 `BACKLOG.md`. Tests live alongside the code in `#[cfg(test)] mod tests` blocks.
 
