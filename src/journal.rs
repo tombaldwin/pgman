@@ -88,7 +88,8 @@ pub struct Event {
     /// password), to reach it again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub into_target: Option<String>,
-    /// Why something was deleted: `by hand`, `expired`.
+    /// Why something was deleted: `with pgman copies rm`, `already gone
+    /// from disk` (`by hand` in older journals).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
     /// This machine's random id: which machine, without its name.

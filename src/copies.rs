@@ -87,6 +87,9 @@ impl Copy {
     }
 }
 
+/// Why `pgman copies rm` deleted something, as the journal says it.
+const RM: &str = "with pgman copies rm";
+
 /// Every successful dump in `events`, oldest first, with what happened
 /// to it since. Pure.
 pub fn registry(events: &[Event]) -> Vec<Copy> {
@@ -143,8 +146,7 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
                             }
                         }
                         None => {
-                            c.deleted =
-                                Some((e.ts, e.why.clone().unwrap_or_else(|| "by hand".into())))
+                            c.deleted = Some((e.ts, e.why.clone().unwrap_or_else(|| RM.into())))
                         }
                     }
                 }
@@ -1137,7 +1139,7 @@ pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
             e.file = Some(file.display().to_string());
             e.why = Some(
                 if on_disk {
-                    "by hand"
+                    RM
                 } else {
                     "already gone from disk"
                 }
@@ -1166,7 +1168,7 @@ pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
                             e.copy = Some(c.id.clone());
                             e.into_server = Some(r.server.clone());
                             e.into_database = Some(r.database.clone());
-                            e.why = Some("by hand".into());
+                            e.why = Some(RM.into());
                             warn = warn.or(journal::append(&e));
                         }
                         Err(why) => println!("kept: {why}"),
