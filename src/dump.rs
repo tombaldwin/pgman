@@ -1071,18 +1071,40 @@ pub fn place_problem(
     )))
 }
 
+/// The extended attribute `tmutil addexclusion` sets (a binary plist of
+/// the string `com.apple.backupd`), in hex.
+#[cfg(target_os = "macos")]
+const BACKUP_EXCLUDE: (&str, &str) = (
+    "com.apple.metadata:com_apple_backup_excludeItem",
+    "62706C69737430305F1011636F6D2E6170706C652E6261636B757064080000000000000101\
+     000000000000000100000000000000000000000000001C",
+);
+
 /// Keep `path` out of Time Machine's backups, where a deleted dump would
-/// live on (macOS; elsewhere nothing). Runs tmutil.
+/// live on (macOS; elsewhere nothing). Sets the attribute `tmutil
+/// addexclusion` would: tmutil itself takes some ten seconds on a
+/// directory. Runs xattr, or tmutil in the background when that fails.
 pub fn exclude_from_backups(path: &Path) {
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("tmutil")
-            .arg("addexclusion")
+        use std::process::{Command, Stdio};
+        let set = Command::new("/usr/bin/xattr")
+            .args(["-wx", BACKUP_EXCLUDE.0, BACKUP_EXCLUDE.1])
             .arg(path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !set {
+            let _ = Command::new("tmutil")
+                .arg("addexclusion")
+                .arg(path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
     }
     #[cfg(not(target_os = "macos"))]
     let _ = path;
@@ -1441,6 +1463,35 @@ pub fn render(done: &Done) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dump is out of Time Machine at once, not after tmutil's ten
+    /// seconds on a directory: the attribute tmutil sets is there. (Not
+    /// `tmutil isexcluded`: it says a temporary directory is excluded
+    /// whatever its attributes.)
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_dump_is_excluded_from_time_machine_quickly() {
+        let dir = std::env::temp_dir().join(format!("pgman-dump-tm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("x.pgman-dump")).unwrap();
+        let started = std::time::Instant::now();
+        exclude_from_backups(&dir.join("x.pgman-dump"));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        let has = std::process::Command::new("/usr/bin/xattr")
+            .args(["-px", BACKUP_EXCLUDE.0])
+            .arg(dir.join("x.pgman-dump"))
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let hex: String = String::from_utf8_lossy(&has.stdout)
+            .split_whitespace()
+            .collect();
+        assert_eq!(hex, BACKUP_EXCLUDE.1);
+    }
 
     fn args(s: &[&str]) -> Vec<String> {
         s.iter().map(|a| a.to_string()).collect()
