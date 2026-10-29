@@ -18,6 +18,8 @@ pub struct RawTable {
     pub kind: String,
     /// The partitioned table at the root, for a partition.
     pub root: Option<i64>,
+    /// The table it inherits from or is a partition of, if any.
+    pub parent: Option<i64>,
 }
 
 /// One row of the columns query.
@@ -117,6 +119,8 @@ pub struct Table {
     pub foreign_keys: Vec<ForeignKey>,
     /// Columns its partitioned root is partitioned by.
     pub partition_key: Vec<String>,
+    /// `schema.name` of the table it inherits from or is a partition of.
+    pub parent: Option<String>,
 }
 
 impl Table {
@@ -290,6 +294,7 @@ pub fn build(
             primary_key,
             foreign_keys,
             partition_key,
+            parent: t.parent.and_then(|p| qualified.get(&p).cloned()),
         });
     }
     Catalog {
@@ -368,6 +373,7 @@ pub(crate) mod tests {
             name: "customers".into(),
             kind: "r".into(),
             root: None,
+            parent: None,
         }];
         let columns = vec![
             col(1, 1, "id", 1043, 40, true),
@@ -413,6 +419,7 @@ pub(crate) mod tests {
             name: name.into(),
             kind: kind.into(),
             root,
+            parent: root,
         };
         let tables = vec![
             table(1, "customers", "r", None),

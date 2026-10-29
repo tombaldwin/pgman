@@ -466,6 +466,7 @@ mod tests {
                 primary_key: vec![],
                 foreign_keys: vec![],
                 partition_key: vec![],
+                parent: None,
             }],
             large_objects: 0,
         };

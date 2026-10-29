@@ -10,7 +10,7 @@
 //! section 2.
 
 use super::catalog::{Catalog, Column, Table};
-use super::rules::{Rows, RuleSet};
+use super::rules::{Rows, RuleSet, TableRules};
 use std::collections::HashMap;
 
 /// What a column becomes.
@@ -747,6 +747,34 @@ fn preset(name: &str) -> Option<(bool, &'static str)> {
     }
 }
 
+/// The rules that apply to `t`, nearest first: its own block, then the
+/// blocks of the tables it is a partition or inheritance child of, then —
+/// for an Envers `_aud` table — its base table's. A column takes the
+/// first rule it finds. Pure.
+fn rules_chain<'a>(catalog: &Catalog, rules: &'a RuleSet, t: &Table) -> Vec<&'a TableRules> {
+    let mut chain = Vec::new();
+    let mut at = Some(t.clone());
+    for _ in 0..16 {
+        let Some(table) = at.take() else { break };
+        chain.extend(rules.table(&table));
+        at = table
+            .parent
+            .as_deref()
+            .and_then(|p| catalog.table(p))
+            .cloned();
+    }
+    if let Some(base) = t
+        .name
+        .strip_suffix("_aud")
+        .and_then(|b| catalog.table(&format!("{}.{b}", t.schema)))
+    {
+        if base.name != t.name {
+            chain.extend(rules_chain(catalog, rules, base));
+        }
+    }
+    chain
+}
+
 /// Union-find over (table, column).
 struct Groups {
     parent: HashMap<(String, String), (String, String)>,
@@ -781,15 +809,13 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
     }
     for t in catalog.tables.iter().filter(|t| t.has_rows()) {
         let q = t.qualified();
-        let table_rules = rules.table(t);
+        let chain = rules_chain(catalog, rules, t);
         let preset = preset(&t.name);
         if let Some((false, what)) = preset {
             drops.insert(q.clone(), format!("{what}: no rows"));
         }
-        if let Some(tr) = table_rules {
-            if tr.rows == Some(Rows::Drop) {
-                drops.insert(q.clone(), "the rules file says rows = \"drop\"".into());
-            }
+        if chain.iter().find_map(|tr| tr.rows) == Some(Rows::Drop) {
+            drops.insert(q.clone(), "the rules file says rows = \"drop\"".into());
         }
         // An Envers audit table is masked as its base table is.
         let base_name = t.name.strip_suffix("_aud").unwrap_or(&t.name);
@@ -810,7 +836,7 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                     d
                 }
             };
-            if let Some(r) = table_rules.and_then(|tr| tr.rule_for(&c.name)) {
+            if let Some(r) = chain.iter().find_map(|tr| tr.rule_for(&c.name)) {
                 // Keeping what the defaults would mask is a decision a
                 // reviewer reads: it says why.
                 if r.rule == Rule::Keep && d.0 != Rule::Keep && r.reason.is_none() {
@@ -1434,6 +1460,7 @@ mod tests {
             primary_key: vec!["id".into()],
             foreign_keys: vec![],
             partition_key: vec![],
+            parent: None,
         }
     }
 
@@ -1695,6 +1722,68 @@ mod tests {
                     || m.contains("other integer types (int8, int4)")),
             "{:?}",
             p.problems
+        );
+    }
+
+    #[test]
+    fn the_rules_reach_partitions_children_and_audit_tables() {
+        let mut parent = table(
+            "orders",
+            vec![c("id", "int4", None), c("free_field", "varchar", Some(40))],
+        );
+        parent.kind = "p".into();
+        let mut part = table(
+            "orders_2026",
+            vec![c("id", "int4", None), c("free_field", "varchar", Some(40))],
+        );
+        part.parent = Some("public.orders".into());
+        let customer = table(
+            "customer",
+            vec![c("id", "int4", None), c("email", "varchar", Some(100))],
+        );
+        let aud = table(
+            "customer_aud",
+            vec![c("id", "int4", None), c("email", "varchar", Some(100))],
+        );
+        let cat = Catalog {
+            tables: vec![parent, part, customer, aud],
+            large_objects: 0,
+        };
+        let p = plan(
+            &cat,
+            &parse(
+                "version = 1\n[tables.orders]\nfree_field = \"null\"\n\
+                 [tables.customer]\nemail = \"hash\"\n",
+            ),
+        );
+        let rule = |t: &str, col: &str| {
+            p.table(t)
+                .unwrap()
+                .columns
+                .iter()
+                .find(|d| d.column == col)
+                .unwrap()
+                .rule
+                .clone()
+        };
+        assert_eq!(rule("public.orders_2026", "free_field"), Rule::Null);
+        assert_eq!(
+            rule("public.customer_aud", "email"),
+            Rule::Hash,
+            "as its base"
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        // The child's own block wins over its parent's.
+        let p = plan(
+            &cat,
+            &parse(
+                "version = 1\n[tables.orders]\nfree_field = \"null\"\n\
+                 [tables.orders_2026]\nfree_field = { rule = \"fixed\", value = \"x\" }\n",
+            ),
+        );
+        assert_eq!(
+            p.table("public.orders_2026").unwrap().columns[1].rule,
+            Rule::Fixed("x".into())
         );
     }
 

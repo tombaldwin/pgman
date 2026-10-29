@@ -16,7 +16,9 @@ const USER_RELATIONS: &str = "\
 fn tables_sql() -> String {
     format!(
         "SELECT c.oid::int8, n.nspname::text, c.relname::text, c.relkind::text, \
-                CASE WHEN c.relispartition THEN pg_catalog.pg_partition_root(c.oid)::int8 END \
+                CASE WHEN c.relispartition THEN pg_catalog.pg_partition_root(c.oid)::int8 END, \
+                (SELECT i.inhparent::int8 FROM pg_catalog.pg_inherits i \
+                  WHERE i.inhrelid = c.oid ORDER BY i.inhseqno LIMIT 1) \
          FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
          WHERE c.relkind IN ('r', 'p', 'f', 'm') AND {USER_RELATIONS} \
          ORDER BY 2, 3"
@@ -88,6 +90,7 @@ pub async fn catalog(client: &tokio_postgres::Client) -> Result<Catalog, String>
             name: r.get(2),
             kind: r.get(3),
             root: r.get(4),
+            parent: r.get(5),
         })
         .collect();
     let columns: Vec<RawColumn> = client

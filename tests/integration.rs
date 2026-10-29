@@ -9907,6 +9907,78 @@ fn an_unconfirmed_rules_file_that_keeps_columns_needs_a_terminal() {
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }
 
+/// The rules file's block for a partitioned table reaches its
+/// partitions, an inheritance parent's its children, a base table's its
+/// Envers `_aud` table: what `pgman masking show` says, read from a real
+/// catalog.
+#[cfg(unix)]
+#[test]
+fn the_rules_reach_partitions_children_and_audit_tables_in_a_real_catalog() {
+    let src = it_name("inherit");
+    let (home, out) = dump_home("inherit");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        raw(&src)
+            .await
+            .batch_execute(
+                "CREATE TABLE orders (id int, placed date, free_field varchar(40)) PARTITION BY RANGE (placed); \
+                 CREATE TABLE orders_2026 PARTITION OF orders FOR VALUES FROM ('2026-01-01') TO ('2027-01-01'); \
+                 CREATE TABLE parent_t (id int, extra varchar(40)); \
+                 CREATE TABLE child_t () INHERITS (parent_t); \
+                 CREATE TABLE customer (id int PRIMARY KEY, extra varchar(40)); \
+                 CREATE TABLE customer_aud (id int, rev int, extra varchar(40));",
+            )
+            .await
+            .unwrap();
+    });
+    std::fs::create_dir_all(out.join(".pgman/masking")).unwrap();
+    std::fs::write(
+        out.join(format!(".pgman/masking/{src}.toml")),
+        "version = 1\n[tables.orders]\nfree_field = \"null\"\n[tables.parent_t]\nextra = \"null\"\n\
+         [tables.customer]\nextra = \"null\"\n",
+    )
+    .unwrap();
+    let shown = pgman_in(&home, &out, &["masking", "show", "src"]);
+    let text = String::from_utf8_lossy(&shown.stdout).into_owned();
+    assert!(
+        shown.status.success(),
+        "{text}{}",
+        String::from_utf8_lossy(&shown.stderr)
+    );
+    // Each table's section: its name on a line, then its columns.
+    let section = |table: &str| -> String {
+        text.split("\n\n")
+            .find(|s| s.lines().next() == Some(table))
+            .unwrap_or_else(|| panic!("no {table} in:\n{text}"))
+            .to_string()
+    };
+    for (table, column) in [
+        ("public.orders_2026", "free_field"),
+        ("public.child_t", "extra"),
+        ("public.customer_aud", "extra"),
+    ] {
+        let s = section(table);
+        let line = s
+            .lines()
+            .find(|l| l.trim_start().starts_with(column))
+            .unwrap_or_else(|| panic!("{column} in {s}"));
+        assert!(
+            line.contains("null") && line.contains("the rules file"),
+            "{table}.{column}: {line}"
+        );
+    }
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+}
+
 /// What an agent may have of a protected environment: a masked copy,
 /// with rules the operator has committed and confirmed — never an
 /// uncommitted or unconfirmed rules file, and never a raw copy: a
