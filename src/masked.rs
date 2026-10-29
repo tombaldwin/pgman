@@ -318,6 +318,17 @@ pub async fn run(
 
     crate::dump::create_partial(&p.partial, crate::dump::Format::Directory)?;
     let made = crate::dump::identity(&p.partial);
+    // Ctrl-C stops it at the command line, between chunks of rows. Not
+    // under MCP: listening for it there would take it from the server
+    // for good.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watcher = (!agent).then(|| {
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            pgtool::interrupted().await;
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+    });
     let result = write_archive(ArchiveRun {
         dir: &p.partial,
         tool: &tool,
@@ -329,10 +340,17 @@ pub async fn run(
         opts,
         plan: &plan,
         copied: &copied,
+        stop: &stop,
         say,
     })
     .await;
-    let _ = crate::query::masking::end(&client).await;
+    if let Some(w) = watcher {
+        w.abort();
+    }
+    if !result.as_ref().is_err_and(|e| e == pgtool::STOPPED) {
+        let _ = crate::query::masking::end(&client).await;
+    }
+    // Stopped mid-COPY: closing the connection ends the snapshot.
     drop(client);
     drop(opened);
     let tables = match result {
@@ -432,6 +450,8 @@ struct ArchiveRun<'a> {
     opts: &'a Opts,
     plan: &'a Plan,
     copied: &'a [&'a classify::TablePlan],
+    /// Set by Ctrl-C.
+    stop: &'a std::sync::atomic::AtomicBool,
     say: &'a (dyn Fn(String) + Send + Sync),
 }
 
@@ -495,6 +515,9 @@ async fn write_archive(r: ArchiveRun<'_>) -> Result<Vec<TableEntry>, String> {
         let mut rest: Vec<u8> = Vec::new();
         let mut rows = 0u64;
         while let Some(chunk) = stream.next().await {
+            if r.stop.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(pgtool::STOPPED.to_string());
+            }
             let chunk = chunk.map_err(|e| format!("reading {}: {e}", t.table))?;
             rest.extend_from_slice(&chunk);
             let mut start = 0;

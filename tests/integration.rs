@@ -9763,6 +9763,89 @@ fn a_unique_constraint_stays_unique_through_a_masked_copy() {
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }
 
+/// A masked dump stopped while it reads rows (SIGTERM, as Ctrl-C) stops:
+/// it exits non-zero soon after, leaves no archive and no partial
+/// directory, and journals the dump as not done. (Once pg_dump's step had
+/// listened for Ctrl-C, the row loop never looked again, and it ran on.)
+#[cfg(unix)]
+#[test]
+fn a_masked_dump_stops_when_signalled() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let src = it_name("stop");
+    let (home, out) = dump_home("stop");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"big\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    on(
+        &src,
+        "CREATE TABLE customers AS SELECT g AS id, 'u' || g || '@x.test' AS email \
+         FROM generate_series(1, 2000000) g",
+    )
+    .unwrap();
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("IT_PW", "pgman_test")
+        .current_dir(&out)
+        .args(["dump", "big", ".", "--masked"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Wait for the rows to start: a data file in the partial directory.
+    let reading = || {
+        std::fs::read_dir(&out).unwrap().flatten().any(|e| {
+            e.file_name().to_string_lossy().contains(".partial")
+                && std::fs::read_dir(e.path().join("data"))
+                    .map(|mut d| d.next().is_some())
+                    .unwrap_or(false)
+        })
+    };
+    let start = std::time::Instant::now();
+    while !reading() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "the dump never started reading rows"
+        );
+        assert!(child.try_wait().unwrap().is_none(), "it finished first");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    let stopped = std::time::Instant::now();
+    let done = child.wait_with_output().unwrap();
+    let said = String::from_utf8_lossy(&done.stderr).into_owned();
+    assert!(!done.status.success(), "{said}");
+    assert!(
+        stopped.elapsed() < std::time::Duration::from_secs(5),
+        "it ran on for {:?}: {said}",
+        stopped.elapsed()
+    );
+    assert!(said.contains("stopped"), "{said}");
+    let left: Vec<String> = std::fs::read_dir(&out)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    assert!(journal.contains("\"ok\":false"), "{journal}");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
+}
+
 /// What an agent may have of a protected environment: a masked copy,
 /// with rules the operator has committed and confirmed — never an
 /// uncommitted or unconfirmed rules file, and never a raw copy: a

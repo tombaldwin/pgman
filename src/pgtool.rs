@@ -507,6 +507,9 @@ impl Tail {
     }
 }
 
+/// What a run stopped by [`interrupted`] says.
+pub const STOPPED: &str = "stopped (Ctrl-C, or the process was signalled)";
+
 /// Completes when the operator stops a command-line run: Ctrl-C, and on
 /// Unix also SIGTERM (`kill`) and SIGHUP (the terminal closing). Each
 /// way, the run then cleans up as for Ctrl-C — the tool killed, the
@@ -575,7 +578,7 @@ pub async fn run_tool_cli(
             },
             _ = &mut ctrl_c => {
                 let _ = child.kill().await;
-                return Err("stopped (Ctrl-C, or the process was signalled)".to_string());
+                return Err(STOPPED.to_string());
             }
         }
     }
@@ -583,7 +586,7 @@ pub async fn run_tool_cli(
         s = child.wait() => s.map_err(|e| format!("waiting for it failed: {e}"))?,
         _ = &mut ctrl_c => {
             let _ = child.kill().await;
-            return Err("stopped (Ctrl-C, or the process was signalled)".to_string());
+            return Err(STOPPED.to_string());
         }
     };
     Ok((status, tail))
