@@ -5,9 +5,9 @@
 //! into one [`Policy`], then checked against what was asked for
 //! ([`gate`]). See `docs/design/masked-dumps.md`, sections 1 and 10.
 //!
-//! Masking isn't built yet, so `masked` allows a schema dump alone, and
-//! a protected environment's default is `unmasked` behind a typed name.
-//! Pure; [`for_target`] is the thin reader.
+//! A protected environment's default is `masked`; a raw dump of one
+//! needs `dump = "unmasked"` in the operator's own file and the
+//! environment's name typed. Pure; [`for_target`] is the thin reader.
 
 use serde::Deserialize;
 
@@ -55,6 +55,8 @@ pub struct EnvSettings {
 pub struct Policy {
     pub protected: bool,
     pub dump: DumpMode,
+    /// `dump` is the operator's setting, not the default.
+    pub dump_set: bool,
     /// Which file lowered `dump`, when a project's cap did.
     pub capped_by: Option<String>,
     pub ttl_secs: u64,
@@ -150,9 +152,13 @@ pub fn effective(
 ) -> Result<Policy, String> {
     let default = EnvSettings::default();
     let env = env.unwrap_or(&default);
-    // Until masking exists, a protected default of `masked` would leave
-    // nothing but the schema: v0.3's raw dump stays, behind a typed name.
-    let mut dump = env.dump.unwrap_or(DumpMode::Unmasked);
+    // A protected environment is dumped masked unless its operator says
+    // otherwise; anything else as it is.
+    let mut dump = env.dump.unwrap_or(if protected {
+        DumpMode::Masked
+    } else {
+        DumpMode::Unmasked
+    });
     let mut capped_by = None;
     if let Some((c, file)) = cap {
         if c < dump {
@@ -173,6 +179,7 @@ pub fn effective(
     Ok(Policy {
         protected,
         dump,
+        dump_set: env.dump.is_some(),
         capped_by,
         ttl_secs,
         reason,
@@ -186,9 +193,13 @@ pub fn effective(
 pub fn gate(policy: &Policy, kind: Kind, via: Via, name: &str) -> Result<Gate, String> {
     let set = || match &policy.capped_by {
         Some(file) => format!("{file} caps {name} at dump = \"{}\"", policy.dump.as_str()),
-        None => format!(
+        None if policy.dump_set => format!(
             "environments.toml says dump = \"{}\" for {name}",
             policy.dump.as_str()
+        ),
+        None => format!(
+            "a protected environment's default; dump = \"unmasked\" on {name} in your own \
+             environments.toml allows a raw copy"
         ),
     };
     match (policy.dump, kind) {
@@ -299,10 +310,24 @@ mod tests {
         }
     }
 
+    fn unmasked(unattended: bool) -> EnvSettings {
+        settings(Some(DumpMode::Unmasked), unattended)
+    }
+
     #[test]
     fn defaults_follow_protection() {
         let p = effective(true, None, None).unwrap();
-        assert_eq!(p.dump, DumpMode::Unmasked);
+        assert_eq!(p.dump, DumpMode::Masked);
+        assert!(!p.dump_set);
+        let e = gate(&p, Kind::Raw, Via::Terminal, "production").unwrap_err();
+        assert!(
+            e.contains("dump = \"unmasked\" on production in your own"),
+            "{e}"
+        );
+        assert_eq!(
+            effective(false, None, None).unwrap().dump,
+            DumpMode::Unmasked
+        );
         assert_eq!(p.ttl_secs, PROTECTED_TTL);
         assert_eq!(p.reason, ReasonRule::Required);
         assert!(!p.unattended);
@@ -317,7 +342,7 @@ mod tests {
         let p = effective(true, Some(&schema), Some((DumpMode::Unmasked, "p.toml"))).unwrap();
         assert_eq!(p.dump, DumpMode::Schema);
         assert_eq!(p.capped_by, None);
-        let open = settings(None, false);
+        let open = unmasked(false);
         let p = effective(true, Some(&open), Some((DumpMode::Masked, "p.toml"))).unwrap();
         assert_eq!(p.dump, DumpMode::Masked);
         assert_eq!(p.capped_by.as_deref(), Some("p.toml"));
@@ -338,7 +363,7 @@ mod tests {
 
     #[test]
     fn a_raw_protected_dump_takes_the_typed_name_at_a_terminal() {
-        let p = effective(true, None, None).unwrap();
+        let p = effective(true, Some(&unmasked(false)), None).unwrap();
         let g = gate(&p, Kind::Raw, Via::Terminal, "production").unwrap();
         assert_eq!(g.typed.as_deref(), Some("production"));
         assert!(g.reason);
@@ -347,10 +372,10 @@ mod tests {
 
     #[test]
     fn a_raw_protected_dump_without_a_terminal_needs_unattended() {
-        let p = effective(true, None, None).unwrap();
+        let p = effective(true, Some(&unmasked(false)), None).unwrap();
         let e = gate(&p, Kind::Raw, Via::NoTerminal, "production").unwrap_err();
         assert!(e.contains("unattended = true"), "{e}");
-        let on = settings(None, true);
+        let on = unmasked(true);
         let p = effective(true, Some(&on), None).unwrap();
         let g = gate(&p, Kind::Raw, Via::NoTerminal, "production").unwrap();
         assert_eq!(g.typed, None);
@@ -363,7 +388,7 @@ mod tests {
 
     #[test]
     fn mcp_takes_a_protected_schema_and_never_raw() {
-        let on = settings(None, true);
+        let on = unmasked(true);
         let p = effective(true, Some(&on), None).unwrap();
         let e = gate(&p, Kind::Raw, Via::Mcp, "production").unwrap_err();
         assert!(e.contains("masked or schema only"), "{e}");

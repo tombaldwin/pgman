@@ -9485,8 +9485,6 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         serde_json::json!({"target": "live", "schema_only": true}),
     );
     assert!(t.contains("declined a dump of live"), "{t}");
-    let t = refused(61, "dump", serde_json::json!({"target": url(&prod)}));
-    assert!(t.contains("dumped masked or schema only"), "{t}");
     let t = refused(
         7,
         "dump",
@@ -9712,6 +9710,14 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         f
     };
 
+    // Protected: masked by default, raw only once the operator says so.
+    let (code, _, err) = run(&["dump", "production", "--unmasked", "--reason", "APP-6"]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(
+        err.contains("leave out --unmasked") && err.contains("dump = \"unmasked\" on production"),
+        "{err}"
+    );
+    std::fs::write(&envs_path, format!("{base}dump = \"unmasked\"\n")).unwrap();
     let (code, _, err) = run(&["dump", "production"]);
     assert_eq!(code, Some(1), "{err}");
     assert!(
@@ -9740,7 +9746,11 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     assert!(said.contains("in the journal: pgman copies"), "{said}");
     // The stamp is to the second: the next dump gets its own name.
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    std::fs::write(&envs_path, format!("{base}unattended = true\n")).unwrap();
+    std::fs::write(
+        &envs_path,
+        format!("{base}dump = \"unmasked\"\nunattended = true\n"),
+    )
+    .unwrap();
     let (code, _, err) = run(&[
         "dump",
         "production",
