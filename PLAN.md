@@ -80,7 +80,7 @@ tap (with a libpq caveat). The panel (four reviewers) and its re-checks
 are in `docs/backlog/archive.md`; what they left for later is in
 BACKLOG.md → From the dump/restore review.
 
-### 1. Masked dumps and the life of a copy — phase 1 built
+### 1. Masked dumps and the life of a copy — phases 1, 1b, 2a in v0.4.0
 
 `docs/design/masked-dumps.md`, third draft (2026-10-28): two review
 passes (four Fable reviewers, then the same four plus a fresh one) and
@@ -106,8 +106,11 @@ protected default to masked, MCP masked dumps with confirmed rules and
 no raw protected copies, `copies rm` dropping databases, the dump
 directory and synced-folder checks, the leak test, `docs/privacy.md`.
 The design note's "Phase 2a as built" lists what differs and what is
-left (in BACKLOG.md). Next: a review panel on the branch, then merge;
-then 2b (encryption).
+left (in BACKLOG.md). A four-reviewer Fable panel (leaks, archive and
+restore, policy and MCP, a hand-driven session) found three blockers
+and a dozen HIGH/MEDIUMs, fixed on the branch ("After the review
+panel" in the design note); merged and released as v0.4.0 on Tom's go
+(2026-10-29). Next: 2b (encryption).
 
 ### 2. Waiting on Tom
 
