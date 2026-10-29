@@ -796,7 +796,9 @@ async fn run_pg_restore(
     let mut cmd = tokio::process::Command::new(tool);
     cmd.args(args);
     pgtool::set_child_env(&mut cmd, password);
-    pgtool::run_tool_cli(cmd, verbose)
+    // --verbose shows pg_restore's lines as they come: a failing key or
+    // row is redacted there as in the summary.
+    pgtool::run_tool_cli_shown(cmd, verbose, redact)
         .await
         .map_err(|e| format!("pg_restore {e}; {database} is part-restored"))
 }

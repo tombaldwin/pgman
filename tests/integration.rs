@@ -10078,8 +10078,8 @@ fn a_masked_dump_leaves_out_what_the_excludes_say() {
 /// A restore that fails part-way still leaves the database marked and
 /// journaled — the comment written before a row goes in, the restore
 /// event recorded as not done — so an agent's tools refuse it as they
-/// would the whole, and `copies rm` finds it. And a restore's errors
-/// carry no value. Here tampered archives
+/// would the whole, and `copies rm` finds it. And a restore's errors,
+/// live under --verbose too, carry no value. Here tampered archives
 /// (checksums redone): one with a duplicate key, whose primary key
 /// fails to build; one whose rows don't fit the table.
 #[cfg(unix)]
@@ -10137,6 +10137,7 @@ fn a_failed_restore_is_marked_journaled_and_redacted() {
                 &copy,
                 "--create",
                 "--yes",
+                "--verbose",
             ],
         );
         let mut said = String::from_utf8_lossy(&r.stdout).into_owned();

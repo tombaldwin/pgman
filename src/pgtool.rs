@@ -553,8 +553,19 @@ pub async fn interrupted() {
 /// `echo`, and keep their tail. Cancelled by Ctrl-C: the tool is killed
 /// and the run says so.
 pub async fn run_tool_cli(
+    cmd: tokio::process::Command,
+    echo: bool,
+) -> Result<(std::process::ExitStatus, Tail), String> {
+    run_tool_cli_shown(cmd, echo, |l| l.to_string()).await
+}
+
+/// [`run_tool_cli`], each echoed line passed through `shown` first (a
+/// restore's, with values redacted). The tail keeps the lines as they
+/// were.
+pub async fn run_tool_cli_shown(
     mut cmd: tokio::process::Command,
     echo: bool,
+    shown: impl Fn(&str) -> String,
 ) -> Result<(std::process::ExitStatus, Tail), String> {
     use tokio::io::AsyncBufReadExt;
     cmd.stdin(std::process::Stdio::null())
@@ -570,7 +581,7 @@ pub async fn run_tool_cli(
             line = lines.next_line() => match line {
                 Ok(Some(l)) => {
                     if echo {
-                        eprintln!("{l}");
+                        eprintln!("{}", shown(&l));
                     }
                     tail.push(l);
                 }
