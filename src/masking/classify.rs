@@ -200,6 +200,15 @@ const SECRET: &[&str] = &[
     "salt",
     "nonce",
     "private key",
+    "pin",
+    "verification code",
+    "reset code",
+    "activation code",
+    "auth code",
+    "authorisation code",
+    "authorization code",
+    "recovery code",
+    "one time",
 ];
 const PASSWORD: &[&str] = &["password", "passwd", "pwd", "passphrase"];
 /// Special-category and criminal-offence data (UK GDPR, Articles 9 and 10).
@@ -233,13 +242,11 @@ const SPECIAL: &[&str] = &[
     "pregnancy",
     "pregnant",
 ];
-/// A last word that says the column is a code or a flag, not the thing.
-const NOT_PERSONAL_LAST: &[&str] = &[
+/// A last word that says the column is about the thing, not the thing:
+/// `email_verified`, `phone_type`.
+const FLAG_LAST: &[&str] = &[
     "type",
     "kind",
-    "code",
-    "status",
-    "state",
     "count",
     "verified",
     "enabled",
@@ -252,8 +259,11 @@ const NOT_PERSONAL_LAST: &[&str] = &[
     "optin",
     "valid",
     "confirmed",
-    "id",
 ];
+/// A last word that is usually a code, not the thing — `currency_code`,
+/// `order_status` — but can be the thing itself: `postal_code`,
+/// `sort_code`, `marital_status`, `tax_id`.
+const VALUE_LAST: &[&str] = &["code", "status", "state", "id"];
 const EMAIL: &[&str] = &["email", "mail", "login"];
 const PHONE: &[&str] = &[
     "phone",
@@ -335,6 +345,8 @@ const IDENTIFIER: &[&str] = &[
     "iban",
     "bic",
     "sort code",
+    "sortcode",
+    "national id",
     "account number",
     "card number",
     "pan",
@@ -352,7 +364,14 @@ const ADDRESS: &[&str] = &[
     "address", "street", "city", "town", "county", "line1", "line2", "line3", "house", "flat",
     "building", "locality",
 ];
-const POSTCODE: &[&str] = &["postcode", "post code", "postal code", "zip", "zipcode"];
+const POSTCODE: &[&str] = &[
+    "postcode",
+    "post code",
+    "postal code",
+    "postalcode",
+    "zip",
+    "zipcode",
+];
 const BIRTH: &[&str] = &["dob", "birth", "birthday", "birthdate"];
 const AGE: &[&str] = &["age"];
 const NETWORK: &[&str] = &[
@@ -536,7 +555,14 @@ pub fn default_rule(
     if extra_personal.iter().any(|p| has(&w, &p.to_lowercase())) {
         return (Rule::Null, why("personal, by the rules file's [classify]"));
     }
-    if NOT_PERSONAL_LAST.contains(&last) && !(last == "id" && text && any(&w, PERSON_REF)) {
+    // A code-like last word keeps the column unless what comes before it
+    // is personal whatever it's called: a postcode, an identifier, a
+    // device's, family details. (An integer `*_id` is a key, kept.)
+    let itself = (last != "id" || text)
+        && (any(&w, IDENTIFIER) || any(&w, POSTCODE) || any(&w, DEVICE) || any(&w, FAMILY));
+    if FLAG_LAST.contains(&last)
+        || (VALUE_LAST.contains(&last) && !itself && !(last == "id" && text && any(&w, PERSON_REF)))
+    {
         return (Rule::Keep, Origin::Plain);
     }
     if any(&w, EMAIL) && text {
@@ -1103,6 +1129,40 @@ mod tests {
         assert_eq!(rule("u", "api_key", "varchar", Some(64)), Rule::Null);
         assert_eq!(rule("u", "date_of_birth", "date", None), Rule::Year);
         assert_eq!(rule("u", "birth_year", "int4", None), Rule::Null);
+    }
+
+    #[test]
+    fn a_code_like_last_word_doesnt_hide_the_thing_itself() {
+        for (name, want) in [
+            ("postal_code", Rule::Postcode),
+            ("zip_code", Rule::Postcode),
+            ("post_code", Rule::Postcode),
+            ("postalCode", Rule::Postcode),
+            ("sort_code", Rule::Null),
+            ("sortcode", Rule::Null),
+            ("tax_id", Rule::Null),
+            ("tax_code", Rule::Null),
+            ("national_id", Rule::Null),
+            ("device_id", Rule::Null),
+            ("marital_status", Rule::Null),
+            ("verification_code", Rule::Null),
+            ("reset_code", Rule::Null),
+            ("pin_code", Rule::Null),
+        ] {
+            assert_eq!(rule("u", name, "varchar", Some(40)), want, "{name}");
+        }
+        // Codes and flags about them are still kept, and an integer id is
+        // a key.
+        for name in [
+            "currency_code",
+            "country_code",
+            "order_status",
+            "device_type",
+            "postcode_valid",
+        ] {
+            assert_eq!(rule("u", name, "varchar", Some(40)), Rule::Keep, "{name}");
+        }
+        assert_eq!(rule("u", "device_id", "int8", None), Rule::Keep);
     }
 
     #[test]
