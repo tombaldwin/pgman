@@ -5,6 +5,24 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### Masked dumps — left from phase 2a (2026-10-29)
+What the design note's section 2–9 asks for that 2a didn't build; the
+later phases (2b encryption, 3 screens, 4 sampled validate, 5 the rest
+of the transformers and stable keys, 6 subsetting) are in the design
+note.
+- **Schema literals.** Scan column defaults, CHECKs, view and function
+  bodies and policies for string literals and name them in the summary
+  (the schema is copied as it is).
+- **The operator's own login.** Find the operator's git email in the
+  data and say what it became, so they can log in to the copy.
+- **The MCP confirmation's classifier summary**: what will be masked, as
+  the terminal's summary says after.
+- **A rules file's changes since last confirmed**: show the diff of
+  what loosened, and journal a `rules_confirmed` event.
+- **`pgman copies prune`**: everything past its expiry, confirming each
+  database.
+- **The TUI's expired-copies flag** in the header.
+
 ### Environments overview, like ebman's main screen (Tom, 2026-10-19)
 One table of every database in an environment, replicas included, each
 with its versions. Tom's immediate need is RDS, but the design must also

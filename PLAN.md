@@ -98,11 +98,16 @@ report (`src/copies.rs`). The design note's "Phase 1 as built" says
 where it differs.
 
 Phase 1b built 2026-10-29, unreleased: the journal to CloudWatch
-(`src/journal_send.rs`). Next: phase 2a, masking itself (the classifier,
-defaults and presets, the data path and archive, restore, provenance,
-`copies rm` for databases, `masking show`/`check`, the leak test,
-`docs/privacy.md`), about 9 days; 1 and 1b could ship as a release
-first.
+(`src/journal_send.rs`).
+
+Phase 2a built 2026-10-29 on the `masking` branch, not merged: masked
+dumps and their restore, the rules file, `masking show`/`check`, the
+protected default to masked, MCP masked dumps with confirmed rules and
+no raw protected copies, `copies rm` dropping databases, the dump
+directory and synced-folder checks, the leak test, `docs/privacy.md`.
+The design note's "Phase 2a as built" lists what differs and what is
+left (in BACKLOG.md). Next: a review panel on the branch, then merge;
+then 2b (encryption).
 
 ### 2. Waiting on Tom
 

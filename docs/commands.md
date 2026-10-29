@@ -135,6 +135,7 @@ answers):
 | `pgman env discover [--save]` | Propose environments from an AWS account ([environments](environments.md#discovering-environments-from-aws)). |
 | `pgman dump <target> [FILE]` | A dump by your own `pg_dump` through pgman's connection, from the replica by default ([dump and restore](dump-restore.md)). |
 | `pgman restore <FILE> <target>` | A dump restored by your own `pg_restore` into an unprotected local database ([dump and restore](dump-restore.md#pgman-restore)). |
+| `pgman masking show\|check <target>` | What a masked dump does to each column, from the catalog; `check` fails a plan that can't go ([masked dumps](dump-restore.md#masked-dumps)). |
 | `pgman copies [show\|rm\|report]` | The dumps taken on this machine, from the journal: list, one in full, delete one, the whole account ([copies](dump-restore.md#pgman-copies)). |
 | `pgman run <target> <FILE>` | A script that runs its own transactions, `\c` between databases ([run](run.md)). |
 | `pgman apply <target>` | An environment's pending patches, as the environments view's `P` ([environments](environments.md#from-the-command-line-pgman-apply)). |

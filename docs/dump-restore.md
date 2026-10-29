@@ -5,7 +5,8 @@ with no stored passwords and no hand-rolled tunnel script:
 
 ```sh
 pgman dump staging/ledger                      # from staging's replica
-pgman restore staging-ledger-latest.dump local --as ledger_copy --clean
+pgman restore ~/.local/share/pgman/dumps/staging-ledger-latest.dump local --as ledger_copy --clean
+pgman dump production --ticket APP-101         # masked: what looks personal replaced
 ```
 
 Both run your own `pg_dump` / `pg_restore`. Installed with Homebrew,
@@ -174,14 +175,15 @@ unattended = false       # true: raw dumps may run without a terminal
 
 | `dump` | A dump may be |
 | --- | --- |
-| `unmasked` (the default) | raw, or schema only |
-| `masked` | schema only, until pgman can mask (then masked, or schema only) |
+| `unmasked` | raw, masked, or schema only |
+| `masked` | masked, or schema only |
 | `schema` | schema only |
 | `never` | nothing |
 
-A protected environment's dumps need a reason (`dump_reason`), and are
-kept 14 days before `pgman copies` calls them expired; others need none
-and are kept 30.
+A protected environment's default is `masked`; anything else's is
+`unmasked`. A protected environment's dumps need a reason
+(`dump_reason`), and are kept 14 days before `pgman copies` calls them
+expired; others need none and are kept 30.
 
 - **The reason.** At a terminal pgman asks, offering the ticket in your
   branch's name (`feature/APP-101-invoice-rounding` offers `APP-101`;
@@ -189,8 +191,9 @@ and are kept 30.
   one line of up to 120 characters: a ticket id or a few words, not
   people's names. `--reason "…"` or `--ticket APP-101` gives it instead.
   When no reason is needed, the branch's ticket is recorded anyway.
-- **A raw dump of a protected environment needs a terminal.** The
-  environment's name is typed, and no flag answers that: run from cron,
+- **A raw dump of a protected environment** needs `dump = "unmasked"` on
+  it in your own `environments.toml` and `--unmasked`, and **a terminal**:
+  the environment's name is typed, and no flag answers that. Run from cron,
   CI, a script or an agent's shell, it is refused. A job that must take
   raw copies of one environment can be allowed to, by `unattended =
   true` on that environment in your own `environments.toml` (never a
@@ -212,9 +215,117 @@ and are kept 30.
   than dropping its cap. `ticket_url` makes `pgman copies` and its report
   show each ticket as a link.
 
-Masking, and encrypting dumps, are designed but not built yet
+Encrypting dumps is designed but not built yet
 ([docs/design/masked-dumps.md](design/masked-dumps.md)): until then a
-dump is the data as it is, in a file only you can read.
+dump is a file only you can read, unencrypted.
+
+## Masked dumps
+
+(For a client's DPO, [privacy.md](privacy.md) says the same with the
+layers around it.)
+
+`pgman dump production` (a protected environment), or `pgman dump
+staging --masked`, takes a copy with what looks personal replaced as it
+is read: the shape of the data, its volumes and its odd rows, without
+the people in it. No rules file is needed for the first one.
+
+- **What is masked.** Each column is judged by its name (whole words: an
+  `age` column, not `stage`) and its type, from the catalog alone:
+
+  | Column | Becomes |
+  | --- | --- |
+  | email, login | a unique fake, `firstname.lastname.<hash>@example.test` (shortened to fit) |
+  | first, last, full name (a bare `name` on a people's table) | a fake name |
+  | phone, mobile | the same shape with other digits; a UK number in Ofcom's drama ranges |
+  | postcode | its district (`SW1A 1AA` → `SW1A`) |
+  | date of birth | its year, still a date |
+  | IP address | an address in a documentation range |
+  | password | the test password `pgman-test`, hashed as the value was (bcrypt, Spring's `{bcrypt}` and `{noop}`) |
+  | someone's id elsewhere (`stripe_customer_id`) | a keyed hash |
+  | secrets, tokens, sessions; special-category data (health, ethnicity, religion, gender…); identifiers and pay; addresses; free text by name (`notes`, `description`, …); `text`, `json`, `bytea` and types pgman doesn't know | NULL |
+  | everything else | kept |
+
+  Where NULL can't be stored it is the type's empty value (`''`, `{}`,
+  `false`, an enum's first label). A column that references another
+  takes its rule, so joins still join; every column joined that way fits
+  the shortest of them. Flyway's and Liquibase's history are kept, Spring
+  Session and OAuth token tables are dumped empty, an Envers `_aud` table
+  is masked as its base table is. Large objects are left out.
+- **The summary names every masked column**, by rule, and every NULLed
+  one, so nothing is lost without saying.
+- **The key.** Values are replaced by a keyed hash, with a key made for
+  this copy and thrown away: within the copy the same email always
+  becomes the same fake (joins hold), and nothing outside it can be
+  matched against it. The key never reaches the server, and a NULLed
+  column's values never leave it.
+- **One snapshot.** The catalog, pg_dump's archive of the schema (with no
+  rows and no comments), every sequence's value and each table's rows
+  are read in one repeatable-read snapshot, with no statement timeout,
+  and row security off (a table you may only see part of fails rather
+  than being dumped in part). It works on a standby.
+- **The archive** is a directory, `production-ledger-<time>.pgman-dump`:
+  a header, a manifest with every file's checksum, the schema, and each
+  table's masked rows. Only `pgman restore` reads it: checksums first,
+  then the tables, the rows, the sequences, and last the keys and
+  indexes, so foreign keys are checked on the masked rows. pg_restore's
+  errors have the row's values taken out. After `--` only options that
+  leave things out are taken (`--exclude-table`, `--exclude-schema`,
+  `--exclude-table-data`).
+- **Where it came from.** A restored copy says so: a `pgman.provenance`
+  table in its own schema (out of the application's sight; a Flyway
+  clean of `public` leaves it), and the database's comment.
+
+### The rules file
+
+Where your team differs from the defaults goes in
+`.pgman/masking/<database>.toml`, committed beside the schema and found
+from the current directory (or `--masking FILE`):
+
+```toml
+version = 1
+large_objects = "drop"            # or "keep"
+
+[classify]
+personal = ["handle"]             # more words that mean personal
+not_personal = ["memo"]           # words that don't, here
+reason = "memo holds support codes"
+
+[tables.customers]                # public.customers
+notes = { rule = "keep", reason = "reviewed: no personal data" }
+contact = "email"                 # a varchar(255) the defaults couldn't tell
+signup_on = { rule = "date.shift", days = 90 }   # a row's dates move together
+
+[tables."audit.events"]
+rows = "drop"
+```
+
+Rules: `keep`, `null`, `fixed` (with `value`), `password`, `hash`,
+`email`, `name`, `first_name`, `last_name`, `phone`, `ip`, `postcode`,
+`year`, `date.shift` (with `days`, keyed by the row's primary key); `"*"`
+for every column a table's block doesn't name. Keeping what the defaults
+would mask needs a `reason`. What can't be stored is refused before
+anything is read: a lossy rule on a unique column, a fixed value too
+long, a partition key moved, a `NOT NULL` type with no empty value.
+
+- `pgman masking show <target>` lists every column's rule and why,
+  NULLed ones first, each with the line that keeps it.
+- `pgman masking check <target> [--strict]` exits 1 when the plan can't
+  go as it is; `--strict` also wants every column the defaults mask
+  decided in the file. It reads the catalog alone, so CI can run it
+  against an empty migrated database.
+- **A new or changed rules file is confirmed at a terminal.** The first
+  masked dump with it shows what it keeps that the defaults would mask,
+  and asks; an agent's dump (MCP) uses it only when it is committed, as
+  it is, and was confirmed so.
+
+## Where dumps go
+
+With no FILE, a dump goes to pgman's dump directory,
+`~/.local/share/pgman/dumps`, readable by you alone. A raw dump of a
+protected target is refused in a synced folder (iCloud Drive, Dropbox,
+OneDrive, Google Drive); anything else written there says it leaves the
+machine. Every dump is excluded from Time Machine, and a protected one
+says so when FileVault is off.
 
 ## `pgman copies`
 
@@ -242,12 +353,14 @@ secrets.
 - `pgman copies rm <copy>` deletes the file (asking first, unless
   `--yes`), records the deletion, and points the `-latest` link at the
   newest copy left, or removes it. A link where the dump was is never
-  followed. A copy already deleted by hand is recorded as gone.
+  followed. A copy already deleted by hand is recorded as gone. It also
+  drops each database pgman restored from it — only one on this machine,
+  not protected, whose comment names this copy, so one made since under
+  the same name is kept and said so; sessions on it need `--terminate`.
 - `pgman copies report` is the whole account, oldest first: what was
   taken, why, where it was restored, and when it was deleted. `--format
   markdown` pastes into a ticket; `--format json` is for a script.
 
-A database restored from a copy isn't dropped by `rm` yet.
 
 ### The journal in CloudWatch
 
@@ -295,9 +408,9 @@ or two is usual) and who may read it are the client's settings.
 ## A local copy, end to end
 
 ```sh
-pgman dump staging/ledger ~/dumps/
-pgman restore ~/dumps/staging-ledger-latest.dump local --as ledger_staging --clean --terminate
-pgman copies rm staging-ledger-latest.dump   # when you're done with it
+pgman dump production --ticket APP-101
+pgman restore ~/.local/share/pgman/dumps/production-ledger-latest.pgman-dump local --as ledger_prod --clean --terminate
+pgman copies rm production-ledger-latest.pgman-dump   # the file and ledger_prod, when you're done
 ```
 
 The second command, run again tomorrow, replaces yesterday's copy.
@@ -307,8 +420,10 @@ The second command, run again tomorrow, replaces yesterday's copy.
 `pgman mcp serve` has `dump` and `restore` tools that do the same, each
 only after you confirm the call in your MCP client, giving the reason
 when the environment asks for one (the agent may suggest it; the one
-recorded is yours). A protected environment is dumped schema only over
-MCP: its raw copy is yours to take, at a terminal. An agent can refresh
+recorded is yours). A protected environment is dumped masked (or schema
+only) over MCP, with your committed, confirmed rules: its raw copy is
+yours to take, at a terminal. And every MCP tool refuses a database
+restored from a raw dump of a protected environment. An agent can refresh
 its own local copy (`restore` with `as`) without ever holding the
 environment's credentials. Its files stay in the server's working
 directory, and `restore` has no `--allow-remote`. See [mcp.md](mcp.md).

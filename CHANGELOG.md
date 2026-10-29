@@ -8,6 +8,22 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- Masked dumps: `pgman dump --masked`, the default for a protected
+  environment, takes a copy with what looks personal replaced as it is
+  read — emails, names, phones, postcodes, dates of birth, IPs and
+  passwords by realistic fakes, secrets, special-category data,
+  identifiers, addresses and free text removed — judged from each
+  column's name and type, with framework presets (Flyway, Liquibase,
+  Envers, Spring Session). Foreign keys keep joining; a fresh key per
+  copy, never sent to the server. One snapshot, a `.pgman-dump`
+  directory with checksums, which `pgman restore` loads rows-then-keys.
+- `.pgman/masking/<database>.toml`: the team's own rules (keep with a
+  reason, fixed, hash, email, name, phone, ip, postcode, year,
+  date.shift, rows dropped), and `pgman masking show` / `check` to see
+  and test them from the catalog alone, in CI too.
+- `docs/privacy.md`: what pgman does with personal data, for a client's
+  DPO.
+
 - `pgman copies`: every dump taken on this machine, from a journal
   pgman now keeps (`~/.local/share/pgman/journal.jsonl`): when, of what,
   raw or schema, why, the file, when it expires, where it was restored.
@@ -39,10 +55,21 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   the environment says `unattended = true` in your own
   `environments.toml`; scripts that need only the structure use
   `--schema-only --reason …`. Other environments are dumped as before.
-- MCP's `dump` takes a protected environment schema only
-  (`schema_only`), with the reason given by you in the confirmation; a
-  raw dump of one over MCP, which v0.3 allowed after its name was typed,
-  is refused. Each MCP dump and restore is journaled.
+- A protected environment is dumped masked by default; a raw copy of
+  one needs `dump = "unmasked"` on it in your own `environments.toml`,
+  `--unmasked`, and its name typed at a terminal.
+- A dump with no FILE goes to `~/.local/share/pgman/dumps` rather than
+  the current directory. A raw dump of a protected environment is
+  refused in iCloud Drive, Dropbox, OneDrive or Google Drive; every dump
+  is excluded from Time Machine.
+- `pgman copies rm` also drops the databases restored from a copy (only
+  local, unprotected ones whose comment names it).
+- MCP's `dump` takes a protected environment masked (or schema only),
+  using a rules file only when it is committed and you have confirmed it
+  at a terminal; a raw dump of one over MCP, which v0.3 allowed after its
+  name was typed, is refused, and every MCP tool refuses a database
+  restored from one. The reason is given by you in the confirmation.
+  Each MCP dump and restore is journaled.
 - `environments.toml` has new keys (`dump`, `dump_ttl`, `dump_reason`,
   `unattended`): an older pgman reading a file that uses them refuses
   it as unknown keys.

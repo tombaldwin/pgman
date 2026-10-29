@@ -20,7 +20,8 @@ use crate::pgtool::{self, Major};
 use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "\
-usage: pgman dump <target> [FILE] [--schema-only] [--reason TEXT] [--ticket KEY]
+usage: pgman dump <target> [FILE] [--masked | --unmasked | --schema-only]
+                  [--masking FILE] [--reason TEXT] [--ticket KEY]
                   [--primary] [--format custom|plain|directory|tar]
                   [--skip-unreadable] [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
 
@@ -34,17 +35,24 @@ postgres:// URL. An environment's replica is used when it has one;
 --primary takes the primary instead.
 
 FILE defaults to a name after the target and the UTC time
-(staging-ledger-20261028T140322Z.dump, or the connection's name) in the
-current directory, or in FILE when it is a directory, and
-staging-ledger-latest.dump is pointed at the newest. The dump is
-written to a temporary name and renamed into place when pg_dump
-succeeds: a failed dump never replaces a file.
+(staging-ledger-20261028T140322Z.dump, or the connection's name) in
+pgman's dump directory (~/.local/share/pgman/dumps), or in FILE when it
+is a directory, and staging-ledger-latest.dump is pointed at the newest.
+The dump is written to a temporary name and renamed into place when it
+is done: a failed dump never replaces a file.
 
-A protected target (production, or as environments.toml says) asks
-why the copy is taken, offering the ticket in your branch's name; a raw
-dump of one also takes its name typed, at a terminal. Each dump goes in
-the journal: pgman copies lists them.
+A protected target (production, or as environments.toml says) is dumped
+masked: what looks personal is replaced as it is read, by built-in rules
+and .pgman/masking/<database>.toml (pgman masking show lists them), into
+a .pgman-dump directory that pgman restore takes. It asks why the copy
+is taken, offering the ticket in your branch's name. A raw copy of one
+needs dump = \"unmasked\" on it in environments.toml, --unmasked, and its
+name typed at a terminal. Each dump goes in the journal: pgman copies
+lists them.
 
+  --masked       mask it (the default for a protected target)
+  --unmasked     every row as it is
+  --masking FILE the masking rules, in place of the project's
   --schema-only  the structure alone, no rows
   --reason TEXT  why, for the journal: a ticket id or a few words, no names
   --ticket KEY   the ticket it is for (APP-101); found in the branch's name
@@ -61,6 +69,7 @@ the journal: pgman copies lists them.
                  (--exclude-table-data=audit_log, -j 4 …);
                  the connection and output options are pgman's
 
+  pgman dump production --ticket APP-101
   pgman dump staging/ledger
   pgman dump staging/ledger ~/dumps/ -- --exclude-table-data=audit_log";
 

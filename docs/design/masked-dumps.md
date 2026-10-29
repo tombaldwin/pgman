@@ -1,6 +1,6 @@
 # Design: masked dumps, and the life of a copy
 
-Status: **proposal, third draft; phases 1 and 1b built (2026-10-28/29), the rest not.** First draft 2026-10-28,
+Status: **proposal, third draft; phases 1, 1b and 2a built (2026-10-28/29), the rest not.** First draft 2026-10-28,
 reviewed the same day by a four-reviewer panel (privacy and compliance,
 security, DBA and feasibility, developer experience) and revised with
 Tom's decisions; the second draft was reviewed again by the same four and
@@ -667,6 +667,38 @@ What shipped, and where it differs from the plan above:
   and after each dump; the TUI header flag waits for the copies view.
 - Untracked dumps are found in the working directory; the dump directory
   comes with 2a.
+
+### Phase 2a as built
+
+- `src/masking/` (pure): `catalog` (the model, domains resolved, keys),
+  `classify` (the defaults by whole word and type, presets, FK
+  following with the shortest length, problems), `rules` (the file),
+  `transform` (HMAC-SHA256 with ring; a fresh key per dump), `copytext`,
+  `archive` (header, manifest, summary), `report` (show, check).
+  `src/query/masking.rs` holds every Db effect: the catalog, the
+  snapshot, locks, COPY out and in, sequences, provenance. `src/masked.rs`
+  runs it.
+- **Sequences** travel in the manifest, read in the snapshot and set
+  after the rows: pg_dump 18's `--exclude-table-data='*.*'` drops their
+  values along with the rows (the DBA review had verified pg_dump 16).
+- **The archive** is JSON (`header.json`, `manifest.json`), not TOML, and
+  unencrypted until 2b. Data files are gzip (flate2, already in the
+  tree), not zstd.
+- **The test password** is fixed (`pgman-test`), its bcrypt hash made
+  once offline, so pgman holds no bcrypt; a rules file's own `value` is
+  used as written.
+- **Rules confirmation**: a masked dump at a terminal shows what a new or
+  changed rules file keeps and asks (recorded as its sha256 in the data
+  directory); an MCP dump needs the file committed as it is and
+  confirmed. Not yet: a diff against the previous version, or a
+  `rules_confirmed` journal event.
+- **Provenance** is written for archives and for raw dumps the journal
+  knows; its comment says raw/masked and protected, which MCP's refusal
+  reads when the journal has lost the copy.
+- **Not built in 2a** (open in BACKLOG.md): the literal scan of the schema
+  (defaults, view bodies), the operator's own fake login, the
+  classifier's summary in the MCP confirmation, `copies prune`, the TUI
+  header's expiry flag, fake addresses (NULL until phase 5).
 
 ### Phase 1b as built
 

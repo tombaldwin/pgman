@@ -46,7 +46,9 @@ At a glance:
   `pg_dump` through pgman's connection (from the replica, the password
   read at that moment, through the bastion; nothing secret on a command
   line or on disk), and `pgman restore` puts it into a local database,
-  never a protected one. See
+  never a protected one. Production is dumped masked — emails, names,
+  phones and free text replaced as they are read, joins intact — and
+  every copy is tracked until it is deleted (`pgman copies`). See
   [`docs/dump-restore.md`](https://github.com/tombaldwin/pgman/blob/main/docs/dump-restore.md).
 - **For your coding agent** — `pgman mcp serve` gives Claude Code (or any
   MCP client) read-only tools for queries, lock pre-flights, pending
@@ -242,6 +244,7 @@ coverage, fuzzing, and what CI runs on every push.
 - [`docs/dump-restore.md`](https://github.com/tombaldwin/pgman/blob/main/docs/dump-restore.md) — `pgman dump` and `pgman restore`.
 - [`docs/mcp.md`](https://github.com/tombaldwin/pgman/blob/main/docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
 - [`docs/safety-and-privacy.md`](https://github.com/tombaldwin/pgman/blob/main/docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
+- [`docs/privacy.md`](https://github.com/tombaldwin/pgman/blob/main/docs/privacy.md) — what pgman does with copies of personal data, for a client's DPO.
 - [`docs/logs-to-sql.md`](https://github.com/tombaldwin/pgman/blob/main/docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.
 - [`docs/tap.md`](https://github.com/tombaldwin/pgman/blob/main/docs/tap.md) — the JDBC tap: OpenTelemetry, TCP and UDP ingest, the event format, limits, record and replay.
 - [`docs/development.md`](https://github.com/tombaldwin/pgman/blob/main/docs/development.md) — build / test / clippy + distribution notes.
