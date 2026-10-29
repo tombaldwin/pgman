@@ -33,7 +33,7 @@ pub fn tool_entries() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "target": {"type": "string", "description": "ENV, ENV/DATABASE, ENV/SERVER/DATABASE, a connection name, or a postgres:// URL."},
-                    "file": {"type": "string", "description": "Relative to the working directory: a name ending .dump, or an existing directory. Default: a timestamped name in the working directory."},
+                    "file": {"type": "string", "description": "Relative to the working directory: a name ending .pgman-dump for a masked dump, .dump otherwise, or an existing directory. Default: a timestamped name in the working directory."},
                     "primary": {"type": "boolean", "description": "Take it from the primary even when the environment has a replica."},
                     "skip_unreadable": {"type": "boolean", "description": "Leave out what the dump's user can't read (named in the result) instead of refusing. Ask the operator first: the copy is then incomplete."},
                     "schema_only": {"type": "boolean", "description": "The structure alone, no rows."},
@@ -51,7 +51,7 @@ pub fn tool_entries() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "A .dump file or a .pgman-dump directory, relative to the working directory."},
+                    "file": {"type": "string", "description": "A .pgman-dump directory (a masked dump), or a .dump file this machine's pgman took, relative to the working directory. A dump from elsewhere, or a raw copy of a protected environment, is the operator's to restore at a terminal."},
                     "target": {"type": "string", "description": "A local, unprotected database: ENV, ENV/DATABASE, ENV/SERVER/DATABASE, a connection name, or a postgres:// URL."},
                     "as": {"type": "string", "description": "Restore into this database on the target's server."},
                     "create": {"type": "boolean", "description": "Create the database when it doesn't exist."},
