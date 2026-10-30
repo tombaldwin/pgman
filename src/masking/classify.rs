@@ -1079,6 +1079,13 @@ fn preset(name: &str) -> Option<(bool, &'static str)> {
         "flyway_schema_history" => Some((true, "Flyway's history")),
         "databasechangelog" | "databasechangeloglock" => Some((true, "Liquibase's history")),
         "revinfo" => Some((true, "Envers' revisions")),
+        "schema_migrations" => Some((true, "the migration history")),
+        "ar_internal_metadata" => Some((true, "Rails' metadata")),
+        "django_migrations" | "django_content_type" => Some((true, "Django's own")),
+        "alembic_version" => Some((true, "Alembic's version")),
+        "knex_migrations" | "knex_migrations_lock" => Some((true, "Knex's history")),
+        "_prisma_migrations" => Some((true, "Prisma's history")),
+        "django_session" => Some((false, "Django's sessions")),
         "spring_session" | "spring_session_attributes" => Some((false, "Spring Session")),
         "persistent_logins" => Some((false, "Spring Security's remember-me")),
         "oauth2_authorized_client"
@@ -2319,6 +2326,21 @@ mod tests {
             "{:?}",
             p.problems
         );
+    }
+
+    #[test]
+    fn framework_tables_have_presets() {
+        for name in [
+            "schema_migrations",
+            "ar_internal_metadata",
+            "django_migrations",
+            "alembic_version",
+            "_prisma_migrations",
+        ] {
+            assert!(matches!(preset(name), Some((true, _))), "{name}");
+        }
+        assert!(matches!(preset("django_session"), Some((false, _))));
+        assert_eq!(preset("migrations"), None);
     }
 
     #[test]

@@ -6,6 +6,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Masked dumps keep Rails', Django's, Alembic's, Knex's and Prisma's
+  migration tables whole, as Flyway's and Liquibase's are, and dump
+  Django's sessions empty.
+
 ### Fixed
 
 - A CHECK constraint that only bounds a column's length, an array's
