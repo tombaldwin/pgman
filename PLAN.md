@@ -64,6 +64,19 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 
 ## Window — after v0.3.0
 
+### The classifier on open-source schemas, and a client's rules file (2026-10-30)
+
+On Tom's "both". `masking show` over GitLab, Keycloak, Odoo 18, Synapse
+and AdventureWorks found leaks (an employee's national ID, hashes of a
+card's last digits, a login id, external ids, pay words), noise, and 850
+CHECK "problems" on GitLab that the masked value passes for certain. On
+main, unreleased: CHECKs that only bound a length pass and bound the
+fit (GitLab 850 → 87 real), the leak vocabulary, a hash of something
+guessable rehashed, settings and free-text words on flags kept,
+framework presets. The rest is in BACKLOG.md (masked dumps). A reviewed
+`.pgman/masking/<db>.toml` is drafted on a branch of the client's repo,
+not pushed; Tom confirms it at a terminal before its first dump.
+
 ### The first masked dump of a real schema (2026-10-30)
 
 On Tom's "staging": `masking show`, a masked dump, a restore and `copies
@@ -141,6 +154,9 @@ panel" in the design note); merged and released as v0.4.0 on Tom's go
   approves the wording first: write them for each release and tell him.
 - **Required CI checks on main**: the branch-protection call needs Tom
   (the payload is drafted).
+- **The client's masking rules file**: review the branch, confirm the
+  file at a terminal (`pgman dump` asks), push and PR it in the client's
+  repo; decide whether CI runs `masking check`.
 
 ### 3. Next from BACKLOG.md
 
