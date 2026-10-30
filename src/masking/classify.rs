@@ -831,11 +831,18 @@ fn by_name_and_type(
     let why = |s: &str| Origin::Default(s.to_string());
     let last = w.last().map(String::as_str).unwrap_or("");
     let text = text_like(base) || col.ty.array_of.is_some();
+    // When a password changed, whether a token was used: a date or a flag
+    // is about the secret, not the secret.
+    let about = col.ty.array_of.is_none()
+        && matches!(
+            base,
+            "date" | "timestamp" | "timestamptz" | "time" | "timetz" | "interval" | "bool"
+        );
     // Specific before general: a token is a token whatever else it is.
-    if any(&w, SECRET) {
+    if !about && any(&w, SECRET) {
         return (Rule::Null, why("a secret, by name"));
     }
-    if any(&w, PASSWORD) {
+    if !about && any(&w, PASSWORD) {
         return if text {
             (Rule::Password(String::new()), why("a password, by name"))
         } else {
@@ -1666,6 +1673,23 @@ mod tests {
         assert_eq!(rule("u", "api_key", "varchar", Some(64)), Rule::Null);
         assert_eq!(rule("u", "date_of_birth", "date", None), Rule::Year);
         assert_eq!(rule("u", "birth_year", "int4", None), Rule::Null);
+    }
+
+    #[test]
+    fn a_date_or_flag_about_a_secret_is_kept() {
+        for (name, base) in [
+            ("password_changed_at", "timestamptz"),
+            ("user_passwordlastchanged", "timestamp"),
+            ("token_expires", "timestamptz"),
+            ("password_reset_required", "bool"),
+            ("api_key_rotated_on", "date"),
+        ] {
+            assert_eq!(rule("u", name, base, None), Rule::Keep, "{name}");
+        }
+        // The secret itself, in any other type, is still masked.
+        assert_eq!(rule("u", "password", "bytea", None), Rule::Null);
+        assert_eq!(rule("u", "session_token", "uuid", None), Rule::Null);
+        assert_eq!(rule("u", "pin", "int4", None), Rule::Null);
     }
 
     #[test]
