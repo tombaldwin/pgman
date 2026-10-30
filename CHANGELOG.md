@@ -19,6 +19,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   (`pgman copies rm`). A phrase such as "account number" now matches
   `accountnumber` too, and "social security", "building society" and
   "account name" are known.
+- `pgman masking check`, and a masked dump, stop at a masked column a
+  validated CHECK constraint names when its masked value may fail it
+  (`wage > 0` on a nulled `NOT NULL` wage became 0): the restore stopped
+  part-way at the first such row, after the whole dump.
 
 ## [0.4.1] — 2026-10-29
 

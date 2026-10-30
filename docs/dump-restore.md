@@ -339,7 +339,11 @@ what the defaults would mask needs a `reason`. What can't be stored is
 refused before anything is read: a lossy rule on a unique column, a
 unique column too short to keep masked values apart, a fixed value too
 long, a partition key moved, a `NOT NULL` type with no empty value, a
-transformer on an array.
+transformer on an array, and a masked value that a validated `CHECK`
+constraint may refuse (the empty value standing in for `NULL`, a hash, a
+year: pgman can't evaluate the constraint, so it names it, and a fixed
+value that passes, or keep, settles it). The realistic fakes are left to
+pass.
 
 - `pgman masking show <target>` lists every column's rule and why,
   NULLed ones first, each with the line that keeps it.

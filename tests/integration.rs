@@ -11643,6 +11643,53 @@ fn the_schema_wizard_skips_an_extensions_schemas() {
     });
 }
 
+/// A masked plan stops at a column a validated CHECK constraint names
+/// when its masked value may fail it: the restore would stop part-way.
+#[test]
+fn a_masked_value_a_check_constraint_may_refuse_stops_the_plan() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = it_name("checks");
+        let admin = raw("pgman_test").await;
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+        ] {
+            admin.batch_execute(&sql).await.unwrap();
+        }
+        let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+        // wage is pay, nulled; NOT NULL makes it 0, which wage > 0 refuses.
+        // A NOT VALID constraint isn't checked against restored rows.
+        raw(&db)
+            .await
+            .batch_execute(
+                "CREATE TABLE pay_rates (id int PRIMARY KEY, wage numeric NOT NULL \
+                   CONSTRAINT c_wage CHECK (wage > 0), salary numeric NOT NULL); \
+                 ALTER TABLE pay_rates ADD CONSTRAINT c_salary CHECK (salary > 0) NOT VALID",
+            )
+            .await
+            .unwrap();
+        let client = probe_client(&dsn).await;
+        let catalog = pgman::query::masking::catalog(&client).await.unwrap();
+        assert_eq!(catalog.checks.len(), 1, "{:?}", catalog.checks);
+        assert_eq!(catalog.checks[0].table, "public.pay_rates");
+        assert_eq!(catalog.checks[0].columns, ["wage"]);
+        let plan =
+            pgman::masking::classify::plan(&catalog, &pgman::masking::rules::RuleSet::default());
+        assert_eq!(plan.problems.len(), 1, "{:?}", plan.problems);
+        assert!(
+            plan.problems[0].starts_with("public.pay_rates.wage: the empty value standing in for NULL may fail its CHECK constraint c_wage, CHECK ((wage > (0)::numeric))"),
+            "{:?}",
+            plan.problems
+        );
+        drop(client);
+        admin
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"))
+            .await
+            .unwrap();
+    });
+}
+
 /// A masked plan stops at a TimescaleDB hypertable, whose compressed
 /// rows a masked copy would leave out. The compose server has no
 /// TimescaleDB: a scratch database with its catalog table stands in.

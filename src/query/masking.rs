@@ -4,7 +4,7 @@
 //! source, and into a restored copy. See `docs/design/masked-dumps.md`,
 //! section 4.
 
-use crate::masking::catalog::{self, Catalog, RawColumn, RawKey, RawTable, RawType};
+use crate::masking::catalog::{self, Catalog, Check, RawColumn, RawKey, RawTable, RawType};
 
 /// The schemas never dumped: the system's, and temporary ones.
 const USER_RELATIONS: &str = "\
@@ -81,6 +81,18 @@ const KEYS_SQL: &str = "\
 
 const PARTITION_KEYS_SQL: &str =
     "SELECT partrelid::int8, partattrs::int2[] FROM pg_catalog.pg_partitioned_table";
+
+/// Validated CHECK constraints (a NOT VALID one isn't checked against
+/// the rows a restore loads) and the columns each names.
+const CHECKS_SQL: &str = "\
+    SELECT n.nspname || '.' || c.relname, k.conname::text, \
+           ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a \
+                 WHERE a.attrelid = k.conrelid AND a.attnum = ANY (k.conkey) ORDER BY a.attnum), \
+           pg_catalog.pg_get_constraintdef(k.oid) \
+    FROM pg_catalog.pg_constraint k \
+    JOIN pg_catalog.pg_class c ON c.oid = k.conrelid \
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+    WHERE k.contype = 'c' AND k.convalidated";
 
 const LARGE_OBJECTS_SQL: &str = "SELECT count(*) FROM pg_catalog.pg_largeobject_metadata";
 
@@ -187,6 +199,18 @@ pub async fn catalog(client: &tokio_postgres::Client) -> Result<Catalog, String>
     catalog.hypertables = hypertables(client)
         .await
         .map_err(|e| fail("hypertables", e))?;
+    catalog.checks = client
+        .query(CHECKS_SQL, &[])
+        .await
+        .map_err(|e| fail("check constraints", e))?
+        .iter()
+        .map(|r| Check {
+            table: r.get(0),
+            name: r.get(1),
+            columns: r.get(2),
+            definition: r.get(3),
+        })
+        .collect();
     Ok(catalog)
 }
 

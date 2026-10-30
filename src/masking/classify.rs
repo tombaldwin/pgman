@@ -1286,6 +1286,38 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             primary_key: t.primary_key.clone(),
         });
     }
+    // A restore loads every row past the table's CHECK constraints, so a
+    // masked value that may fail one stops it part-way. Which values pass
+    // can't be told from the catalog: name each and let the team decide.
+    for k in &catalog.checks {
+        let Some(tp) = tables.iter().find(|t| t.table == k.table && !t.drop_rows) else {
+            continue;
+        };
+        for d in tp.columns.iter().filter(|d| k.columns.contains(&d.column)) {
+            let what = match &d.rule {
+                // Made to look like the real thing, or the team's own.
+                Rule::Keep
+                | Rule::Fixed(_)
+                | Rule::Email
+                | Rule::Name(_)
+                | Rule::Phone
+                | Rule::Ip => continue,
+                // NULL passes a CHECK that doesn't ask for a value.
+                Rule::Null if !d.not_null => continue,
+                Rule::Null => "the empty value standing in for NULL".to_string(),
+                r => r.name().to_string(),
+            };
+            let mut def = k.definition.clone();
+            if def.chars().count() > 120 {
+                def = def.chars().take(119).collect::<String>() + "…";
+            }
+            problems.push(format!(
+                "{}.{}: {} may fail its CHECK constraint {}, {def}, and stop the restore: \
+                 keep it with a reason, or give it a fixed value that passes",
+                tp.table, d.column, what, k.name
+            ));
+        }
+    }
     Plan {
         tables,
         large_objects: rules.large_objects_kept,
@@ -1444,7 +1476,7 @@ pub fn empty_value(base: &str, enum_first: Option<&str>, array: bool) -> Option<
 
 #[cfg(test)]
 mod tests {
-    use super::super::catalog::{ColumnType, ForeignKey};
+    use super::super::catalog::{Check, ColumnType, ForeignKey};
     use super::super::rules;
     use super::*;
 
@@ -1706,6 +1738,61 @@ mod tests {
             "{:?}",
             p.problems
         );
+    }
+
+    #[test]
+    fn a_masked_value_under_a_check_constraint_is_a_problem() {
+        let not_null = |name: &str, base: &str| Column {
+            ty: ty(base, None, true),
+            ..c(name, base, None)
+        };
+        let cat = |cols: Vec<Column>, check_cols: &[&str]| Catalog {
+            tables: vec![table("pay_rates", cols)],
+            checks: vec![Check {
+                table: "public.pay_rates".into(),
+                name: "c_rate".into(),
+                columns: check_cols.iter().map(|s| s.to_string()).collect(),
+                definition: "CHECK ((wage > (0)::numeric))".into(),
+            }],
+            ..Default::default()
+        };
+        // wage is pay, nulled; NOT NULL makes it 0, which fails wage > 0.
+        let p = plan(
+            &cat(vec![not_null("wage", "numeric")], &["wage"]),
+            &RuleSet::default(),
+        );
+        assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
+        assert!(
+            p.problems[0].starts_with("public.pay_rates.wage: the empty value standing in for NULL may fail its CHECK constraint c_rate, CHECK ((wage > (0)::numeric))"),
+            "{:?}",
+            p.problems
+        );
+        // NULL itself passes it.
+        let p = plan(
+            &cat(vec![c("wage", "numeric", None)], &["wage"]),
+            &RuleSet::default(),
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        // A column the constraint doesn't name, or one kept, isn't one.
+        let p = plan(
+            &cat(vec![not_null("wage", "numeric")], &["other"]),
+            &RuleSet::default(),
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        let kept =
+            parse("[tables.pay_rates]\nwage = { rule = \"keep\", reason = \"published rates\" }\n");
+        let p = plan(&cat(vec![not_null("wage", "numeric")], &["wage"]), &kept);
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        // A realistic fake is left to pass.
+        let p = plan(
+            &cat(vec![not_null("email", "varchar")], &["email"]),
+            &RuleSet::default(),
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        // No rows, nothing to fail.
+        let dropped = parse("[tables.pay_rates]\nrows = \"drop\"\n");
+        let p = plan(&cat(vec![not_null("wage", "numeric")], &["wage"]), &dropped);
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
     }
 
     #[test]

@@ -148,6 +148,19 @@ pub struct Catalog {
     /// TimescaleDB's hypertables, `schema.name`: rows a masked copy
     /// can't carry yet (a compressed chunk's are opaque).
     pub hypertables: Vec<String>,
+    /// Validated CHECK constraints, which the restored rows must pass.
+    pub checks: Vec<Check>,
+}
+
+/// A table's CHECK constraint, by the columns it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Check {
+    /// `schema.name` of its table.
+    pub table: String,
+    pub name: String,
+    pub columns: Vec<String>,
+    /// `CHECK (…)`, as pg_get_constraintdef gives it.
+    pub definition: String,
 }
 
 impl Catalog {
@@ -304,6 +317,7 @@ pub fn build(
         tables: out,
         large_objects,
         hypertables: Vec::new(),
+        checks: Vec::new(),
     }
 }
 
