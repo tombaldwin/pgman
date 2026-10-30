@@ -301,8 +301,6 @@ const INSIDE: &[&str] = &[
     "description",
     "remark",
     "remarks",
-    "message",
-    "messages",
     "narrative",
     "feedback",
 ];
@@ -1024,7 +1022,9 @@ fn by_name_and_type(
     if ACTOR_LAST.contains(&last) || any(&w, ACTOR) {
         return (Rule::Null, why("who did it, by name"));
     }
-    if any(&w, FREE_TEXT) {
+    // A number, date or flag can't hold free text: note_events, a
+    // failure_reason enum's code.
+    if any(&w, FREE_TEXT) && (text || !plain_type(base, &col.ty.category)) {
         return (Rule::Null, why("free text, by name"));
     }
     if REF_LAST.contains(&last) && any(&w, PERSON_REF) && text {
@@ -1724,6 +1724,12 @@ mod tests {
             ("member_contactbyemail", "bool", Rule::Keep),
             ("document_contenttype", "varchar", Rule::Keep),
             ("sms_messagetype", "varchar", Rule::Keep),
+            ("member_receivesmessages", "bool", Rule::Keep),
+            ("chatmessage_createdon", "timestamp", Rule::Keep),
+            ("ticket_customercommentson", "timestamp", Rule::Keep),
+            ("notificationmessagetype_desc", "varchar", Rule::Keep),
+            ("integrations_note_events", "bool", Rule::Keep),
+            ("payment_failure_reason", "int2", Rule::Keep),
         ] {
             assert_eq!(rule("t", name, base, Some(64)), want, "{name}");
         }

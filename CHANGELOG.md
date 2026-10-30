@@ -16,8 +16,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   to 87 real ones.
 - Masking keeps a date, time or boolean column named for a password or
   secret (`password_changed_at`, `token_expires`), which can't hold one.
-- Masking finds comment, description, message and similar words inside
-  a folded camelCase name (`staffcomment`).
+- Masking finds comment, description and similar words inside a folded
+  camelCase name (`staffcomment`). A free-text word no longer masks a
+  number, date or boolean (`note_events`, a `failure_reason` code), which
+  can't hold free text.
 - Masking knows more personal words, found by running it over GitLab's,
   Keycloak's, Odoo's, Synapse's and AdventureWorks' schemas: an
   `identification_id` (a national ID number), a visa or work permit, an
