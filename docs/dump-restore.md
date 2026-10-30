@@ -242,7 +242,10 @@ is read: the shape of the data, its volumes and its odd rows, without
 the people in it. No rules file is needed for the first one.
 
 - **What is masked.** Each column is judged by its name (whole words: an
-  `age` column, not `stage`) and its type, from the catalog alone:
+  `age` column, not `stage`) and its type, from the catalog alone. A
+  camelCase name Postgres has folded to lower case is pulled back into
+  its words: `customer_dateofbirth` is a date of birth,
+  `payee_banksortcode` a sort code.
 
   | Column | Becomes |
   | --- | --- |

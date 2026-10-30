@@ -195,7 +195,14 @@ the fake it became is shown.
 - **By name, on every type, by whole word.** Column names are split on
   `_` and camelCase into words, and matched whole: `age` matches `age` and
   `age_band`, never `stage` or `message`; `ip` matches `ip_address`, never
-  `zip` or `recipient`. The vocabulary:
+  `zip` or `recipient`. A name Postgres folded (an unquoted
+  `dateOfBirth` is stored `dateofbirth`) is pulled apart into the words
+  pgman knows (`date of birth`), or, where the rest is no word it knows,
+  around a long unambiguous one (`homemobile`): `cancellation` holds no
+  `cell`, `warehouse` no `house`. A phrase matches its words run
+  together too (`accountnumber`). Found on a real schema, 2026-10-30:
+  before it, a folded schema kept its dates of birth, mobile numbers,
+  sort codes and passport numbers. The vocabulary:
   - contact and identity: email, mail, phone, mobile, tel, the name
     family, title, address, street, city, postcode, zip;
   - birth, age and family: dob, birth, age, marital, nationality;

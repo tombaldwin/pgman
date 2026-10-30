@@ -6,6 +6,20 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Masked dumps judge a camelCase column name that Postgres folded to
+  lower case by its words: an unquoted `dateOfBirth` is stored
+  `dateofbirth`, which pgman read as one unknown word and kept. On such
+  a schema a masked dump kept dates of birth, phone and mobile numbers,
+  email addresses, password hashes, bank sort codes and account numbers,
+  passport and social security numbers, and special-category columns
+  such as sexual orientation. Run `pgman masking show` again on a schema
+  named this way; copies taken with 0.4.0 or 0.4.1 should be deleted
+  (`pgman copies rm`). A phrase such as "account number" now matches
+  `accountnumber` too, and "social security", "building society" and
+  "account name" are known.
+
 ## [0.4.1] — 2026-10-29
 
 ### Fixed

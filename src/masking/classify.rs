@@ -11,7 +11,8 @@
 
 use super::catalog::{Catalog, Column, Table};
 use super::rules::{Rows, RuleSet, TableRules};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// What a column becomes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,9 +140,23 @@ impl Plan {
 }
 
 /// A column name's words: split on `_`, `-`, between a lower-case letter
-/// and a capital, and between letters and digits; lower-cased.
-/// `customerEmail2` is `customer email 2`. Pure.
+/// and a capital, and between letters and digits; lower-cased; and a word
+/// that runs known ones together pulled apart ([`run_together`]).
+/// `customerEmail2` is `customer email 2`, `dateofbirth` is `date of
+/// birth`. Pure.
 pub fn words(name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for w in parts(name) {
+        match run_together(&w) {
+            Some(split) => out.extend(split),
+            None => out.push(w),
+        }
+    }
+    out
+}
+
+/// [`words`] without pulling run-together words apart.
+fn parts(name: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut prev: Option<char> = None;
@@ -173,11 +188,242 @@ pub fn words(name: &str) -> Vec<String> {
     out
 }
 
-/// Whether `w` holds `phrase` (one word, or several in a row). Pure.
+/// Words that join the phrases below when Postgres has run them together:
+/// an unquoted `dateOfBirth` is folded to `dateofbirth`.
+const JOINING: &[&str] = &[
+    "of",
+    "to",
+    "by",
+    "from",
+    "next",
+    "date",
+    "number",
+    "name",
+    "social",
+    "security",
+    "bank",
+    "card",
+    "emergency",
+    "contact",
+    "account",
+    "sort",
+    "code",
+    "personal",
+    "place",
+    "time",
+    "society",
+];
+
+/// Words found inside a longer one even where the rest of it is no word
+/// pgman knows: `homemobile`. Long and unambiguous, so `cancellation`
+/// holds no `cell` and `warehouse` no `house`.
+const INSIDE: &[&str] = &[
+    "email",
+    "phone",
+    "telephone",
+    "mobile",
+    "firstname",
+    "lastname",
+    "surname",
+    "forename",
+    "forenames",
+    "birth",
+    "birthday",
+    "birthdate",
+    "passport",
+    "postcode",
+    "postalcode",
+    "zipcode",
+    "address",
+    "sortcode",
+    "accountnumber",
+    "cardnumber",
+    "password",
+    "passwd",
+    "passphrase",
+    "secret",
+    "token",
+    "credential",
+    "credentials",
+    "apikey",
+    "sexual",
+    "sexuality",
+    "ethnicity",
+    "ethnic",
+    "religion",
+    "religious",
+    "gender",
+    "health",
+    "medical",
+    "diagnosis",
+    "disability",
+    "criminal",
+    "conviction",
+    "convictions",
+    "offence",
+    "offense",
+    "pregnancy",
+    "pregnant",
+    "biometric",
+    "genetic",
+    "political",
+    "nationality",
+    "citizenship",
+    "marital",
+    "salary",
+    "income",
+    "latitude",
+    "longitude",
+    "photo",
+    "avatar",
+    "signature",
+    "selfie",
+    "portrait",
+    "nickname",
+    "username",
+    "fullname",
+    "displayname",
+    "middlename",
+    "social",
+    "security",
+    "number",
+    "account",
+    "contact",
+    "emergency",
+    "personal",
+    "enabled",
+    "verified",
+    "confirmed",
+    "consent",
+    "optin",
+];
+
+/// Every word the lists name.
+fn known(word: &str) -> bool {
+    static KNOWN: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    KNOWN
+        .get_or_init(|| {
+            [
+                SECRET,
+                PASSWORD,
+                SPECIAL,
+                FLAG_LAST,
+                VALUE_LAST,
+                EMAIL,
+                PHONE,
+                FIRST,
+                LAST,
+                FULL,
+                PEOPLE,
+                HOLDER,
+                IDENTIFIER,
+                ADDRESS,
+                POSTCODE,
+                BIRTH,
+                AGE,
+                NETWORK,
+                DEVICE,
+                LOCATION,
+                IMAGE,
+                FAMILY,
+                FREE_TEXT,
+                ACTOR_LAST,
+                ACTOR,
+                NOT_PERSONAL,
+                PERSON_REF,
+                REF_LAST,
+                JOINING,
+                INSIDE,
+            ]
+            .iter()
+            .flat_map(|list| list.iter().flat_map(|p| p.split(' ')))
+            .collect()
+        })
+        .contains(word)
+}
+
+/// A lower-case word that runs others together, pulled apart: into words
+/// pgman knows wholly (`dateofbirth` is `date of birth`, `banksortcode`
+/// `bank sort code`), or else around the [`INSIDE`] words in it
+/// (`sentmobilenumber` is `sent mobile number`). `None` when it is a word
+/// pgman knows, or holds none. Pure.
+pub fn run_together(word: &str) -> Option<Vec<String>> {
+    if word.len() < 5 || !word.bytes().all(|b| b.is_ascii_lowercase()) || known(word) {
+        return None;
+    }
+    let n = word.len();
+    // Wholly: the fewest known words that make it up.
+    let mut best: Vec<Option<(usize, usize)>> = vec![None; n + 1];
+    best[0] = Some((0, 0));
+    for j in 1..=n {
+        best[j] = (0..j)
+            .filter(|&i| known(&word[i..j]))
+            .filter_map(|i| best[i].map(|(k, _)| (k + 1, i)))
+            .min();
+    }
+    if best[n].is_some() {
+        let mut out = Vec::new();
+        let mut j = n;
+        while j > 0 {
+            let (_, i) = best[j].expect("reached from the end");
+            out.push(word[i..j].to_string());
+            j = i;
+        }
+        out.reverse();
+        return Some(out);
+    }
+    // Around INSIDE words: the fewest letters left over, then the fewest
+    // words. A step is one leftover letter or one INSIDE word.
+    let mut cost: Vec<(usize, usize, usize, bool)> = vec![(usize::MAX, 0, 0, false); n + 1];
+    cost[0] = (0, 0, 0, false);
+    for i in 0..n {
+        let (left, count, _, _) = cost[i];
+        if left == usize::MAX {
+            continue;
+        }
+        let letter = (left + 1, count, i, false);
+        if (letter.0, letter.1) < (cost[i + 1].0, cost[i + 1].1) {
+            cost[i + 1] = letter;
+        }
+        for w in INSIDE {
+            let j = i + w.len();
+            if j <= n && &word[i..j] == *w && (left, count + 1) < (cost[j].0, cost[j].1) {
+                cost[j] = (left, count + 1, i, true);
+            }
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut found = false;
+    let mut leftover = String::new();
+    let mut j = n;
+    while j > 0 {
+        let (_, _, i, is_word) = cost[j];
+        if is_word {
+            if !leftover.is_empty() {
+                out.push(leftover.chars().rev().collect());
+                leftover.clear();
+            }
+            out.push(word[i..j].to_string());
+            found = true;
+        } else {
+            leftover.push_str(&word[i..j]);
+        }
+        j = i;
+    }
+    if !leftover.is_empty() {
+        out.push(leftover.chars().rev().collect());
+    }
+    out.reverse();
+    found.then_some(out)
+}
+
+/// Whether `w` holds `phrase` (one word, or several in a row, or those
+/// run together as one: `accountnumber`). Pure.
 fn has(w: &[String], phrase: &str) -> bool {
     let p: Vec<&str> = phrase.split(' ').collect();
     w.windows(p.len())
         .any(|win| win.iter().zip(&p).all(|(a, b)| a == b))
+        || (p.len() > 1 && w.iter().any(|x| *x == p.concat()))
 }
 
 fn any(w: &[String], phrases: &[&str]) -> bool {
@@ -306,6 +552,7 @@ const FULL: &[&str] = &[
     "user name",
     "username",
     "contact name",
+    "account name",
     "customer name",
     "person name",
     "known as",
@@ -371,6 +618,7 @@ const HOLDER: &[&str] = &[
 ];
 const IDENTIFIER: &[&str] = &[
     "ssn",
+    "social security",
     "nino",
     "national insurance",
     "ni number",
@@ -395,6 +643,8 @@ const IDENTIFIER: &[&str] = &[
     "tax",
     "utr",
     "vat number",
+    "building society",
+    "roll number",
 ];
 const ADDRESS: &[&str] = &[
     "address", "street", "city", "town", "county", "line 1", "line 2", "line 3", "house", "flat",
@@ -603,14 +853,22 @@ fn by_name_and_type(
     if any(&w, SPECIAL) {
         return (Rule::Null, why("special-category data, by name"));
     }
-    let plain_listed = extra_plain.iter().any(|p| has(&w, &p.to_lowercase()));
+    // The rules file's words match the name as written, too: `bankdetails`.
+    let raw = parts(&col.name);
+    let listed = |list: &[String]| {
+        list.iter().any(|p| {
+            let p = p.to_lowercase();
+            has(&w, &p) || has(&raw, &p)
+        })
+    };
+    let plain_listed = listed(extra_plain);
     if plain_listed {
         return (
             Rule::Keep,
             Origin::Default("not personal, by the rules file's [classify]".into()),
         );
     }
-    if extra_personal.iter().any(|p| has(&w, &p.to_lowercase())) {
+    if listed(extra_personal) {
         return (Rule::Null, why("personal, by the rules file's [classify]"));
     }
     // A code-like last word keeps the column unless what comes before it
@@ -1227,6 +1485,73 @@ mod tests {
         assert_eq!(words("IPAddress"), ["ipaddress"]);
         assert_eq!(words("addressLine1"), ["address", "line", "1"]);
         assert_eq!(words("__x__"), ["x"]);
+        // Postgres folds an unquoted dateOfBirth to dateofbirth.
+        assert_eq!(
+            words("customer_dateofbirth"),
+            ["customer", "date", "of", "birth"]
+        );
+        assert_eq!(words("payee_banksortcode"), ["payee", "bank", "sortcode"]);
+        assert_eq!(
+            words("sms_senttomobilenumber"),
+            ["sms", "sentto", "mobile", "number"]
+        );
+        // Known words stay whole; words with nothing pgman knows in them too.
+        assert_eq!(words("ipaddress"), ["ipaddress"]);
+        assert_eq!(words("cancellation"), ["cancellation"]);
+        assert_eq!(words("warehouse"), ["warehouse"]);
+        assert_eq!(words("company"), ["company"]);
+    }
+
+    #[test]
+    fn folded_camel_case_names_are_judged_by_their_words() {
+        for (name, base, want) in [
+            ("customer_dateofbirth", "date", Rule::Year),
+            ("customer_placeofbirth", "varchar", Rule::Null),
+            ("member_mobilenumber", "varchar", Rule::Phone),
+            ("member_nextofkintelephone", "varchar", Rule::Phone),
+            ("member_emailaddress", "varchar", Rule::Email),
+            (
+                "member_passwordhash",
+                "varchar",
+                Rule::Password(String::new()),
+            ),
+            ("customer_socialsecuritynumber", "varchar", Rule::Null),
+            ("customer_sexualorientation", "varchar", Rule::Null),
+            ("customer_criminalrecord", "bool", Rule::Null),
+            ("payee_banksortcode", "varchar", Rule::Null),
+            ("payee_bankaccountnumber", "varchar", Rule::Null),
+            ("payee_passportnumber", "varchar", Rule::Null),
+            ("customer_basepostcode", "varchar", Rule::Postcode),
+            // Not personal, and not made so by a word inside them.
+            ("order_cancellationreasoncode", "varchar", Rule::Keep),
+            ("order_shippingmethod", "varchar", Rule::Keep),
+            ("warehouse_company", "varchar", Rule::Keep),
+            ("member_emailenabled", "bool", Rule::Keep),
+            ("member_contactbyemail", "bool", Rule::Keep),
+            ("document_contenttype", "varchar", Rule::Keep),
+        ] {
+            assert_eq!(rule("t", name, base, Some(64)), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_phrase_matches_its_words_run_together() {
+        let w = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        assert!(has(&w("bank accountnumber"), "account number"));
+        assert!(has(&w("bank account number"), "account number"));
+        assert!(!has(&w("accountnumbers"), "account number"));
+        assert!(!has(&w("account"), "account number"));
+    }
+
+    #[test]
+    fn the_rules_files_words_match_a_name_as_written() {
+        // codeversion is code|version to pgman, kept unless the file says.
+        let col = c("release_codeversion", "varchar", Some(64));
+        assert_eq!(default_rule("t", &col, &[], &[]).0, Rule::Keep);
+        let (r, _) = default_rule("t", &col, &["codeversion".to_string()], &[]);
+        assert_eq!(r, Rule::Null);
+        let (r, _) = default_rule("t", &col, &["code version".to_string()], &[]);
+        assert_eq!(r, Rule::Null);
     }
 
     #[test]
