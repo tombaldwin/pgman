@@ -10253,8 +10253,11 @@ fn a_masked_restore_stops_when_signalled() {
     on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
     on(
         &src,
+        // Enough rows that the load outlasts the signal's delivery: the
+        // masked label is NULL, so the rows go in fast, and with 500k CI
+        // once finished between seeing COPY start and the kill.
         "CREATE TABLE events AS SELECT g AS id, 'some text for the row ' || g AS label \
-         FROM generate_series(1, 500000) g",
+         FROM generate_series(1, 2000000) g",
     )
     .unwrap();
     let dumped = pgman_in(&home, &out, &["dump", "src", ".", "--masked"]);
