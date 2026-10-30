@@ -18,6 +18,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   secret (`password_changed_at`, `token_expires`), which can't hold one.
 - Masking finds comment, description, message and similar words inside
   a folded camelCase name (`staffcomment`).
+- Masking knows more personal words, found by running it over GitLab's,
+  Keycloak's, Odoo's, Synapse's and AdventureWorks' schemas: an
+  `identification_id` (a national ID number), a visa or work permit, an
+  abbreviated `acc_number`, a bonus or commission, social handles
+  (`linkedin`, `twitter`, …), OAuth device and user codes, an access key,
+  sick leave, pronouns, a login or external id (`extern_uid`), a
+  reviewer's or attendee's name, a partner's or guest's name, `reply_to`,
+  an `sms_number`, a browser. A hash of something personal and easy to
+  guess (`holder_name_hash`, `last_digits_hash`) is hashed again, so it
+  still joins; any other `*_hash` is kept.
 
 ## [0.4.2] — 2026-10-30
 

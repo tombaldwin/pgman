@@ -464,6 +464,11 @@ const SECRET: &[&str] = &[
     "authorization code",
     "recovery code",
     "one time",
+    "user code",
+    "device code",
+    "access key",
+    "apikeys",
+    "approval code",
 ];
 const PASSWORD: &[&str] = &["password", "passwd", "pwd", "passphrase"];
 /// Special-category and criminal-offence data (UK GDPR, Articles 9 and 10).
@@ -496,6 +501,8 @@ const SPECIAL: &[&str] = &[
     "vulnerable",
     "pregnancy",
     "pregnant",
+    "sick",
+    "pronouns",
 ];
 /// A last word that says the column is about the thing, not the thing:
 /// `email_verified`, `phone_type`.
@@ -519,7 +526,7 @@ const FLAG_LAST: &[&str] = &[
 /// `order_status` — but can be the thing itself: `postal_code`,
 /// `sort_code`, `marital_status`, `tax_id`.
 const VALUE_LAST: &[&str] = &["code", "status", "state", "id"];
-const EMAIL: &[&str] = &["email", "emails", "mail", "login"];
+const EMAIL: &[&str] = &["email", "emails", "mail", "login", "reply to"];
 const PHONE: &[&str] = &[
     "phone",
     "phones",
@@ -530,6 +537,7 @@ const PHONE: &[&str] = &[
     "msisdn",
     "cell",
     "mob",
+    "sms number",
 ];
 const FIRST: &[&str] = &[
     "first name",
@@ -598,6 +606,12 @@ const PEOPLE: &[&str] = &[
     "drivers",
     "profile",
     "profiles",
+    "partner",
+    "partners",
+    "attendee",
+    "attendees",
+    "guest",
+    "guests",
 ];
 /// Whose name a `<word>_name` column holds, beside [`PEOPLE`]:
 /// `account_holder_name`, `recipient_name`, `billing_name`.
@@ -624,6 +638,8 @@ const HOLDER: &[&str] = &[
     "billing",
     "shipping",
     "delivery",
+    "reviewer",
+    "attendee",
 ];
 const IDENTIFIER: &[&str] = &[
     "ssn",
@@ -654,6 +670,22 @@ const IDENTIFIER: &[&str] = &[
     "vat number",
     "building society",
     "roll number",
+    "identification",
+    "visa",
+    "work permit",
+    "acc number",
+    "bonus",
+    "commission",
+    "last digits",
+    "last four",
+    "last4",
+    "linkedin",
+    "twitter",
+    "discord",
+    "mastodon",
+    "bluesky",
+    "orcid",
+    "skype",
 ];
 const ADDRESS: &[&str] = &[
     "address", "street", "city", "town", "county", "line 1", "line 2", "line 3", "house", "flat",
@@ -684,6 +716,9 @@ const DEVICE: &[&str] = &[
     "device",
     "imei",
     "fingerprint",
+    "browser",
+    "ja3",
+    "ja4",
 ];
 const LOCATION: &[&str] = &[
     "lat",
@@ -770,8 +805,11 @@ const PERSON_REF: &[&str] = &[
     "payment",
     "subscriber",
     "client",
+    "login",
+    "extern",
+    "external",
 ];
-const REF_LAST: &[&str] = &["id", "ref", "reference", "number", "no"];
+const REF_LAST: &[&str] = &["id", "ref", "reference", "number", "no", "uid"];
 
 fn text_like(base: &str) -> bool {
     matches!(base, "text" | "varchar" | "bpchar" | "citext" | "name")
@@ -864,6 +902,28 @@ fn by_name_and_type(
             "created" | "updated" | "deleted" | "modified"
         )
     {
+        return (Rule::Keep, Origin::Plain);
+    }
+    // A hash of something personal and guessable, a card's last digits or
+    // a holder's name, is the thing: hash it again, so joins still join.
+    // (A password's hash is a password, above.)
+    if matches!(last, "hash" | "digest") && w.len() > 1 && (text || base == "bytea") {
+        // Judged as the bounded text that was hashed.
+        let mut of = Column {
+            name: w[..w.len() - 1].join("_"),
+            ..col.clone()
+        };
+        of.ty.base = "varchar".into();
+        of.ty.max_len = Some(255);
+        of.ty.array_of = None;
+        if let (r, Origin::Default(what)) =
+            by_name_and_type(table_name, &of, extra_personal, extra_plain)
+        {
+            // Free text hashes to no guess; anything else is a hash, kept.
+            if r != Rule::Keep && !what.starts_with("free text") {
+                return (Rule::Hash, Origin::Default(format!("a hash of {what}")));
+            }
+        }
         return (Rule::Keep, Origin::Plain);
     }
     if any(&w, SPECIAL) {
@@ -1769,6 +1829,50 @@ mod tests {
         assert_eq!(rule("u", "api_key", "varchar", Some(64)), Rule::Null);
         assert_eq!(rule("u", "date_of_birth", "date", None), Rule::Year);
         assert_eq!(rule("u", "birth_year", "int4", None), Rule::Null);
+    }
+
+    #[test]
+    fn personal_words_from_open_source_schemas() {
+        for (table, name, base, want) in [
+            ("hr_employee", "identification_id", "varchar", Rule::Null),
+            ("employee", "visa_no", "varchar", Rule::Null),
+            (
+                "employee",
+                "work_permit_expiration_date",
+                "date",
+                Rule::Null,
+            ),
+            ("res_partner_bank", "acc_number", "varchar", Rule::Null),
+            ("salesperson", "bonus", "numeric", Rule::Null),
+            ("salesperson", "commission_pct", "numeric", Rule::Null),
+            ("user_details", "linkedin", "varchar", Rule::Null),
+            ("oauth_device_grants", "user_code", "varchar", Rule::Null),
+            ("settings", "aws_access_key", "varchar", Rule::Null),
+            ("employee", "sick_leave_hours", "int2", Rule::Null),
+            ("user_details", "pronouns", "varchar", Rule::Null),
+            ("employee", "login_id", "varchar", Rule::Email),
+            ("scim_identities", "extern_uid", "varchar", Rule::Hash),
+            ("user_external_ids", "external_id", "varchar", Rule::Hash),
+            (
+                "product_review",
+                "reviewer_name",
+                "varchar",
+                Rule::Name(NamePart::Full),
+            ),
+            ("res_partner", "name", "varchar", Rule::Name(NamePart::Full)),
+            ("mail_message", "reply_to", "varchar", Rule::Email),
+            ("sms_resend", "sms_number", "varchar", Rule::Phone),
+            ("device_log", "browser", "varchar", Rule::Null),
+            ("card_validations", "holder_name_hash", "text", Rule::Hash),
+            ("card_validations", "last_digits_hash", "text", Rule::Hash),
+            ("users", "email_digest", "bytea", Rule::Hash),
+            // A hash of what isn't personal, or a file's, is still kept.
+            ("uploads", "content_hash", "varchar", Rule::Keep),
+            ("attributes", "long_value_hash", "bytea", Rule::Keep),
+            ("lfs_objects", "file_sha_hash", "varchar", Rule::Keep),
+        ] {
+            assert_eq!(rule(table, name, base, Some(255)), want, "{table}.{name}");
+        }
     }
 
     #[test]
