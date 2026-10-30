@@ -48,7 +48,11 @@ note.
   review panel, 2026-10-29.
 - **Words for `value`, `data`, `metadata`.** A bounded `varchar` named
   so is kept, judged by its name; the panel found one holding personal
-  data. Decide whether they are free text by default.
+  data. Decide whether they are free text by default. Open-source
+  schemas add two more: Keycloak's `user_attribute.value` (a user's
+  phone, address…) and `realm_smtp_config.value` (the SMTP password),
+  both bounded and kept; a `value` on a `*_attribute`/`*_config` table
+  whose name has a people or mail word may be the rule. 2026-10-30.
 - **Non-English and non-UK vocabulary**: `nom`, `prenom`, `telefon`,
   PESEL, CPF, BSN… A preset per language or country, chosen in the rules
   file. (privacy.md says the words are English and British.)
@@ -58,7 +62,28 @@ note.
   referencing a `marital_status` table keeps the id (the lookup's `_id` is a
   key), while `gender`/`ethnicity` ids are hashed; neither hides much
   when the lookup has five rows. Decide what a FAMILY or SPECIAL foreign
-  key becomes. Found on a real schema, 2026-10-30.
+  key becomes. Found on a real schema, 2026-10-30. The same in Odoo:
+  `hr_employee.country_of_birth` references `res_country.id`, takes its
+  keep, and so keeps a birthplace a name alone would NULL.
+- **A person's id with no foreign key.** Keycloak's `event_entity.user_id`
+  has none, so it is hashed while every declared reference keeps
+  `user_entity.id`: the masked copy's events no longer join to users.
+  Synapse is the other way: `users.name` gets a fake name, its ~60
+  `user_id` columns a hash. Decide whether an undeclared `*user_id` joins
+  the group of a column it matches by type and name. 2026-10-30.
+- **Card expiry and other table-aware words.** `exp_month`/`exp_year` on
+  a card table, a bare `code` on a TOTP table, a bare `number` on an SMS
+  table, `rate` on a pay table: kept, since the column's words alone
+  aren't personal. Table words would settle them. 2026-10-30.
+- **Classifier noise left from the open-source run (2026-10-30).** `tax`
+  and `pay` NULL amounts (`amount_tax`, `pay_invoices_online`);
+  `license` a module's licence; `fname` gives Odoo's
+  `ir_attachment.store_fname` a fake first name (every attachment's path
+  breaks); location words (`geo_status_timeout`, `age_value`); an integer
+  or interval named for a secret (`access_token_lifespan`) is still
+  NULLed; `client` makes an OAuth client's `name` a person's; Odoo's
+  `ir_*` metadata is NULLed by type and breaks the restored app (a preset,
+  like Rails').
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.
