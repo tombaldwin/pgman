@@ -54,6 +54,18 @@ note.
   file. (privacy.md says the words are English and British.)
 - **A unique integer under `hash`** can collide (a keyed hash modulo the
   type's range); a keyed permutation would keep it unique.
+- **A person's link to a lookup table.** `customer_maritalstatus`
+  referencing a `marital_status` table keeps the id (the lookup's `_id` is a
+  key), while `gender`/`ethnicity` ids are hashed; neither hides much
+  when the lookup has five rows. Decide what a FAMILY or SPECIAL foreign
+  key becomes. Found on a real schema, 2026-10-30.
+- **`pgman query` against an environment.** It takes `--dsn` only, so
+  checking a column's type on an environment behind a bastion and a
+  secret means the TUI. A `<target>` like dump's. Found 2026-10-30.
+- **Flaky: `a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout`.**
+  `CREATE INDEX CONCURRENTLY` waits for every open transaction; in the
+  full parallel suite it failed once (2026-10-30), alone it passes. Give
+  it its own database or a serial group.
 
 ### Environments overview, like ebman's main screen (Tom, 2026-10-19)
 One table of every database in an environment, replicas included, each
