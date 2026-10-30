@@ -20,6 +20,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   camelCase name (`staffcomment`). A free-text word no longer masks a
   number, date or boolean (`note_events`, a `failure_reason` code), which
   can't hold free text.
+- Masking keeps settings named for a personal thing: a feature switched
+  off (`emails_disabled`, no longer read as disability), a theme, colour,
+  layout, template, style or mode (`login_theme`, `mobile_view_mode`),
+  and a boolean about a signature. An email's subject or body is NULLed
+  as free text, not given a fake address.
 - Masking knows more personal words, found by running it over GitLab's,
   Keycloak's, Odoo's, Synapse's and AdventureWorks' schemas: an
   `identification_id` (a national ID number), a visa or work permit, an

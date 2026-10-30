@@ -485,7 +485,6 @@ const SPECIAL: &[&str] = &[
     "medical",
     "diagnosis",
     "disability",
-    "disabled",
     "union",
     "political",
     "politics",
@@ -519,6 +518,13 @@ const FLAG_LAST: &[&str] = &[
     "optin",
     "valid",
     "confirmed",
+    "theme",
+    "color",
+    "colour",
+    "layout",
+    "template",
+    "style",
+    "mode",
 ];
 /// A last word that is usually a code, not the thing — `currency_code`,
 /// `order_status` — but can be the thing itself: `postal_code`,
@@ -955,10 +961,12 @@ fn by_name_and_type(
     {
         return (Rule::Keep, Origin::Plain);
     }
-    if any(&w, EMAIL) && text {
+    // An email's subject or body is free text, below.
+    let about_text = FREE_TEXT.contains(&last);
+    if any(&w, EMAIL) && text && !about_text {
         return (Rule::Email, why("an email address, by name"));
     }
-    if any(&w, PHONE) && text {
+    if any(&w, PHONE) && text && !about_text {
         return (Rule::Phone, why("a phone number, by name"));
     }
     if text {
@@ -1016,7 +1024,8 @@ fn by_name_and_type(
     if any(&w, AGE) {
         return (Rule::Null, why("an age, by name"));
     }
-    if any(&w, LOCATION) || any(&w, IMAGE) || any(&w, FAMILY) {
+    // A flag can't be a photo: require_signature.
+    if any(&w, LOCATION) || (any(&w, IMAGE) && base != "bool") || any(&w, FAMILY) {
         return (Rule::Null, why("about a person, by name"));
     }
     if ACTOR_LAST.contains(&last) || any(&w, ACTOR) {
@@ -1878,6 +1887,26 @@ mod tests {
             ("lfs_objects", "file_sha_hash", "varchar", Rule::Keep),
         ] {
             assert_eq!(rule(table, name, base, Some(255)), want, "{table}.{name}");
+        }
+    }
+
+    #[test]
+    fn settings_about_personal_things_are_kept() {
+        for (name, base, want) in [
+            ("emails_disabled", "bool", Rule::Keep),
+            ("mentions_disabled", "bool", Rule::Keep),
+            ("login_theme", "varchar", Rule::Keep),
+            ("email_primary_color", "varchar", Rule::Keep),
+            ("mobile_view_mode", "varchar", Rule::Keep),
+            ("require_signature", "bool", Rule::Keep),
+            ("mail_subject", "varchar", Rule::Null),
+            ("email_body", "varchar", Rule::Null),
+            // Still the thing itself.
+            ("disability", "varchar", Rule::Null),
+            ("signature", "varchar", Rule::Null),
+            ("contact_email", "varchar", Rule::Email),
+        ] {
+            assert_eq!(rule("settings", name, base, Some(255)), want, "{name}");
         }
     }
 
