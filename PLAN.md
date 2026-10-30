@@ -64,6 +64,16 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 
 ## Window — after v0.3.0
 
+### The first masked dump of a real schema (2026-10-30)
+
+On Tom's "staging": `masking show`, a masked dump, a restore and `copies
+rm` against a client's demo environment, with the journal to CloudWatch.
+Found and fixed on main, unreleased: folded camelCase names kept as they
+were (dates of birth, phones, bank and passport numbers: a leak), a
+masked value a CHECK constraint refuses stopping the restore, and `copies
+rm`'s unexplained "password missing". CloudWatch carried every event.
+Next: release the fixes (v0.4.2, on Tom's go).
+
 ### v0.4.1 released (2026-10-29)
 
 Compatibility fixes from checking pgman against PostgreSQL 10–17,
