@@ -23,6 +23,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   validated CHECK constraint names when its masked value may fail it
   (`wage > 0` on a nulled `NOT NULL` wage became 0): the restore stopped
   part-way at the first such row, after the whole dump.
+- `pgman copies rm` names the database it keeps and why; one restored
+  through a URL with a password in it said only "invalid configuration:
+  password missing".
 
 ## [0.4.1] — 2026-10-29
 

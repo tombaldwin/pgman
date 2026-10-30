@@ -404,7 +404,10 @@ secrets.
   drops each database pgman restored from it — only one on this machine,
   not protected, whose comment names this copy, so one made since under
   the same name is kept and said so (unless someone gave it that comment
-  too); sessions on it need `--terminate`.
+  too); sessions on it need `--terminate`. A database restored through a
+  URL with a password in it is kept, and said so: pgman keeps no
+  passwords, so restore through a `connections.toml` entry with
+  `password_env` for `copies rm` to reach it again.
 - `pgman copies report` is the whole account, oldest first: what was
   taken, why, where it was restored, and when it was deleted. `--format
   markdown` pastes into a ticket; `--format json` is for a script.

@@ -983,6 +983,26 @@ pub fn may_drop(
 
 /// Drop `database` (restored from `copy` through `target`) if
 /// [`may_drop`] says so; what happened.
+/// Why a restored database was kept, worded for `copies rm`: a restore
+/// through a URL with a password in it can't be reached again, since
+/// pgman keeps no passwords. Pure.
+fn kept(database: &str, server: &str, why: &str) -> String {
+    if why.starts_with("no password for ") && !why.contains("password_env") {
+        let who = why
+            .trim_start_matches("no password for ")
+            .split([',', ' '])
+            .next()
+            .map(|w| w.trim_end_matches(':'))
+            .unwrap_or("");
+        return format!(
+            "kept {database} on {server}: no password for {who}. A password in the restore's URL \
+             isn't kept, so drop it yourself (DROP DATABASE {database}), or restore through a \
+             connections.toml entry with password_env, which copies rm can use again"
+        );
+    }
+    format!("kept {database} on {server}: {why}")
+}
+
 async fn drop_restored(
     copy: &str,
     target: &str,
@@ -1007,7 +1027,9 @@ async fn drop_restored(
     let opened = crate::pgtool::open(&resolved).await?;
     let mut dsn = opened.dsn.clone();
     dsn.dbname = "postgres".into();
-    let client = crate::conn::connect_via_writable(dsn, opened.via, 10_000).await?;
+    let client = crate::conn::connect_via_writable(dsn, opened.via, 10_000)
+        .await
+        .map_err(|e| crate::pgtool::explain_connect(e, &resolved))?;
     if !crate::query::server::database_exists(&client, database).await? {
         return Ok(format!("{database} was already gone"));
     }
@@ -1171,7 +1193,7 @@ pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
                             e.why = Some(RM.into());
                             warn = warn.or(journal::append(&e));
                         }
-                        Err(why) => println!("kept: {why}"),
+                        Err(why) => println!("{}", kept(&r.database, &r.server, &why)),
                     }
                 }
             }
@@ -1189,6 +1211,25 @@ pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kept_database_is_named_and_a_lost_password_explained() {
+        assert_eq!(
+            kept("ledger_copy", "127.0.0.1:55432", "has 2 session(s) connected: close them, or --terminate"),
+            "kept ledger_copy on 127.0.0.1:55432: has 2 session(s) connected: close them, or --terminate"
+        );
+        let why = "no password for postgres@127.0.0.1:55432, and the server asks for one. Put it in the URL";
+        let said = kept("ledger_copy", "127.0.0.1:55432", why);
+        assert!(said.starts_with("kept ledger_copy on 127.0.0.1:55432: no password for postgres@127.0.0.1:55432. A password in the restore's URL isn't kept"), "{said}");
+        assert!(said.contains("DROP DATABASE ledger_copy"), "{said}");
+        // An unset password_env says so as it is.
+        let why =
+            "no password for app@127.0.0.1:55432: password_env names $LEDGER_PW, which is not set";
+        assert_eq!(
+            kept("ledger_copy", "s", why),
+            format!("kept ledger_copy on s: {why}")
+        );
+    }
 
     fn args(s: &[&str]) -> Vec<String> {
         s.iter().map(|a| a.to_string()).collect()
