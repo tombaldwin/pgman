@@ -296,6 +296,15 @@ const INSIDE: &[&str] = &[
     "confirmed",
     "consent",
     "optin",
+    "comment",
+    "comments",
+    "description",
+    "remark",
+    "remarks",
+    "message",
+    "messages",
+    "narrative",
+    "feedback",
 ];
 
 /// Every word the lists name.
@@ -1561,6 +1570,9 @@ mod tests {
             ("payee_bankaccountnumber", "varchar", Rule::Null),
             ("payee_passportnumber", "varchar", Rule::Null),
             ("customer_basepostcode", "varchar", Rule::Postcode),
+            ("ticket_staffcomment", "varchar", Rule::Null),
+            ("order_customercomments", "varchar", Rule::Null),
+            ("job_workdescription", "varchar", Rule::Null),
             // Not personal, and not made so by a word inside them.
             ("order_cancellationreasoncode", "varchar", Rule::Keep),
             ("order_shippingmethod", "varchar", Rule::Keep),
@@ -1568,6 +1580,7 @@ mod tests {
             ("member_emailenabled", "bool", Rule::Keep),
             ("member_contactbyemail", "bool", Rule::Keep),
             ("document_contenttype", "varchar", Rule::Keep),
+            ("sms_messagetype", "varchar", Rule::Keep),
         ] {
             assert_eq!(rule("t", name, base, Some(64)), want, "{name}");
         }
