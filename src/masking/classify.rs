@@ -1222,6 +1222,15 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             }
         }
     }
+    // A CHECK bounding a column's length is a length too: text with
+    // char_length(name) <= 63 fits its masked values in 63.
+    for k in catalog.checks.iter().filter(|k| k.columns.len() == 1) {
+        if let Some(n) = length_bound(&k.definition, &k.columns[0]) {
+            let root = groups.find(&(k.table.clone(), k.columns[0].clone()));
+            let e = fit_of.entry(root).or_insert(n);
+            *e = (*e).min(n);
+        }
+    }
     // What a joined group must keep as one: unique if any member is (so
     // every member's fake carries the same suffix), NOT NULL if any is (so
     // a NULLed group is hashed, or the referencing side's empty value
@@ -1323,6 +1332,9 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 Rule::Null => "the empty value standing in for NULL".to_string(),
                 r => r.name().to_string(),
             };
+            if masked_shape(d).is_some_and(|v| sure_to_pass(&k.definition, &d.column, &v)) {
+                continue;
+            }
             let mut def = k.definition.clone();
             if def.chars().count() > 120 {
                 def = def.chars().take(119).collect::<String>() + "…";
@@ -1338,6 +1350,77 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
         tables,
         large_objects: rules.large_objects_kept,
         problems,
+    }
+}
+
+/// A value of the shape `d`'s rule makes, where a CHECK can only look at
+/// its shape: the empty value standing in for NULL, or a text hash (hex
+/// digits, as long as the column's fit). Pure.
+fn masked_shape(d: &Decision) -> Option<String> {
+    match d.rule {
+        Rule::Null => empty_value(&d.base, d.enum_first.as_deref(), d.array),
+        Rule::Hash if text_like(&d.base) && !d.array => {
+            Some("0".repeat(d.fit.unwrap_or(64).clamp(16, 64)))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `value` in `column` passes the CHECK `definition` for certain,
+/// from the few one-clause forms whose answer needs no evaluating: an
+/// upper bound on its length or cardinality, and a JSON object's type.
+/// Anything else may fail. Pure.
+pub fn sure_to_pass(definition: &str, column: &str, value: &str) -> bool {
+    if let Some(n) = length_bound(definition, column) {
+        return value.chars().count() <= n;
+    }
+    // An empty array has no elements, and `{}` is an object.
+    let Some(clause) = definition
+        .strip_prefix("CHECK ((")
+        .and_then(|d| d.strip_suffix("))"))
+    else {
+        return false;
+    };
+    let on = |f: &str| {
+        [column.to_string(), format!("\"{column}\"")]
+            .iter()
+            .find_map(|c| clause.strip_prefix(&format!("{f}({c}) ")))
+    };
+    if let Some(rest) = on("cardinality") {
+        return value == "{}"
+            && rest
+                .strip_prefix("<= ")
+                .is_some_and(|n| n.parse::<usize>().is_ok());
+    }
+    if let Some(rest) = on("octet_length") {
+        return rest
+            .strip_prefix("<= ")
+            .and_then(|n| n.parse::<usize>().ok())
+            .is_some_and(|n| value.len() <= n);
+    }
+    on("jsonb_typeof").is_some_and(|rest| value == "{}" && rest == "= 'object'::text")
+}
+
+/// The most characters a CHECK `definition` of one clause lets `column`
+/// hold, if it is an upper bound on its `char_length` or `length`. Pure.
+pub fn length_bound(definition: &str, column: &str) -> Option<usize> {
+    let clause = definition.strip_prefix("CHECK ((")?.strip_suffix("))")?;
+    let rest = ["char_length(", "length("]
+        .iter()
+        .find_map(|f| clause.strip_prefix(f))?;
+    let (arg, bound) = rest.split_once(") ")?;
+    let arg = arg.strip_suffix("::text").unwrap_or(arg);
+    let arg = arg
+        .strip_prefix('(')
+        .and_then(|a| a.strip_suffix(')'))
+        .unwrap_or(arg);
+    if arg != column && arg != format!("\"{column}\"") {
+        return None;
+    }
+    match bound.split_once(' ')? {
+        ("<=", n) => n.parse().ok(),
+        ("<", n) => n.parse::<usize>().ok()?.checked_sub(1),
+        _ => None,
     }
 }
 
@@ -1778,6 +1861,84 @@ mod tests {
     }
 
     #[test]
+    fn a_check_only_an_upper_bound_or_an_objects_type_is_sure_to_pass() {
+        let hash = "0".repeat(64);
+        for (def, value) in [
+            ("CHECK ((char_length(title) <= 255))", ""),
+            ("CHECK ((char_length(title) <= 255))", hash.as_str()),
+            ("CHECK ((char_length(title) < 65))", hash.as_str()),
+            ("CHECK ((length((title)::text) <= 64))", hash.as_str()),
+            ("CHECK ((octet_length(title) <= 1024))", ""),
+            ("CHECK ((char_length(\"title\") <= 10))", ""),
+            ("CHECK ((cardinality(title) <= 100))", "{}"),
+            ("CHECK ((jsonb_typeof(title) = 'object'::text))", "{}"),
+        ] {
+            assert!(sure_to_pass(def, "title", value), "{def} {value:?}");
+        }
+        for (def, value) in [
+            // Too long for it, or a lower bound, or another column.
+            ("CHECK ((char_length(title) <= 32))", hash.as_str()),
+            ("CHECK ((char_length(title) < 64))", hash.as_str()),
+            ("CHECK ((char_length(title) >= 1))", ""),
+            ("CHECK ((char_length(other) <= 255))", ""),
+            ("CHECK ((octet_length(title) = 20))", ""),
+            // More than one clause, or one pgman doesn't read.
+            (
+                "CHECK (((char_length(title) <= 255) AND (title <> ''::text)))",
+                "",
+            ),
+            ("CHECK ((jsonb_typeof(title) = 'array'::text))", "{}"),
+            ("CHECK ((title > (0)::numeric))", "0"),
+            ("CHECK ((cardinality(title) <= 100))", ""),
+            ("CHECK ((title)::text !~~ '% %'::text)", ""),
+        ] {
+            assert!(!sure_to_pass(def, "title", value), "{def} {value:?}");
+        }
+    }
+
+    #[test]
+    fn a_check_on_a_columns_length_bounds_it() {
+        let b = |def: &str| length_bound(def, "name");
+        assert_eq!(b("CHECK ((char_length(name) <= 63))"), Some(63));
+        assert_eq!(b("CHECK ((char_length(name) < 64))"), Some(63));
+        assert_eq!(b("CHECK ((length((name)::text) <= 20))"), Some(20));
+        assert_eq!(b("CHECK ((char_length(\"name\") <= 8))"), Some(8));
+        assert_eq!(b("CHECK ((char_length(name) >= 1))"), None);
+        assert_eq!(b("CHECK ((char_length(other) <= 63))"), None);
+        assert_eq!(b("CHECK ((octet_length(name) = 20))"), None);
+        assert_eq!(
+            b("CHECK (((char_length(name) <= 63) AND (name <> ''::text)))"),
+            None
+        );
+        // So a hash of it fits, and stops nothing.
+        let cat = Catalog {
+            tables: vec![table(
+                "buckets",
+                vec![Column {
+                    unique: true,
+                    ..c("customer_ref", "text", None)
+                }],
+            )],
+            checks: vec![Check {
+                table: "public.buckets".into(),
+                name: "c_len".into(),
+                columns: vec!["customer_ref".into()],
+                definition: "CHECK ((char_length(customer_ref) <= 40))".into(),
+            }],
+            ..Default::default()
+        };
+        let p = plan(&cat, &RuleSet::default());
+        let d = &p.tables[0].columns[0];
+        assert_eq!(
+            (&d.rule, d.fit),
+            (&Rule::Hash, Some(40)),
+            "{:?}",
+            p.problems
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+    }
+
+    #[test]
     fn a_masked_value_under_a_check_constraint_is_a_problem() {
         let not_null = |name: &str, base: &str| Column {
             ty: ty(base, None, true),
@@ -1830,6 +1991,24 @@ mod tests {
         let dropped = parse("[tables.pay_rates]\nrows = \"drop\"\n");
         let p = plan(&cat(vec![not_null("wage", "numeric")], &["wage"]), &dropped);
         assert!(p.problems.is_empty(), "{:?}", p.problems);
+        // An empty string under an upper bound on its length passes.
+        let bounded = |def: &str| Catalog {
+            checks: vec![Check {
+                definition: def.into(),
+                ..cat(vec![], &["notes"]).checks[0].clone()
+            }],
+            ..cat(vec![not_null("notes", "text")], &["notes"])
+        };
+        let p = plan(
+            &bounded("CHECK ((char_length(notes) <= 255))"),
+            &RuleSet::default(),
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        let p = plan(
+            &bounded("CHECK ((char_length(notes) >= 1))"),
+            &RuleSet::default(),
+        );
+        assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
     }
 
     #[test]

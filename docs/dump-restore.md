@@ -343,7 +343,10 @@ transformer on an array, and a masked value that a validated `CHECK`
 constraint may refuse (the empty value standing in for `NULL`, a hash, a
 year: pgman can't evaluate the constraint, so it names it, and a fixed
 value that passes, or keep, settles it). The realistic fakes are left to
-pass.
+pass, and so is what passes for certain: anything under an upper bound
+on its length or cardinality, and `{}` where a JSON object is asked
+for. A bound on a text column's length is taken as its length, as
+`varchar(n)` is.
 
 - `pgman masking show <target>` lists every column's rule and why,
   NULLed ones first, each with the line that keeps it.

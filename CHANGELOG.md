@@ -6,6 +6,19 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- A CHECK constraint that only bounds a column's length, an array's
+  cardinality, or asks for a JSON object no longer stops a masked dump:
+  the empty value and a hash pass it for certain. A bound on a text
+  column's length is taken as its length, so a hash or a fake fits it.
+  On GitLab's schema this takes `pgman masking check` from 850 problems
+  to 87 real ones.
+- Masking keeps a date, time or boolean column named for a password or
+  secret (`password_changed_at`, `token_expires`), which can't hold one.
+- Masking finds comment, description, message and similar words inside
+  a folded camelCase name (`staffcomment`).
+
 ## [0.4.2] — 2026-10-30
 
 ### Fixed
