@@ -72,7 +72,7 @@ Found and fixed on main, unreleased: folded camelCase names kept as they
 were (dates of birth, phones, bank and passport numbers: a leak), a
 masked value a CHECK constraint refuses stopping the restore, and `copies
 rm`'s unexplained "password missing". CloudWatch carried every event.
-Next: release the fixes (v0.4.2, on Tom's go).
+Released as v0.4.2 on Tom's go (2026-10-30).
 
 ### v0.4.1 released (2026-10-29)
 
