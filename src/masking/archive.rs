@@ -35,6 +35,24 @@ pub struct Header {
     /// Taken from a protected target.
     #[serde(default)]
     pub protected: bool,
+    /// How every file but this header is encrypted, when it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal: Option<crate::crypt::Seal>,
+}
+
+impl Header {
+    /// What a KMS wrap of this dump's key is bound to: the header's fields,
+    /// so a header edited to say something else can't be opened. Pure.
+    pub fn context(&self) -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::from([
+            ("pgman:copy".to_string(), self.copy.clone()),
+            ("pgman:label".to_string(), self.label.clone()),
+            ("pgman:database".to_string(), self.database.clone()),
+            ("pgman:created".to_string(), self.created.to_string()),
+            ("pgman:masked".to_string(), self.masked.to_string()),
+            ("pgman:protected".to_string(), self.protected.to_string()),
+        ])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,6 +335,7 @@ mod tests {
                 created: 0,
                 masked: true,
                 protected: true,
+                seal: None,
             },
             schema_sha256: String::new(),
             tables: vec![TableEntry {

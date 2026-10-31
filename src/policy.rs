@@ -247,10 +247,12 @@ pub fn gate(policy: &Policy, kind: Kind, via: Via, name: &str) -> Result<Gate, S
                      copies unencrypted; --schema-only needs neither"
                 ))
             }
-            (Some(crate::crypt::Encrypt::None), Kind::Raw) => return Err(format!(
+            (Some(crate::crypt::Encrypt::None), Kind::Raw) => {
+                return Err(format!(
                 "{name} is protected and says encrypt = \"none\", which is for masked copies: a \
                      raw copy of it is always encrypted. Give a kms: or age: key"
-            )),
+            ))
+            }
             _ => {}
         }
     }

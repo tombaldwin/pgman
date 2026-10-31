@@ -630,8 +630,8 @@ pub struct Ready {
     server: String,
     pub plan: Plan,
     notes: Vec<String>,
-    /// A masked dump: its checked manifest.
-    archive: Option<crate::masking::archive::Manifest>,
+    /// A masked dump: opened, its manifest checked.
+    archive: Option<crate::masked::OpenArchive>,
 }
 
 impl Ready {
@@ -753,7 +753,7 @@ impl Ready {
                 (errors, errors_text)
             }
             Some(m) => {
-                let schema = opts.file.join(crate::masking::archive::SCHEMA);
+                let schema = m.schema.clone();
                 let mut errors: Option<u64> = None;
                 let mut text = String::new();
                 for (section, then) in [("pre-data", true), ("data", false), ("post-data", false)] {
@@ -888,7 +888,7 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     let masked = if crate::masked::is_archive(&opts.file) {
         let dir = opts.file.clone();
         Some(
-            tokio::task::spawn_blocking(move || crate::masked::checked_manifest(&dir))
+            tokio::task::spawn_blocking(move || crate::masked::open_archive(&dir))
                 .await
                 .map_err(|e| format!("checksum task failed: {e}"))??,
         )
@@ -896,7 +896,7 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
         None
     };
     let listed = match &masked {
-        Some(_) => opts.file.join(crate::masking::archive::SCHEMA),
+        Some(a) => a.schema.clone(),
         None => opts.file.clone(),
     };
     let listing = tokio::process::Command::new(&tool)
@@ -946,6 +946,13 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
         return Err(format!("{server} is a standby; a restore needs a primary"));
     }
     let mut notes = Vec::new();
+    if let Some(seal) = masked.as_ref().and_then(|a| a.header.seal.as_ref()) {
+        notes.push(format!(
+            "{}; its schema was decrypted to a private file in pgman's cache for pg_restore, \
+             removed when the restore ends",
+            seal.describe()
+        ));
+    }
     let server_major = Major::from_num(facts.version_num);
     if let (Some(from), Some(to)) = (archive.dumped_from, server_major) {
         if from > to {

@@ -139,6 +139,9 @@ pub struct Opts {
     pub masked: Option<bool>,
     /// `--masking FILE`: the rules, in place of the project's.
     pub masking: Option<PathBuf>,
+    /// What the dump is encrypted to, and where a KMS key is used: the
+    /// environment's `encrypt`, set from the policy, never a flag.
+    pub encrypt: Option<(crate::crypt::Encrypt, crate::aws_cli::AwsScope)>,
 }
 
 /// Parse the arguments after `pgman dump`. Pure.
@@ -211,6 +214,7 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
         ticket,
         masked,
         masking,
+        encrypt: None,
     })
 }
 
@@ -1243,18 +1247,18 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         crate::util::ensure_private_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         opts.out = Some(dir);
     }
-    let opts = &opts;
     let via = if tty {
         crate::policy::Via::Terminal
     } else {
         crate::policy::Via::NoTerminal
     };
-    let kind = kind(opts, crate::policy::default_kind(&policy));
+    let kind = kind(&opts, crate::policy::default_kind(&policy));
     let name = resolved
         .environment
         .clone()
         .unwrap_or_else(|| resolved.label.clone());
     let gate = crate::policy::gate(&policy, kind, via, &name)?;
+    opts.encrypt = encrypt_for(&policy);
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let place_note = place_problem(
         &place_dir(opts.out.as_deref(), &cwd),
@@ -1309,7 +1313,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let say = |line: String| eprintln!("pgman dump: {line}");
     let mut result = if kind == crate::policy::Kind::Masked {
         crate::masked::run(
-            opts,
+            &opts,
             resolved,
             &entry.copy,
             &cwd,
@@ -1319,7 +1323,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         )
         .await
     } else {
-        run(opts, resolved, &say).await
+        run(&opts, resolved, &say).await
     };
     let warn = journal_dump(&entry, env.as_deref(), &database, &label, &result);
     let unsent = crate::journal_send::flush_note().await;
@@ -1331,6 +1335,17 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         done.notes.extend(expired_note(&entry.copy));
     }
     result
+}
+
+/// What a dump under `policy` is encrypted to: its environment's
+/// `encrypt`, any kind of dump; `none`, or nothing set, is nothing. Pure.
+pub fn encrypt_for(
+    policy: &crate::policy::Policy,
+) -> Option<(crate::crypt::Encrypt, crate::aws_cli::AwsScope)> {
+    match &policy.encrypt {
+        None | Some(crate::crypt::Encrypt::None) => None,
+        Some(e) => Some((e.clone(), policy.encrypt_scope.clone())),
+    }
 }
 
 /// The directory a dump to `out` lands in, for [`place_problem`]: `out`

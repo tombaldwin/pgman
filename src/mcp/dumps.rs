@@ -306,6 +306,7 @@ impl Server {
             ticket: None,
             masked: arg_bool(args, "masked").then_some(true),
             masking: None,
+            encrypt: None,
         };
         let mut resolved = crate::dump::resolve(&opts).await?;
         if let Some(why) = agent_tunnel(&target, &resolved) {
@@ -333,6 +334,7 @@ impl Server {
             .clone()
             .unwrap_or_else(|| resolved.label.clone());
         let gate = crate::policy::gate(&policy, kind, crate::policy::Via::Mcp, &name)?;
+        opts.encrypt = crate::dump::encrypt_for(&policy);
         let masked = kind == crate::policy::Kind::Masked;
         let out = if masked {
             crate::masked::agent_out(&self.cwd, file.as_deref())?

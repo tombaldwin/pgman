@@ -103,6 +103,35 @@ impl AwsScope {
     }
 }
 
+/// Run `aws` with `args` and `input` on its stdin (a secret goes this way,
+/// never as an argument); stdout on success. Blocking.
+pub fn run_with_input(args: &[String], input: &[u8]) -> Result<String, String> {
+    use std::io::Write;
+    let mut child = Command::new("aws")
+        .args(args)
+        .env("AWS_PAGER", "")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run the aws CLI ({e}); is it installed and on PATH?"))?;
+    let mut stdin = child.stdin.take().ok_or("the aws CLI's stdin")?;
+    let input = input.to_vec();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("the aws CLI: {e}"))?;
+    let _ = writer.join();
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err: String = err.trim().chars().take(500).collect();
+        return Err(format!("aws {} failed: {err}", args[..2].join(" ")));
+    }
+    String::from_utf8(out.stdout).map_err(|_| "the aws CLI returned non-UTF-8 output".to_string())
+}
+
 /// Run `aws` with `args`; stdout on success. A failure carries the CLI's
 /// own stderr (trimmed, capped), which names the problem — expired SSO,
 /// access denied, no such resource — and never holds a secret value.
