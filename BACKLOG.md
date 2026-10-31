@@ -90,6 +90,12 @@ note.
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.
+- **CI's Postgres crashed mid-suite once (2026-10-31, the v0.4.3 release
+  commit).** "the database system is in recovery mode", 42 integration
+  tests failed together while the 2M-row signalled-restore test ran; the
+  rerun passed. A backend died abnormally; docker's 64 MB `/dev/shm`
+  (parallel query, SIGBUS) is a guess, not shown. Capture the container's
+  log on failure in CI, then decide (`shm_size`, or fewer rows).
 - **Flaky: `a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout`.**
   `CREATE INDEX CONCURRENTLY` waits for every open transaction; in the
   full parallel suite it failed once (2026-10-30), alone it passes. Give
