@@ -264,17 +264,22 @@ the people in it. No rules file is needed for the first one.
   the type's empty value (`''`, `{}`, `false`, an enum's first label),
   or a hash where the column must stay unique or a reference to it
   can't be NULL. A column that references another takes its rule, so
-  joins still join, unless its name says what it points at is personal
-  (`gender_id`, `country_of_birth` into a lookup table): it is NULLed,
-  and where it can't be NULL the plan asks the rules file to decide; every column joined that way fits the shortest of
+  joins still join, unless its name says what it points at is personal:
+  a family detail or a birth (`country_of_birth`, `spouse_id`, into a
+  lookup or at another person), or a special category into a lookup
+  named for it (`gender_id` into `genders`). It is NULLed, and where it
+  can't be NULL the plan asks the rules file to decide; every column joined that way fits the shortest of
   them, and is unique if one of them is (a unique name gets a tag, kept
   when it is shortened). Migration history is kept (Flyway, Liquibase,
   Rails, Django, Alembic, Knex), and so are Odoo's models, views and
   menus (not its attachments, settings or mail servers); Spring
-  Session, Django session and OAuth token tables are dumped empty, an Envers
+  Session, Django session, Keycloak session and OAuth token tables are
+  dumped empty, an Envers
   `_aud` table is masked as its base table is. Large objects are left
   out. The words are English, and the identifiers British (NI number,
-  NHS number, sort code): name your own in `[classify]`.
+  NHS number, sort code): name your own in `[classify]`. A key-value
+  table that holds no one's details (`property_features.value`) is kept
+  by a rule on that table, with its reason.
 - **The summary names every masked column**, by rule, every NULLed one,
   and every one the rules file kept, so nothing is lost or kept without
   saying; a copy with nothing masked says that too.
