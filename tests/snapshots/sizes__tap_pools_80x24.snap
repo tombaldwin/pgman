@@ -1,6 +1,6 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
+assertion_line: 255
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X · released YYYY-MM-DD ──────────────╮╭───────────────────────────╮
@@ -12,8 +12,8 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: pools · v cycle · … ╮   │
-│  │  CONNS   PEAK   CALLS    ERR        BUSY        P95  POOL · APP       │   │
-│  │      3      1      11      0       8.2ms      2.3ms  primary          │   │
+│  │  CONNS   PEAK   CALLS    ERR        P95  POOL · APP                   │   │
+│  │      3      1      11      0      2.3ms  primary · billing-api        │   │
 ╰──│                                                                       │───╯
 ╭[ │                                                                       │───╮
 │nu│                                                                       │   │

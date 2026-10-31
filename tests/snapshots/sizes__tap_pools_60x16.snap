@@ -1,14 +1,14 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
+assertion_line: 255
 expression: dump(&buf)
 ---
  pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │  CONNS   PEAK   CALLS    ERR        BUSY        P95…│  │
-│ │      3      1      11      0       8.2ms      2.3ms…│  │
+│ │  CONNS   PEAK   CALLS    ERR  POOL · APP            │  │
+│ │      3      1      11      0  primary · billing-api │  │
 ╰─│                                                     │──╯
 ╭[│                                                     │──╮
 │n│                                                     │  │

@@ -18,6 +18,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The tap monitor's status says a sender's drop count is events
   "dropped in the app, never sent", not "JAR backpressure": OTLP
   senders never report one, and pgman's own drops are the footer's.
+- The tap's transactions and pools views drop numeric columns on a
+  narrow screen instead of their text column: at 60 columns a row
+  ended on a bare `…`, and at 80 the transactions view read `con…` and
+  the pools view showed the pool under a `POOL · APP` header with no
+  app.
 
 ## [0.4.4] — 2026-10-31
 

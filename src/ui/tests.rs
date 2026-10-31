@@ -2801,6 +2801,50 @@ fn no_tap_view_row_is_cut_by_the_border_without_an_ellipsis() {
     }
 }
 
+/// The demo's tap monitor in `view` at `w`x`h`, one string per screen
+/// row.
+fn tap_view_screen(view: crate::app::TapView, w: u16, h: u16) -> Vec<String> {
+    let mut a = crate::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = crate::app::Mode::TapMonitor;
+    a.tap_nav.view = view;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| draw(f, &mut a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..h)
+        .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+        .collect()
+}
+
+/// At 60 columns the transactions and pools views' fixed numeric
+/// columns filled the row, which ended on a bare `…`; at 80 the
+/// transactions view's text column read `con…` and the pools view's
+/// showed the pool under a `POOL · APP` header. Numeric columns now
+/// give way, so the text column names the transaction and its SQL, the
+/// pool and its app.
+#[test]
+fn tap_transactions_and_pools_keep_their_text_column_at_60_and_80() {
+    use crate::app::TapView;
+    for (w, h) in [(60u16, 16u16), (80, 24)] {
+        let rows = tap_view_screen(TapView::Transactions, w, h);
+        let header = rows.iter().find(|r| r.contains("STATE")).unwrap();
+        assert!(header.contains("TXN / CONN · LAST SQL"), "{w}: {header}");
+        assert!(
+            rows.iter().any(|r| r.contains("conn-7#311 · select id")),
+            "{w}x{h}: {rows:#?}"
+        );
+
+        let rows = tap_view_screen(TapView::Pools, w, h);
+        let header = rows.iter().find(|r| r.contains("PEAK")).unwrap();
+        assert!(header.contains("POOL · APP"), "{w}: {header}");
+        assert!(
+            rows.iter().any(|r| r.contains("primary · billing-api")),
+            "{w}x{h}: {rows:#?}"
+        );
+    }
+}
+
 /// The help section list's teasers: whole at 80 columns, and at 60
 /// columns each keeps its lead (the key, as in `:tap / F4 · …`) whole.
 /// At 80x24 the tap's teaser ended `(:…`, cutting the `:tap / F4` it
