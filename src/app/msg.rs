@@ -102,10 +102,12 @@ pub enum AppMsg {
         tx: crate::conn::EditTx,
     },
     /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
+    /// `error` keeps the server's fields, so a `FATAL` in place of the
+    /// answer reaches the connection-lost card (`App::session_ended_with`).
     TxClosed {
         generation: u64,
         committed: bool,
-        error: Option<String>,
+        error: Option<crate::conn::QueryErr>,
     },
     /// Server-emitted notice (`RAISE NOTICE`, `RAISE WARNING`, …)
     /// piped through the connection driver. Generation-tagged so a

@@ -1840,19 +1840,16 @@ fn status_grid(msg: &str) -> Grid {
 }
 
 /// Commit an open transaction.
-pub async fn tx_commit(client: &tokio_postgres::Client) -> Result<(), String> {
-    client
-        .batch_execute("COMMIT")
-        .await
-        .map_err(|e| e.to_string())
+pub async fn tx_commit(client: &tokio_postgres::Client) -> Result<(), QueryErr> {
+    client.batch_execute("COMMIT").await.map_err(QueryErr::from)
 }
 
 /// Roll back an open transaction.
-pub async fn tx_rollback(client: &tokio_postgres::Client) -> Result<(), String> {
+pub async fn tx_rollback(client: &tokio_postgres::Client) -> Result<(), QueryErr> {
     client
         .batch_execute("ROLLBACK")
         .await
-        .map_err(|e| e.to_string())
+        .map_err(QueryErr::from)
 }
 
 /// Run `sql` inside an explicit transaction that is *always* rolled back —

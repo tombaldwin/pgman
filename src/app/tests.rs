@@ -15141,6 +15141,164 @@ fn a_query_error_ends_the_session_only_when_fatal_or_panic() {
     );
 }
 
+/// The server's error for a request it answered with a `FATAL` (or an
+/// `ERROR`) — `pg_terminate_backend` while it was in flight.
+fn terminated_err(severity: &str) -> crate::conn::QueryErr {
+    crate::conn::QueryErr {
+        msg: "terminating connection due to administrator command".into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some("57P01".into()),
+            severity: Some(severity.into()),
+            hint: Some(RECOVERY_CONFLICT_HINT.into()),
+            ..Default::default()
+        }),
+    }
+}
+
+fn connected_app() -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Connected {
+        server_version: "16.4".into(),
+    };
+    a
+}
+
+/// `M`'s fetch answered with a FATAL is the session ending, as a run's
+/// is: the card has the server's reason, not a "fetching more rows
+/// failed" footer — whether or not the result is still the one that
+/// asked. An ERROR stays the fetch's own failure.
+#[test]
+fn a_fatal_page_fetch_is_the_lost_cards_reason() {
+    let lost = format!(
+        "connection lost · terminating connection due to administrator command · \
+         {RECOVERY_CONFLICT_HINT}"
+    );
+    for current in [true, false] {
+        let mut a = connected_app();
+        a.on_msg(AppMsg::QueryOk {
+            generation: a.generation,
+            grid: crate::grid::Grid {
+                columns: vec!["id".into()],
+                rows: id_rows(0..1000),
+                truncated: true,
+            },
+            origins: Vec::new(),
+            kind_label: "run".into(),
+            tx_open_after: false,
+            paging: Some(RunPaging {
+                sql: "SELECT id FROM t".into(),
+                cursor: None,
+                in_transaction: false,
+                standby: false,
+            }),
+        });
+        let id = a.result_paging.as_ref().unwrap().id;
+        a.query_running = true;
+        a.on_msg(AppMsg::PageLoaded {
+            generation: a.generation,
+            result_id: if current { id } else { id + 1 },
+            outcome: Err(terminated_err("FATAL")),
+        });
+        assert!(
+            matches!(&a.conn_state, ConnState::Failed(r) if *r == lost),
+            "current {current}: {:?}",
+            a.conn_state
+        );
+        assert_eq!(a.last_error, None, "the card says it; the footer doesn't");
+        assert!(!a.query_running);
+    }
+
+    let mut a = connected_app();
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: Some(RunPaging {
+            sql: "SELECT id FROM t".into(),
+            cursor: None,
+            in_transaction: false,
+            standby: false,
+        }),
+    });
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Err(terminated_err("ERROR")),
+    });
+    assert!(matches!(a.conn_state, ConnState::Connected { .. }));
+    assert!(
+        a.last_error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("fetching more rows failed")),
+        "{:?}",
+        a.last_error
+    );
+}
+
+/// A `COMMIT` (or `ROLLBACK`) answered with a FATAL: the session ended
+/// with the transaction, and the card — not a "tx close failed" footer
+/// — says why, whichever of it and the notice channel's close lands
+/// first. An ERROR stays the close's failure, with its own fields.
+#[test]
+fn a_fatal_transaction_close_is_the_lost_cards_reason() {
+    let lost = format!(
+        "connection lost · terminating connection due to administrator command · \
+         {RECOVERY_CONFLICT_HINT}"
+    );
+    for close_first in [false, true] {
+        let mut a = connected_app();
+        a.tx_open = true;
+        a.mode = Mode::TxDecision;
+        a.query_running = true;
+        if close_first {
+            a.on_msg(AppMsg::ConnectionLost {
+                generation: a.generation,
+                reason: super::msg::connection_lost_reason(None),
+            });
+        }
+        a.on_msg(AppMsg::TxClosed {
+            generation: a.generation,
+            committed: true,
+            error: Some(terminated_err("FATAL")),
+        });
+        assert!(
+            matches!(&a.conn_state, ConnState::Failed(r) if *r == lost),
+            "close first {close_first}: {:?}",
+            a.conn_state
+        );
+        assert_eq!(a.last_error, None, "the card says it; the footer doesn't");
+        assert_eq!(a.mode, Mode::Normal, "the card's keys are Normal mode's");
+        assert!(!a.tx_open);
+    }
+
+    let mut a = connected_app();
+    a.tx_open = true;
+    a.mode = Mode::TxDecision;
+    a.on_msg(AppMsg::TxClosed {
+        generation: a.generation,
+        committed: true,
+        error: Some(terminated_err("ERROR")),
+    });
+    assert!(matches!(a.conn_state, ConnState::Connected { .. }));
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("tx close failed: terminating connection due to administrator command")
+    );
+    assert_eq!(
+        a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("57P01"),
+        "the close's own fields, for the rich-error overlay"
+    );
+}
+
 /// A close that lands while the connect is still in flight is what the
 /// card says when the `Booted` behind it carries the closed client
 /// (the live half is `a_connect_whose_client_closed_says_why` in
