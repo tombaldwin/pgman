@@ -694,6 +694,8 @@ const IDENTIFIER: &[&str] = &[
     "commission",
     "last digits",
     "last four",
+    "ccnum",
+    "cc number",
 ];
 /// A person's account elsewhere.
 const HANDLE: &[&str] = &[
@@ -786,6 +788,22 @@ const FREE_TEXT: &[&str] = &[
     "payload",
     "subject",
 ];
+/// How a hash was made, after its word: `long_value_hash_lower_case`.
+const HASH_HOW: &[&str] = &[
+    "lower", "upper", "case", "sha", "sha1", "sha256", "sha512", "md5", "hex", "b64", "base64",
+];
+
+/// A table name's words, each without a plural's `s`: `cards`. Pure.
+fn singular(name: &str) -> Vec<String> {
+    words(name)
+        .into_iter()
+        .map(|w| match w.strip_suffix('s') {
+            Some(one) if w.len() > 3 && !w.ends_with("ss") => one.to_string(),
+            _ => w,
+        })
+        .collect()
+}
+
 /// Tables of names and values, whose value is whatever the name says.
 const KEY_VALUE: &[&str] = &[
     "attribute",
@@ -1083,7 +1101,20 @@ fn by_name_and_type(
     // A hash of something personal and guessable, a card's last digits or
     // a holder's name, is the thing: hash it again, so joins still join.
     // (A password's hash is a password, above.)
-    if matches!(last, "hash" | "digest") && w.len() > 1 && (text || base == "bytea") {
+    // The hash word may be followed by how it was made, and a bare hash is
+    // of what its table holds: cards.hash.
+    let hashed = w
+        .iter()
+        .rposition(|x| x == "hash" || x == "digest")
+        .filter(|&at| w[at + 1..].iter().all(|x| HASH_HOW.contains(&x.as_str())));
+    if let Some(at) = hashed.filter(|_| text || base == "bytea") {
+        let of_what: Vec<String> = if at > 0 {
+            w[..at].to_vec()
+        } else {
+            singular(table_name)
+        };
+        let last = w[at].as_str();
+        let w = [of_what, vec![last.to_string()]].concat();
         // Judged as the bounded text that was hashed.
         let mut of = Column {
             name: w[..w.len() - 1].join("_"),
@@ -2220,6 +2251,16 @@ mod tests {
             ("card_validations", "last_digits_hash", "text", Rule::Hash),
             ("users", "email_digest", "bytea", Rule::Hash),
             ("payments", "card_hash", "varchar", Rule::Hash),
+            ("cards", "hash", "varchar", Rule::Hash),
+            ("payments", "ccnum_hash", "varchar", Rule::Hash),
+            (
+                "user_attribute",
+                "long_value_hash_lower_case",
+                "bytea",
+                Rule::Hash,
+            ),
+            ("files", "hash", "varchar", Rule::Keep),
+            ("users", "hash_algorithm", "varchar", Rule::Keep),
             ("bank_links", "account_hash", "bytea", Rule::Hash),
             ("widgets", "user_hash", "varchar", Rule::Hash),
             // Keycloak's: a hash of an attribute's value, a phone or more.
