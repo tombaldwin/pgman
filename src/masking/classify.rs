@@ -877,6 +877,55 @@ fn key_says_it(name: &str) -> bool {
     special(&w) || any(&w, FAMILY) || any(&w, BIRTH)
 }
 
+/// Whether the key `from` into `to` (each a qualified table and a
+/// column) says the answer: `to` is its table's key, and the name is a
+/// family detail or a birth, or a special category pointing at a lookup
+/// named for one (`gender_id` into `genders`; not `medical_staff_id`
+/// into `staff`, nor `race_id` into `races` that reference circuits). A
+/// lookup's own extension keyed by it and no other key (a translations
+/// table) isn't anyone's. Pure.
+fn unlinks(catalog: &Catalog, from: &(String, String), to: &(String, String)) -> bool {
+    let Some(target) = catalog.table(&to.0) else {
+        return false;
+    };
+    if target.primary_key != [to.1.clone()] {
+        return false;
+    }
+    let w = words(&from.1);
+    let says = any(&w, FAMILY)
+        || any(&w, BIRTH)
+        || (special(&w) && special(&singular(&target.name)) && refers_to_nothing(target));
+    // Keyed by it and a language, say, not by another key: a junction's
+    // other key (person_id) is someone's.
+    let extension = catalog.table(&from.0).is_some_and(|t| {
+        t.primary_key.len() > 1
+            && t.primary_key.contains(&from.1)
+            && t.primary_key
+                .iter()
+                .filter(|k| **k != from.1)
+                .all(|k| !t.foreign_keys.iter().any(|fk| fk.columns.contains(k)))
+    });
+    says && !extension
+}
+
+/// A table name's words, each without a plural's `s`: `genders`. Pure.
+fn singular(name: &str) -> Vec<String> {
+    words(name)
+        .into_iter()
+        .map(|w| match w.strip_suffix('s') {
+            Some(one) if w.len() > 3 => one.to_string(),
+            _ => w,
+        })
+        .collect()
+}
+
+/// A table that references no other: a lookup, or a root. Pure.
+fn refers_to_nothing(t: &Table) -> bool {
+    t.foreign_keys
+        .iter()
+        .all(|fk| fk.ref_table == t.qualified())
+}
+
 fn text_like(base: &str) -> bool {
     matches!(base, "text" | "varchar" | "bpchar" | "citext" | "name")
 }
@@ -1314,10 +1363,12 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             let lookup_key = t.primary_key.len() == 1
                 && t.primary_key[0] == c.name
                 && matches!(c.ty.base.as_str(), "int2" | "int4" | "int8" | "uuid")
-                && key_says_it(&c.name);
+                && key_says_it(&c.name)
+                // employee_spouses.spouse_id is someone's, not a lookup's.
+                && !t.foreign_keys.iter().any(|fk| fk.columns.contains(&c.name));
             let mut d = match preset {
                 Some((true, what)) => (Rule::Keep, Origin::Preset(what.to_string())),
-                _ if lookup_key => (Rule::Keep, Origin::Plain),
+                _ if lookup_key => (Rule::Keep, Origin::Default("a lookup's own key".into())),
                 _ => {
                     let from = base.and_then(|b| b.column(&c.name)).unwrap_or(c);
                     let mut d = default_rule(base_name, from, &rules.personal, &rules.not_personal);
@@ -1372,7 +1423,7 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
     // null carried up to the lookup's key would be hashed there, and the
     // reference with it, and a fixed value can't be the key of every row.
     for (from, to) in &edges {
-        if !key_says_it(&from.1) {
+        if !unlinks(catalog, from, to) {
             continue;
         }
         match decided.get(from) {
@@ -1385,6 +1436,27 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 unlinked.insert(from.clone(), String::new());
             }
             _ => {}
+        }
+    }
+    // What references an unlinked key takes its NULL: its value, or a
+    // hash, would reference nothing.
+    for _ in 0..32 {
+        let mut changed = false;
+        for (from, to) in &edges {
+            if unlinked.contains_key(to)
+                && !unlinked.contains_key(from)
+                && !matches!(decided.get(from), Some((_, Origin::Rules)))
+            {
+                decided.insert(
+                    from.clone(),
+                    (Rule::Null, Origin::Follows(format!("{}.{}", to.0, to.1))),
+                );
+                unlinked.insert(from.clone(), String::new());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
         }
     }
     // Follow to a fixpoint: a chain of references takes the head's rule.
@@ -1524,9 +1596,24 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             if unlinked.contains_key(&key) && rule == Rule::Null && c.ty.not_null {
                 problems.push(format!(
                     "{q}.{}: its key says what it points at, which is personal, and it can't \
-                     be NULL: keep it with a reason, or give it a fixed value its table has",
+                     be NULL: keep it with a reason, give it a fixed value its table has, or \
+                     drop the table's rows (rows = \"drop\")",
                     c.name
                 ));
+            }
+            // The rules file's rule on a key into one: its values would
+            // reference rows whose key is NULL.
+            if rule != Rule::Null && !unlinked.contains_key(&key) {
+                if let Some((_, to)) = edges
+                    .iter()
+                    .find(|(from, to)| *from == key && unlinked.contains_key(to))
+                {
+                    problems.push(format!(
+                        "{q}.{} references {}.{}, which is NULLed (its key says something \
+                         personal): null it too, or keep {}.{} with a reason",
+                        c.name, to.0, to.1, to.0, to.1
+                    ));
+                }
             }
             // After the hash it may have become: that must fit too.
             check(t, c, &rule, unique, fit, &mut problems);
@@ -3037,7 +3124,7 @@ mod tests {
         let key = &p.table("public.religions").unwrap().columns[0];
         assert_eq!(
             (key.rule.clone(), key.origin.clone()),
-            (Rule::Keep, Origin::Plain)
+            (Rule::Keep, Origin::Default("a lookup's own key".into()))
         );
         for n in [
             "gender_id",
@@ -3092,5 +3179,134 @@ mod tests {
             ),
         );
         assert!(p.problems.is_empty(), "{:?}", p.problems);
+    }
+
+    #[test]
+    fn only_a_key_into_a_lookup_named_for_the_answer_is_unlinked() {
+        let key = |t: &mut Table| {
+            t.columns[0].ty.not_null = true;
+            t.columns[0].unique = true;
+        };
+        let not_null = |name: &str| {
+            let mut col = c(name, "int4", None);
+            col.ty.not_null = true;
+            col
+        };
+        let fk = |t: &mut Table, col: &str, to: &str| {
+            t.foreign_keys.push(ForeignKey {
+                columns: vec![col.into()],
+                ref_table: format!("public.{to}"),
+                ref_columns: vec!["id".into()],
+            })
+        };
+        let mut staff = table("staff", vec![c("id", "int4", None)]);
+        key(&mut staff);
+        let mut circuits = table("circuits", vec![c("id", "int4", None)]);
+        key(&mut circuits);
+        let mut races = table(
+            "races",
+            vec![c("id", "int4", None), c("circuit_id", "int4", None)],
+        );
+        key(&mut races);
+        fk(&mut races, "circuit_id", "circuits");
+        let mut religions = table(
+            "religions",
+            vec![c("id", "int4", None), c("label", "varchar", Some(40))],
+        );
+        key(&mut religions);
+        let mut people = table("people", vec![c("id", "int4", None)]);
+        key(&mut people);
+        let mut visits = table(
+            "visits",
+            vec![
+                c("id", "int4", None),
+                not_null("medical_staff_id"),
+                not_null("race_id"),
+                c("belief_id", "int4", None),
+            ],
+        );
+        // A plural the word splitter doesn't take apart.
+        let mut beliefs = table("beliefs", vec![c("id", "int4", None)]);
+        key(&mut beliefs);
+        fk(&mut visits, "belief_id", "beliefs");
+        fk(&mut visits, "medical_staff_id", "staff");
+        fk(&mut visits, "race_id", "races");
+        // The lookup's translations, keyed by it: the lookup's own.
+        let mut names = table(
+            "religion_names",
+            vec![not_null("religion_id"), c("lang", "varchar", Some(5))],
+        );
+        names.primary_key = vec!["religion_id".into(), "lang".into()];
+        fk(&mut names, "religion_id", "religions");
+        // Who holds which: the answer, and the plan says how to settle it.
+        let mut held = table(
+            "person_religions",
+            vec![not_null("person_id"), not_null("religion_id")],
+        );
+        held.primary_key = vec!["person_id".into(), "religion_id".into()];
+        fk(&mut held, "person_id", "people");
+        fk(&mut held, "religion_id", "religions");
+        // A key into the unlinked one can't keep its value either.
+        let mut badges = table(
+            "badges",
+            vec![c("id", "int4", None), c("held_ref", "int4", None)],
+        );
+        badges.foreign_keys.push(ForeignKey {
+            columns: vec!["held_ref".into()],
+            ref_table: "public.person_religions".into(),
+            ref_columns: vec!["religion_id".into()],
+        });
+        // Keyed by someone else's id: neither a lookup's key nor its extension.
+        let mut spouses = table("employee_spouses", vec![not_null("spouse_id")]);
+        spouses.primary_key = vec!["spouse_id".into()];
+        fk(&mut spouses, "spouse_id", "people");
+        let cat = Catalog {
+            tables: vec![
+                staff, circuits, races, religions, people, visits, names, held, badges, spouses,
+                beliefs,
+            ],
+            ..Default::default()
+        };
+        let p = plan(&cat, &RuleSet::default());
+        let rule_of = |t: &str, n: &str| {
+            p.table(&format!("public.{t}"))
+                .unwrap()
+                .columns
+                .iter()
+                .find(|d| d.column == n)
+                .unwrap()
+                .rule
+                .clone()
+        };
+        assert_eq!(rule_of("visits", "medical_staff_id"), Rule::Keep);
+        assert_eq!(rule_of("visits", "race_id"), Rule::Keep);
+        assert_eq!(rule_of("visits", "belief_id"), Rule::Null);
+        assert_eq!(rule_of("religion_names", "religion_id"), Rule::Keep);
+        assert_eq!(rule_of("person_religions", "religion_id"), Rule::Null);
+        assert_eq!(rule_of("badges", "held_ref"), Rule::Null);
+        assert_eq!(rule_of("employee_spouses", "spouse_id"), Rule::Null);
+        assert_eq!(p.problems.len(), 2, "{:?}", p.problems);
+        assert!(p.problems[1].starts_with("public.employee_spouses.spouse_id: its key says"));
+        // The rules file's hash on a key into it isn't carried up onto it.
+        let ruled = plan(
+            &cat,
+            &parse("version = 1\n[tables.badges]\nheld_ref = \"hash\"\n"),
+        );
+        let held = ruled.table("public.person_religions").unwrap();
+        assert_eq!(held.columns[1].rule, Rule::Null);
+        assert!(
+            ruled
+                .problems
+                .iter()
+                .any(|m| m.starts_with("public.badges.held_ref references public.person_religions.religion_id, which is NULLed")),
+            "{:?}",
+            ruled.problems
+        );
+        assert!(
+            p.problems[0].starts_with("public.person_religions.religion_id: its key says")
+                && p.problems[0].contains("rows = \"drop\""),
+            "{:?}",
+            p.problems
+        );
     }
 }
