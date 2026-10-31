@@ -10775,11 +10775,14 @@ fn encrypted_dumps_round_trip_and_refuse_without_their_key() {
     on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
     on(
         &src,
-        "CREATE TABLE customers (id int PRIMARY KEY, email varchar(100), plan varchar(20)); \
-         INSERT INTO customers VALUES (1, 'canary-seal@example.com', 'gold'), (2, 'b@example.com', 'free')",
+        "CREATE TABLE customers (id int PRIMARY KEY, email varchar(100), plan varchar(20))",
     )
     .unwrap();
-    // The rules file is the defaults: confirmed as a terminal would.
+    on(
+        &src,
+        "INSERT INTO customers VALUES (1, 'canary-seal@example.com', 'gold'), (2, 'b@example.com', 'free')",
+    )
+    .unwrap();
     let restore = |file: &std::path::Path, into: &str| {
         pgman_in(
             &home,
@@ -10952,7 +10955,12 @@ fn a_kms_dump_wraps_its_key_and_restores_through_kms() {
         let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
     }
     on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
-    on(&src, "CREATE TABLE widgets (id int PRIMARY KEY, colour varchar(10)); INSERT INTO widgets VALUES (1, 'teal')").unwrap();
+    on(
+        &src,
+        "CREATE TABLE widgets (id int PRIMARY KEY, colour varchar(10))",
+    )
+    .unwrap();
+    on(&src, "INSERT INTO widgets VALUES (1, 'teal')").unwrap();
     let bin = home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let log = home.join("aws.log");
