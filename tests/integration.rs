@@ -8272,6 +8272,24 @@ fn dump_home(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (home, out)
 }
 
+/// A new age key in `home`'s pgman config (`pgman key new`), as an
+/// environment's `encrypt` value.
+#[cfg(unix)]
+fn age_key(home: &std::path::Path) -> String {
+    let o = pgman_in(home, home, &["key", "new"]);
+    let said = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        o.status.success(),
+        "{said}{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let public = said
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("public key "))
+        .unwrap_or_else(|| panic!("no public key in {said}"));
+    format!("age:{public}")
+}
+
 /// `pgman <args>` from `cwd` with `home`, the password in `$IT_PW`, and
 /// misleading libpq variables pgman must not pass on.
 #[cfg(unix)]
@@ -10384,10 +10402,13 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         ),
     )
     .unwrap();
+    let key = age_key(&home);
     std::fs::write(
         home.join(".config/pgman/environments.toml"),
-        "[[environments]]\nname = \"production\"\ndump = \"unmasked\"\nunattended = true\n\
-         source = { kind = \"static\", connections = [\"prod-db\"] }\n",
+        format!(
+            "[[environments]]\nname = \"production\"\ndump = \"unmasked\"\nunattended = true\n\
+             encrypt = \"{key}\"\nsource = {{ kind = \"static\", connections = [\"prod-db\"] }}\n"
+        ),
     )
     .unwrap();
     // The standby has the database once it has replayed it: the other
@@ -10556,10 +10577,14 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         "{}",
         String::from_utf8_lossy(&dumped.stderr)
     );
+    // Encrypted: pgman's archive, its header saying raw.
     let raw_file = std::fs::read_dir(&out)
         .unwrap()
         .map(|e| e.unwrap().path())
-        .find(|p| p.extension().is_some_and(|x| x == "dump") && !p.is_symlink())
+        .find(|p| {
+            !p.is_symlink()
+                && pgman::masked::read_header(p).is_ok_and(|h| !h.masked && h.seal.is_some())
+        })
         .unwrap();
     let restored = pgman_in(
         &home,
@@ -10624,11 +10649,17 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     // A raw dump copied into the work tree is still what it was (its
     // fingerprint says so), and one the journal doesn't know at all
     // could be anything: an agent restores neither.
-    std::fs::copy(&raw_file, out.join("copy.dump")).unwrap();
+    assert!(std::process::Command::new("cp")
+        .arg("-R")
+        .arg(&raw_file)
+        .arg(out.join("copy.pgman-dump"))
+        .status()
+        .unwrap()
+        .success());
     let (t, err, _) = call(
         10,
         "restore",
-        serde_json::json!({"file": "copy.dump", "target": "local", "as": format!("{raw_copy}x"), "create": true}),
+        serde_json::json!({"file": "copy.pgman-dump", "target": "local", "as": format!("{raw_copy}x"), "create": true}),
         restore_yes.clone(),
     );
     assert!(
@@ -10708,6 +10739,314 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
 const OTHERS_TABLES: &str = "--exclude-table=pgman_it_*";
 const OTHERS_SCHEMAS: &str = "--exclude-schema=pgman_it_*";
 
+/// An encrypted environment's dumps, masked and raw, end to end: nothing
+/// readable on disk but the header, a restore that opens them with the
+/// operator's key and leaves no decrypted file behind, and a refusal
+/// without the key, or with a header edited to say something else.
+#[cfg(unix)]
+#[test]
+fn encrypted_dumps_round_trip_and_refuse_without_their_key() {
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, masked_copy, raw_copy) = (it_name("seal"), it_name("sealm"), it_name("sealr"));
+    let (home, out) = dump_home("seal");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"prod-src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    let key = age_key(&home);
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"production\"\ndump = \"unmasked\"\nunattended = true\n\
+             encrypt = \"{key}\"\nsource = {{ kind = \"static\", connections = [\"prod-src\"] }}\n"
+        ),
+    )
+    .unwrap();
+    for db in [&src, &masked_copy, &raw_copy] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    on(
+        &src,
+        "CREATE TABLE customers (id int PRIMARY KEY, email varchar(100), plan varchar(20)); \
+         INSERT INTO customers VALUES (1, 'canary-seal@example.com', 'gold'), (2, 'b@example.com', 'free')",
+    )
+    .unwrap();
+    // The rules file is the defaults: confirmed as a terminal would.
+    let restore = |file: &std::path::Path, into: &str| {
+        pgman_in(
+            &home,
+            &out,
+            &[
+                "restore",
+                file.to_str().unwrap(),
+                "local",
+                "--as",
+                into,
+                "--create",
+                "--yes",
+            ],
+        )
+    };
+    let readable_anywhere = |dir: &std::path::Path, needle: &[u8]| -> bool {
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if std::fs::read(&p)
+                    .unwrap()
+                    .windows(needle.len())
+                    .any(|w| w == needle)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+
+    for (flag, copy) in [("--masked", &masked_copy), ("--unmasked", &raw_copy)] {
+        let dumped = pgman_in(
+            &home,
+            &out,
+            &["dump", "production", ".", flag, "--reason", "APP-101"],
+        );
+        let said = String::from_utf8_lossy(&dumped.stdout).into_owned();
+        assert!(
+            dumped.status.success(),
+            "{flag}: {said}{}",
+            String::from_utf8_lossy(&dumped.stderr)
+        );
+        assert!(said.contains("encrypted to age key"), "{flag}: {said}");
+        let file =
+            std::fs::canonicalize(out.join(format!("production-{src}-latest.pgman-dump"))).unwrap();
+        // Nothing of the rows, the schema or the manifest is readable.
+        for needle in [&b"customers"[..], b"gold", b"canary-seal"] {
+            assert!(
+                !readable_anywhere(&file, needle),
+                "{flag}: {} readable in {}",
+                String::from_utf8_lossy(needle),
+                file.display()
+            );
+        }
+        let r = restore(&file, copy);
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&r.stdout),
+            String::from_utf8_lossy(&r.stderr)
+        );
+        assert!(r.status.success(), "{flag}: {said}");
+        assert!(
+            said.contains("decrypted to a private file"),
+            "{flag}: {said}"
+        );
+        let plans: Vec<String> = on(copy, "SELECT plan FROM customers ORDER BY id")
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        assert_eq!(plans, ["gold", "free"], "{flag}");
+        let canary: i64 = on(
+            copy,
+            "SELECT count(*) FROM customers WHERE email = 'canary-seal@example.com'",
+        )
+        .unwrap()[0]
+            .get(0);
+        assert_eq!(canary, if flag == "--masked" { 0 } else { 1 }, "{flag}");
+        // No decrypted copy is left in the cache.
+        let leftovers: Vec<_> = std::fs::read_dir(home.join(".cache/pgman"))
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("restore-"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+    }
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    assert!(
+        journal
+            .lines()
+            .filter(|l| l.contains(&format!("\"encrypted\":\"{key}\"")))
+            .count()
+            == 2,
+        "{journal}"
+    );
+
+    // Without the key: nothing restored.
+    let archive =
+        std::fs::canonicalize(out.join(format!("production-{src}-latest.pgman-dump"))).unwrap();
+    let keys = home.join(".config/pgman/keys");
+    let away = home.join("keys-away");
+    std::fs::rename(&keys, &away).unwrap();
+    let r = restore(&archive, &format!("{raw_copy}x"));
+    let err = String::from_utf8_lossy(&r.stderr).into_owned();
+    assert!(
+        !r.status.success() && err.contains("no key here opens this dump"),
+        "{err}"
+    );
+    std::fs::rename(&away, &keys).unwrap();
+    // A header edited to say it is masked: the encrypted manifest's copy
+    // says otherwise.
+    let header_path = archive.join("header.json");
+    let mut header: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&header_path).unwrap()).unwrap();
+    header["masked"] = serde_json::Value::Bool(true);
+    std::fs::write(&header_path, header.to_string()).unwrap();
+    let r = restore(&archive, &format!("{raw_copy}y"));
+    let err = String::from_utf8_lossy(&r.stderr).into_owned();
+    assert!(
+        !r.status.success() && err.contains("disagrees with the manifest"),
+        "{err}"
+    );
+    for db in [
+        src.clone(),
+        masked_copy.clone(),
+        raw_copy.clone(),
+        format!("{raw_copy}x"),
+        format!("{raw_copy}y"),
+    ] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+}
+
+/// A KMS environment's dump: a fresh key per dump, wrapped by `aws kms
+/// encrypt` (the key on stdin, never an argument; the header's fields as
+/// the encryption context) and unwrapped by `aws kms decrypt` to restore.
+/// The `aws` here is a stand-in that "wraps" by base64.
+#[cfg(unix)]
+#[test]
+fn a_kms_dump_wraps_its_key_and_restores_through_kms() {
+    use std::os::unix::fs::PermissionsExt;
+    if !have_pg_dump() {
+        eprintln!("skipped: no pg_dump");
+        return;
+    }
+    let (src, copy) = (it_name("kms"), it_name("kmscopy"));
+    let (home, out) = dump_home("kms");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"prod-src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"production\"\nencrypt = \"kms:alias/pgman-dumps\"\n\
+         source = { kind = \"static\", connections = [\"prod-src\"] }\n",
+    )
+    .unwrap();
+    for db in [&src, &copy] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+    on("pgman_test", &format!("CREATE DATABASE {src}")).unwrap();
+    on(&src, "CREATE TABLE widgets (id int PRIMARY KEY, colour varchar(10)); INSERT INTO widgets VALUES (1, 'teal')").unwrap();
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = home.join("aws.log");
+    std::fs::write(
+        bin.join("aws"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$2\" in\n\
+             encrypt|decrypt) base64 | tr -d '\\n' ;;\n\
+             *) exit 1 ;;\n\
+             esac\n",
+            log = log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("aws"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let dumped = pgman_in_env(
+        &home,
+        &out,
+        &[("PATH", &path)],
+        &["dump", "production", ".", "--reason", "APP-102"],
+    );
+    let said = String::from_utf8_lossy(&dumped.stdout).into_owned();
+    assert!(
+        dumped.status.success(),
+        "{said}{}",
+        String::from_utf8_lossy(&dumped.stderr)
+    );
+    assert!(
+        said.contains("encrypted with KMS key alias/pgman-dumps"),
+        "{said}"
+    );
+    let archive =
+        std::fs::canonicalize(out.join(format!("production-{src}-latest.pgman-dump"))).unwrap();
+    let header = std::fs::read_to_string(archive.join("header.json")).unwrap();
+    assert!(
+        header.contains("\"wrapped\"") && !header.contains("AGE-SECRET-KEY"),
+        "{header}"
+    );
+    let r = pgman_in_env(
+        &home,
+        &out,
+        &[("PATH", &path)],
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "local",
+            "--as",
+            &copy,
+            "--create",
+            "--yes",
+        ],
+    );
+    assert!(
+        r.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&r.stdout),
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let colour: String = on(&copy, "SELECT colour FROM widgets").unwrap()[0].get(0);
+    assert_eq!(colour, "teal");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<&str> = calls.lines().collect();
+    assert_eq!(lines.len(), 2, "{calls}");
+    assert!(
+        lines[0]
+            .starts_with("kms encrypt --key-id alias/pgman-dumps --plaintext fileb:///dev/stdin"),
+        "{calls}"
+    );
+    assert!(
+        lines[1].starts_with(
+            "kms decrypt --key-id alias/pgman-dumps --ciphertext-blob fileb:///dev/stdin"
+        ),
+        "{calls}"
+    );
+    for l in &lines {
+        assert!(
+            l.contains("\"pgman:copy\":") && l.contains("\"pgman:protected\":\"true\""),
+            "{l}"
+        );
+    }
+    assert!(
+        !calls.contains("AGE-SECRET-KEY"),
+        "the key never on a command line"
+    );
+    for db in [&src, &copy] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+}
+
 /// A protected environment's dump policy at the command line: with no
 /// terminal a raw dump is refused unless the operator's own file says
 /// `unattended = true`, a schema dump needs a reason, a project's cap
@@ -10786,6 +11125,18 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         );
     }
     std::fs::remove_file(out.join("any.dump")).unwrap();
+
+    // Its rows are encrypted: until it says to what, a masked dump (its
+    // default) is refused, saying how.
+    let (code, _, err) = run(&["dump", "production", ".", "--reason", "APP-5"]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(
+        err.contains("encrypt = \"kms:alias/") && err.contains("pgman key new"),
+        "{err}"
+    );
+    let key = age_key(&home);
+    let base = format!("{base}encrypt = \"{key}\"\n");
+    std::fs::write(&envs_path, &base).unwrap();
 
     // Protected: masked by default, raw only once the operator says so.
     let (code, _, err) = run(&["dump", "production", ".", "--unmasked", "--reason", "APP-6"]);
@@ -10893,7 +11244,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
         "{said}"
     );
 
-    let latest = out.join(format!("production-{db}-latest.dump"));
+    let latest = out.join(format!("production-{db}-latest.pgman-dump"));
     assert_eq!(
         std::fs::read_link(&latest).unwrap().to_string_lossy(),
         std::path::Path::new(&raw_file)
