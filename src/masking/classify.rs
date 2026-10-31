@@ -431,6 +431,11 @@ fn has(w: &[String], phrase: &str) -> bool {
     w.windows(p.len())
         .any(|win| win.iter().zip(&p).all(|(a, b)| a == b))
         || (p.len() > 1 && w.iter().any(|x| *x == p.concat()))
+        // A word split from its digits: ipv4, last4.
+        || (p.len() == 1
+            && w.windows(2).any(|pair| {
+                pair[1].bytes().all(|b| b.is_ascii_digit()) && format!("{}{}", pair[0], pair[1]) == p[0]
+            }))
 }
 
 fn any(w: &[String], phrases: &[&str]) -> bool {
@@ -1907,6 +1912,9 @@ mod tests {
             ("mail_message", "reply_to", "varchar", Rule::Email),
             ("sms_resend", "sms_number", "varchar", Rule::Phone),
             ("device_log", "browser", "varchar", Rule::Null),
+            ("tls_sessions", "client_ja3", "varchar", Rule::Null),
+            ("cards", "card_last4", "varchar", Rule::Null),
+            ("logins", "ipv4", "varchar", Rule::Ip),
             ("card_validations", "holder_name_hash", "text", Rule::Hash),
             ("card_validations", "last_digits_hash", "text", Rule::Hash),
             ("users", "email_digest", "bytea", Rule::Hash),
