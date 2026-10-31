@@ -9,6 +9,11 @@
 services:
   postgres:
     image: postgres:16
+    # Docker's 64 MB /dev/shm can be too little for parallel query under
+    # the parallel suite: a backend that can't map its segment dies of
+    # SIGBUS and takes the server into recovery (the likely cause of one
+    # CI crash, not shown; CI prints the server's log on failure).
+    shm_size: 512mb
     environment:
       POSTGRES_PASSWORD: pgman_test
       POSTGRES_USER: pgman_test
@@ -27,6 +32,7 @@ services:
   # replication. What the replica, lag and standby-refusal tests run on.
   standby:
     image: postgres:16
+    shm_size: 512mb
     depends_on:
       postgres:
         condition: service_healthy

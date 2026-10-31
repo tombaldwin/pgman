@@ -63,6 +63,10 @@ jobs:
       # "integration"))` — a real App against the compose database, as in
       # src/app/edit_cell.rs): `--test integration` alone never runs them.
       - run: cargo test --locked --features integration --lib
+      # A server that crashed mid-suite fails dozens of tests at once with
+      # "recovery mode"; its own log says why.
+      - if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color --timestamps --tail=400
 
   # Coverage report via cargo-llvm-cov. Posts the summary to the run
   # log; the lcov artifact is uploadable to Codecov or similar.
