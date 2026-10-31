@@ -11462,15 +11462,27 @@ fn a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout() {
         "[default]\nread_only = false\nstatement_timeout_ms = 200\n",
     )
     .unwrap();
-    let t = it_name("untimed");
-    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {t}"));
-    on(
+    // Its own database: CREATE INDEX CONCURRENTLY waits for every older
+    // transaction in the database, and the parallel suite always has one.
+    let (t, db) = (it_name("untimed"), it_name("untimed_db"));
+    let _ = on(
         "pgman_test",
+        &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+    );
+    on("pgman_test", &format!("CREATE DATABASE {db}")).unwrap();
+    let conns = home.join(".config/pgman/connections.toml");
+    let mut text = std::fs::read_to_string(&conns).unwrap();
+    text.push_str(&format!(
+        "[[connections]]\nname = \"own\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{db}?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
+    ));
+    std::fs::write(&conns, text).unwrap();
+    on(
+        &db,
         &format!("CREATE TABLE {t} AS SELECT g AS id, md5(g::text) AS v FROM generate_series(1, 1000000) g"),
     )
     .unwrap();
     std::fs::write(out.join("slow.sql"), "SELECT pg_sleep(1);\n").unwrap();
-    let o = pgman_in(&home, &out, &["run", "local", "slow.sql", "--yes"]);
+    let o = pgman_in(&home, &out, &["run", "own", "slow.sql", "--yes"]);
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(
         stderr.contains("statement timeout"),
@@ -11481,17 +11493,17 @@ fn a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout() {
         format!("CREATE INDEX CONCURRENTLY {t}_v ON {t} (v);\n"),
     )
     .unwrap();
-    let o = pgman_in(&home, &out, &["run", "local", "index.sql", "--yes"]);
+    let o = pgman_in(&home, &out, &["run", "own", "index.sql", "--yes"]);
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(o.status.success(), "{stderr}");
     let valid: bool = on(
-        "pgman_test",
+        &db,
         &format!("SELECT indisvalid FROM pg_index WHERE indexrelid = '{t}_v'::regclass"),
     )
     .unwrap()[0]
         .get(0);
     assert!(valid, "built, not left INVALID");
-    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+    let _ = on("pgman_test", &format!("DROP DATABASE {db} WITH (FORCE)"));
 }
 
 /// The formula's wrapper names its libpq in PGMAN_PG_BIN: that pg_dump is
