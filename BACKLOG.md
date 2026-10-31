@@ -83,7 +83,10 @@ note.
   or interval named for a secret (`access_token_lifespan`) is still
   NULLed; `client` makes an OAuth client's `name` a person's; Odoo's
   `ir_*` metadata is NULLed by type and breaks the restored app (a preset,
-  like Rails').
+  like Rails'). From the release panel: `card_hash`, `account_hash`,
+  `user_hash` are kept (card/account/user alone aren't identifier
+  words); `visa_type` is kept by the `type` flag word; presets match a
+  table's name in any schema.
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.
