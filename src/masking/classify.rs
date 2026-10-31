@@ -526,6 +526,8 @@ const FLAG_LAST: &[&str] = &[
     "style",
     "mode",
 ];
+/// Whose colour is a person's.
+const BODY: &[&str] = &["eye", "eyes", "skin", "hair", "complexion"];
 /// A last word that is usually a code, not the thing — `currency_code`,
 /// `order_status` — but can be the thing itself: `postal_code`,
 /// `sort_code`, `marital_status`, `tax_id`.
@@ -956,6 +958,10 @@ fn by_name_and_type(
     // device's, family details. (An integer `*_id` is a key, kept.)
     let itself = (last != "id" || text)
         && (any(&w, IDENTIFIER) || any(&w, POSTCODE) || any(&w, DEVICE) || any(&w, FAMILY));
+    // A colour is a setting, but not a person's: eye_colour, skin_tone.
+    if matches!(last, "color" | "colour" | "tone") && any(&w, BODY) {
+        return (Rule::Null, why("a person's appearance, by name"));
+    }
     if FLAG_LAST.contains(&last)
         || (VALUE_LAST.contains(&last) && !itself && !(last == "id" && text && any(&w, PERSON_REF)))
     {
@@ -1906,6 +1912,10 @@ mod tests {
             ("email_primary_color", "varchar", Rule::Keep),
             ("mobile_view_mode", "varchar", Rule::Keep),
             ("require_signature", "bool", Rule::Keep),
+            ("eye_colour", "text", Rule::Null),
+            ("skin_color", "varchar", Rule::Null),
+            ("hair_colour", "varchar", Rule::Null),
+            ("skin_tone", "varchar", Rule::Null),
             ("mail_subject", "varchar", Rule::Null),
             ("email_body", "varchar", Rule::Null),
             // Still the thing itself.
