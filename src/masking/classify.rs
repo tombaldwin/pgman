@@ -1368,21 +1368,30 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
     // into a lookup of five genders — keeps its own NULL, not the lookup's
     // keep: the key is the answer.
     let mut unlinked: HashMap<(String, String), String> = HashMap::new();
+    // The rules file's null or fixed value on one stays its own too: a
+    // null carried up to the lookup's key would be hashed there, and the
+    // reference with it, and a fixed value can't be the key of every row.
     for (from, to) in &edges {
-        if let Some((Rule::Null, Origin::Default(why))) = decided.get(from) {
-            if key_says_it(&from.1) {
-                unlinked.insert(from.clone(), format!("{why}, not its key into {}", to.0));
-            }
+        if !key_says_it(&from.1) {
+            continue;
         }
-    }
-    for (k, why) in &unlinked {
-        decided.insert(k.clone(), (Rule::Null, Origin::Default(why.clone())));
+        match decided.get(from) {
+            Some((Rule::Null, Origin::Default(why))) => {
+                let why = format!("{why}, not its key into {}", to.0);
+                decided.insert(from.clone(), (Rule::Null, Origin::Default(why.clone())));
+                unlinked.insert(from.clone(), why);
+            }
+            Some((Rule::Null | Rule::Fixed(_), Origin::Rules)) => {
+                unlinked.insert(from.clone(), String::new());
+            }
+            _ => {}
+        }
     }
     // Follow to a fixpoint: a chain of references takes the head's rule.
     for _ in 0..32 {
         let mut changed = false;
         for (from, to) in &edges {
-            if unlinked.contains_key(from) {
+            if unlinked.contains_key(from) || unlinked.contains_key(to) {
                 continue;
             }
             let Some((rule, origin)) = decided.get(to).cloned() else {
@@ -1512,7 +1521,7 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 rule = Rule::Hash;
             }
             // A hash or the empty value would reference nothing.
-            if unlinked.contains_key(&key) && c.ty.not_null {
+            if unlinked.contains_key(&key) && rule == Rule::Null && c.ty.not_null {
                 problems.push(format!(
                     "{q}.{}: its key says what it points at, which is personal, and it can't \
                      be NULL: keep it with a reason, or give it a fixed value its table has",
@@ -3049,6 +3058,32 @@ mod tests {
         // NOT NULL: a hash or 0 would reference nothing, so the team decides.
         assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
         assert!(p.problems[0].starts_with("public.people.maritalstatus: its key says"));
+        // The rules file's null stays a null: carried up to the lookup it
+        // would be hashed there, the reference with it, and still join.
+        let p = plan(
+            &cat,
+            &parse("version = 1\n[tables.people]\ngender_id = \"null\"\n"),
+        );
+        let t = p.table("public.people").unwrap();
+        let g = t.columns.iter().find(|d| d.column == "gender_id").unwrap();
+        assert_eq!(g.rule, Rule::Null);
+        assert_eq!(
+            p.table("public.gender").unwrap().columns[0].rule,
+            Rule::Keep
+        );
+        // A fixed value from the lookup settles a NOT NULL one, and isn't
+        // carried up to the lookup's unique key.
+        let p = plan(
+            &cat,
+            &parse(
+                "version = 1\n[tables.people]\nmaritalstatus = { rule = \"fixed\", value = \"1\" }\n",
+            ),
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        assert_eq!(
+            p.table("public.marital_status").unwrap().columns[0].rule,
+            Rule::Keep
+        );
         // A rules file's keep, with its reason, settles it.
         let p = plan(
             &cat,
