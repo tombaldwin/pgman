@@ -995,9 +995,22 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
     let cursor = app.tap_nav.pools_cursor.min(pools.len() - 1);
     let scroll = scroll_offset(cursor, body_h);
     let (kept, body_col) = fit_fixed_cols(&POOLS_COLS, &POOLS_DROP_ORDER, inner.width);
+    // The header names the app only over rows that show one: a pool
+    // name too long to leave the app room shows alone, and so does the
+    // header.
+    let shows_app = pools.iter().any(|p| {
+        p.last_app
+            .as_deref()
+            .is_some_and(|a| pair_fits(&p.pool, a, body_col))
+    });
+    let header_body = if shows_app {
+        pair_cell("pool", "app", body_col)
+    } else {
+        crate::grid::truncate_cell("pool", body_col)
+    };
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        fixed_cols_header(&POOLS_COLS, &kept, &pair_cell("pool", "app", body_col))
+        fixed_cols_header(&POOLS_COLS, &kept, &header_body)
             .to_uppercase()
             .fit(inner.width),
         Style::default()
@@ -1271,13 +1284,21 @@ const PAIR_MIN_REST: usize = 8;
 /// alone, cut with `…` — the border cut it with no marker, and at 80
 /// columns left a dangling ` · `. Pure.
 pub(crate) fn pair_cell(lead: &str, rest: &str, width: usize) -> String {
-    const SEP: &str = " · ";
-    let room = width.saturating_sub(display_width(lead) + display_width(SEP));
-    if !rest.is_empty() && room >= PAIR_MIN_REST.min(display_width(rest)) {
-        format!("{lead}{SEP}{}", crate::grid::truncate_cell(rest, room))
+    if pair_fits(lead, rest, width) {
+        let room = width - display_width(lead) - display_width(PAIR_SEP);
+        format!("{lead}{PAIR_SEP}{}", crate::grid::truncate_cell(rest, room))
     } else {
         crate::grid::truncate_cell(lead, width)
     }
+}
+
+const PAIR_SEP: &str = " · ";
+
+/// Whether [`pair_cell`] shows `rest` after `lead` in `width` columns,
+/// or the lead alone. Pure.
+fn pair_fits(lead: &str, rest: &str, width: usize) -> bool {
+    let room = width.saturating_sub(display_width(lead) + display_width(PAIR_SEP));
+    !rest.is_empty() && room >= PAIR_MIN_REST.min(display_width(rest))
 }
 
 /// Collapse + truncate a SQL fingerprint for one-line render.
@@ -1319,6 +1340,12 @@ mod tests {
         assert_eq!(pair_cell("A.b:1", "select 1", 40), "A.b:1 · select 1");
         for w in 0..80 {
             assert!(display_width(&pair_cell(caller, fp, w)) <= w, "{w}");
+            // pair_fits says which of the two pair_cell drew.
+            assert_eq!(
+                pair_fits(caller, fp, w),
+                pair_cell(caller, fp, w).contains(" · "),
+                "{w}"
+            );
         }
     }
 

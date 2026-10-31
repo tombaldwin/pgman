@@ -22,7 +22,7 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   narrow screen instead of their text column: at 60 columns a row
   ended on a bare `…`, and at 80 the transactions view read `con…` and
   the pools view showed the pool under a `POOL · APP` header with no
-  app.
+  app. The pools header names the app only when a row has room for one.
 
 ## [0.4.4] — 2026-10-31
 

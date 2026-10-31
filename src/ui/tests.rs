@@ -2845,6 +2845,53 @@ fn tap_transactions_and_pools_keep_their_text_column_at_60_and_80() {
     }
 }
 
+/// The pools header names the app only when a row shows one: a pool
+/// name too long to leave the app room at 60 columns showed alone
+/// under `POOL · APP`.
+#[test]
+fn tap_pools_header_names_the_app_only_over_rows_that_show_it() {
+    let screen = |pools: &[&str]| -> Vec<String> {
+        let mut a = settled_app(false, false);
+        a.mode = crate::app::Mode::TapMonitor;
+        a.tap_nav.view = crate::app::TapView::Pools;
+        a.splash_visible = false;
+        a.splash_until = None;
+        for pool in pools {
+            let mut e = tap_query_with_params("SELECT 1", &[], false);
+            e.pool = Some((*pool).into());
+            e.app = Some("orders-service".into());
+            a.on_tap_event(e);
+        }
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
+        term.draw(|f| draw(f, &mut a)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..16)
+            .map(|y| (0..60).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect()
+    };
+    let header = |rows: &[String]| {
+        rows.iter()
+            .find(|r| r.contains("PEAK"))
+            .unwrap_or_else(|| panic!("no header: {rows:#?}"))
+            .clone()
+    };
+
+    let rows = screen(&["primary-replica-eu"]);
+    assert!(
+        rows.iter().all(|r| !r.contains("orders-service")),
+        "{rows:#?}"
+    );
+    let h = header(&rows);
+    assert!(h.contains("POOL ") && !h.contains("APP"), "{h}");
+
+    let rows = screen(&["primary-replica-eu", "reports"]);
+    assert!(
+        rows.iter().any(|r| r.contains("reports · orders-serv")),
+        "{rows:#?}"
+    );
+    assert!(header(&rows).contains("POOL · APP"), "{}", header(&rows));
+}
+
 /// The help section list's teasers: whole at 80 columns, and at 60
 /// columns each keeps its lead (the key, as in `:tap / F4 · …`) whole.
 /// At 80x24 the tap's teaser ended `(:…`, cutting the `:tap / F4` it
