@@ -786,6 +786,41 @@ const FREE_TEXT: &[&str] = &[
     "payload",
     "subject",
 ];
+/// Tables of names and values, whose value is whatever the name says.
+const KEY_VALUE: &[&str] = &[
+    "attribute",
+    "attributes",
+    "attr",
+    "attrs",
+    "config",
+    "configuration",
+    "setting",
+    "settings",
+    "property",
+    "properties",
+    "param",
+    "params",
+    "parameter",
+    "parameters",
+    "preference",
+    "preferences",
+    "meta",
+    "metadata",
+    "extra",
+    "extras",
+];
+/// A last word for a column that holds whatever was put in it.
+const BAG: &[&str] = &[
+    "data",
+    "metadata",
+    "meta",
+    "attributes",
+    "properties",
+    "extra",
+    "extras",
+    "params",
+    "parameters",
+];
 /// Who did it: a staff member's name or email in an audit column.
 const ACTOR_LAST: &[&str] = &["by"];
 const ACTOR: &[&str] = &["author", "actor", "owner", "assignee", "reporter"];
@@ -967,6 +1002,18 @@ fn by_name_and_type(
         if last == "hash" {
             return (Rule::Keep, Origin::Plain);
         }
+    }
+    // What can hold anything whatever its length: a key-value table's
+    // value (Keycloak's user_attribute.value is a phone or an address,
+    // realm_smtp_config.value a password), or a bag of data.
+    if text && matches!(last, "value" | "val" | "data") && any(&words(table_name), KEY_VALUE) {
+        return (
+            Rule::Null,
+            why("a key-value table's value: anything can be in it"),
+        );
+    }
+    if text && BAG.contains(&last) {
+        return (Rule::Null, why("a bag of data: anything can be in it"));
     }
     // A code-like last word keeps the column unless what comes before it
     // is personal whatever it's called: a postcode, an identifier, a
@@ -1932,9 +1979,10 @@ mod tests {
             ("card_validations", "holder_name_hash", "text", Rule::Hash),
             ("card_validations", "last_digits_hash", "text", Rule::Hash),
             ("users", "email_digest", "bytea", Rule::Hash),
+            // Keycloak's: a hash of an attribute's value, a phone or more.
+            ("user_attribute", "long_value_hash", "bytea", Rule::Hash),
             // A hash of what isn't personal, or a file's, is still kept.
             ("uploads", "content_hash", "varchar", Rule::Keep),
-            ("attributes", "long_value_hash", "bytea", Rule::Keep),
             ("lfs_objects", "file_sha_hash", "varchar", Rule::Keep),
         ] {
             assert_eq!(rule(table, name, base, Some(255)), want, "{table}.{name}");
@@ -2795,5 +2843,37 @@ mod tests {
         );
         assert_eq!(empty_value("bool", None, false).as_deref(), Some("f"));
         assert_eq!(empty_value("geometry", None, false), None);
+    }
+
+    #[test]
+    fn a_key_value_tables_value_is_nulled_whatever_its_length() {
+        for (table, name) in [
+            ("user_attribute", "value"),
+            ("realm_smtp_config", "value"),
+            ("client_attributes", "value"),
+            ("widget_settings", "val"),
+            ("app_properties", "data"),
+        ] {
+            assert_eq!(
+                rule(table, name, "varchar", Some(255)),
+                Rule::Null,
+                "{table}.{name}"
+            );
+        }
+        for name in ["metadata", "user_metadata", "raw_data", "extra", "params"] {
+            assert_eq!(
+                rule("events", name, "varchar", Some(4000)),
+                Rule::Null,
+                "{name}"
+            );
+        }
+        // Elsewhere a value is a value, and a number can't hold a phone.
+        assert_eq!(rule("readings", "value", "varchar", Some(20)), Rule::Keep);
+        assert_eq!(rule("user_attribute", "value", "numeric", None), Rule::Keep);
+        assert_eq!(
+            rule("user_attribute", "name", "varchar", Some(255)),
+            Rule::Keep
+        );
+        assert_eq!(rule("events", "has_extra", "bool", None), Rule::Keep);
     }
 }
