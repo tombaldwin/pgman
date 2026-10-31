@@ -1176,11 +1176,12 @@ fn pools_body_col(inner_w: u16) -> usize {
 
 /// How much of a `body_col`-wide [`pair_cell`] a long lead (a
 /// fingerprint, a txn id) may take: half, leaving the rest room to be
-/// read — unless the column is too narrow to show both, when the lead
-/// takes it all.
+/// read — unless what half leaves after the ` · ` is too narrow for a
+/// rest worth reading, when the lead takes it all.
 fn lead_col(body_col: usize) -> usize {
-    if body_col >= 2 * PAIR_MIN_REST + 3 {
-        body_col / 2
+    let half = body_col / 2;
+    if body_col - half >= PAIR_MIN_REST + 3 {
+        half
     } else {
         body_col
     }
@@ -1262,9 +1263,16 @@ mod tests {
     #[test]
     fn lead_col_halves_only_a_column_wide_enough_for_both() {
         assert_eq!(lead_col(21), 10);
-        assert_eq!(lead_col(2 * PAIR_MIN_REST + 3), PAIR_MIN_REST + 1);
-        // Too narrow for a lead and a readable rest: the lead takes it.
-        assert_eq!(lead_col(2 * PAIR_MIN_REST + 2), 2 * PAIR_MIN_REST + 2);
+        assert_eq!(lead_col(40), 20);
+        // Half of 19 or 20 leaves 7 after the ` · `: too narrow for a
+        // readable rest, so the lead takes it.
+        assert_eq!(lead_col(20), 20);
+        assert_eq!(lead_col(19), 19);
+        // Whenever the lead is halved, the rest has its readable minimum.
+        for b in 0..80 {
+            let lead = lead_col(b);
+            assert!(lead == b || b - lead - 3 >= PAIR_MIN_REST, "{b}: {lead}");
+        }
         assert_eq!(lead_col(3), 3);
         assert_eq!(lead_col(0), 0);
     }
