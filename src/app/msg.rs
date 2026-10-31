@@ -48,6 +48,8 @@ pub enum AppMsg {
         /// went via a bastion. App owns it after this message lands;
         /// dropping it terminates the ssh subprocess.
         tunnel: Option<crate::tunnel::SshTunnel>,
+        /// The `FATAL` a bootstrap read swallowed (`conn::Booted`).
+        ended_by: Option<Box<crate::conn::QueryErr>>,
     },
     /// Connection or the bootstrap query failed.
     BootFailed { generation: u64, error: String },
@@ -262,6 +264,21 @@ pub fn connection_lost_saying(message: Option<&str>, hint: Option<&str>) -> Stri
         (Some(m), Some(h)) => format!("connection lost · {m} · {h}"),
         (Some(m), None) => format!("connection lost · {m}"),
         (None, _) => "connection lost · the connection to the server closed".to_string(),
+    }
+}
+
+/// What the card says for a connect whose session the server ended
+/// before its `Booted` landed: the `FATAL` one of the bootstrap's reads
+/// got back (`ended_by`), else what the notice channel's close said
+/// meanwhile (`lost_while_connecting`), else that the connection
+/// closed. Pure.
+pub fn closed_while_connecting(
+    ended_by: Option<&crate::conn::QueryErr>,
+    lost_while_connecting: Option<String>,
+) -> String {
+    match ended_by.and_then(|e| e.detail.as_ref().map(|d| (e, d))) {
+        Some((e, d)) if d.ends_session() => connection_lost_saying(Some(&e.msg), d.hint.as_deref()),
+        _ => lost_while_connecting.unwrap_or_else(|| connection_lost_reason(None)),
     }
 }
 

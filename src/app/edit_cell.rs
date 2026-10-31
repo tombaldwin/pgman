@@ -1326,6 +1326,7 @@ mod live {
             client: doomed,
             schema_cache: Default::default(),
             tunnel: None,
+            ended_by: None,
         });
         match &a.conn_state {
             ConnState::Failed(r) => assert_eq!(r, reason),

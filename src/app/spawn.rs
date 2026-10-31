@@ -195,6 +195,7 @@ impl App {
                     client: b.client,
                     schema_cache: b.schema_cache,
                     tunnel: b.tunnel,
+                    ended_by: b.ended_by.map(Box::new),
                 },
                 Err(error) => AppMsg::BootFailed { generation, error },
             };

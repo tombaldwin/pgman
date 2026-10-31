@@ -15299,6 +15299,39 @@ fn a_fatal_transaction_close_is_the_lost_cards_reason() {
     );
 }
 
+/// A connect whose session the server ended before `Booted` landed: the
+/// FATAL a bootstrap read got back and swallowed is the card's reason
+/// over the notice channel's bare close; without one, the close's
+/// reason (whatever it said) stands.
+#[test]
+fn a_fatal_the_bootstrap_swallowed_is_the_closed_connects_reason() {
+    let lost = format!(
+        "connection lost · terminating connection due to administrator command · \
+         {RECOVERY_CONFLICT_HINT}"
+    );
+    let bare = super::msg::connection_lost_reason(None);
+    let fatal = terminated_err("FATAL");
+    assert_eq!(
+        super::msg::closed_while_connecting(Some(&fatal), Some(bare.clone())),
+        lost
+    );
+    assert_eq!(
+        super::msg::closed_while_connecting(Some(&fatal), None),
+        lost
+    );
+    let error = terminated_err("ERROR");
+    assert_eq!(
+        super::msg::closed_while_connecting(Some(&error), Some("connection lost · x".into())),
+        "connection lost · x",
+        "an ERROR did not end the session"
+    );
+    assert_eq!(
+        super::msg::closed_while_connecting(Some(&crate::conn::QueryErr::msg("closed")), None),
+        bare
+    );
+    assert_eq!(super::msg::closed_while_connecting(None, None), bare);
+}
+
 /// A close that lands while the connect is still in flight is what the
 /// card says when the `Booted` behind it carries the closed client
 /// (the live half is `a_connect_whose_client_closed_says_why` in

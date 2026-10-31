@@ -123,6 +123,7 @@ impl App {
                 client,
                 schema_cache,
                 tunnel,
+                ended_by,
                 ..
             } => {
                 if client.is_closed() {
@@ -133,10 +134,10 @@ impl App {
                     if let Some(dead) = tunnel {
                         tokio::task::spawn_blocking(move || drop(dead));
                     }
-                    let reason = self
-                        .lost_while_connecting
-                        .take()
-                        .unwrap_or_else(|| super::msg::connection_lost_reason(None));
+                    let reason = super::msg::closed_while_connecting(
+                        ended_by.as_deref(),
+                        self.lost_while_connecting.take(),
+                    );
                     self.conn_state = ConnState::Failed(reason);
                     return;
                 }
