@@ -269,6 +269,7 @@ mod tests {
             dump_reason: None,
             unattended: false,
             journal: None,
+            encrypt: None,
         }
     }
 
