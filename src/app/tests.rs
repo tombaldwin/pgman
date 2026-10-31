@@ -5275,7 +5275,7 @@ fn tap_monitor_status_shortens_a_huge_drop_count() {
     a.on_tap_event(tap_heartbeat(1_000_000_000_000_000_000, 1));
     assert_eq!(
         a.tap_health.monitor_status(&[]),
-        "JDBC tap · 0 queries · 1 heartbeat · 1.0e18 dropped (JAR backpressure)"
+        "JDBC tap · 0 queries · 1 heartbeat · 1.0e18 dropped in the app, never sent"
     );
 }
 

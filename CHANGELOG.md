@@ -15,6 +15,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `religions`) is NULLed as one into the lookup is; a text-keyed lookup
   of categories keeps its key; a lookup's translations keyed by a
   `language_id` aren't refused.
+- The tap monitor's status says a sender's drop count is events
+  "dropped in the app, never sent", not "JAR backpressure": OTLP
+  senders never report one, and pgman's own drops are the footer's.
 
 ## [0.4.4] — 2026-10-31
 
