@@ -21,6 +21,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   was hashed alongside it, so the copy still joined to the answer. It is
   NULLed now, a rules-file `null` on it too, and where it can't be NULL
   the plan asks the rules file to decide. The lookup's own key is kept.
+  Masked copies taken with an earlier version of a schema with such keys,
+  Keycloak's tables, or the hashes below should be deleted (`pgman
+  copies rm`).
 - Keycloak's session tables are dumped empty: their notes hold a
   device's address and details.
 - A key-value table's value is NULLed whatever its length: Keycloak's
