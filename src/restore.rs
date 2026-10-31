@@ -737,9 +737,20 @@ impl Ready {
         let run = |args: Vec<String>| {
             run_pg_restore(&tool, args, opened.password(), opts.verbose, &database)
         };
-        let (errors, errors_text) = match &archive {
+        // An encrypted raw dump is restored as any other, from its
+        // decrypted copy.
+        let decrypted_raw = archive.as_ref().filter(|a| a.is_raw()).map(|a| Opts {
+            file: a.schema.clone(),
+            ..opts.clone()
+        });
+        let sectioned = archive.as_ref().filter(|a| !a.is_raw());
+        let (errors, errors_text) = match sectioned {
             None => {
-                let (status, tail) = run(pg_restore_args(&conninfo, &opts)).await?;
+                let (status, tail) = run(pg_restore_args(
+                    &conninfo,
+                    decrypted_raw.as_ref().unwrap_or(&opts),
+                ))
+                .await?;
                 let errors_text = tail.errors();
                 let tail = tail.text();
                 let errors = ignored_errors(&tail);

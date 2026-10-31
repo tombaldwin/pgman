@@ -440,7 +440,7 @@ impl Server {
         let result = if masked {
             crate::masked::run(&opts, resolved, &entry.copy, &self.cwd, true, false, &say).await
         } else {
-            crate::dump::run(&opts, resolved, &say).await
+            crate::dump::run(&opts, resolved, &entry.copy, &say).await
         };
         let warn = crate::dump::journal_dump(&entry, env.as_deref(), &database, &label, &result);
         let unsent = crate::journal_send::flush_note().await;
@@ -465,7 +465,11 @@ impl Server {
         let rel = arg_string(args, "file")?.ok_or("file is required")?;
         let target = arg_string(args, "target")?.ok_or("target is required")?;
         let file = inside(&self.cwd, &rel, true)?;
-        if !crate::masked::is_archive(&file) {
+        // A masked archive is what an agent restores; an encrypted raw one
+        // is a raw copy, judged as any other by the journal.
+        let masked_archive = crate::masked::is_archive(&file)
+            && crate::masked::read_header(&file).is_ok_and(|h| h.masked);
+        if !masked_archive {
             let f = file.clone();
             let known = tokio::task::spawn_blocking(move || {
                 let (events, _) = crate::journal::read_in(&crate::journal::dir());

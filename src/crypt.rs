@@ -85,6 +85,16 @@ impl Seal {
     }
 }
 
+impl Seal {
+    /// For the journal: `kms:<key>` or `age:<public key>`. Pure.
+    pub fn journal(&self) -> String {
+        match (self.kind.as_str(), &self.kms_key) {
+            ("kms", Some(k)) => format!("kms:{k}"),
+            _ => format!("age:{}", self.recipient),
+        }
+    }
+}
+
 /// `age1abcd…wxyz`. Pure.
 pub fn short(recipient: &str) -> String {
     if recipient.len() <= 16 {

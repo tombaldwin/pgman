@@ -71,6 +71,9 @@ pub struct Policy {
     /// What its dumps are encrypted to; `None` when nothing says.
     pub encrypt: Option<crate::crypt::Encrypt>,
     pub encrypt_scope: crate::aws_cli::AwsScope,
+    /// The target is an environment the operator's file names: somewhere
+    /// `encrypt` can be said.
+    pub has_env: bool,
 }
 
 /// What was asked for.
@@ -160,6 +163,7 @@ pub fn effective(
     cap: Option<(DumpMode, &str)>,
 ) -> Result<Policy, String> {
     let default = EnvSettings::default();
+    let has_env = env.is_some();
     let env = env.unwrap_or(&default);
     // A protected environment is dumped masked unless its operator says
     // otherwise; anything else as it is.
@@ -200,6 +204,7 @@ pub fn effective(
         unattended: env.unattended,
         encrypt,
         encrypt_scope: env.encrypt_scope.clone(),
+        has_env,
     })
 }
 
@@ -239,6 +244,10 @@ pub fn gate(policy: &Policy, kind: Kind, via: Via, name: &str) -> Result<Gate, S
     // says; `none` is an opt-out for masked copies only.
     if policy.protected && kind != Kind::Schema {
         match (&policy.encrypt, kind) {
+            // A protected connection, or a raw copy restored here: no
+            // environment to say a key on, so masked goes unencrypted (and
+            // says so). Raw it can't be: with no environment it is masked.
+            (None, Kind::Masked) if !policy.has_env => {}
             (None, _) => {
                 return Err(format!(
                     "{name} is protected, and its dumps are encrypted: say to what with encrypt \
@@ -534,6 +543,9 @@ mod tests {
         assert!(gate(&p, Kind::Masked, Via::Terminal, "production").is_ok());
         let e = gate(&p, Kind::Raw, Via::Terminal, "production").unwrap_err();
         assert!(e.contains("always encrypted"), "{e}");
+        // No environment to say a key on: masked, unencrypted.
+        let p = effective(true, None, None).unwrap();
+        assert!(gate(&p, Kind::Masked, Via::Terminal, "prod-db").is_ok());
         // A key: both.
         let keyed = EnvSettings {
             encrypt: Some(key()),

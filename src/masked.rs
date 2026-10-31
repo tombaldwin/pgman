@@ -566,6 +566,7 @@ pub async fn run(
         key: "fresh".to_string(),
         words: crate::masking::transform::WORDS_VERSION,
         sequences,
+        raw: None,
     };
     let written = (|| -> Result<(), String> {
         // In a work tree (an agent's dumps land in the project), git
@@ -1117,6 +1118,52 @@ impl OpenArchive {
     pub fn decrypted(&self) -> bool {
         self.temp.is_some()
     }
+
+    /// An encrypted raw dump: [`OpenArchive::schema`] is its whole
+    /// pg_dump archive, restored as any other.
+    pub fn is_raw(&self) -> bool {
+        self.manifest.raw.is_some()
+    }
+}
+
+/// Write `header` and an encrypted raw dump's manifest into `dir`, beside
+/// its [`archive::RAW`]: the header plain, the manifest encrypted to `to`.
+pub fn finish_raw_archive(
+    dir: &Path,
+    header: &Header,
+    to: &age::x25519::Recipient,
+) -> Result<(), String> {
+    use std::io::Write;
+    let manifest = Manifest {
+        header: header.clone(),
+        schema_sha256: String::new(),
+        tables: Vec::new(),
+        large_objects: true,
+        rules: "raw".into(),
+        key: "none".into(),
+        words: 0,
+        sequences: Vec::new(),
+        raw: Some(archive::sha256_file(&dir.join(archive::RAW))?),
+    };
+    private_file(&dir.join(".gitignore"))?
+        .write_all(b"# A pgman dump: never committed.\n*\n")
+        .map_err(|e| format!(".gitignore: {e}"))?;
+    private_file(&dir.join(archive::HEADER))?
+        .write_all(
+            serde_json::to_string_pretty(header)
+                .unwrap_or_default()
+                .as_bytes(),
+        )
+        .map_err(|e| format!("header: {e}"))?;
+    let mut m = crate::crypt::Sink::new(private_file(&dir.join(archive::MANIFEST))?, Some(to))
+        .map_err(|e| format!("manifest: {e}"))?;
+    m.write_all(
+        serde_json::to_string_pretty(&manifest)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .and_then(|_| m.finish())
+    .map_err(|e| format!("manifest: {e}"))
 }
 
 /// The plain header of the archive at `dir`. Reads it.
@@ -1161,8 +1208,14 @@ fn open_archive_with(
     cache: &Path,
 ) -> Result<OpenArchive, String> {
     let manifest = checked_manifest_with(dir, header, key.as_ref())?;
+    // What pg_restore reads: the schema, or a raw dump's whole archive.
+    let inner = if manifest.raw.is_some() {
+        archive::RAW
+    } else {
+        archive::SCHEMA
+    };
     let (schema, temp) = match &key {
-        None => (dir.join(archive::SCHEMA), None),
+        None => (dir.join(inner), None),
         Some(k) => {
             let temp = cache.join(format!(
                 "restore-{}-{}",
@@ -1172,15 +1225,14 @@ fn open_archive_with(
             let _ = std::fs::remove_dir_all(&temp);
             crate::util::ensure_private_dir(&temp)
                 .map_err(|e| format!("{}: {e}", temp.display()))?;
-            let out = temp.join(archive::SCHEMA);
+            let out = temp.join(inner);
             let copied = (|| -> Result<(), String> {
-                let from = std::fs::File::open(dir.join(archive::SCHEMA))
-                    .map_err(|e| format!("{}: {e}", archive::SCHEMA))?;
-                let mut r = crate::crypt::source(from, Some(k))
-                    .map_err(|e| format!("{}: {e}", archive::SCHEMA))?;
+                let from =
+                    std::fs::File::open(dir.join(inner)).map_err(|e| format!("{inner}: {e}"))?;
+                let mut r =
+                    crate::crypt::source(from, Some(k)).map_err(|e| format!("{inner}: {e}"))?;
                 let mut w = private_file(&out)?;
-                std::io::copy(&mut r, &mut w)
-                    .map_err(|e| format!("decrypting {}: {e}", archive::SCHEMA))?;
+                std::io::copy(&mut r, &mut w).map_err(|e| format!("decrypting {inner}: {e}"))?;
                 Ok(())
             })();
             if let Err(e) = copied {
@@ -1241,6 +1293,10 @@ fn checked_manifest_with(
         }
         Ok(())
     };
+    if let Some(sha) = &m.raw {
+        check(dir.join(archive::RAW), sha)?;
+        return Ok(m);
+    }
     check(dir.join(archive::SCHEMA), &m.schema_sha256)?;
     for t in &m.tables {
         check(dir.join("data").join(&t.file), &t.sha256)?;
@@ -1280,6 +1336,7 @@ mod tests {
             key: "fresh".into(),
             words: 1,
             sequences: vec![],
+            raw: None,
         };
         std::fs::write(
             dir.join(archive::MANIFEST),
@@ -1327,6 +1384,7 @@ mod tests {
             key: "fresh".into(),
             words: 1,
             sequences: vec![],
+            raw: None,
         };
         write(
             dir.join(archive::MANIFEST),

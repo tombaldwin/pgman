@@ -21,6 +21,9 @@ pub const FORMAT: u32 = 1;
 pub const HEADER: &str = "header.json";
 pub const MANIFEST: &str = "manifest.json";
 pub const SCHEMA: &str = "schema.dump";
+/// An encrypted raw dump's pg_dump archive, in place of the schema and
+/// the tables.
+pub const RAW: &str = "raw.dump";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Header {
@@ -80,6 +83,10 @@ pub struct Manifest {
     /// Each sequence: schema, name, last value, whether it was called.
     #[serde(default)]
     pub sequences: Vec<(String, String, i64, bool)>,
+    /// An encrypted raw dump: the sha256 of its [`RAW`] file, which holds
+    /// every row as it is; `schema_sha256` and `tables` are empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
 }
 
 /// The generated name of the `n`th table's file. Pure.
@@ -350,6 +357,7 @@ mod tests {
             key: "fresh".into(),
             words: 1,
             sequences: vec![],
+            raw: None,
         };
         assert!(manifest_problem(&m)
             .unwrap()
