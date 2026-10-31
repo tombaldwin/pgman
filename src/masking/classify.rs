@@ -326,6 +326,7 @@ fn known(word: &str) -> bool {
                 IDENTIFIER,
                 HANDLE,
                 BODY,
+                BODY_LAST,
                 ADDRESS,
                 POSTCODE,
                 BIRTH,
@@ -536,6 +537,7 @@ const FLAG_LAST: &[&str] = &[
 ];
 /// Whose colour is a person's.
 const BODY: &[&str] = &["eye", "eyes", "skin", "hair", "complexion"];
+const BODY_LAST: &[&str] = &["color", "colour", "tone"];
 /// A last word that is usually a code, not the thing — `currency_code`,
 /// `order_status` — but can be the thing itself: `postal_code`,
 /// `sort_code`, `marital_status`, `tax_id`.
@@ -692,7 +694,6 @@ const IDENTIFIER: &[&str] = &[
     "commission",
     "last digits",
     "last four",
-    "last4",
 ];
 /// A person's account elsewhere.
 const HANDLE: &[&str] = &[
@@ -973,7 +974,7 @@ fn by_name_and_type(
     let itself = (last != "id" || text)
         && (any(&w, IDENTIFIER) || any(&w, POSTCODE) || any(&w, DEVICE) || any(&w, FAMILY));
     // A colour is a setting, but not a person's: eye_colour, skin_tone.
-    if matches!(last, "color" | "colour" | "tone") && any(&w, BODY) {
+    if BODY_LAST.contains(&last) && any(&w, BODY) {
         return (Rule::Null, why("a person's appearance, by name"));
     }
     // A template, layout or style that can hold anything may be an email
@@ -987,7 +988,7 @@ fn by_name_and_type(
         return (Rule::Keep, Origin::Plain);
     }
     // An email's subject or body is free text, below.
-    let about_text = FREE_TEXT.contains(&last);
+    let about_text = FREE_TEXT.contains(&last) || loose;
     if any(&w, EMAIL) && text && !about_text {
         return (Rule::Email, why("an email address, by name"));
     }
@@ -1015,7 +1016,9 @@ fn by_name_and_type(
             return (Rule::Name(NamePart::Full), why("a person's name, by name"));
         }
     }
-    if any(&w, IDENTIFIER) {
+    // A card's last four, not the last 4 weeks.
+    let last4 = w.ends_with(&["last".to_string(), "4".to_string()]) || has(&w, "last 4 digits");
+    if any(&w, IDENTIFIER) || last4 {
         return (Rule::Null, why("an identifier or pay, by name"));
     }
     if any(&w, HANDLE) {
@@ -1923,6 +1926,9 @@ mod tests {
             ("tls_sessions", "client_ja3", "varchar", Rule::Null),
             ("cards", "card_last4", "varchar", Rule::Null),
             ("logins", "ipv4", "varchar", Rule::Ip),
+            ("cards", "last_4_digits", "varchar", Rule::Null),
+            ("reports", "last_4_weeks", "numeric", Rule::Keep),
+            ("reports", "sales_last4weeks", "int4", Rule::Keep),
             ("card_validations", "holder_name_hash", "text", Rule::Hash),
             ("card_validations", "last_digits_hash", "text", Rule::Hash),
             ("users", "email_digest", "bytea", Rule::Hash),
@@ -1972,6 +1978,11 @@ mod tests {
         );
         assert_eq!(
             rule("settings", "letter_template", "text", None),
+            Rule::Null
+        );
+        assert_eq!(rule("settings", "email_template", "text", None), Rule::Null);
+        assert_eq!(
+            rule("settings", "skintone", "varchar", Some(20)),
             Rule::Null
         );
     }
