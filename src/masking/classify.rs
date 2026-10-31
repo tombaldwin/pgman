@@ -1520,7 +1520,7 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 ));
             }
             // After the hash it may have become: that must fit too.
-            check(t, c, &rule, &origin, unique, fit, &mut problems);
+            check(t, c, &rule, unique, fit, &mut problems);
             if rule == Rule::Hash && g.ints.len() > 1 {
                 problems.push(format!(
                     "{q}.{} is joined to columns of other integer types ({}), and a hash comes \
@@ -1683,7 +1683,6 @@ fn check(
     t: &Table,
     c: &Column,
     rule: &Rule,
-    origin: &Origin,
     unique: bool,
     fit: Option<usize>,
     problems: &mut Vec<String>,
@@ -1759,9 +1758,6 @@ fn check(
     }
     if *rule == Rule::Hash && !hashable(base) {
         problems.push(format!("{at} is {}: hash can't apply", c.ty.display));
-    }
-    if *rule == Rule::Null && c.ty.not_null && origin == &Origin::Rules && c.unique {
-        // Becomes a hash; fine.
     }
     if *rule == Rule::Null
         && c.ty.not_null
