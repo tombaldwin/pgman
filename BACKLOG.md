@@ -77,7 +77,11 @@ note.
   integer one is kept; Odoo's `/web/assets` attachments keep a checksum
   and lose their content, so a restored web client may need `-u web`
   (not tried on an instance); the concurrent index test's own database
-  is left behind when it fails part-way.
+  is left behind when it fails part-way. A translations table keyed by a
+  lookup's key and a `language_id` that is itself a key is read as a
+  junction and refused (the message gives the way out). The rules files'
+  "different rules" problem is pushed once per pass of the join
+  fixpoint, so a long chain can show it twice.
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.

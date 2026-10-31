@@ -267,8 +267,10 @@ the people in it. No rules file is needed for the first one.
   joins still join, unless its name says what it points at is personal:
   a family detail or a birth (`country_of_birth`, `spouse_id`, into a
   lookup or at another person), or a special category into a lookup
-  named for it (`gender_id` into `genders`). It is NULLed, and where it
-  can't be NULL the plan asks the rules file to decide; every column joined that way fits the shortest of
+  named for it that references no other table but for who made a row
+  (`gender_id` into `genders`). It is NULLed, and where it can't be NULL
+  the plan asks the rules file to decide. Elsewhere a rules-file `null`
+  on a key that can be NULL stays NULL; every column joined that way fits the shortest of
   them, and is unique if one of them is (a unique name gets a tag, kept
   when it is shortened). Migration history is kept (Flyway, Liquibase,
   Rails, Django, Alembic, Knex), and so are Odoo's models, views and
