@@ -414,6 +414,57 @@ pub fn read_all(path: &Path, key: Option<&age::x25519::Identity>) -> Result<Vec<
     Ok(out)
 }
 
+pub const KEY_USAGE: &str = "\
+usage: pgman key new [NAME]
+       pgman key list
+
+The operator's age keys, which dumps are encrypted to where an
+environment says encrypt = \"age:<public key>\". Kept in pgman's config
+directory (keys/, 0600), in the format `age -d -i` reads.
+
+  new     make a key (NAME defaults to `default`) and print its public key
+  list    each key's name and public key";
+
+/// `pgman key …`: what to print, or why not. Writes a key for `new`.
+pub fn key_cli(args: &[String]) -> Result<String, String> {
+    match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        ["new"] | ["new", _] => {
+            let name = args.get(1).map(String::as_str).unwrap_or("default");
+            let (path, public) = new_key(name)?;
+            Ok(format!(
+                "made key {name}: {}\n  public key {public}\n  use it: encrypt = \"age:{public}\" \
+                 on an environment in environments.toml\n  keep a copy somewhere safe: a dump \
+                 encrypted to it can't be opened without it",
+                path.display()
+            ))
+        }
+        ["list"] => {
+            let mut out = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(keys_dir()) {
+                let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+                paths.sort();
+                for p in paths {
+                    let Ok(text) = std::fs::read_to_string(&p) else {
+                        continue;
+                    };
+                    for id in identities_in(&text) {
+                        let name = p.file_stem().and_then(|n| n.to_str()).unwrap_or("?");
+                        out.push(format!("{name:<16} {}", id.to_public()));
+                    }
+                }
+            }
+            if out.is_empty() {
+                return Ok(format!(
+                    "no keys in {}: `pgman key new` makes one",
+                    keys_dir().display()
+                ));
+            }
+            Ok(out.join("\n"))
+        }
+        _ => Err(KEY_USAGE.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
