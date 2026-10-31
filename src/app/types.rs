@@ -1941,7 +1941,7 @@ impl TapHealth {
         }
         let dropped_suffix = if self.dropped_events_total > 0 {
             format!(
-                " · {} dropped (JAR backpressure)",
+                " · {} dropped in the app, never sent",
                 crate::ui::compact_count(self.dropped_events_total)
             )
         } else {

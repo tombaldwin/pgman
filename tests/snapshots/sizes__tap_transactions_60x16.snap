@@ -1,16 +1,16 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
+assertion_line: 255
 expression: dump(&buf)
 ---
  pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
-│ │  STATE        STMTS    FPS        SPAN     DB-TIME …│  │
-│ │  open             9      2     195.0ms       5.6ms …│  │
-╰─│  open             1      1         0µs       290µs …│──╯
-╭[│  open             1      1         0µs       2.3ms …│──╮
+│ │  STATE             SPAN  TXN / CONN · LAST SQL      │  │
+│ │  open           195.0ms  conn-7#311 · select id, de…│  │
+╰─│  open               0µs  (autocommit … · select id,…│──╯
+╭[│  open               0µs  conn-2#90 · update subscri…│──╮
 │n│                                                     │  │
 │I│                                                     │  │
 │I│                                                     │  │

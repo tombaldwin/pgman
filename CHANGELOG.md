@@ -15,6 +15,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `religions`) is NULLed as one into the lookup is; a text-keyed lookup
   of categories keeps its key; a lookup's translations keyed by a
   `language_id` aren't refused.
+- The tap monitor's status says a sender's drop count is events
+  "dropped in the app, never sent", not "JAR backpressure": OTLP
+  senders never report one, and pgman's own drops are the footer's.
+- The tap's transactions and pools views drop numeric columns on a
+  narrow screen instead of their text column: at 60 columns a row
+  ended on a bare `…`, and at 80 the transactions view read `con…` and
+  the pools view showed the pool under a `POOL · APP` header with no
+  app. The pools header names the app only when a row has room for one.
 
 ## [0.4.4] — 2026-10-31
 

@@ -900,17 +900,13 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
     let visible_h = (inner.height as usize).saturating_sub(1); // under the header
     let cursor = app.tap_nav.txns_cursor.min(txns.len() - 1);
     let scroll = scroll_offset(cursor, visible_h);
+    let (kept, body_col) = fit_fixed_cols(&TXNS_COLS, &TXNS_DROP_ORDER, inner.width);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        format!(
-            "  {:<10}  {:>6}  {:>5}  {:>10}  {:>10}  {:<12}  {}",
-            "state",
-            "stmts",
-            "fps",
-            "span",
-            "db-time",
-            "pool",
-            pair_cell("txn / conn", "last sql", txns_body_col(inner.width))
+        fixed_cols_header(
+            &TXNS_COLS,
+            &kept,
+            &pair_cell("txn / conn", "last sql", body_col),
         )
         .to_uppercase()
         .fit(inner.width),
@@ -918,7 +914,6 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )));
-    let body_col = txns_body_col(inner.width);
     for (i, t) in txns.iter().enumerate().skip(scroll).take(visible_h) {
         let is_focus = i == cursor;
         let state_label = match t.outcome {
@@ -949,16 +944,15 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
             body_col,
         );
         let pool_label = short_fingerprint(t.pool.as_deref().unwrap_or("—"), 12);
-        let line = format!(
-            "  {state:<10}  {stmts:>6}  {fps:>5}  {span:>10}  {dbt:>10}  {pool:<12}  {body}",
-            state = state_label,
-            stmts = t.statement_count,
-            fps = t.distinct_fingerprints,
-            pool = pool_label,
-            span = format_duration(t.span_micros),
-            dbt = format_duration(t.total_query_micros),
-        )
-        .fit(inner.width);
+        let cells = [
+            state_label.to_string(),
+            t.statement_count.to_string(),
+            t.distinct_fingerprints.to_string(),
+            format_duration(t.span_micros),
+            format_duration(t.total_query_micros),
+            pool_label,
+        ];
+        let line = fixed_cols_row(&TXNS_COLS, &kept, &cells, &body).fit(inner.width);
         lines.push(Line::from(Span::styled(line, row_style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -1000,25 +994,29 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
     let body_h = (inner.height as usize).saturating_sub(1);
     let cursor = app.tap_nav.pools_cursor.min(pools.len() - 1);
     let scroll = scroll_offset(cursor, body_h);
+    let (kept, body_col) = fit_fixed_cols(&POOLS_COLS, &POOLS_DROP_ORDER, inner.width);
+    // The header names the app only over rows that show one: a pool
+    // name too long to leave the app room shows alone, and so does the
+    // header.
+    let shows_app = pools.iter().any(|p| {
+        p.last_app
+            .as_deref()
+            .is_some_and(|a| pair_fits(&p.pool, a, body_col))
+    });
+    let header_body = if shows_app {
+        pair_cell("pool", "app", body_col)
+    } else {
+        crate::grid::truncate_cell("pool", body_col)
+    };
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        format!(
-            "  {:>5}  {:>5}  {:>6}  {:>5}  {:>10}  {:>9}  {}",
-            "conns",
-            "peak",
-            "calls",
-            "err",
-            "busy",
-            "p95",
-            pair_cell("pool", "app", pools_body_col(inner.width))
-        )
-        .to_uppercase()
-        .fit(inner.width),
+        fixed_cols_header(&POOLS_COLS, &kept, &header_body)
+            .to_uppercase()
+            .fit(inner.width),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )));
-    let body_col = pools_body_col(inner.width);
     for (i, p) in pools.iter().enumerate().skip(scroll).take(body_h) {
         let is_focus = i == cursor;
         let style = if is_focus {
@@ -1035,16 +1033,15 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
             Some(a) => pair_cell(&p.pool, a, body_col),
             None => short_fingerprint(&p.pool, body_col),
         };
-        let line = format!(
-            "  {conns:>5}  {peak:>5}  {calls:>6}  {err:>5}  {busy:>10}  {p95:>9}  {body}",
-            conns = p.distinct_conns,
-            peak = p.peak_concurrent,
-            calls = p.query_count,
-            err = p.error_count,
-            busy = format_duration(p.total_micros),
-            p95 = format_duration(p.p95_micros),
-        )
-        .fit(inner.width);
+        let cells = [
+            p.distinct_conns.to_string(),
+            p.peak_concurrent.to_string(),
+            p.query_count.to_string(),
+            p.error_count.to_string(),
+            format_duration(p.total_micros),
+            format_duration(p.p95_micros),
+        ];
+        let line = fixed_cols_row(&POOLS_COLS, &kept, &cells, &body).fit(inner.width);
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -1164,23 +1161,114 @@ fn callers_body_col(inner_w: u16) -> usize {
     (inner_w as usize).saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 4 + 2)
 }
 
-/// The transactions view's `txn / conn · last sql` column.
-fn txns_body_col(inner_w: u16) -> usize {
-    (inner_w as usize).saturating_sub(2 + 10 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 10 + 2 + 12 + 2)
+/// One of the fixed-width columns a tap view draws before its text
+/// column.
+#[derive(Debug, Clone, Copy)]
+struct FixedCol {
+    label: &'static str,
+    width: usize,
+    /// Left-aligned (a name); numbers are right-aligned.
+    left: bool,
 }
 
-/// The pools view's `pool · app` column.
-fn pools_body_col(inner_w: u16) -> usize {
-    (inner_w as usize).saturating_sub(2 + 5 + 2 + 5 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 9 + 2)
+const fn col(label: &'static str, width: usize, left: bool) -> FixedCol {
+    FixedCol { label, width, left }
+}
+
+/// The transactions view's columns before `txn / conn · last sql`.
+const TXNS_COLS: [FixedCol; 6] = [
+    col("state", 10, true),
+    col("stmts", 6, false),
+    col("fps", 5, false),
+    col("span", 10, false),
+    col("db-time", 10, false),
+    col("pool", 12, true),
+];
+
+/// Which [`TXNS_COLS`] go first when the row is short of room: distinct
+/// fingerprints, the pool (the pools view has it), db time, the
+/// statement count. The state and the span — a transaction held open —
+/// are what the view is for, and stay.
+const TXNS_DROP_ORDER: [usize; 4] = [2, 5, 4, 1];
+
+/// The pools view's columns before `pool · app`.
+const POOLS_COLS: [FixedCol; 6] = [
+    col("conns", 5, false),
+    col("peak", 5, false),
+    col("calls", 6, false),
+    col("err", 5, false),
+    col("busy", 10, false),
+    col("p95", 9, false),
+];
+
+/// Which [`POOLS_COLS`] go first when the row is short of room: total
+/// busy time, p95, the connection count, the call count. Peak in-flight
+/// (is the pool running hot?) and errors stay.
+const POOLS_DROP_ORDER: [usize; 4] = [4, 5, 0, 2];
+
+/// The narrowest text column a view with fixed columns settles for:
+/// room for a lead and a rest of [`PAIR_MIN_REST`] once [`lead_col`]
+/// halves it. Narrower, and the row ended on a bare `…`.
+const TEXT_COL_MIN: usize = 2 * PAIR_MIN_REST + 6;
+
+/// Which of `cols` a view draws in a panel `inner_w` wide, and how wide
+/// its text column is then. All of them where the text column keeps
+/// [`TEXT_COL_MIN`]; short of that, columns go in `drop_order` until it
+/// does, or until there are none left to drop. Pure.
+fn fit_fixed_cols(cols: &[FixedCol], drop_order: &[usize], inner_w: u16) -> (Vec<bool>, usize) {
+    let body_col = |kept: &[bool]| {
+        let fixed: usize = cols
+            .iter()
+            .zip(kept)
+            .filter(|(_, k)| **k)
+            .map(|(c, _)| c.width + 2)
+            .sum();
+        (inner_w as usize).saturating_sub(2 + fixed)
+    };
+    let mut kept = vec![true; cols.len()];
+    for &i in drop_order {
+        if body_col(&kept) >= TEXT_COL_MIN {
+            break;
+        }
+        kept[i] = false;
+    }
+    let body = body_col(&kept);
+    (kept, body)
+}
+
+/// One row of a view with fixed columns: each kept `cells[i]` padded to
+/// `cols[i]`, then `body`. Pure.
+fn fixed_cols_row(cols: &[FixedCol], kept: &[bool], cells: &[String], body: &str) -> String {
+    let mut line = String::from("  ");
+    for ((c, k), cell) in cols.iter().zip(kept).zip(cells) {
+        if !*k {
+            continue;
+        }
+        let w = c.width;
+        if c.left {
+            line.push_str(&format!("{cell:<w$}  "));
+        } else {
+            line.push_str(&format!("{cell:>w$}  "));
+        }
+    }
+    line.push_str(body);
+    line
+}
+
+/// The header row over [`fixed_cols_row`]: the kept columns' labels.
+fn fixed_cols_header(cols: &[FixedCol], kept: &[bool], body: &str) -> String {
+    let labels: Vec<String> = cols.iter().map(|c| c.label.to_string()).collect();
+    fixed_cols_row(cols, kept, &labels, body)
 }
 
 /// How much of a `body_col`-wide [`pair_cell`] a long lead (a
 /// fingerprint, a txn id) may take: half, leaving the rest room to be
-/// read — unless the column is too narrow to show both, when the lead
-/// takes it all.
+/// read — unless what half leaves after the ` · ` is too narrow for a
+/// rest worth reading, when the lead takes it all.
 fn lead_col(body_col: usize) -> usize {
-    if body_col >= 2 * PAIR_MIN_REST + 3 {
-        body_col / 2
+    let half = body_col / 2;
+    if body_col - half >= PAIR_MIN_REST + 3 {
+        half
     } else {
         body_col
     }
@@ -1196,13 +1284,21 @@ const PAIR_MIN_REST: usize = 8;
 /// alone, cut with `…` — the border cut it with no marker, and at 80
 /// columns left a dangling ` · `. Pure.
 pub(crate) fn pair_cell(lead: &str, rest: &str, width: usize) -> String {
-    const SEP: &str = " · ";
-    let room = width.saturating_sub(display_width(lead) + display_width(SEP));
-    if !rest.is_empty() && room >= PAIR_MIN_REST.min(display_width(rest)) {
-        format!("{lead}{SEP}{}", crate::grid::truncate_cell(rest, room))
+    if pair_fits(lead, rest, width) {
+        let room = width - display_width(lead) - display_width(PAIR_SEP);
+        format!("{lead}{PAIR_SEP}{}", crate::grid::truncate_cell(rest, room))
     } else {
         crate::grid::truncate_cell(lead, width)
     }
+}
+
+const PAIR_SEP: &str = " · ";
+
+/// Whether [`pair_cell`] shows `rest` after `lead` in `width` columns,
+/// or the lead alone. Pure.
+fn pair_fits(lead: &str, rest: &str, width: usize) -> bool {
+    let room = width.saturating_sub(display_width(lead) + display_width(PAIR_SEP));
+    !rest.is_empty() && room >= PAIR_MIN_REST.min(display_width(rest))
 }
 
 /// Collapse + truncate a SQL fingerprint for one-line render.
@@ -1244,6 +1340,12 @@ mod tests {
         assert_eq!(pair_cell("A.b:1", "select 1", 40), "A.b:1 · select 1");
         for w in 0..80 {
             assert!(display_width(&pair_cell(caller, fp, w)) <= w, "{w}");
+            // pair_fits says which of the two pair_cell drew.
+            assert_eq!(
+                pair_fits(caller, fp, w),
+                pair_cell(caller, fp, w).contains(" · "),
+                "{w}"
+            );
         }
     }
 
@@ -1259,12 +1361,98 @@ mod tests {
         }
     }
 
+    fn kept_labels(cols: &[FixedCol], kept: &[bool]) -> Vec<&'static str> {
+        cols.iter()
+            .zip(kept)
+            .filter(|(_, k)| **k)
+            .map(|(c, _)| c.label)
+            .collect()
+    }
+
+    /// 53 and 71 are the tap panel's inner width at 60 and 80 columns.
+    #[test]
+    fn fixed_cols_drop_in_order_until_the_text_column_is_readable() {
+        let (kept, body) = fit_fixed_cols(&TXNS_COLS, &TXNS_DROP_ORDER, 53);
+        assert_eq!(kept_labels(&TXNS_COLS, &kept), ["state", "span"]);
+        assert_eq!(body, 27);
+        let (kept, body) = fit_fixed_cols(&TXNS_COLS, &TXNS_DROP_ORDER, 71);
+        assert_eq!(
+            kept_labels(&TXNS_COLS, &kept),
+            ["state", "stmts", "span", "db-time"]
+        );
+        assert_eq!(body, 25);
+        let (kept, body) = fit_fixed_cols(&TXNS_COLS, &TXNS_DROP_ORDER, 108);
+        assert!(kept.iter().all(|k| *k));
+        assert_eq!(body, 108 - 67);
+
+        let (kept, body) = fit_fixed_cols(&POOLS_COLS, &POOLS_DROP_ORDER, 53);
+        assert_eq!(
+            kept_labels(&POOLS_COLS, &kept),
+            ["conns", "peak", "calls", "err"]
+        );
+        assert_eq!(body, 22);
+        let (kept, body) = fit_fixed_cols(&POOLS_COLS, &POOLS_DROP_ORDER, 71);
+        assert_eq!(
+            kept_labels(&POOLS_COLS, &kept),
+            ["conns", "peak", "calls", "err", "p95"]
+        );
+        assert_eq!(body, 29);
+
+        // Every width: the text column is readable, or nothing is left
+        // to drop; and no column goes that didn't need to.
+        for (cols, order) in [
+            (&TXNS_COLS, &TXNS_DROP_ORDER),
+            (&POOLS_COLS, &POOLS_DROP_ORDER),
+        ] {
+            for w in 0..200u16 {
+                let (kept, body) = fit_fixed_cols(cols, order, w);
+                let dropped = kept.iter().filter(|k| !**k).count();
+                assert!(body >= TEXT_COL_MIN || dropped == order.len(), "{w}");
+                if dropped > 0 {
+                    let mut one_fewer = kept.clone();
+                    one_fewer[order[dropped - 1]] = true;
+                    let fixed: usize = cols
+                        .iter()
+                        .zip(&one_fewer)
+                        .filter(|(_, k)| **k)
+                        .map(|(c, _)| c.width + 2)
+                        .sum();
+                    assert!(
+                        (w as usize).saturating_sub(2 + fixed) < TEXT_COL_MIN,
+                        "{w}: dropped one too many"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_cols_row_pads_kept_cells_and_skips_dropped_ones() {
+        let cells = ["open", "9", "2", "195.0ms", "5.6ms", "primary"].map(String::from);
+        let kept = [true, true, false, true, false, false];
+        assert_eq!(
+            fixed_cols_row(&TXNS_COLS, &kept, &cells, "conn-7#311 · select"),
+            "  open             9     195.0ms  conn-7#311 · select"
+        );
+        assert_eq!(
+            fixed_cols_header(&TXNS_COLS, &kept, "txn / conn"),
+            "  state        stmts        span  txn / conn"
+        );
+    }
+
     #[test]
     fn lead_col_halves_only_a_column_wide_enough_for_both() {
         assert_eq!(lead_col(21), 10);
-        assert_eq!(lead_col(2 * PAIR_MIN_REST + 3), PAIR_MIN_REST + 1);
-        // Too narrow for a lead and a readable rest: the lead takes it.
-        assert_eq!(lead_col(2 * PAIR_MIN_REST + 2), 2 * PAIR_MIN_REST + 2);
+        assert_eq!(lead_col(40), 20);
+        // Half of 19 or 20 leaves 7 after the ` · `: too narrow for a
+        // readable rest, so the lead takes it.
+        assert_eq!(lead_col(20), 20);
+        assert_eq!(lead_col(19), 19);
+        // Whenever the lead is halved, the rest has its readable minimum.
+        for b in 0..80 {
+            let lead = lead_col(b);
+            assert!(lead == b || b - lead - 3 >= PAIR_MIN_REST, "{b}: {lead}");
+        }
         assert_eq!(lead_col(3), 3);
         assert_eq!(lead_col(0), 0);
     }
