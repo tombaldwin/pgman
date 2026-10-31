@@ -1310,8 +1310,14 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             .table(&format!("{}.{base_name}", t.schema))
             .filter(|_| base_name != t.name);
         for c in t.columns.iter().filter(|c| !c.generated) {
+            // A lookup's own key isn't anyone's: genders.gender_id.
+            let lookup_key = t.primary_key.len() == 1
+                && t.primary_key[0] == c.name
+                && matches!(c.ty.base.as_str(), "int2" | "int4" | "int8" | "uuid")
+                && key_says_it(&c.name);
             let mut d = match preset {
                 Some((true, what)) => (Rule::Keep, Origin::Preset(what.to_string())),
+                _ if lookup_key => (Rule::Keep, Origin::Plain),
                 _ => {
                     let from = base.and_then(|b| b.column(&c.name)).unwrap_or(c);
                     let mut d = default_rule(base_name, from, &rules.personal, &rules.not_personal);
@@ -3000,11 +3006,22 @@ mod tests {
                 ref_columns: vec!["id".into()],
             });
         }
+        // A lookup keyed by its own name: its key isn't anyone's.
+        let mut religion = lookup("religions");
+        religion.columns[0].name = "religion_id".into();
+        religion.primary_key = vec!["religion_id".into()];
+        people.columns.push(c("religion", "int4", None));
+        people.foreign_keys.push(ForeignKey {
+            columns: vec!["religion".into()],
+            ref_table: "public.religions".into(),
+            ref_columns: vec!["religion_id".into()],
+        });
         let cat = Catalog {
             tables: vec![
                 lookup("gender"),
                 lookup("country"),
                 lookup("marital_status"),
+                religion,
                 people,
             ],
             ..Default::default()
@@ -3012,7 +3029,17 @@ mod tests {
         let p = plan(&cat, &RuleSet::default());
         let t = p.table("public.people").unwrap();
         let rule_of = |n: &str| t.columns.iter().find(|d| d.column == n).unwrap();
-        for n in ["gender_id", "country_of_birth", "nationality_id"] {
+        let key = &p.table("public.religions").unwrap().columns[0];
+        assert_eq!(
+            (key.rule.clone(), key.origin.clone()),
+            (Rule::Keep, Origin::Plain)
+        );
+        for n in [
+            "gender_id",
+            "country_of_birth",
+            "nationality_id",
+            "religion",
+        ] {
             let d = rule_of(n);
             assert_eq!(d.rule, Rule::Null, "{n}");
             assert!(
