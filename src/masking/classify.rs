@@ -485,6 +485,7 @@ const SPECIAL: &[&str] = &[
     "medical",
     "diagnosis",
     "disability",
+    "disabled",
     "union",
     "political",
     "politics",
@@ -910,7 +911,13 @@ fn by_name_and_type(
     {
         return (Rule::Keep, Origin::Plain);
     }
-    if any(&w, SPECIAL) {
+    // Something switched off isn't a disability: emails_disabled. A bare
+    // disabled, or registered_disabled, is the monitoring answer.
+    let switched_off = w.len() > 1
+        && last == "disabled"
+        && w[w.len() - 2] != "registered"
+        && !any(&w[..w.len() - 1], SPECIAL);
+    if any(&w, SPECIAL) && !switched_off {
         return (Rule::Null, why("special-category data, by name"));
     }
     // The rules file's words match the name as written, too: `bankdetails`.
@@ -1926,6 +1933,10 @@ mod tests {
             ("email_body", "varchar", Rule::Null),
             // Still the thing itself.
             ("disability", "varchar", Rule::Null),
+            ("disabled", "bool", Rule::Null),
+            ("disabled_person", "varchar", Rule::Null),
+            ("registered_disabled", "bool", Rule::Null),
+            ("health_disabled", "bool", Rule::Null),
             ("signature", "varchar", Rule::Null),
             ("contact_email", "varchar", Rule::Email),
         ] {
