@@ -70,23 +70,12 @@ note.
   NULLed; `client` makes an OAuth client's `name` a person's. From the release
   panel: `visa_type` is kept by the `type` flag word; presets match a
   table's name in any schema.
-- **From the v0.4.4 panel (2026-10-31).** `long_value_hash_lower_case`
-  is kept while `long_value_hash` is rehashed (`hash` not last); a bare
-  `hash` on a cards table and `ccnum_hash` are kept; a text-keyed lookup
-  (`genders.code char(1)`) has its key hashed with a fit problem where an
-  integer one is kept; Odoo's `/web/assets` attachments keep a checksum
-  and lose their content, so a restored web client may need `-u web`
-  (not tried on an instance); the concurrent index test's own database
-  is left behind when it fails part-way. A translations table keyed by a
-  lookup's key and a `language_id` that is itself a key is read as a
-  junction and refused (the message gives the way out). The rules files'
-  "different rules" problem is pushed once per pass of the join
-  fixpoint, so a long chain can show it twice.
-  From the re-check: a rules-file `fixed` on a nullable key isn't checked
-  against the referenced table (a value it lacks fails the restore's
-  foreign key); a key into a lookup's sub-lookup (`sub_religions`,
-  which references `religions`) is followed and kept; a follower the
-  rules file nulled but can't be NULL is told to "null it too".
+- **From the v0.4.4 panel (2026-10-31).** Odoo's `/web/assets`
+  attachments keep a checksum and lose their content, so a restored web
+  client may need `-u web` (not tried on an instance). A rules-file
+  `fixed` on a nullable key isn't checked against the referenced table: a
+  value it lacks fails the restore's foreign key (it can't be checked
+  from the catalog; validate could).
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.

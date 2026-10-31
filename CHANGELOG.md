@@ -6,6 +6,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Masking rehashes a hash whose word isn't last
+  (`long_value_hash_lower_case`), a bare `hash` on a cards or users
+  table, and a card number's (`ccnum_hash`).
+- A key into a lookup that refines another (`sub_religions` into
+  `religions`) is NULLed as one into the lookup is; a text-keyed lookup
+  of categories keeps its key; a lookup's translations keyed by a
+  `language_id` aren't refused.
+
 ## [0.4.4] — 2026-10-31
 
 ### Added
