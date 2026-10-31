@@ -977,7 +977,12 @@ fn by_name_and_type(
     if matches!(last, "color" | "colour" | "tone") && any(&w, BODY) {
         return (Rule::Null, why("a person's appearance, by name"));
     }
-    if FLAG_LAST.contains(&last)
+    // A template, layout or style that can hold anything may be an email
+    // signature's, with a name in it: judged as any column.
+    let unbounded = matches!(base, "text" | "citext" | "json" | "jsonb" | "xml" | "bytea")
+        || (base == "varchar" && col.ty.max_len.is_none());
+    let loose = unbounded && matches!(last, "template" | "layout" | "style");
+    if (FLAG_LAST.contains(&last) && !loose)
         || (VALUE_LAST.contains(&last) && !itself && !(last == "id" && text && any(&w, PERSON_REF)))
     {
         return (Rule::Keep, Origin::Plain);
@@ -1953,6 +1958,19 @@ mod tests {
         ] {
             assert_eq!(rule("settings", name, base, Some(255)), want, "{name}");
         }
+        // Unbounded, a template may hold a person's signature.
+        assert_eq!(
+            rule("settings", "email_template", "varchar", Some(64)),
+            Rule::Keep
+        );
+        assert_eq!(
+            rule("settings", "signature_template", "text", None),
+            Rule::Null
+        );
+        assert_eq!(
+            rule("settings", "letter_template", "text", None),
+            Rule::Null
+        );
     }
 
     #[test]
