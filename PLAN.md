@@ -73,7 +73,11 @@ lookups, so they still joined), a key-value table's value and a bag of
 data NULLed (Keycloak's SMTP password), card/account/user hashes
 rehashed, an Odoo preset. CI prints the test server's log on failure
 and gives it a 512 MB /dev/shm; the concurrent index test has its own
-database. Next: a panel, then v0.4.4 on its GO.
+database. A Fable panel (two reviewers, a closing one, and a re-check
+of its fixes) found a rules-file null still hashed and joined, lookup
+keys unlinked far too widely (a health schema's staff keys), audited and
+tenant-scoped lookups missed, and Keycloak's session notes kept; all
+fixed. Released as v0.4.4 on the panel's GO (2026-10-31).
 
 ### The classifier on open-source schemas, and a client's rules file (2026-10-30)
 
