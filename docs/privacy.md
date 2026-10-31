@@ -113,9 +113,14 @@ original.
   to pgman's own directory by default, never into a synced folder
   (iCloud Drive, Dropbox, OneDrive, Google Drive, Nextcloud) for a raw
   copy, and excluded from Time Machine.
-  pgman warns when the disk isn't encrypted (FileVault off). Encrypting
-  dump files is planned, not built: until it is, a copy on disk is
-  protected by the machine's own disk encryption.
+  pgman warns when the disk isn't encrypted (FileVault off).
+- **Encrypted.** A protected environment's copies are encrypted: with a
+  key in the client's AWS KMS (`kms:`), so who may open a copy is an IAM
+  decision, every opening is in CloudTrail, and disabling the key makes
+  every copy unreadable; or with the developer's own key (`age:`). The
+  operator can opt masked copies out (`none`); raw copies, never. A
+  protected database that isn't configured as an environment is dumped
+  masked and unencrypted, which pgman says.
 - **Expiring.** Each copy has an expiry (14 days for a protected
   environment, unless configured); `pgman copies` flags those past it.
 - **Deleted in one step.** `pgman copies rm` deletes the file and drops
@@ -159,7 +164,9 @@ and CloudWatch once sent.
   if the developer has configured it so; masking applies to copies, not
   to those queries.
 - **Anonymisation.** A masked copy is pseudonymised, not anonymous.
-- **Encryption of dump files** is not built yet.
+- **An encrypted copy restored** is a database on the developer's
+  machine like any other: encryption protects the file, not what is
+  restored from it.
 
 The design behind all of this, and what is planned, is in
 [`docs/design/masked-dumps.md`](design/masked-dumps.md).

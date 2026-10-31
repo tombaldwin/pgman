@@ -183,6 +183,7 @@ dump = "unmasked"        # unmasked | masked | schema | never
 dump_ttl = "14d"         # when pgman copies calls a copy expired: 36h, 14d, 2w
 dump_reason = "required" # required | optional
 unattended = false       # true: raw dumps may run without a terminal
+encrypt = "kms:alias/pgman-dumps"  # kms:<key> | age:<public key> | none
 ```
 
 | `dump` | A dump may be |
@@ -227,9 +228,44 @@ expired; others need none and are kept 30.
   than dropping its cap. `ticket_url` makes `pgman copies` and its report
   show each ticket as a link.
 
-Encrypting dumps is designed but not built yet
-([docs/design/masked-dumps.md](design/masked-dumps.md)): until then a
-dump is a file only you can read, unencrypted.
+## Encrypted dumps
+
+A protected environment's rows are encrypted, to what its `encrypt` says;
+until it says, its raw and masked dumps are refused with the lines that
+settle it. A schema-only dump needs no key (and is encrypted when one is
+set).
+
+- **`kms:<key id, alias/… or ARN>`** for an AWS environment: each dump
+  gets a fresh key, which KMS wraps (`aws kms encrypt`, in the
+  environment's account, region and profile) and the dump keeps,
+  wrapped, in its header. The wrap is bound to the header's fields (the
+  copy, the database, when, masked or raw, protected), so a header edited
+  to say something else can't be opened. Restoring is `aws kms decrypt`:
+  whether you may is an IAM decision, each one is a CloudTrail line, and
+  disabling the key makes every copy unreadable. The key never appears
+  on a command line.
+- **`age:<public key>`** for the rest: your own key, made by `pgman key
+  new` and kept in pgman's config directory (`keys/`, readable by you
+  alone, the format `age -d -i` reads). `pgman key list` shows them.
+  Keep a copy: a dump encrypted to a key you've lost can't be opened.
+  Restoring elsewhere takes the key there too, or
+  `PGMAN_AGE_IDENTITY_FILE`.
+- **`none`**: masked copies unencrypted, said on each dump. Never a raw
+  copy of a protected environment.
+
+An encrypted dump is pgman's archive (a directory) whatever it holds:
+the header plain, everything else encrypted with the stock
+[age](https://age-encryption.org) format, pg_dump's own output piped
+through the encryptor, so no plaintext of it is written. The encryption
+key is never the masking key. `pgman restore` finds the key, checks
+every file's checksum, decrypts what pg_restore reads to a private file
+in pgman's cache (removed when the restore ends, and said), and streams
+the rows through the decryptor. An encrypted dump is pg_dump's custom
+format; `--format` is refused.
+
+A protected target that isn't an environment in your file (a connection
+named for production, a raw copy restored on your machine) has nowhere
+to say a key: it is dumped masked, unencrypted, and the result says so.
 
 ## Masked dumps
 

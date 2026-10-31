@@ -6,6 +6,23 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Encrypted dumps. `encrypt = "kms:<key>"` on an environment wraps a
+  fresh key per dump with AWS KMS, bound to the dump's header; `encrypt =
+  "age:<public key>"` encrypts to your own key, made by `pgman key new`.
+  Masked and raw dumps are both encrypted, pg_dump's output piped straight
+  into the encryptor; `pgman restore` opens them. The journal records
+  what each copy is encrypted to.
+
+### Changed
+
+- **A protected environment's raw and masked dumps need `encrypt`.**
+  Until the environment says `kms:`, `age:` or `none` (masked copies
+  only), they are refused, with the lines that settle it. Schema-only
+  dumps, and protected targets that aren't environments, are unchanged
+  (the latter dumped masked and unencrypted, which is said).
+
 ### Fixed
 
 - Masking rehashes a hash whose word isn't last
