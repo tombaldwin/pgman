@@ -11470,6 +11470,18 @@ fn a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout() {
         &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
     );
     on("pgman_test", &format!("CREATE DATABASE {db}")).unwrap();
+    // Dropped however the test ends: its name has the pid in it, so a
+    // failed run's would be left behind.
+    struct DropDb(String);
+    impl Drop for DropDb {
+        fn drop(&mut self) {
+            let _ = on(
+                "pgman_test",
+                &format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", self.0),
+            );
+        }
+    }
+    let _drop = DropDb(db.clone());
     let conns = home.join(".config/pgman/connections.toml");
     let mut text = std::fs::read_to_string(&conns).unwrap();
     text.push_str(&format!(
@@ -11503,7 +11515,6 @@ fn a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout() {
     .unwrap()[0]
         .get(0);
     assert!(valid, "built, not left INVALID");
-    let _ = on("pgman_test", &format!("DROP DATABASE {db} WITH (FORCE)"));
 }
 
 /// The formula's wrapper names its libpq in PGMAN_PG_BIN: that pg_dump is
