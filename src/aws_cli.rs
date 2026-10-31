@@ -150,11 +150,11 @@ mod tests {
                 ..AwsScope::default()
             },
             AwsScope {
-                account: Some("54084755703".into()),
+                account: Some("21098765432".into()),
                 ..AwsScope::default()
             },
             AwsScope {
-                account: Some("54084755703x".into()),
+                account: Some("21098765432x".into()),
                 ..AwsScope::default()
             },
         ] {

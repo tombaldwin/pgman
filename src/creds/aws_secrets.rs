@@ -221,7 +221,7 @@ mod tests {
         x.profile = Some("-p".into());
         assert!(x.validate().is_err());
         let mut x = r("ok");
-        x.account = Some("54084755703".into());
+        x.account = Some("21098765432".into());
         assert!(x.validate().is_err());
         x.account = Some("210987654321".into());
         assert!(x.validate().is_ok());
