@@ -11,6 +11,7 @@ pub mod batch;
 pub mod conn;
 pub mod copies;
 pub mod creds;
+pub mod crypt;
 pub mod dbunit;
 pub mod demo;
 pub mod discover;

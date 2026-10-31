@@ -92,6 +92,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # src/util.rs and src/font_probe.rs; see `// tui-common: …` notes
 # inline where the migration replaced them.
 tui-common = { package = "tb-tui-common", version = "0.2.2" }
+age = { version = "0.12.1", default-features = false }
+base64 = "0.22.1"
 
 # SIGPIPE back to its default at start (main.rs): `pgman … | head`
 # ends quietly instead of panicking (an abort, with panic = "abort").
