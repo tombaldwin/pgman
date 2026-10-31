@@ -340,9 +340,6 @@ batch.
   connections turn up.
 
 ### From the v0.2.1 polish (2026-10-24)
-- **`demo.gif` still shows 0.1.0's chrome.** `demo.tape` installs into
-  the real `~/.cargo/bin` and runs under the real HOME; make it use a
-  `target/` binary and scratch HOME / XDG dirs, then re-record.
 - **The schema wizard's detail strip at 60x16** is clipped by height
   with no "more" marker.
 - **The tap status still says "JAR backpressure"** (`src/app/types.rs`)

@@ -2,8 +2,12 @@
 #
 # Render with:
 #   brew install vhs        # one-time
-#   cargo install --path . --locked --force   # rebuild the local binary
+#   cargo build --release    # the binary the tape runs, from target/
 #   vhs demo.tape            # produces demo.gif next to this file
+#
+# It runs target/release/pgman under a fresh HOME and XDG dirs, so
+# nothing installed and nothing in your own config reaches the recording
+# (and the recording writes nothing to them).
 #
 # Flow (~30s) — the wedge, start to finish: logs/pasted code → runnable
 # SQL → rows:
@@ -47,12 +51,13 @@ Set TypingSpeed 60ms
 Set PlaybackSpeed 1.0
 Set Padding 16
 
-# Launch against the synthetic fixture. Put ~/.cargo/bin ahead of PATH
-# so the locally-built binary (which has --demo) is what runs — but
-# keep that plumbing off-screen: the hero should show the command a
-# real user types, `pgman --demo`, not a dev's install path.
+# Launch against the synthetic fixture: this checkout's build first on
+# PATH, under a scratch HOME. Off-screen: the hero shows the command a
+# real user types, `pgman --demo`, not the plumbing.
 Hide
-Type "export PATH=$HOME/.cargo/bin:$PATH"
+Type `export PATH="$PWD/target/release:$PATH" HOME="$(mktemp -d)"`
+Enter
+Type `export XDG_CONFIG_HOME="$HOME/.config" XDG_CACHE_HOME="$HOME/.cache" XDG_DATA_HOME="$HOME/.local/share"`
 Enter
 Type "clear"
 Enter
