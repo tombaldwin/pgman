@@ -1266,6 +1266,17 @@ fn preset(name: &str) -> Option<(bool, &'static str)> {
         "django_session" => Some((false, "Django's sessions")),
         "spring_session" | "spring_session_attributes" => Some((false, "Spring Session")),
         "persistent_logins" => Some((false, "Spring Security's remember-me")),
+        // Their notes hold a device's address and details, by key.
+        "user_session"
+        | "user_session_note"
+        | "client_session"
+        | "client_session_auth_status"
+        | "client_session_note"
+        | "client_session_prot_mapper"
+        | "client_session_role"
+        | "client_user_session_note"
+        | "offline_user_session"
+        | "offline_client_session" => Some((false, "Keycloak's sessions")),
         "oauth2_authorized_client"
         | "oauth_access_token"
         | "oauth_refresh_token"
@@ -2734,6 +2745,7 @@ mod tests {
             assert_eq!(preset(name), None, "{name}");
         }
         assert!(matches!(preset("django_session"), Some((false, _))));
+        assert!(matches!(preset("user_session_note"), Some((false, _))));
         assert_eq!(preset("migrations"), None);
     }
 
