@@ -20,16 +20,24 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   column's length is taken as its length, so a hash or a fake fits it.
   On GitLab's schema this takes `pgman masking check` from 850 problems
   to 87 real ones.
+- A domain's CHECK constraint (`CREATE DOMAIN … CHECK (VALUE <> '')`) is
+  read too: a masked value it refuses stopped the restore part-way.
+- A unique column too short for the hash that keeps it unique is a
+  problem however the hash came about. A NOT NULL unique column NULLed by
+  default is hashed, and a short one passed the plan and lost its unique
+  index on restore.
 - Masking keeps a date, time or boolean column named for a password or
   secret (`password_changed_at`, `token_expires`), which can't hold one.
 - Masking finds comment, description and similar words inside a folded
-  camelCase name (`staffcomment`). A free-text word no longer masks a
+  camelCase name whose other words it doesn't know. A free-text word no
+  longer masks a
   number, date or boolean (`note_events`, a `failure_reason` code), which
   can't hold free text.
 - Masking keeps settings named for a personal thing: a feature switched
-  off (`emails_disabled`, no longer read as disability), a theme, colour,
-  layout, template, style or mode (`login_theme`, `mobile_view_mode`),
-  and a boolean about a signature. An email's subject or body is NULLed
+  off (`emails_disabled`; a bare `disabled` is still special-category
+  data), a theme, colour or mode (`login_theme`, `mobile_view_mode`; not
+  an eye, skin or hair colour), a bounded template, layout or style, and
+  a boolean about a signature. An email's subject or body is NULLed
   as free text, not given a fake address.
 - Masking knows more personal words, found by running it over GitLab's,
   Keycloak's, Odoo's, Synapse's and AdventureWorks' schemas: an
@@ -38,9 +46,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   (`linkedin`, `twitter`, …), OAuth device and user codes, an access key,
   sick leave, pronouns, a login or external id (`extern_uid`), a
   reviewer's or attendee's name, a partner's or guest's name, `reply_to`,
-  an `sms_number`, a browser. A hash of something personal and easy to
-  guess (`holder_name_hash`, `last_digits_hash`) is hashed again, so it
-  still joins; any other `*_hash` is kept.
+  an `sms_number`, a browser, a TLS fingerprint (`ja3`). A word with
+  digits in it (`ipv4`, `last4`) now matches. A hash of something
+  personal and easy to guess (`holder_name_hash`, `last_digits_hash`,
+  `email_digest`) is hashed again, so it still joins; any other `*_hash`
+  is kept, and the rules file's `[classify]` words reach both.
+- `pgman copies rm` says what to do when it can't drop a copy restored
+  through a URL with the password in it: drop it by hand, or restore
+  through a `connections.toml` entry with `password_env`.
 
 ## [0.4.2] — 2026-10-30
 
