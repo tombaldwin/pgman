@@ -888,13 +888,18 @@ fn unlinks(catalog: &Catalog, from: &(String, String), to: &(String, String)) ->
     let Some(target) = catalog.table(&to.0) else {
         return false;
     };
-    if target.primary_key != [to.1.clone()] {
+    // Its key, or another unique column of it: a natural key.
+    if target.primary_key != [to.1.clone()] && !target.column(&to.1).is_some_and(|c| c.unique) {
         return false;
     }
     let w = words(&from.1);
+    // A lookup's own hierarchy isn't anyone's: religions.parent_religion_id.
     let says = any(&w, FAMILY)
         || any(&w, BIRTH)
-        || (special(&w) && special(&singular(&target.name)) && refers_to_nothing(target));
+        || (special(&w)
+            && from.0 != to.0
+            && named_for_special(&target.name)
+            && refers_to_nothing(target));
     // Keyed by it and a language, say, not by another key: a junction's
     // other key (person_id) is someone's.
     let extension = catalog.table(&from.0).is_some_and(|t| {
@@ -908,22 +913,40 @@ fn unlinks(catalog: &Catalog, from: &(String, String), to: &(String, String)) ->
     says && !extension
 }
 
-/// A table name's words, each without a plural's `s`: `genders`. Pure.
-fn singular(name: &str) -> Vec<String> {
-    words(name)
-        .into_iter()
-        .map(|w| match w.strip_suffix('s') {
-            Some(one) if w.len() > 3 => one.to_string(),
-            _ => w,
-        })
-        .collect()
+/// Whether a table's name has a special-category word in it, singular or
+/// plural: `genders`, `sexes`, `diagnoses`, `disabilities`. Pure.
+fn named_for_special(name: &str) -> bool {
+    words(name).iter().any(|w| {
+        let mut forms = vec![w.clone()];
+        for (plural, one) in [("s", ""), ("es", ""), ("ies", "y"), ("es", "is")] {
+            if let Some(stem) = w.strip_suffix(plural) {
+                forms.push(format!("{stem}{one}"));
+            }
+        }
+        forms.iter().any(|f| SPECIAL.contains(&f.as_str()))
+    })
 }
 
-/// A table that references no other: a lookup, or a root. Pure.
+/// A table that references no other, but for who made or changed a row:
+/// a lookup, or a root. Pure.
 fn refers_to_nothing(t: &Table) -> bool {
     t.foreign_keys
         .iter()
-        .all(|fk| fk.ref_table == t.qualified())
+        .all(|fk| fk.ref_table == t.qualified() || fk.columns.iter().all(|c| audit(c)))
+}
+
+/// A column naming who made or changed a row: `created_by`, Odoo's
+/// `create_uid`. Pure.
+fn audit(column: &str) -> bool {
+    let w = words(column);
+    w.last().is_some_and(|l| ACTOR_LAST.contains(&l.as_str()))
+        || matches!(column, "create_uid" | "write_uid")
+        || w.first().is_some_and(|f| {
+            matches!(
+                f.as_str(),
+                "created" | "updated" | "modified" | "creator" | "editor" | "changed"
+            )
+        })
 }
 
 fn text_like(base: &str) -> bool {
@@ -1434,16 +1457,20 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
     // null carried up to the lookup's key would be hashed there, and the
     // reference with it, and a fixed value can't be the key of every row.
     for (from, to) in &edges {
-        if !unlinks(catalog, from, to) {
-            continue;
-        }
+        let says = unlinks(catalog, from, to);
+        // Nor anywhere a NULL can go: it references nothing, and carried
+        // up it would be hashed on both sides and still join.
+        let nullable = catalog
+            .table(&from.0)
+            .and_then(|t| t.column(&from.1))
+            .is_some_and(|c| !c.ty.not_null);
         match decided.get(from) {
-            Some((Rule::Null, Origin::Default(why))) => {
+            Some((Rule::Null, Origin::Default(why))) if says => {
                 let why = format!("{why}, not its key into {}", to.0);
                 decided.insert(from.clone(), (Rule::Null, Origin::Default(why.clone())));
                 unlinked.insert(from.clone(), why);
             }
-            Some((Rule::Null | Rule::Fixed(_), Origin::Rules)) => {
+            Some((Rule::Null | Rule::Fixed(_), Origin::Rules)) if says || nullable => {
                 unlinked.insert(from.clone(), String::new());
             }
             _ => {}
@@ -3320,5 +3347,90 @@ mod tests {
             "{:?}",
             p.problems
         );
+    }
+
+    #[test]
+    fn an_audited_lookup_an_odd_plural_and_a_natural_key_are_still_lookups() {
+        let id = |name: &str| {
+            let mut col = c(name, "int4", None);
+            col.ty.not_null = true;
+            col.unique = true;
+            col
+        };
+        let fk = |t: &mut Table, col: &str, to: &str, key: &str| {
+            t.foreign_keys.push(ForeignKey {
+                columns: vec![col.into()],
+                ref_table: format!("public.{to}"),
+                ref_columns: vec![key.into()],
+            })
+        };
+        let users = table("users", vec![id("id")]);
+        let mut code = c("code", "varchar", Some(2));
+        code.unique = true;
+        let mut genders = table(
+            "genders",
+            vec![id("id"), code, c("created_by", "int4", None)],
+        );
+        fk(&mut genders, "created_by", "users", "id");
+        let sexes = table("sexes", vec![id("id")]);
+        let diagnoses = table("diagnoses", vec![id("id")]);
+        let mut religions = table(
+            "religions",
+            vec![id("id"), c("parent_religion_id", "int4", None)],
+        );
+        fk(&mut religions, "parent_religion_id", "religions", "id");
+        let mut regions = table("regions", vec![id("id")]);
+        regions.columns.push(c("label", "varchar", Some(20)));
+        let mut lookups = table("lookups", vec![id("id"), c("region_id", "int4", None)]);
+        fk(&mut lookups, "region_id", "regions", "id");
+        let mut persons = table(
+            "persons",
+            vec![
+                id("id"),
+                c("gender_id", "int4", None),
+                c("sex_id", "int4", None),
+                c("diagnosis_id", "int4", None),
+                c("gender_code", "varchar", Some(2)),
+                c("kind_ref", "int4", None),
+            ],
+        );
+        fk(&mut persons, "gender_id", "genders", "id");
+        fk(&mut persons, "sex_id", "sexes", "id");
+        fk(&mut persons, "diagnosis_id", "diagnoses", "id");
+        fk(&mut persons, "gender_code", "genders", "code");
+        fk(&mut persons, "kind_ref", "lookups", "id");
+        let cat = Catalog {
+            tables: vec![
+                users, genders, sexes, diagnoses, religions, regions, lookups, persons,
+            ],
+            ..Default::default()
+        };
+        let rule_of = |p: &Plan, t: &str, n: &str| {
+            p.table(&format!("public.{t}"))
+                .unwrap()
+                .columns
+                .iter()
+                .find(|d| d.column == n)
+                .unwrap()
+                .rule
+                .clone()
+        };
+        let p = plan(&cat, &RuleSet::default());
+        for n in ["gender_id", "sex_id", "diagnosis_id", "gender_code"] {
+            assert_eq!(rule_of(&p, "persons", n), Rule::Null, "{n}");
+        }
+        assert_eq!(rule_of(&p, "religions", "parent_religion_id"), Rule::Keep);
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        // The rules file's null on a key the defaults would follow: a
+        // NULL, not carried up to be hashed on both sides.
+        let p = plan(
+            &cat,
+            &parse("version = 1\n[tables.persons]\nkind_ref = \"null\"\n"),
+        );
+        assert_eq!(rule_of(&p, "persons", "kind_ref"), Rule::Null);
+        assert_eq!(rule_of(&p, "lookups", "id"), Rule::Keep);
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        assert!(!named_for_special("statuses"));
+        assert!(named_for_special("disabilities"));
     }
 }
