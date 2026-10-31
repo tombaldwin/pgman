@@ -268,7 +268,7 @@ the people in it. No rules file is needed for the first one.
   a family detail or a birth (`country_of_birth`, `spouse_id`, into a
   lookup or at another person), or a special category into a lookup
   named for it that references no other table but for who made a row
-  (`gender_id` into `genders`). It is NULLed, and where it can't be NULL
+  and whose tenant it is (`gender_id` into `genders`). It is NULLed, and where it can't be NULL
   the plan asks the rules file to decide. Elsewhere a rules-file `null`
   on a key that can be NULL stays NULL; every column joined that way fits the shortest of
   them, and is unique if one of them is (a unique name gets a tag, kept

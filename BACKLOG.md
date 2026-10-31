@@ -82,6 +82,11 @@ note.
   junction and refused (the message gives the way out). The rules files'
   "different rules" problem is pushed once per pass of the join
   fixpoint, so a long chain can show it twice.
+  From the re-check: a rules-file `fixed` on a nullable key isn't checked
+  against the referenced table (a value it lacks fails the restore's
+  foreign key); a key into a lookup's sub-lookup (`sub_religions`,
+  which references `religions`) is followed and kept; a follower the
+  rules file nulled but can't be NULL is told to "null it too".
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.
