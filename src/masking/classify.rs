@@ -1354,7 +1354,6 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             let fit = fit_of.get(&root).copied();
             let g = &joined[&root];
             let unique = c.unique || g.unique;
-            check(t, c, &rule, &origin, unique, fit, &mut problems);
             // NULL where it must stay unique and can't be NULL — or where a
             // join can't be NULL: a hash, so every row still differs and
             // every reference still finds its row.
@@ -1365,6 +1364,8 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             {
                 rule = Rule::Hash;
             }
+            // After the hash it may have become: that must fit too.
+            check(t, c, &rule, &origin, unique, fit, &mut problems);
             if rule == Rule::Hash && g.ints.len() > 1 {
                 problems.push(format!(
                     "{q}.{} is joined to columns of other integer types ({}), and a hash comes \
@@ -1440,9 +1441,14 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
 /// digits, as long as the column's fit). Pure.
 fn masked_shape(d: &Decision) -> Option<String> {
     match d.rule {
-        Rule::Null => empty_value(&d.base, d.enum_first.as_deref(), d.array),
+        // Where its COPY text is what the CHECK sees: not `f` for false.
+        Rule::Null if d.array || !matches!(d.base.as_str(), "bool" | "interval" | "money") => {
+            empty_value(&d.base, d.enum_first.as_deref(), d.array)
+        }
+        // Cut to the fit after it's made (16 digits at least only where
+        // it must stay unique, which check() says).
         Rule::Hash if text_like(&d.base) && !d.array => {
-            Some("0".repeat(d.fit.unwrap_or(64).clamp(16, 64)))
+            Some("0".repeat(d.fit.unwrap_or(64).min(64)))
         }
         _ => None,
     }
@@ -1543,7 +1549,7 @@ fn check(
         if n < need {
             problems.push(format!(
                 "{at} must stay unique and takes {n} characters; {} needs {need} to keep values \
-                 apart: keep it, or widen the column",
+                 apart: keep it, or let it hold more (its type, or a CHECK on its length)",
                 rule.name()
             ));
         }
@@ -2058,6 +2064,56 @@ mod tests {
         ] {
             assert!(!sure_to_pass(def, "title", value), "{def} {value:?}");
         }
+    }
+
+    #[test]
+    fn a_hash_promoted_onto_a_short_unique_column_is_a_problem() {
+        let short = |base: &str, len: Option<usize>, check: Option<&str>| Catalog {
+            tables: vec![table(
+                "people",
+                vec![Column {
+                    unique: true,
+                    ty: ty(base, len, true),
+                    ..c("ssn", base, len)
+                }],
+            )],
+            checks: check
+                .map(|d| Check {
+                    table: "public.people".into(),
+                    name: "c_ssn".into(),
+                    columns: vec!["ssn".into()],
+                    definition: d.into(),
+                })
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        // NULL can't keep it unique, so it's hashed, and 6 can't hold one.
+        let p = plan(&short("varchar", Some(6), None), &RuleSet::default());
+        assert_eq!(p.tables[0].columns[0].rule, Rule::Hash);
+        assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
+        assert!(
+            p.problems[0].contains("must stay unique and takes 6"),
+            "{:?}",
+            p.problems
+        );
+        // A CHECK bounding it says the same, once.
+        let p = plan(
+            &short("text", None, Some("CHECK ((char_length(ssn) <= 12))")),
+            &RuleSet::default(),
+        );
+        assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
+        assert!(
+            p.problems[0].contains("must stay unique and takes 12"),
+            "{:?}",
+            p.problems
+        );
+        // Not unique, a hash is cut to fit the CHECK and passes it.
+        let mut cat = short("text", None, Some("CHECK ((char_length(ssn) <= 8))"));
+        cat.tables[0].columns[0].unique = false;
+        let hashed = parse("[tables.people]\nssn = \"hash\"\n");
+        let p = plan(&cat, &hashed);
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
     }
 
     #[test]
