@@ -256,15 +256,17 @@ the people in it. No rules file is needed for the first one.
   | date of birth | its year, still a date |
   | IP address | an address in a documentation range (IPv6's, where the column must stay unique) |
   | password | the test password `pgman-test`, hashed as the value was (bcrypt, Spring's `{bcrypt}` and `{noop}`) |
-  | someone's id elsewhere (`stripe_customer_id`) | a keyed hash |
-  | secrets, tokens, sessions; special-category data (health, ethnicity, religion, gender…); identifiers and pay; addresses; free text by name (`notes`, `description`, …); `text`, `json`, `bytea` and types pgman doesn't know | NULL |
+  | someone's id elsewhere (`stripe_customer_id`); a hash of a card, an account, a user or anything above (`card_hash`) | a keyed hash |
+  | secrets, tokens, sessions; special-category data (health, ethnicity, religion, gender…); identifiers and pay; addresses; free text by name (`notes`, `description`, …); a key-value table's value (`user_attribute.value`) and a bag of data (`metadata`); `text`, `json`, `bytea` and types pgman doesn't know | NULL |
   | everything else | kept |
 
   An array of any of these is NULLed. Where NULL can't be stored it is
   the type's empty value (`''`, `{}`, `false`, an enum's first label),
   or a hash where the column must stay unique or a reference to it
   can't be NULL. A column that references another takes its rule, so
-  joins still join; every column joined that way fits the shortest of
+  joins still join, unless its name says what it points at is personal
+  (`gender_id`, `country_of_birth` into a lookup table): it is NULLed,
+  and where it can't be NULL the plan asks the rules file to decide; every column joined that way fits the shortest of
   them, and is unique if one of them is (a unique name gets a tag, kept
   when it is shortened). Migration history is kept (Flyway, Liquibase,
   Rails, Django, Alembic, Knex), and so are Odoo's models, views and
