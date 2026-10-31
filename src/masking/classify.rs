@@ -914,22 +914,39 @@ fn unlinks(catalog: &Catalog, from: &(String, String), to: &(String, String)) ->
     // A lookup's own hierarchy isn't anyone's: religions.parent_religion_id.
     let says = any(&w, FAMILY)
         || any(&w, BIRTH)
-        || (special(&w)
-            && from.0 != to.0
-            && named_for_special(&target.name)
-            && refers_to_nothing(target));
+        || (special(&w) && from.0 != to.0 && special_lookup(catalog, target));
     // Keyed by it and a language, say, not by another key: a junction's
     // other key (person_id) is someone's.
     let extension = catalog.table(&from.0).is_some_and(|t| {
         t.primary_key.len() > 1
             && t.primary_key.contains(&from.1)
-            && t.primary_key
-                .iter()
-                .filter(|k| **k != from.1)
-                .all(|k| !t.foreign_keys.iter().any(|fk| fk.columns.contains(k)))
+            && t.primary_key.iter().filter(|k| **k != from.1).all(|k| {
+                t.foreign_keys
+                    .iter()
+                    .filter(|fk| fk.columns.contains(k))
+                    .all(|fk| any(&singular(&fk.ref_table), LANGUAGE))
+            })
     });
     says && !extension
 }
+
+/// A lookup named for a special category: it references no other table
+/// but for who made a row, whose tenant it is, and another such lookup it
+/// refines (`sub_religions` into `religions`). Pure.
+fn special_lookup(catalog: &Catalog, t: &Table) -> bool {
+    named_for_special(&t.name)
+        && t.foreign_keys.iter().all(|fk| {
+            fk.ref_table == t.qualified()
+                || fk.columns.iter().all(|c| audit(c) || scope(c))
+                || catalog
+                    .table(&fk.ref_table)
+                    .is_some_and(|r| named_for_special(&r.name) && refers_to_nothing(r))
+        })
+}
+
+/// Words naming a table of languages, which a lookup's translations are
+/// keyed by.
+const LANGUAGE: &[&str] = &["language", "lang", "locale"];
 
 /// Whether a table's name has a special-category word in it, singular or
 /// plural: `genders`, `sexes`, `diagnoses`, `disabilities`. Pure.
@@ -1442,9 +1459,11 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             .filter(|_| base_name != t.name);
         for c in t.columns.iter().filter(|c| !c.generated) {
             // A lookup's own key isn't anyone's: genders.gender_id.
+            // A text key is one only on a lookup of categories: genders.code.
             let lookup_key = t.primary_key.len() == 1
                 && t.primary_key[0] == c.name
-                && matches!(c.ty.base.as_str(), "int2" | "int4" | "int8" | "uuid")
+                && (matches!(c.ty.base.as_str(), "int2" | "int4" | "int8" | "uuid")
+                    || (text_like(&c.ty.base) && special_lookup(catalog, t)))
                 && key_says_it(&c.name)
                 // employee_spouses.spouse_id is someone's, not a lookup's.
                 && !t.foreign_keys.iter().any(|fk| fk.columns.contains(&c.name));
@@ -1705,9 +1724,15 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                     .iter()
                     .find(|(from, to)| *from == key && unlinked.contains_key(to))
                 {
+                    // The rules file nulled it, but it can't be NULL: hashed.
+                    let remedy = if matches!(decided.get(&key), Some((Rule::Null, _))) {
+                        "it can't be NULL: drop the table's rows (rows = \"drop\"), or keep"
+                    } else {
+                        "null it too, or keep"
+                    };
                     problems.push(format!(
-                        "{q}.{} references {}.{}, which is NULLed (its key says something \
-                         personal): null it too, or keep {}.{} with a reason",
+                        "{q}.{} references {}.{}, which is NULLed: {remedy} {}.{} with a \
+                         reason",
                         c.name, to.0, to.1, to.0, to.1
                     ));
                 }
@@ -1777,6 +1802,9 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             ));
         }
     }
+    // A problem found on more than one pass of a fixpoint is one problem.
+    let mut seen = std::collections::HashSet::new();
+    problems.retain(|p| seen.insert(p.clone()));
     Plan {
         tables,
         large_objects: rules.large_objects_kept,
@@ -3400,6 +3428,26 @@ mod tests {
             &cat,
             &parse("version = 1\n[tables.badges]\nheld_ref = \"hash\"\n"),
         );
+        // The rules file's null on one that can't be NULL: it's hashed, so
+        // nulling it isn't the way out.
+        let mut strict = cat.clone();
+        let badges = strict
+            .tables
+            .iter_mut()
+            .find(|t| t.name == "badges")
+            .unwrap();
+        badges.columns[1].ty.not_null = true;
+        let nulled = plan(
+            &strict,
+            &parse("version = 1\n[tables.badges]\nheld_ref = \"null\"\n"),
+        );
+        assert!(
+            nulled.problems.iter().any(|m| m.contains(
+                "references public.person_religions.religion_id, which is NULLed: it can't be NULL"
+            )),
+            "{:?}",
+            nulled.problems
+        );
         let held = ruled.table("public.person_religions").unwrap();
         assert_eq!(held.columns[1].rule, Rule::Null);
         assert!(
@@ -3536,5 +3584,102 @@ mod tests {
         assert_eq!(rule_of(&p, "persons", "sex_id"), Rule::Null);
         assert!(!named_for_special("statuses"));
         assert!(named_for_special("disabilities"));
+    }
+
+    #[test]
+    fn sub_lookups_text_keys_and_translations_by_language() {
+        let id = |name: &str, base: &str| {
+            let mut col = c(name, base, None);
+            col.ty.not_null = true;
+            col.unique = true;
+            col
+        };
+        let fk = |t: &mut Table, col: &str, to: &str, key: &str| {
+            t.foreign_keys.push(ForeignKey {
+                columns: vec![col.into()],
+                ref_table: format!("public.{to}"),
+                ref_columns: vec![key.into()],
+            })
+        };
+        let languages = table("languages", vec![id("id", "int4")]);
+        let religions = table("religions", vec![id("id", "int4")]);
+        let mut names = table(
+            "religion_names",
+            vec![id("religion_id", "int4"), id("language_id", "int4")],
+        );
+        names.primary_key = vec!["religion_id".into(), "language_id".into()];
+        fk(&mut names, "religion_id", "religions", "id");
+        fk(&mut names, "language_id", "languages", "id");
+        let mut subs = table(
+            "sub_religions",
+            vec![id("id", "int4"), c("religion_id", "int4", None)],
+        );
+        fk(&mut subs, "religion_id", "religions", "id");
+        let mut sexes = table("sexes", vec![id("sex", "varchar")]);
+        sexes.primary_key = vec!["sex".into()];
+        let mut persons = table(
+            "persons",
+            vec![
+                id("id", "int4"),
+                c("sub_religion_id", "int4", None),
+                c("sex_code", "varchar", None),
+            ],
+        );
+        fk(&mut persons, "sub_religion_id", "sub_religions", "id");
+        fk(&mut persons, "sex_code", "sexes", "sex");
+        let cat = Catalog {
+            tables: vec![languages, religions, names, subs, sexes, persons],
+            ..Default::default()
+        };
+        let p = plan(&cat, &RuleSet::default());
+        let rule_of = |t: &str, n: &str| {
+            p.table(&format!("public.{t}"))
+                .unwrap()
+                .columns
+                .iter()
+                .find(|d| d.column == n)
+                .unwrap()
+                .rule
+                .clone()
+        };
+        assert_eq!(rule_of("religion_names", "religion_id"), Rule::Keep);
+        assert_eq!(rule_of("persons", "sub_religion_id"), Rule::Null);
+        assert_eq!(rule_of("persons", "sex_code"), Rule::Null);
+        assert_eq!(rule_of("sexes", "sex"), Rule::Keep);
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+    }
+
+    #[test]
+    fn a_problem_found_on_two_passes_is_said_once() {
+        let mut tables = Vec::new();
+        for i in 1..=4 {
+            let mut t = table(
+                &format!("t{i}"),
+                vec![c("id", "int4", None), c("x", "varchar", Some(40))],
+            );
+            t.columns[1].unique = true;
+            if i < 4 {
+                t.foreign_keys.push(ForeignKey {
+                    columns: vec!["x".into()],
+                    ref_table: format!("public.t{}", i + 1),
+                    ref_columns: vec!["x".into()],
+                });
+            }
+            tables.push(t);
+        }
+        let cat = Catalog {
+            tables,
+            ..Default::default()
+        };
+        let p = plan(
+            &cat,
+            &parse("version = 1\n[tables.t1]\nx = \"hash\"\n[tables.t2]\nx = \"email\"\n"),
+        );
+        let different: Vec<_> = p
+            .problems
+            .iter()
+            .filter(|m| m.contains("different rules"))
+            .collect();
+        assert_eq!(different.len(), 1, "{:?}", p.problems);
     }
 }
