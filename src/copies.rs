@@ -987,7 +987,8 @@ pub fn may_drop(
 /// through a URL with a password in it can't be reached again, since
 /// pgman keeps no passwords. Pure.
 fn kept(database: &str, server: &str, why: &str) -> String {
-    if why.starts_with("no password for ") && !why.contains("password_env") {
+    // pgtool::explain_connect's words for a URL with no password.
+    if why.starts_with("no password for ") && why.contains("Put it in the URL") {
         let who = why
             .trim_start_matches("no password for ")
             .split([',', ' '])
@@ -1218,7 +1219,9 @@ mod tests {
             kept("ledger_copy", "127.0.0.1:55432", "has 2 session(s) connected: close them, or --terminate"),
             "kept ledger_copy on 127.0.0.1:55432: has 2 session(s) connected: close them, or --terminate"
         );
-        let why = "no password for postgres@127.0.0.1:55432, and the server asks for one. Put it in the URL";
+        let why = "no password for postgres@127.0.0.1:55432, and the server asks for one. Put it in the URL \
+                   (postgres://user:password@…), or use a connections.toml entry with password_env or a \
+                   secret. pgman doesn't read PGPASSWORD here";
         let said = kept("ledger_copy", "127.0.0.1:55432", why);
         assert!(said.starts_with("kept ledger_copy on 127.0.0.1:55432: no password for postgres@127.0.0.1:55432. A password in the restore's URL isn't kept"), "{said}");
         assert!(said.contains("DROP DATABASE ledger_copy"), "{said}");
