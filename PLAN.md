@@ -76,6 +76,10 @@ guessable rehashed, settings and free-text words on flags kept,
 framework presets. The rest is in BACKLOG.md (masked dumps). A reviewed
 `.pgman/masking/<db>.toml` is drafted on a branch of the client's repo,
 not pushed; Tom confirms it at a terminal before its first dump.
+A Fable panel (three reviewers, then a closing one on the fixes) found
+privacy regressions in the new rules, a short unique column passing the
+plan, and domain CHECKs unread; all fixed. Released as v0.4.3 on the
+panel's GO (2026-10-31).
 
 ### The first masked dump of a real schema (2026-10-30)
 

@@ -6,6 +6,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-10-31
+
 ### Added
 
 - Masked dumps keep Rails', Django's, Alembic's and Knex's migration
@@ -1025,7 +1027,8 @@ ratatui 0.30, crossterm 0.29, reqwest 0.12 (rustls only), `tb-tui-common`
 0.2 shared with ebman. `toml` 1.x is used but saved-query files are
 written with TOML 1.0-compatible escapes, pinned by test.
 
-[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/tombaldwin/pgman/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/tombaldwin/pgman/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/tombaldwin/pgman/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/tombaldwin/pgman/compare/v0.3.1...v0.4.0

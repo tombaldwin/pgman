@@ -1,6 +1,6 @@
 [package]
 name = "pgman"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 rust-version = "1.94.1"
 authors = ["Tom Baldwin <tom@polymorphism.co.uk>"]
