@@ -927,12 +927,29 @@ fn named_for_special(name: &str) -> bool {
     })
 }
 
-/// A table that references no other, but for who made or changed a row:
-/// a lookup, or a root. Pure.
+/// A table that references no other, but for who made or changed a row
+/// and whose it is: a lookup, or a root. Pure.
 fn refers_to_nothing(t: &Table) -> bool {
     t.foreign_keys
         .iter()
-        .all(|fk| fk.ref_table == t.qualified() || fk.columns.iter().all(|c| audit(c)))
+        .all(|fk| fk.ref_table == t.qualified() || fk.columns.iter().all(|c| audit(c) || scope(c)))
+}
+
+/// A column scoping a row to a tenant: every lookup of a multi-tenant
+/// schema has one. Pure.
+fn scope(column: &str) -> bool {
+    any(
+        &words(column),
+        &[
+            "tenant",
+            "company",
+            "organisation",
+            "organization",
+            "org",
+            "realm",
+            "workspace",
+        ],
+    )
 }
 
 /// A column naming who made or changed a row: `created_by`, Odoo's
@@ -1473,6 +1490,13 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             Some((Rule::Null | Rule::Fixed(_), Origin::Rules)) if says || nullable => {
                 unlinked.insert(from.clone(), String::new());
             }
+            // Hashed instead, it and what it references: say so.
+            Some((Rule::Null, Origin::Rules)) => problems.push(format!(
+                "{}.{}: the rules file nulls it, but it can't be NULL, so it and {}.{} would \
+                 both be hashed: give it a fixed value {} has, keep it with a reason, or drop \
+                 the table's rows (rows = \"drop\")",
+                from.0, from.1, to.0, to.1, to.0
+            )),
             _ => {}
         }
     }
@@ -1632,10 +1656,14 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             }
             // A hash or the empty value would reference nothing.
             if unlinked.contains_key(&key) && rule == Rule::Null && c.ty.not_null {
+                let why = match &origin {
+                    Origin::Default(_) => "its key says what it points at, which is personal",
+                    Origin::Follows(_) => "what it references is NULLed",
+                    _ => "the rules file nulls it",
+                };
                 problems.push(format!(
-                    "{q}.{}: its key says what it points at, which is personal, and it can't \
-                     be NULL: keep it with a reason, give it a fixed value its table has, or \
-                     drop the table's rows (rows = \"drop\")",
+                    "{q}.{}: {why}, and it can't be NULL: keep it with a reason, give it a \
+                     fixed value its table has, or drop the table's rows (rows = \"drop\")",
                     c.name
                 ));
             }
@@ -3430,6 +3458,41 @@ mod tests {
         assert_eq!(rule_of(&p, "persons", "kind_ref"), Rule::Null);
         assert_eq!(rule_of(&p, "lookups", "id"), Rule::Keep);
         assert!(p.problems.is_empty(), "{:?}", p.problems);
+        // A NOT NULL key the rules file nulls is hashed with its lookup:
+        // the plan says so.
+        let mut strict = cat.clone();
+        let persons = strict
+            .tables
+            .iter_mut()
+            .find(|t| t.name == "persons")
+            .unwrap();
+        persons.columns[5].ty.not_null = true;
+        let p = plan(
+            &strict,
+            &parse("version = 1\n[tables.persons]\nkind_ref = \"null\"\n"),
+        );
+        assert!(
+            p.problems.iter().any(|m| m.starts_with(
+                "public.persons.kind_ref: the rules file nulls it, but it can't be NULL"
+            )),
+            "{:?}",
+            p.problems
+        );
+        // A tenant's lookup is still a lookup.
+        let mut scoped = cat.clone();
+        let sexes = scoped
+            .tables
+            .iter_mut()
+            .find(|t| t.name == "sexes")
+            .unwrap();
+        sexes.columns.push(c("tenant_id", "int4", None));
+        sexes.foreign_keys.push(ForeignKey {
+            columns: vec!["tenant_id".into()],
+            ref_table: "public.users".into(),
+            ref_columns: vec!["id".into()],
+        });
+        let p = plan(&scoped, &RuleSet::default());
+        assert_eq!(rule_of(&p, "persons", "sex_id"), Rule::Null);
         assert!(!named_for_special("statuses"));
         assert!(named_for_special("disabilities"));
     }
