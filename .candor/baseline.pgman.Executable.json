@@ -22,7 +22,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cbabffe269d999a646",
+      "hash": "97e4c565ae36a5b09ad00da34733efbf",
       "invisible": [
         "clap_builder"
       ]
@@ -34,7 +34,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cb35c110820bccf0a0",
+      "hash": "97e4c565ae36a5b0d98db0a0c6d3efb8",
       "invisible": [
         "clap_builder"
       ]
@@ -46,7 +46,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cbfeebfbc59dbd051d",
+      "hash": "97e4c565ae36a5b0a383e111fd4db9bc",
       "invisible": [
         "clap_builder"
       ]
@@ -58,7 +58,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cbde2b29059e732add",
+      "hash": "97e4c565ae36a5b0bf338555a5d41e78",
       "invisible": [
         "clap_builder"
       ]
@@ -70,7 +70,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cba2a0c7a624783cfc",
+      "hash": "97e4c565ae36a5b05d1db4dc556ce66e",
       "invisible": [
         "clap_builder"
       ]
@@ -82,7 +82,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cb6d9338a34b98b0fa",
+      "hash": "97e4c565ae36a5b052f1a7f29f4dca85",
       "invisible": [
         "clap_builder"
       ]
@@ -94,7 +94,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cb7a466cd70efa467c",
+      "hash": "97e4c565ae36a5b02b2b38afaee11765",
       "invisible": [
         "clap_builder"
       ]
@@ -106,14 +106,14 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cbb24e5feb24d95153",
+      "hash": "97e4c565ae36a5b0dda0f5d6f94714c2",
       "invisible": [
         "clap_builder"
       ]
     },
     {
       "fn": "<OwnerOnlyWriter<'_> as std::io::Write>::flush",
-      "loc": "src/main.rs:1701:5: 1701:47",
+      "loc": "src/main.rs:1716:5: 1716:47",
       "inferred": [
         "Unknown"
       ],
@@ -124,14 +124,14 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cba5ebfcb637c6c868",
+      "hash": "97e4c565ae36a5b0872d560d624dce30",
       "unknownWhy": [
         "dispatch:Write.flush"
       ]
     },
     {
       "fn": "<OwnerOnlyWriter<'_> as std::io::Write>::write",
-      "loc": "src/main.rs:1695:5: 1695:62",
+      "loc": "src/main.rs:1710:5: 1710:62",
       "inferred": [
         "Clock",
         "Fs",
@@ -147,7 +147,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cbaf4ec737d6638309",
+      "hash": "97e4c565ae36a5b07331186c90ed6394",
       "fs": [
         "read",
         "write"
@@ -165,7 +165,7 @@
     },
     {
       "fn": "OwnerOnlyRolling::new",
-      "loc": "src/main.rs:1649:5: 1649:99",
+      "loc": "src/main.rs:1664:5: 1664:99",
       "inferred": [
         "Clock"
       ],
@@ -174,14 +174,14 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb4149a4da74599066",
+      "hash": "97e4c565ae36a5b0db49db696d840675",
       "calls": [
         "utc_day_number"
       ]
     },
     {
       "fn": "apply_pgpassword",
-      "loc": "src/main.rs:1731:1: 1731:41",
+      "loc": "src/main.rs:1746:1: 1746:41",
       "inferred": [
         "Env"
       ],
@@ -193,23 +193,23 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb073cb9dfc74879b5"
+      "hash": "97e4c565ae36a5b04fd8b4a7656332e9"
     },
     {
       "fn": "batch_dsn_from_picks",
-      "loc": "src/main.rs:1283:1: 1286:31",
+      "loc": "src/main.rs:1298:1: 1301:31",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cb9eafdce8d212e956",
+      "hash": "97e4c565ae36a5b00930d6eeb1835478",
       "invisible": [
         "pgman"
       ]
     },
     {
       "fn": "check_log_max_size",
-      "loc": "src/main.rs:1498:1: 1498:68",
+      "loc": "src/main.rs:1513:1: 1513:68",
       "inferred": [
         "Fs"
       ],
@@ -221,7 +221,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb3e93b535cbc6a8ad",
+      "hash": "97e4c565ae36a5b0d7d4ed9dda018280",
       "fs": [
         "read"
       ],
@@ -231,7 +231,7 @@
     },
     {
       "fn": "chmod_owner_only_if_exists",
-      "loc": "src/main.rs:1712:1: 1712:54",
+      "loc": "src/main.rs:1727:1: 1727:54",
       "inferred": [
         "Fs"
       ],
@@ -243,7 +243,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb3aed00b9dcaf8b90",
+      "hash": "97e4c565ae36a5b0b0fc2bf129d338c8",
       "fs": [
         "read",
         "write"
@@ -254,7 +254,7 @@
     },
     {
       "fn": "chmod_pgman_logs_in",
-      "loc": "src/main.rs:1610:1: 1610:46",
+      "loc": "src/main.rs:1625:1: 1625:46",
       "inferred": [
         "Fs"
       ],
@@ -266,7 +266,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb4767b3d7677323a7",
+      "hash": "97e4c565ae36a5b0f9d32a6923f748a2",
       "fs": [
         "read",
         "write"
@@ -291,7 +291,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cb1b3c838449e7158c",
+      "hash": "97e4c565ae36a5b0b85c35c21dcb500d",
       "unknownWhy": [
         "callback:generic iterable driven by any"
       ],
@@ -301,7 +301,7 @@
     },
     {
       "fn": "dev_tty_opens",
-      "loc": "src/main.rs:1547:1: 1547:27",
+      "loc": "src/main.rs:1562:1: 1562:27",
       "inferred": [
         "Fs"
       ],
@@ -313,19 +313,19 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb3935026a78914dc6",
+      "hash": "97e4c565ae36a5b046ab8bbf87ab5238",
       "paths": [
         "/dev/tty"
       ]
     },
     {
       "fn": "format_connect_failure",
-      "loc": "src/main.rs:1435:1: 1435:64",
+      "loc": "src/main.rs:1450:1: 1450:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "d067015725e086cbdb7c5ffa2ba7fcce",
+      "hash": "97e4c565ae36a5b0c32c2567dc270e3b",
       "invisible": [
         "pgman"
       ]
@@ -343,14 +343,14 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cbacaf095a4a9dc307",
+      "hash": "97e4c565ae36a5b0ef65e924bad74f8c",
       "unknownWhy": [
         "callback:invoked param (opaque from the HOF's own standpoint)"
       ]
     },
     {
       "fn": "init_config_cli",
-      "loc": "src/main.rs:1462:1: 1462:28",
+      "loc": "src/main.rs:1477:1: 1477:28",
       "inferred": [
         "Clock",
         "Env",
@@ -368,7 +368,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cb554c99f4b4429212",
+      "hash": "97e4c565ae36a5b02e9c546d6fdad4cf",
       "invisible": [
         "pgman"
       ],
@@ -378,7 +378,7 @@
     },
     {
       "fn": "init_logging",
-      "loc": "src/main.rs:1576:1: 1576:18",
+      "loc": "src/main.rs:1591:1: 1591:18",
       "inferred": [
         "Clock",
         "Env",
@@ -397,7 +397,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb8322d460ccec4355",
+      "hash": "97e4c565ae36a5b0bfcbc13d9e0382e1",
       "calls": [
         "OwnerOnlyRolling::new",
         "chmod_pgman_logs_in",
@@ -414,7 +414,7 @@
     },
     {
       "fn": "load_project_safety",
-      "loc": "src/main.rs:1747:1: 1747:82",
+      "loc": "src/main.rs:1762:1: 1762:82",
       "inferred": [
         "Fs",
         "Log"
@@ -425,14 +425,14 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb31bde72f389e8623",
+      "hash": "97e4c565ae36a5b0e8bd74ebde57c08e",
       "invisible": [
         "pgman"
       ]
     },
     {
       "fn": "load_safety_config",
-      "loc": "src/main.rs:1753:1: 1753:48",
+      "loc": "src/main.rs:1768:1: 1768:48",
       "inferred": [
         "Env",
         "Fs",
@@ -448,7 +448,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb0b0a3050a9ae6255",
+      "hash": "97e4c565ae36a5b099ce2c81615bf55c",
       "invisible": [
         "pgman",
         "tracing_core"
@@ -490,7 +490,7 @@
       "overdeclared": [],
       "unresolved": true,
       "entryPoint": true,
-      "hash": "d067015725e086cb7629164f41144bea",
+      "hash": "97e4c565ae36a5b0397311ef2cd77f5d",
       "hosts": [
         "crates.io"
       ],
@@ -554,7 +554,7 @@
     },
     {
       "fn": "parse_tap_addr",
-      "loc": "src/main.rs:1157:1: 1157:69",
+      "loc": "src/main.rs:1172:1: 1172:69",
       "inferred": [
         "Net",
         "Unknown"
@@ -569,7 +569,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cb360eee8591d53786",
+      "hash": "97e4c565ae36a5b089331bd55e0c6e2f",
       "calls": [
         "parse_tap_addr_with"
       ],
@@ -585,7 +585,7 @@
     },
     {
       "fn": "parse_tap_addr_with",
-      "loc": "src/main.rs:1168:1: 1171:42",
+      "loc": "src/main.rs:1183:1: 1186:42",
       "inferred": [
         "Unknown"
       ],
@@ -596,14 +596,14 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cbc74e891885dc5837",
+      "hash": "97e4c565ae36a5b06f4b8d7d8a59a666",
       "unknownWhy": [
         "callback:invoked param (opaque from the HOF's own standpoint)"
       ]
     },
     {
       "fn": "read_log_arg_cli",
-      "loc": "src/main.rs:1204:1: 1204:98",
+      "loc": "src/main.rs:1219:1: 1219:98",
       "inferred": [
         "Fs"
       ],
@@ -615,7 +615,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cbe6a3d037a11eb62f",
+      "hash": "97e4c565ae36a5b0601fdd833b8d509a",
       "fs": [
         "read"
       ],
@@ -625,7 +625,7 @@
     },
     {
       "fn": "repair_logs_on_day_change",
-      "loc": "src/main.rs:1661:1: 1665:10",
+      "loc": "src/main.rs:1676:1: 1680:10",
       "inferred": [
         "Fs"
       ],
@@ -634,7 +634,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb2719b24c3c042c04",
+      "hash": "97e4c565ae36a5b0f9f181452b2eaa36",
       "fs": [
         "read",
         "write"
@@ -648,7 +648,7 @@
     },
     {
       "fn": "repair_private_dirs",
-      "loc": "src/main.rs:1563:1: 1563:25",
+      "loc": "src/main.rs:1578:1: 1578:25",
       "inferred": [
         "Env",
         "Fs",
@@ -661,14 +661,14 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb22fc0ba9594c19b6",
+      "hash": "97e4c565ae36a5b0c3cfe4ac3887810f",
       "invisible": [
         "pgman"
       ]
     },
     {
       "fn": "resolve_batch_dsn",
-      "loc": "src/main.rs:1224:1: 1224:61",
+      "loc": "src/main.rs:1239:1: 1239:61",
       "inferred": [
         "Env",
         "Fs",
@@ -686,7 +686,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cbd45add1447b82def",
+      "hash": "97e4c565ae36a5b06ea4b9a652f95bca",
       "calls": [
         "apply_pgpassword"
       ],
@@ -696,7 +696,7 @@
     },
     {
       "fn": "run_batch",
-      "loc": "src/main.rs:1356:1: 1356:37",
+      "loc": "src/main.rs:1371:1: 1371:37",
       "inferred": [
         "Clock",
         "Db",
@@ -723,7 +723,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cbab5200db6cb83e40",
+      "hash": "97e4c565ae36a5b0dd20fa97b4f28fbe",
       "cmds": [
         "ssh"
       ],
@@ -745,7 +745,7 @@
     },
     {
       "fn": "tap_addr_or_exit_cli",
-      "loc": "src/main.rs:1142:1: 1142:71",
+      "loc": "src/main.rs:1157:1: 1157:71",
       "inferred": [
         "Net",
         "Unknown"
@@ -756,7 +756,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "d067015725e086cb25ffce0db5dae0b7",
+      "hash": "97e4c565ae36a5b03a332eea403b216e",
       "calls": [
         "parse_tap_addr"
       ],
@@ -769,7 +769,7 @@
     },
     {
       "fn": "tap_bind_failed_cli",
-      "loc": "src/main.rs:1129:1: 1134:12",
+      "loc": "src/main.rs:1144:1: 1149:12",
       "inferred": [
         "Log"
       ],
@@ -781,14 +781,14 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cb419019b26739ebf6",
+      "hash": "97e4c565ae36a5b0bb99c179e12bc03d",
       "invisible": [
         "tracing_core"
       ]
     },
     {
       "fn": "utc_day_number",
-      "loc": "src/main.rs:1624:1: 1624:27",
+      "loc": "src/main.rs:1639:1: 1639:27",
       "inferred": [
         "Clock"
       ],
@@ -800,7 +800,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "d067015725e086cbc50eade15b4f3808"
+      "hash": "97e4c565ae36a5b014d18827b7a190a3"
     }
   ]
 }
