@@ -500,7 +500,10 @@ impl App {
             return;
         };
         // The live session too: the header has to be the truth. Turning
-        // it on tightens at once; off waits for the server to agree.
+        // it on tightens at once; off waits for the server to agree. A
+        // SET that fails leaves the session as it was — a read-only
+        // profile's included.
+        let before = self.read_only;
         if want {
             self.read_only = true;
         }
@@ -513,6 +516,7 @@ impl App {
             let _ = tx.send(AppMsg::ReadOnlyApplied {
                 generation,
                 want,
+                before,
                 result,
             });
         });

@@ -4183,6 +4183,13 @@ impl App {
         self.query_running = false;
         self.query_started = None;
         let asked = std::mem::take(&mut self.cancel_requested);
+        // A FATAL in place of the page ended the session, whichever
+        // result asked for it.
+        if let Err(e) = &outcome {
+            if self.session_ended_with(&e.msg, e.detail.as_ref()) {
+                return;
+            }
+        }
         if self.result_paging.as_ref().map(|p| p.id) != Some(result_id) {
             // The result changed under the fetch (tab switches and new
             // runs wait for it, so this is a stale answer): nothing to

@@ -935,6 +935,12 @@ pub struct Booted {
     /// the local forward and (typically) terminates the postgres
     /// connection. `None` when the connection is direct.
     pub tunnel: Option<crate::tunnel::SshTunnel>,
+    /// The `FATAL` one of the bootstrap's own reads (the version probe,
+    /// the database list) got back instead of its answer, and swallowed
+    /// ([`session_ending_error`]): the server's reason, should the
+    /// session be closed by the time the App sees it. The notice
+    /// channel's close knows only that it closed.
+    pub ended_by: Option<QueryErr>,
 }
 
 /// Connect to `dsn`, apply the safety session settings, then run `bootstrap_sql`
@@ -1353,7 +1359,11 @@ pub async fn connect_and_bootstrap(
         )
     })
     .await;
-    let version_row = version_res.ok();
+    let (version_row, version_err) = match version_res {
+        Ok(row) => (Some(row), None),
+        Err(e) => (None, Some(QueryErr::from(e))),
+    };
+    let ended_by = session_ending_error([version_err, grid_res.as_ref().err().cloned()]);
     let server_version = version_row
         .as_ref()
         .and_then(|row| row.try_get::<usize, String>(0).ok())
@@ -1386,7 +1396,20 @@ pub async fn connect_and_bootstrap(
         client,
         schema_cache,
         tunnel,
+        ended_by,
     })
+}
+
+/// The first of `errors` — what the bootstrap's reads got back and
+/// would otherwise only log — that ended the session (a `FATAL` or
+/// `PANIC`, [`QueryErrDetail::ends_session`]). Pure.
+pub fn session_ending_error(
+    errors: impl IntoIterator<Item = Option<QueryErr>>,
+) -> Option<QueryErr> {
+    errors
+        .into_iter()
+        .flatten()
+        .find(|e| e.detail.as_ref().is_some_and(QueryErrDetail::ends_session))
 }
 
 /// Shared connect path for both `connect_only` and
@@ -1840,19 +1863,16 @@ fn status_grid(msg: &str) -> Grid {
 }
 
 /// Commit an open transaction.
-pub async fn tx_commit(client: &tokio_postgres::Client) -> Result<(), String> {
-    client
-        .batch_execute("COMMIT")
-        .await
-        .map_err(|e| e.to_string())
+pub async fn tx_commit(client: &tokio_postgres::Client) -> Result<(), QueryErr> {
+    client.batch_execute("COMMIT").await.map_err(QueryErr::from)
 }
 
 /// Roll back an open transaction.
-pub async fn tx_rollback(client: &tokio_postgres::Client) -> Result<(), String> {
+pub async fn tx_rollback(client: &tokio_postgres::Client) -> Result<(), QueryErr> {
     client
         .batch_execute("ROLLBACK")
         .await
-        .map_err(|e| e.to_string())
+        .map_err(QueryErr::from)
 }
 
 /// Run `sql` inside an explicit transaction that is *always* rolled back —
@@ -2595,6 +2615,52 @@ mod tests {
     }
 
     use super::*;
+
+    /// The bootstrap keeps the swallowed error that ended the session —
+    /// the first FATAL or PANIC — and none of the rest: an ERROR (the
+    /// database list refused), a failure with no server fields, nothing.
+    #[test]
+    fn the_bootstrap_keeps_the_first_error_that_ended_the_session() {
+        let err = |msg: &str, severity: Option<&str>| QueryErr {
+            msg: msg.into(),
+            position: None,
+            detail: severity.map(|s| QueryErrDetail {
+                severity: Some(s.into()),
+                ..Default::default()
+            }),
+        };
+        let fatal = err(
+            "terminating connection due to administrator command",
+            Some("FATAL"),
+        );
+        assert_eq!(
+            session_ending_error([None, Some(fatal.clone())]),
+            Some(fatal.clone())
+        );
+        assert_eq!(
+            session_ending_error([
+                Some(err("permission denied", Some("ERROR"))),
+                Some(fatal.clone())
+            ]),
+            Some(fatal.clone()),
+            "an ERROR first is not the reason"
+        );
+        let panic = err("the server panicked", Some("PANIC"));
+        assert_eq!(
+            session_ending_error([Some(panic.clone()), Some(fatal)]),
+            Some(panic)
+        );
+        assert_eq!(
+            session_ending_error([Some(err("permission denied", Some("ERROR"))), None]),
+            None
+        );
+        assert_eq!(
+            session_ending_error([Some(err("connection closed", None))]),
+            None,
+            "no server fields, no FATAL"
+        );
+        assert_eq!(session_ending_error([None, None]), None);
+    }
 
     /// The parting FATAL is told by the protocol's own word, not the
     /// translation a German server sends in the localized field.

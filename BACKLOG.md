@@ -352,11 +352,14 @@ batch.
 - **The schema reload has no `lock_timeout` backstop**: it skips
   relations under another session's ACCESS EXCLUSIVE lock as the connect
   does, but a lock on a catalog table can still stall it.
-- **A FATAL through `TxClosed`, `CellUpdated` or `PageLoaded`** (or one
-  the bootstrap's own queries swallow) doesn't reach the
-  connection-lost card yet; only `QueryFailed`'s does.
-- **A failed `:readonly on` under a read-only profile** drops the header
-  to `writable`; the error branch only keeps a replica pin.
+- **A FATAL the connect's schema fetch swallows** still leaves the
+  closed connect's card saying only that the connection closed:
+  `query::schema::fetch` logs and drops its errors, so `Booted.ended_by`
+  sees the version probe's and the database list's only.
+- **The live halves of the connection-lost and `:readonly` fixes are
+  pinned by handler tests only**: `Booted`'s closed-client branch using
+  `ended_by`, and `:readonly`'s capture of `before` ahead of the SET,
+  need a live (or fake-login) session to test end to end.
 - **The FATAL-ends-the-session check under a non-English
   `lc_messages`** is covered by `severity_word`'s pure test only.
 

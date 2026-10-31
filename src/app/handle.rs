@@ -123,6 +123,7 @@ impl App {
                 client,
                 schema_cache,
                 tunnel,
+                ended_by,
                 ..
             } => {
                 if client.is_closed() {
@@ -133,10 +134,10 @@ impl App {
                     if let Some(dead) = tunnel {
                         tokio::task::spawn_blocking(move || drop(dead));
                     }
-                    let reason = self
-                        .lost_while_connecting
-                        .take()
-                        .unwrap_or_else(|| super::msg::connection_lost_reason(None));
+                    let reason = super::msg::closed_while_connecting(
+                        ended_by.as_deref(),
+                        self.lost_while_connecting.take(),
+                    );
                     self.conn_state = ConnState::Failed(reason);
                     return;
                 }
@@ -334,31 +335,8 @@ impl App {
                 // A statement timeout is the same SQLSTATE without the
                 // request, and stays an error.
                 let asked = std::mem::take(&mut self.cancel_requested);
-                // A FATAL in place of the result is the server ending the
-                // session: it is the connection-lost card's reason, not a
-                // query error under it. The notice channel's close says
-                // only that the connection closed — before this or after.
-                if detail
-                    .as_ref()
-                    .is_some_and(conn::QueryErrDetail::ends_session)
-                {
-                    let reason = super::msg::connection_lost_saying(
-                        Some(&error),
-                        detail.as_ref().and_then(|d| d.hint.as_deref()),
-                    );
-                    match self.conn_state {
-                        ConnState::Connected { .. } => {
-                            self.on_connection_lost(reason);
-                            return;
-                        }
-                        ConnState::Failed(_) => {
-                            self.conn_state = ConnState::Failed(reason);
-                            self.last_error = None;
-                            self.last_error_detail = None;
-                            return;
-                        }
-                        _ => {}
-                    }
+                if self.session_ended_with(&error, detail.as_ref()) {
+                    return;
                 }
                 if asked && detail.as_ref().and_then(|d| d.code.as_deref()) == Some("57014") {
                     self.last_error = None;
@@ -412,6 +390,17 @@ impl App {
             AppMsg::TxClosed {
                 committed, error, ..
             } => {
+                // A FATAL in place of the answer ended the session, and
+                // the transaction with it: the card's clearing
+                // (`on_connection_lost`) puts back an edit and leaves the
+                // mode where the card's keys work — or did, when the
+                // close came first.
+                if let Some(e) = &error {
+                    if self.session_ended_with(&e.msg, e.detail.as_ref()) {
+                        self.schema_dirty_after_run = false;
+                        return;
+                    }
+                }
                 self.tx_open = false;
                 self.query_running = false;
                 // A cell edit's transaction lands back where the edit
@@ -436,11 +425,10 @@ impl App {
                 }
                 match error {
                     Some(e) => {
-                        // A close failure carries no `DbError` fields —
-                        // whatever detail the last query left is not
-                        // this error's.
-                        self.last_error = Some(format!("tx close failed: {e}"));
-                        self.last_error_detail = None;
+                        // The close's own fields, or none — whatever
+                        // detail the last query left is not this error's.
+                        self.last_error = Some(format!("tx close failed: {}", e.msg));
+                        self.last_error_detail = e.detail;
                     }
                     None => {
                         // The footer shows an error over a status; the
@@ -521,7 +509,12 @@ impl App {
             AppMsg::SessionsLoaded { result, .. } => self.on_sessions_loaded(result),
             AppMsg::LiveLintLoaded { result, .. } => self.on_live_lint_loaded(result),
             AppMsg::AdvisorLoaded { result, .. } => self.on_advisor_loaded(result),
-            AppMsg::ReadOnlyApplied { want, result, .. } => {
+            AppMsg::ReadOnlyApplied {
+                want,
+                before,
+                result,
+                ..
+            } => {
                 let state = if want { "on" } else { "off" };
                 match result {
                     Ok(()) => {
@@ -541,10 +534,12 @@ impl App {
                         });
                     }
                     Err(e) => {
-                        // The header must say what the server will do. A
+                        // The header must say what the server will do: what
+                        // the session was before the SET (a read-only
+                        // profile's `on` that failed is still on). A
                         // standby stays pinned: recovery refuses writes
                         // whatever this SET did.
-                        self.read_only = !want || self.replica_pin;
+                        self.read_only = before || self.replica_pin;
                         self.last_error = Some(format!(
                             "read-only {state} not applied to this session ({e}) · it applies at the next connect"
                         ));
@@ -678,6 +673,40 @@ impl App {
                 self.update_check_done = true;
                 self.update_available = latest;
             }
+        }
+    }
+
+    /// A `FATAL` (or `PANIC`) a request got back in place of its answer
+    /// is the server ending the session: it is the connection-lost card's
+    /// reason, not an error under it. The notice channel's close says only
+    /// that the connection closed — before this or after — so whichever
+    /// lands second, the card ends up with the server's own words.
+    ///
+    /// Every result that can carry the server's error routes through
+    /// here: a run's `QueryFailed` (a cell edit's failure among them),
+    /// `M`'s `PageLoaded`, a commit or rollback's `TxClosed`. True when it
+    /// took the error, and the caller shows nothing more of it.
+    pub(super) fn session_ended_with(
+        &mut self,
+        message: &str,
+        detail: Option<&conn::QueryErrDetail>,
+    ) -> bool {
+        let Some(detail) = detail.filter(|d| d.ends_session()) else {
+            return false;
+        };
+        let reason = super::msg::connection_lost_saying(Some(message), detail.hint.as_deref());
+        match self.conn_state {
+            ConnState::Connected { .. } => {
+                self.on_connection_lost(reason);
+                true
+            }
+            ConnState::Failed(_) => {
+                self.conn_state = ConnState::Failed(reason);
+                self.last_error = None;
+                self.last_error_detail = None;
+                true
+            }
+            _ => false,
         }
     }
 
