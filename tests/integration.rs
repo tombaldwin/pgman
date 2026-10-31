@@ -9961,10 +9961,10 @@ fn the_rules_reach_partitions_children_and_audit_tables_in_a_real_catalog() {
             .batch_execute(
                 "CREATE TABLE orders (id int, placed date, free_field varchar(40)) PARTITION BY RANGE (placed); \
                  CREATE TABLE orders_2026 PARTITION OF orders FOR VALUES FROM ('2026-01-01') TO ('2027-01-01'); \
-                 CREATE TABLE parent_t (id int, extra varchar(40)); \
+                 CREATE TABLE parent_t (id int, spare varchar(40)); \
                  CREATE TABLE child_t () INHERITS (parent_t); \
-                 CREATE TABLE customer (id int PRIMARY KEY, extra varchar(40)); \
-                 CREATE TABLE customer_aud (id int, rev int, extra varchar(40));",
+                 CREATE TABLE customer (id int PRIMARY KEY, spare varchar(40)); \
+                 CREATE TABLE customer_aud (id int, rev int, spare varchar(40));",
             )
             .await
             .unwrap();
@@ -9972,8 +9972,8 @@ fn the_rules_reach_partitions_children_and_audit_tables_in_a_real_catalog() {
     std::fs::create_dir_all(out.join(".pgman/masking")).unwrap();
     std::fs::write(
         out.join(format!(".pgman/masking/{src}.toml")),
-        "version = 1\n[tables.orders]\nfree_field = \"null\"\n[tables.parent_t]\nextra = \"null\"\n\
-         [tables.customer]\nextra = \"null\"\n",
+        "version = 1\n[tables.orders]\nfree_field = \"null\"\n[tables.parent_t]\nspare = \"null\"\n\
+         [tables.customer]\nspare = \"null\"\n",
     )
     .unwrap();
     let shown = pgman_in(&home, &out, &["masking", "show", "src"]);
@@ -9992,8 +9992,8 @@ fn the_rules_reach_partitions_children_and_audit_tables_in_a_real_catalog() {
     };
     for (table, column) in [
         ("public.orders_2026", "free_field"),
-        ("public.child_t", "extra"),
-        ("public.customer_aud", "extra"),
+        ("public.child_t", "spare"),
+        ("public.customer_aud", "spare"),
     ] {
         let s = section(table);
         let line = s
