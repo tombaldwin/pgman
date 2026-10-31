@@ -958,7 +958,10 @@ fn by_name_and_type(
                 return (Rule::Hash, Origin::Default(format!("a hash of {what}")));
             }
         }
-        return (Rule::Keep, Origin::Plain);
+        // A digest is as often a summary sent out as a hash.
+        if last == "hash" {
+            return (Rule::Keep, Origin::Plain);
+        }
     }
     // A code-like last word keeps the column unless what comes before it
     // is personal whatever it's called: a postcode, an identifier, a
@@ -1950,6 +1953,17 @@ mod tests {
         let c = c("email_digest", "bytea", None);
         assert_eq!(default_rule("t", &c, &[], &[]).0, Rule::Hash);
         assert_eq!(default_rule("t", &c, &[], &plain).0, Rule::Keep);
+        let personal = ["digest".to_string()];
+        let weekly = super::tests::c("weekly_digest", "varchar", Some(255));
+        assert_eq!(default_rule("t", &weekly, &personal, &[]).0, Rule::Null);
+        let named = ["content hash".to_string()];
+        let content = super::tests::c("content_hash", "varchar", Some(255));
+        assert_eq!(default_rule("t", &content, &named, &[]).0, Rule::Null);
+        // A digest that isn't of something personal is judged as any column.
+        let activity = super::tests::c("activity_digest", "text", None);
+        assert_eq!(default_rule("t", &activity, &[], &[]).0, Rule::Null);
+        let sent = super::tests::c("activity_digest", "varchar", Some(255));
+        assert_eq!(default_rule("t", &sent, &[], &[]).0, Rule::Keep);
     }
 
     #[test]
