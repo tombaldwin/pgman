@@ -910,6 +910,27 @@ fn by_name_and_type(
     {
         return (Rule::Keep, Origin::Plain);
     }
+    if any(&w, SPECIAL) {
+        return (Rule::Null, why("special-category data, by name"));
+    }
+    // The rules file's words match the name as written, too: `bankdetails`.
+    let raw = parts(&col.name);
+    let listed = |list: &[String]| {
+        list.iter().any(|p| {
+            let p = p.to_lowercase();
+            has(&w, &p) || has(&raw, &p)
+        })
+    };
+    let plain_listed = listed(extra_plain);
+    if plain_listed {
+        return (
+            Rule::Keep,
+            Origin::Default("not personal, by the rules file's [classify]".into()),
+        );
+    }
+    if listed(extra_personal) {
+        return (Rule::Null, why("personal, by the rules file's [classify]"));
+    }
     // A hash of something personal and guessable, a card's last digits or
     // a holder's name, is the thing: hash it again, so joins still join.
     // (A password's hash is a password, above.)
@@ -931,27 +952,6 @@ fn by_name_and_type(
             }
         }
         return (Rule::Keep, Origin::Plain);
-    }
-    if any(&w, SPECIAL) {
-        return (Rule::Null, why("special-category data, by name"));
-    }
-    // The rules file's words match the name as written, too: `bankdetails`.
-    let raw = parts(&col.name);
-    let listed = |list: &[String]| {
-        list.iter().any(|p| {
-            let p = p.to_lowercase();
-            has(&w, &p) || has(&raw, &p)
-        })
-    };
-    let plain_listed = listed(extra_plain);
-    if plain_listed {
-        return (
-            Rule::Keep,
-            Origin::Default("not personal, by the rules file's [classify]".into()),
-        );
-    }
-    if listed(extra_personal) {
-        return (Rule::Null, why("personal, by the rules file's [classify]"));
     }
     // A code-like last word keeps the column unless what comes before it
     // is personal whatever it's called: a postcode, an identifier, a
@@ -1925,6 +1925,14 @@ mod tests {
         ] {
             assert_eq!(rule("settings", name, base, Some(255)), want, "{name}");
         }
+    }
+
+    #[test]
+    fn the_rules_files_words_reach_a_hash() {
+        let plain = ["digest".to_string()];
+        let c = c("email_digest", "bytea", None);
+        assert_eq!(default_rule("t", &c, &[], &[]).0, Rule::Hash);
+        assert_eq!(default_rule("t", &c, &[], &plain).0, Rule::Keep);
     }
 
     #[test]
