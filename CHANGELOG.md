@@ -23,6 +23,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   ended on a bare `…`, and at 80 the transactions view read `con…` and
   the pools view showed the pool under a `POOL · APP` header with no
   app. The pools header names the app only when a row has room for one.
+- A connection the server ends while a page of rows loads, a transaction
+  commits or rolls back, or pgman is first connecting shows the
+  connection-lost card with the server's reason, as a failed query's
+  did. A failed `:readonly on` leaves the header as the session is.
 
 ## [0.4.4] — 2026-10-31
 
