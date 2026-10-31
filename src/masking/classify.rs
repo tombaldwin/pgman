@@ -858,6 +858,25 @@ const PERSON_REF: &[&str] = &[
 ];
 const REF_LAST: &[&str] = &["id", "ref", "reference", "number", "no", "uid"];
 
+/// Special-category words in `w`. Something switched off isn't a
+/// disability: emails_disabled. A bare disabled, or registered_disabled,
+/// is the monitoring answer. Pure.
+fn special(w: &[String]) -> bool {
+    let switched_off = w.len() > 1
+        && w[w.len() - 1] == "disabled"
+        && w[w.len() - 2] != "registered"
+        && !any(&w[..w.len() - 1], SPECIAL);
+    any(w, SPECIAL) && !switched_off
+}
+
+/// Whether a key in a column named `name` says what it points at is
+/// personal: a gender, a marital status, a country of birth — so taking
+/// the key a lookup table keeps would keep the answer. Pure.
+fn key_says_it(name: &str) -> bool {
+    let w = words(name);
+    special(&w) || any(&w, FAMILY) || any(&w, BIRTH)
+}
+
 fn text_like(base: &str) -> bool {
     matches!(base, "text" | "varchar" | "bpchar" | "citext" | "name")
 }
@@ -951,13 +970,7 @@ fn by_name_and_type(
     {
         return (Rule::Keep, Origin::Plain);
     }
-    // Something switched off isn't a disability: emails_disabled. A bare
-    // disabled, or registered_disabled, is the monitoring answer.
-    let switched_off = w.len() > 1
-        && last == "disabled"
-        && w[w.len() - 2] != "registered"
-        && !any(&w[..w.len() - 1], SPECIAL);
-    if any(&w, SPECIAL) && !switched_off {
+    if special(&w) {
         return (Rule::Null, why("special-category data, by name"));
     }
     // The rules file's words match the name as written, too: `bankdetails`.
@@ -1018,8 +1031,11 @@ fn by_name_and_type(
     // A code-like last word keeps the column unless what comes before it
     // is personal whatever it's called: a postcode, an identifier, a
     // device's, family details. (An integer `*_id` is a key, kept.)
-    let itself = (last != "id" || text)
-        && (any(&w, IDENTIFIER) || any(&w, POSTCODE) || any(&w, DEVICE) || any(&w, FAMILY));
+    // A key into a lookup of nationalities or birthplaces says which.
+    let itself = ((last != "id" || text)
+        && (any(&w, IDENTIFIER) || any(&w, POSTCODE) || any(&w, DEVICE)))
+        || any(&w, FAMILY)
+        || any(&w, BIRTH);
     // A colour is a setting, but not a person's: eye_colour, skin_tone.
     if BODY_LAST.contains(&last) && any(&w, BODY) {
         return (Rule::Null, why("a person's appearance, by name"));
@@ -1308,10 +1324,27 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
             }
         }
     }
+    // A key whose name says it points at something personal — gender_id
+    // into a lookup of five genders — keeps its own NULL, not the lookup's
+    // keep: the key is the answer.
+    let mut unlinked: HashMap<(String, String), String> = HashMap::new();
+    for (from, to) in &edges {
+        if let Some((Rule::Null, Origin::Default(why))) = decided.get(from) {
+            if key_says_it(&from.1) {
+                unlinked.insert(from.clone(), format!("{why}, not its key into {}", to.0));
+            }
+        }
+    }
+    for (k, why) in &unlinked {
+        decided.insert(k.clone(), (Rule::Null, Origin::Default(why.clone())));
+    }
     // Follow to a fixpoint: a chain of references takes the head's rule.
     for _ in 0..32 {
         let mut changed = false;
         for (from, to) in &edges {
+            if unlinked.contains_key(from) {
+                continue;
+            }
             let Some((rule, origin)) = decided.get(to).cloned() else {
                 continue;
             };
@@ -1434,8 +1467,17 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 && hashable(&c.ty.base)
                 && c.ty.array_of.is_none()
                 && ((c.unique && c.ty.not_null) || (g.members > 1 && g.not_null))
+                && !unlinked.contains_key(&key)
             {
                 rule = Rule::Hash;
+            }
+            // A hash or the empty value would reference nothing.
+            if unlinked.contains_key(&key) && c.ty.not_null {
+                problems.push(format!(
+                    "{q}.{}: its key says what it points at, which is personal, and it can't \
+                     be NULL: keep it with a reason, or give it a fixed value its table has",
+                    c.name
+                ));
             }
             // After the hash it may have become: that must fit too.
             check(t, c, &rule, &origin, unique, fit, &mut problems);
@@ -2875,5 +2917,74 @@ mod tests {
             Rule::Keep
         );
         assert_eq!(rule("events", "has_extra", "bool", None), Rule::Keep);
+    }
+
+    #[test]
+    fn a_key_into_a_lookup_of_personal_answers_is_nulled_not_followed() {
+        let lookup = |name: &str| {
+            let mut id = c("id", "int4", None);
+            id.ty.not_null = true;
+            id.unique = true;
+            table(name, vec![id, c("label", "varchar", Some(40))])
+        };
+        let mut people = table(
+            "people",
+            vec![
+                c("id", "int4", None),
+                c("gender_id", "int4", None),
+                c("country_of_birth", "int4", None),
+                c("nationality_id", "int4", None),
+                c("maritalstatus", "int4", None),
+                c("country_id", "int4", None),
+            ],
+        );
+        people.columns[4].ty.not_null = true;
+        for (col, to) in [
+            ("gender_id", "gender"),
+            ("country_of_birth", "country"),
+            ("nationality_id", "country"),
+            ("maritalstatus", "marital_status"),
+            ("country_id", "country"),
+        ] {
+            people.foreign_keys.push(ForeignKey {
+                columns: vec![col.into()],
+                ref_table: format!("public.{to}"),
+                ref_columns: vec!["id".into()],
+            });
+        }
+        let cat = Catalog {
+            tables: vec![
+                lookup("gender"),
+                lookup("country"),
+                lookup("marital_status"),
+                people,
+            ],
+            ..Default::default()
+        };
+        let p = plan(&cat, &RuleSet::default());
+        let t = p.table("public.people").unwrap();
+        let rule_of = |n: &str| t.columns.iter().find(|d| d.column == n).unwrap();
+        for n in ["gender_id", "country_of_birth", "nationality_id"] {
+            let d = rule_of(n);
+            assert_eq!(d.rule, Rule::Null, "{n}");
+            assert!(
+                matches!(&d.origin, Origin::Default(w) if w.contains("not its key into")),
+                "{n}: {:?}",
+                d.origin
+            );
+        }
+        // Where the person lives isn't a special category: the join holds.
+        assert_eq!(rule_of("country_id").rule, Rule::Keep);
+        // NOT NULL: a hash or 0 would reference nothing, so the team decides.
+        assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
+        assert!(p.problems[0].starts_with("public.people.maritalstatus: its key says"));
+        // A rules file's keep, with its reason, settles it.
+        let p = plan(
+            &cat,
+            &parse(
+                "version = 1\n[tables.people]\nmaritalstatus = { rule = \"keep\", reason = \"test data\" }\n",
+            ),
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
     }
 }
