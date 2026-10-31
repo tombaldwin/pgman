@@ -968,10 +968,15 @@ pub fn settle_reason(
 }
 
 /// The warning before a raw dump of a protected target. Pure.
-pub fn raw_warning(name: &str, why: &str) -> String {
+pub fn raw_warning(name: &str, why: &str, encrypted: bool) -> String {
     format!(
         "{name} is protected ({why}). This is a raw copy: every row, personal data included, \
-         written to this machine unencrypted. pgman copies rm deletes it when you're done."
+         written to this machine {}. pgman copies rm deletes it when you're done.",
+        if encrypted {
+            "encrypted"
+        } else {
+            "unencrypted"
+        }
     )
 }
 
@@ -1272,7 +1277,10 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         home.as_deref(),
     )?;
     if gate.typed.is_some() || gate.unattended {
-        eprintln!("pgman dump: {}", raw_warning(&name, &resolved.protection()));
+        eprintln!(
+            "pgman dump: {}",
+            raw_warning(&name, &resolved.protection(), opts.encrypt.is_some())
+        );
     }
     let keys = dumps.ticket_keys.clone();
     let branch_ticket = branch
@@ -1468,7 +1476,16 @@ pub async fn run(
             std::process::id(),
         )
     };
-    if let Some(why) = output_problem(opts, &p) {
+    // Encrypted, it is an archive: a directory, replaced as one.
+    let as_written = Opts {
+        format: if opts.encrypt.is_some() {
+            Format::Directory
+        } else {
+            opts.format
+        },
+        ..opts.clone()
+    };
+    if let Some(why) = output_problem(&as_written, &p) {
         return Err(why);
     }
     let opened = pgtool::open(&resolved).await?;
@@ -2012,6 +2029,7 @@ mod tests {
         let w = raw_warning(
             "production",
             "the environment \"production\" has \"prod\" in its name",
+            false,
         );
         assert!(
             w.starts_with("production is protected (the environment"),
@@ -2022,6 +2040,11 @@ mod tests {
             "{w}"
         );
         assert!(w.contains("pgman copies rm"), "{w}");
+        let w = raw_warning("production", "protected = true", true);
+        assert!(
+            w.contains("machine encrypted") && !w.contains("unencrypted"),
+            "{w}"
+        );
     }
 
     #[test]
