@@ -8,9 +8,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
-- Masked dumps keep Rails', Django's, Alembic's, Knex's and Prisma's
-  migration tables whole, as Flyway's and Liquibase's are, and dump
-  Django's sessions empty.
+- Masked dumps keep Rails', Django's, Alembic's and Knex's migration
+  tables whole, as Flyway's and Liquibase's are, and dump Django's
+  sessions empty.
 
 ### Fixed
 

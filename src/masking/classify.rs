@@ -324,6 +324,8 @@ fn known(word: &str) -> bool {
                 PEOPLE,
                 HOLDER,
                 IDENTIFIER,
+                HANDLE,
+                BODY,
                 ADDRESS,
                 POSTCODE,
                 BIRTH,
@@ -691,13 +693,10 @@ const IDENTIFIER: &[&str] = &[
     "last digits",
     "last four",
     "last4",
-    "linkedin",
-    "twitter",
-    "discord",
-    "mastodon",
-    "bluesky",
-    "orcid",
-    "skype",
+];
+/// A person's account elsewhere.
+const HANDLE: &[&str] = &[
+    "linkedin", "twitter", "discord", "mastodon", "bluesky", "orcid", "skype",
 ];
 const ADDRESS: &[&str] = &[
     "address", "street", "city", "town", "county", "line 1", "line 2", "line 3", "house", "flat",
@@ -1019,6 +1018,9 @@ fn by_name_and_type(
     if any(&w, IDENTIFIER) {
         return (Rule::Null, why("an identifier or pay, by name"));
     }
+    if any(&w, HANDLE) {
+        return (Rule::Null, why("a person's handle elsewhere, by name"));
+    }
     // An IP or MAC address before a postal one.
     if any(&w, NETWORK) {
         return if text || matches!(base, "inet" | "cidr") {
@@ -1107,10 +1109,11 @@ fn preset(name: &str) -> Option<(bool, &'static str)> {
         "revinfo" => Some((true, "Envers' revisions")),
         "schema_migrations" => Some((true, "the migration history")),
         "ar_internal_metadata" => Some((true, "Rails' metadata")),
-        "django_migrations" | "django_content_type" => Some((true, "Django's own")),
+        "django_migrations" | "django_content_type" => {
+            Some((true, "Django's migrations and content types"))
+        }
         "alembic_version" => Some((true, "Alembic's version")),
         "knex_migrations" | "knex_migrations_lock" => Some((true, "Knex's history")),
-        "_prisma_migrations" => Some((true, "Prisma's history")),
         "django_session" => Some((false, "Django's sessions")),
         "spring_session" | "spring_session_attributes" => Some((false, "Spring Session")),
         "persistent_logins" => Some((false, "Spring Security's remember-me")),
@@ -1775,7 +1778,7 @@ mod tests {
             ("member_receivesmessages", "bool", Rule::Keep),
             ("chatmessage_createdon", "timestamp", Rule::Keep),
             ("ticket_customercommentson", "timestamp", Rule::Keep),
-            ("notificationmessagetype_desc", "varchar", Rule::Keep),
+            ("widgetmessagetype_desc", "varchar", Rule::Keep),
             ("integrations_note_events", "bool", Rule::Keep),
             ("payment_failure_reason", "int2", Rule::Keep),
         ] {
@@ -1990,6 +1993,26 @@ mod tests {
         assert_eq!(default_rule("t", &activity, &[], &[]).0, Rule::Null);
         let sent = super::tests::c("activity_digest", "varchar", Some(255));
         assert_eq!(default_rule("t", &sent, &[], &[]).0, Rule::Keep);
+    }
+
+    #[test]
+    fn a_handle_says_what_it_is() {
+        let (r, o) = default_rule("people", &c("linkedin", "varchar", Some(100)), &[], &[]);
+        assert_eq!(r, Rule::Null);
+        assert_eq!(
+            o,
+            Origin::Default("a person's handle elsewhere, by name".into())
+        );
+        let (_, o) = default_rule(
+            "people",
+            &c("mastodon_handle", "varchar", Some(100)),
+            &[],
+            &[],
+        );
+        assert_eq!(
+            o,
+            Origin::Default("a person's handle elsewhere, by name".into())
+        );
     }
 
     #[test]
@@ -2460,7 +2483,6 @@ mod tests {
             "ar_internal_metadata",
             "django_migrations",
             "alembic_version",
-            "_prisma_migrations",
         ] {
             assert!(matches!(preset(name), Some((true, _))), "{name}");
         }

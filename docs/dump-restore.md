@@ -267,7 +267,7 @@ the people in it. No rules file is needed for the first one.
   joins still join; every column joined that way fits the shortest of
   them, and is unique if one of them is (a unique name gets a tag, kept
   when it is shortened). Migration history is kept (Flyway, Liquibase,
-  Rails, Django, Alembic, Knex, Prisma), Spring Session, Django session
+  Rails, Django, Alembic, Knex), Spring Session, Django session
   and OAuth token tables are dumped empty, an Envers
   `_aud` table is masked as its base table is. Large objects are left
   out. The words are English, and the identifiers British (NI number,
