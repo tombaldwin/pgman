@@ -1187,6 +1187,33 @@ fn preset(name: &str) -> Option<(bool, &'static str)> {
         }
         "alembic_version" => Some((true, "Alembic's version")),
         "knex_migrations" | "knex_migrations_lock" => Some((true, "Knex's history")),
+        // Its translatable names are jsonb, which the defaults NULL: the
+        // restored app wouldn't start. Not ir_attachment (people's files),
+        // ir_config_parameter (the database secret), ir_mail_server (a
+        // password), ir_act_server (code, which may hold a key).
+        "ir_model"
+        | "ir_model_fields"
+        | "ir_model_fields_selection"
+        | "ir_model_data"
+        | "ir_model_access"
+        | "ir_model_constraint"
+        | "ir_model_relation"
+        | "ir_model_inherit"
+        | "ir_ui_view"
+        | "ir_ui_menu"
+        | "ir_actions"
+        | "ir_act_window"
+        | "ir_act_window_view"
+        | "ir_act_report_xml"
+        | "ir_act_url"
+        | "ir_act_client"
+        | "ir_module_module"
+        | "ir_module_module_dependency"
+        | "ir_module_module_exclusion"
+        | "ir_module_category"
+        | "ir_rule"
+        | "ir_sequence"
+        | "ir_asset" => Some((true, "Odoo's models, views and menus")),
         "django_session" => Some((false, "Django's sessions")),
         "spring_session" | "spring_session_attributes" => Some((false, "Spring Session")),
         "persistent_logins" => Some((false, "Spring Security's remember-me")),
@@ -2594,8 +2621,19 @@ mod tests {
             "ar_internal_metadata",
             "django_migrations",
             "alembic_version",
+            "ir_ui_view",
+            "ir_model_fields",
         ] {
             assert!(matches!(preset(name), Some((true, _))), "{name}");
+        }
+        // Odoo's tables that hold people's files and the secrets.
+        for name in [
+            "ir_attachment",
+            "ir_config_parameter",
+            "ir_mail_server",
+            "ir_act_server",
+        ] {
+            assert_eq!(preset(name), None, "{name}");
         }
         assert!(matches!(preset("django_session"), Some((false, _))));
         assert_eq!(preset("migrations"), None);
