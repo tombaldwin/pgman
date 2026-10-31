@@ -1011,6 +1011,13 @@ fn by_name_and_type(
                 return (Rule::Hash, Origin::Default(format!("a hash of {what}")));
             }
         }
+        // A card's, an account's, a user's: few enough to try every one.
+        if PERSON_REF.contains(&w[w.len() - 2].as_str()) || w[w.len() - 2] == "card" {
+            return (
+                Rule::Hash,
+                Origin::Default(format!("a hash of a {}, by name", w[w.len() - 2])),
+            );
+        }
         // A digest is as often a summary sent out as a hash.
         if last == "hash" {
             return (Rule::Keep, Origin::Plain);
@@ -2021,6 +2028,9 @@ mod tests {
             ("card_validations", "holder_name_hash", "text", Rule::Hash),
             ("card_validations", "last_digits_hash", "text", Rule::Hash),
             ("users", "email_digest", "bytea", Rule::Hash),
+            ("payments", "card_hash", "varchar", Rule::Hash),
+            ("bank_links", "account_hash", "bytea", Rule::Hash),
+            ("widgets", "user_hash", "varchar", Rule::Hash),
             // Keycloak's: a hash of an attribute's value, a phone or more.
             ("user_attribute", "long_value_hash", "bytea", Rule::Hash),
             // A hash of what isn't personal, or a file's, is still kept.
