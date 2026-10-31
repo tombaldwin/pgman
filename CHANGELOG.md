@@ -6,6 +6,28 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Masked dumps keep Odoo's models, views and menus whole (their names
+  are JSON, which the defaults NULL, and the restored app wouldn't
+  start). Its attachments, settings and mail servers are masked as before.
+
+### Fixed
+
+- A key into a lookup of personal answers (`gender_id`,
+  `marital_status`, `country_of_birth`) took the lookup's kept id, or
+  was hashed alongside it, so the copy still joined to the answer. It is
+  NULLed now, and where it can't be NULL the plan asks the rules file to
+  decide. The lookup's own key is kept.
+- A key-value table's value is NULLed whatever its length: Keycloak's
+  `user_attribute.value` (a user's phone or address) and
+  `realm_smtp_config.value` (the SMTP password) were kept as bounded
+  `varchar`. So is a column named for a bag of data (`metadata`,
+  `extra`, `raw_data`).
+- A hash of a card, an account or a user (`card_hash`, `account_hash`,
+  `user_hash`) is rehashed, not kept: there are few enough of each to
+  try every one.
+
 ## [0.4.3] — 2026-10-31
 
 ### Added

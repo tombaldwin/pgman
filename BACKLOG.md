@@ -46,25 +46,11 @@ note.
 - **The rules digest in the dump's journal event** (and whether it was
   confirmed), so the account says which rules masked a copy. From the
   review panel, 2026-10-29.
-- **Words for `value`, `data`, `metadata`.** A bounded `varchar` named
-  so is kept, judged by its name; the panel found one holding personal
-  data. Decide whether they are free text by default. Open-source
-  schemas add two more: Keycloak's `user_attribute.value` (a user's
-  phone, address…) and `realm_smtp_config.value` (the SMTP password),
-  both bounded and kept; a `value` on a `*_attribute`/`*_config` table
-  whose name has a people or mail word may be the rule. 2026-10-30.
 - **Non-English and non-UK vocabulary**: `nom`, `prenom`, `telefon`,
   PESEL, CPF, BSN… A preset per language or country, chosen in the rules
   file. (privacy.md says the words are English and British.)
 - **A unique integer under `hash`** can collide (a keyed hash modulo the
   type's range); a keyed permutation would keep it unique.
-- **A person's link to a lookup table.** `customer_maritalstatus`
-  referencing a `marital_status` table keeps the id (the lookup's `_id` is a
-  key), while `gender`/`ethnicity` ids are hashed; neither hides much
-  when the lookup has five rows. Decide what a FAMILY or SPECIAL foreign
-  key becomes. Found on a real schema, 2026-10-30. The same in Odoo:
-  `hr_employee.country_of_birth` references `res_country.id`, takes its
-  keep, and so keeps a birthplace a name alone would NULL.
 - **A person's id with no foreign key.** Keycloak's `event_entity.user_id`
   has none, so it is hashed while every declared reference keeps
   `user_entity.id`: the masked copy's events no longer join to users.
@@ -81,25 +67,12 @@ note.
   `ir_attachment.store_fname` a fake first name (every attachment's path
   breaks); location words (`geo_status_timeout`, `age_value`); an integer
   or interval named for a secret (`access_token_lifespan`) is still
-  NULLed; `client` makes an OAuth client's `name` a person's; Odoo's
-  `ir_*` metadata is NULLed by type and breaks the restored app (a preset,
-  like Rails'). From the release panel: `card_hash`, `account_hash`,
-  `user_hash` are kept (card/account/user alone aren't identifier
-  words); `visa_type` is kept by the `type` flag word; presets match a
+  NULLed; `client` makes an OAuth client's `name` a person's. From the release
+  panel: `visa_type` is kept by the `type` flag word; presets match a
   table's name in any schema.
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.
-- **CI's Postgres crashed mid-suite once (2026-10-31, the v0.4.3 release
-  commit).** "the database system is in recovery mode", 42 integration
-  tests failed together while the 2M-row signalled-restore test ran; the
-  rerun passed. A backend died abnormally; docker's 64 MB `/dev/shm`
-  (parallel query, SIGBUS) is a guess, not shown. Capture the container's
-  log on failure in CI, then decide (`shm_size`, or fewer rows).
-- **Flaky: `a_concurrent_index_build_isnt_cut_short_by_the_statement_timeout`.**
-  `CREATE INDEX CONCURRENTLY` waits for every open transaction; in the
-  full parallel suite it failed once (2026-10-30), alone it passes. Give
-  it its own database or a serial group.
 
 ### Environments overview, like ebman's main screen (Tom, 2026-10-19)
 One table of every database in an environment, replicas included, each

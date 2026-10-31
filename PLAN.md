@@ -64,6 +64,17 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 
 ## Window — after v0.3.0
 
+### Lookup keys, key-value values, card hashes; CI's crash (2026-10-31)
+
+On Tom's "go" after v0.4.3. On main, unreleased: a key into a lookup of
+personal answers NULLed rather than following the lookup's keep (the
+client's plan hashed five special-category keys in step with their
+lookups, so they still joined), a key-value table's value and a bag of
+data NULLed (Keycloak's SMTP password), card/account/user hashes
+rehashed, an Odoo preset. CI prints the test server's log on failure
+and gives it a 512 MB /dev/shm; the concurrent index test has its own
+database. Next: a panel, then v0.4.4 on its GO.
+
 ### The classifier on open-source schemas, and a client's rules file (2026-10-30)
 
 On Tom's "both". `masking show` over GitLab, Keycloak, Odoo 18, Synapse
