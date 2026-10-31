@@ -11668,20 +11668,32 @@ fn a_masked_value_a_check_constraint_may_refuse_stops_the_plan() {
             .batch_execute(
                 "CREATE TABLE pay_rates (id int PRIMARY KEY, wage numeric NOT NULL \
                    CONSTRAINT c_wage CHECK (wage > 0), salary numeric NOT NULL); \
-                 ALTER TABLE pay_rates ADD CONSTRAINT c_salary CHECK (salary > 0) NOT VALID",
+                 ALTER TABLE pay_rates ADD CONSTRAINT c_salary CHECK (salary > 0) NOT VALID; \
+                 CREATE DOMAIN nonempty AS text CONSTRAINT nonempty_check CHECK (VALUE <> ''); \
+                 CREATE DOMAIN reference AS nonempty; \
+                 CREATE TABLE payees (id int PRIMARY KEY, notes reference NOT NULL)",
             )
             .await
             .unwrap();
         let client = probe_client(&dsn).await;
         let catalog = pgman::query::masking::catalog(&client).await.unwrap();
-        assert_eq!(catalog.checks.len(), 1, "{:?}", catalog.checks);
+        assert_eq!(catalog.checks.len(), 2, "{:?}", catalog.checks);
         assert_eq!(catalog.checks[0].table, "public.pay_rates");
         assert_eq!(catalog.checks[0].columns, ["wage"]);
+        // A domain's, under the domain over it, names the column.
+        assert_eq!(catalog.checks[1].table, "public.payees");
+        assert_eq!(catalog.checks[1].columns, ["notes"]);
+        assert_eq!(catalog.checks[1].definition, "CHECK ((notes <> ''::text))");
         let plan =
             pgman::masking::classify::plan(&catalog, &pgman::masking::rules::RuleSet::default());
-        assert_eq!(plan.problems.len(), 1, "{:?}", plan.problems);
+        assert_eq!(plan.problems.len(), 2, "{:?}", plan.problems);
         assert!(
             plan.problems[0].starts_with("public.pay_rates.wage: the empty value standing in for NULL may fail its CHECK constraint c_wage, CHECK ((wage > (0)::numeric))"),
+            "{:?}",
+            plan.problems
+        );
+        assert!(
+            plan.problems[1].starts_with("public.payees.notes: the empty value standing in for NULL may fail its CHECK constraint nonempty_check"),
             "{:?}",
             plan.problems
         );

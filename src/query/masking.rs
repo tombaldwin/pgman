@@ -83,8 +83,16 @@ const PARTITION_KEYS_SQL: &str =
     "SELECT partrelid::int8, partattrs::int2[] FROM pg_catalog.pg_partitioned_table";
 
 /// Validated CHECK constraints (a NOT VALID one isn't checked against
-/// the rows a restore loads) and the columns each names.
+/// the rows a restore loads) and the columns each names; a column's
+/// domain's too (a domain over a domain has both), with VALUE named as
+/// the column.
 const CHECKS_SQL: &str = "\
+    WITH RECURSIVE domains(typ, dom) AS ( \
+        SELECT oid, oid FROM pg_catalog.pg_type WHERE typtype = 'd' \
+        UNION ALL \
+        SELECT d.typ, t.typbasetype FROM domains d \
+        JOIN pg_catalog.pg_type t ON t.oid = d.dom \
+        JOIN pg_catalog.pg_type b ON b.oid = t.typbasetype AND b.typtype = 'd') \
     SELECT n.nspname || '.' || c.relname, k.conname::text, \
            ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a \
                  WHERE a.attrelid = k.conrelid AND a.attnum = ANY (k.conkey) ORDER BY a.attnum), \
@@ -92,7 +100,18 @@ const CHECKS_SQL: &str = "\
     FROM pg_catalog.pg_constraint k \
     JOIN pg_catalog.pg_class c ON c.oid = k.conrelid \
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-    WHERE k.contype = 'c' AND k.convalidated";
+    WHERE k.contype = 'c' AND k.convalidated \
+    UNION ALL \
+    SELECT n.nspname || '.' || c.relname, k.conname::text, ARRAY[a.attname::text], \
+           pg_catalog.regexp_replace(pg_catalog.pg_get_constraintdef(k.oid), \
+                                     '\\mVALUE\\M', pg_catalog.quote_ident(a.attname), 'g') \
+    FROM pg_catalog.pg_attribute a \
+    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid AND c.relkind IN ('r', 'p') \
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+    JOIN domains d ON d.typ = a.atttypid \
+    JOIN pg_catalog.pg_constraint k ON k.contypid = d.dom \
+    WHERE a.attnum > 0 AND NOT a.attisdropped AND k.contype = 'c' AND k.convalidated \
+      AND n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'";
 
 const LARGE_OBJECTS_SQL: &str = "SELECT count(*) FROM pg_catalog.pg_largeobject_metadata";
 
