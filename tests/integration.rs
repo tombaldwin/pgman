@@ -10755,7 +10755,7 @@ fn encrypted_dumps_round_trip_and_refuse_without_their_key() {
     std::fs::write(
         home.join(".config/pgman/connections.toml"),
         format!(
-            "[[connections]]\nname = \"prod-src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+            "[[connections]]\nname = \"prod-src\"\nurl = \"postgres://pgman_test@127.0.0.1:55433/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
              [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
         ),
     )
@@ -10783,6 +10783,11 @@ fn encrypted_dumps_round_trip_and_refuse_without_their_key() {
         "INSERT INTO customers VALUES (1, 'canary-seal@example.com', 'gold'), (2, 'b@example.com', 'free')",
     )
     .unwrap();
+    // Production is read on the standby, so the restores go to a server
+    // it doesn't reach.
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(standby_caught_up());
     let restore = |file: &std::path::Path, into: &str| {
         pgman_in(
             &home,
@@ -10940,7 +10945,7 @@ fn a_kms_dump_wraps_its_key_and_restores_through_kms() {
     std::fs::write(
         home.join(".config/pgman/connections.toml"),
         format!(
-            "[[connections]]\nname = \"prod-src\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
+            "[[connections]]\nname = \"prod-src\"\nurl = \"postgres://pgman_test@127.0.0.1:55433/{src}?sslmode=disable\"\npassword_env = \"IT_PW\"\n\
              [[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\npassword_env = \"IT_PW\"\n"
         ),
     )
@@ -10961,6 +10966,9 @@ fn a_kms_dump_wraps_its_key_and_restores_through_kms() {
     )
     .unwrap();
     on(&src, "INSERT INTO widgets VALUES (1, 'teal')").unwrap();
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(standby_caught_up());
     let bin = home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let log = home.join("aws.log");
