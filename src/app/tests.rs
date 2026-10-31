@@ -12592,6 +12592,7 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     a.on_msg(AppMsg::ReadOnlyApplied {
         generation,
         want: true,
+        before: false,
         result: Ok(()),
     });
     assert!(a.read_only);
@@ -12599,6 +12600,7 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     a.on_msg(AppMsg::ReadOnlyApplied {
         generation,
         want: true,
+        before: false,
         result: Err("connection closed".into()),
     });
     assert!(!a.read_only, "not applied: the session is still writable");
@@ -12610,9 +12612,43 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     a.on_msg(AppMsg::ReadOnlyApplied {
         generation,
         want: true,
+        before: false,
         result: Err("connection closed".into()),
     });
     assert!(a.read_only && a.replica_pin);
+}
+
+/// A failed `SET` leaves the session as it was, and so does the header:
+/// a read-only profile's session given `:readonly on` (which tightens the
+/// header at once) stays `read-only` when the SET fails, rather than
+/// dropping to `writable`; a writable one given `:readonly off` that
+/// failed stays writable.
+#[test]
+fn a_failed_readonly_toggle_leaves_the_header_as_the_session_was() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.conn_state = ConnState::Connected {
+        server_version: "16.4".into(),
+    };
+    a.read_only = true;
+    let generation = a.generation;
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        before: true,
+        result: Err("connection closed".into()),
+    });
+    assert!(a.read_only, "the profile's session is still read-only");
+    assert!(!a.replica_pin, "no standby here: the profile alone held it");
+    assert!(a.last_error.as_deref().unwrap().contains("not applied"));
+
+    a.read_only = false;
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: false,
+        before: false,
+        result: Err("connection closed".into()),
+    });
+    assert!(!a.read_only, "a writable session that stayed writable");
 }
 
 /// A `:readonly off` that the server took, landing after the session was
@@ -12628,6 +12664,7 @@ fn readonly_off_applied_after_a_standby_pin_keeps_the_session_read_only() {
     a.on_msg(AppMsg::ReadOnlyApplied {
         generation,
         want: false,
+        before: true,
         result: Ok(()),
     });
     assert!(a.read_only && a.replica_pin);
@@ -12899,6 +12936,7 @@ fn a_later_success_replaces_a_stale_error() {
     a.on_msg(AppMsg::ReadOnlyApplied {
         generation,
         want: true,
+        before: false,
         result: Ok(()),
     });
     assert!(a.last_error.is_none(), "read-only applied");

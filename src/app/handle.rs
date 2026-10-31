@@ -509,7 +509,12 @@ impl App {
             AppMsg::SessionsLoaded { result, .. } => self.on_sessions_loaded(result),
             AppMsg::LiveLintLoaded { result, .. } => self.on_live_lint_loaded(result),
             AppMsg::AdvisorLoaded { result, .. } => self.on_advisor_loaded(result),
-            AppMsg::ReadOnlyApplied { want, result, .. } => {
+            AppMsg::ReadOnlyApplied {
+                want,
+                before,
+                result,
+                ..
+            } => {
                 let state = if want { "on" } else { "off" };
                 match result {
                     Ok(()) => {
@@ -529,10 +534,12 @@ impl App {
                         });
                     }
                     Err(e) => {
-                        // The header must say what the server will do. A
+                        // The header must say what the server will do: what
+                        // the session was before the SET (a read-only
+                        // profile's `on` that failed is still on). A
                         // standby stays pinned: recovery refuses writes
                         // whatever this SET did.
-                        self.read_only = !want || self.replica_pin;
+                        self.read_only = before || self.replica_pin;
                         self.last_error = Some(format!(
                             "read-only {state} not applied to this session ({e}) · it applies at the next connect"
                         ));

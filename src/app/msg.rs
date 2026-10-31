@@ -225,9 +225,12 @@ pub enum AppMsg {
         result: Result<crate::query::ddl::TableDdl, String>,
     },
     /// `:readonly on|off` was applied to the live session (or wasn't).
+    /// `before` is what the session was until then — read-only or not —
+    /// and stays so when the `SET` failed.
     ReadOnlyApplied {
         generation: u64,
         want: bool,
+        before: bool,
         result: Result<(), String>,
     },
     /// The crates.io update check finished — `Some` only when a
