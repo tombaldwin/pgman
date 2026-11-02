@@ -232,8 +232,7 @@ expired; others need none and are kept 30.
 
 A protected environment's rows are encrypted, to what its `encrypt` says;
 until it says, its raw and masked dumps are refused with the lines that
-settle it. A schema-only dump needs no key (and is encrypted when one is
-set).
+settle it. A schema-only dump has no rows and isn't encrypted.
 
 - **`kms:<key id, alias/… or ARN>`** for an AWS environment: each dump
   gets a fresh key, which KMS wraps (`aws kms encrypt`, in the
@@ -261,7 +260,25 @@ key is never the masking key. `pgman restore` finds the key, checks
 every file's checksum, decrypts what pg_restore reads to a private file
 in pgman's cache (removed when the restore ends, and said), and streams
 the rows through the decryptor. An encrypted dump is pg_dump's custom
-format; `--format` is refused.
+format; `--format` is refused. An encrypted raw dump is an archive like a
+masked one, `<label>-latest.pgman-dump` its link, where an unencrypted
+one was `<label>-latest.dump`.
+
+- **What it protects.** The files, from anyone who reads them without
+  the key: a copied laptop disk, a dump left in a shared folder. Not
+  forgery: the age format encrypts but doesn't sign, so someone who
+  could read an archive's public key (in its plain header) could build
+  another that restores. The checksums and the header check catch
+  damage and edits, not a forger. Restore what you or pgman took; an
+  agent restores only copies this machine's journal knows.
+- **A restore opens the key before it asks.** The decrypted copy is made
+  (and a KMS key used, a CloudTrail line) while pgman reads the archive
+  to plan the restore, before the confirmation; declining removes the
+  copy. A restore that is killed leaves it, and the next encrypted
+  restore or `pgman copies` removes it.
+- **The AWS CLI's own history.** With `cli_history = enabled` in your
+  AWS config, the CLI records each call's response, a KMS unwrap's
+  included: leave it off on a machine that restores encrypted dumps.
 
 A protected target that isn't an environment in your file (a connection
 named for production, a raw copy restored on your machine) has nowhere

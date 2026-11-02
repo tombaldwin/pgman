@@ -760,8 +760,20 @@ What shipped, and where it differs from the plan above:
   said on the dump; raw it can't be.
 - MCP: the same seal; an encrypted raw archive is judged by the journal
   as a raw copy, never as masked.
-- Not built: rotating a KMS key's copies, the Keychain, a `--jobs`-free
-  streamed restore.
+- Schema-only dumps aren't encrypted: no rows, and a plain-SQL schema is
+  for reading.
+- **age 0.11**, not 0.12: 0.12 depends on p256 and hpke unconditionally,
+  bringing a timing advisory (crypto-bigint) into code pgman never runs.
+  Every release reads its translations with an i18n proc-macro whose two
+  build-time crates are unmaintained: ignored in deny.toml on Tom's
+  decision (2026-11-02).
+- **Integrity is against damage, not forgery** (age doesn't sign). The
+  temp directory is named by nothing in the archive, and a copy id must
+  be a uuid's characters, after the review panel found a forged archive
+  could name a path to delete.
+- Not built: rotating a KMS key's copies, the Keychain, a streamed
+  restore with no temp copy, decrypting only after the confirmation,
+  hashing while writing (a raw dump is read again for its checksum).
 
 ### Phase 1b as built
 

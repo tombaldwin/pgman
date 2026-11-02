@@ -13,7 +13,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   "age:<public key>"` encrypts to your own key, made by `pgman key new`.
   Masked and raw dumps are both encrypted, pg_dump's output piped straight
   into the encryptor; `pgman restore` opens them. The journal records
-  what each copy is encrypted to.
+  what each copy is encrypted to, and `pgman copies show` says it.
+  `pgman key new|list` makes and lists your age keys.
 
 ### Changed
 
@@ -22,6 +23,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   only), they are refused, with the lines that settle it. Schema-only
   dumps, and protected targets that aren't environments, are unchanged
   (the latter dumped masked and unencrypted, which is said).
+- An encrypted raw dump is pgman's archive, a `.pgman-dump` directory,
+  and its link `<label>-latest.pgman-dump`, not `<label>-latest.dump`:
+  a script restoring the old link name finds the last unencrypted dump.
+  Masked and raw copies of one label now share that link.
 
 ### Fixed
 
