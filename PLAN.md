@@ -78,7 +78,12 @@ On Tom's "all 3". Merged to main, unreleased:
   text-keyed lookups, translations by language.
 - **Polish:** the tap's narrow views, the connection-lost card's FATAL
   paths, `demo.gif` re-recorded from a scratch HOME.
-Next: a release, on Tom's go, and the BACKLOG's 2b leftovers.
+Then, from a client's first MCP dump and restore: the confirmation box
+starts ticked (Claude Code re-showed an unticked required box until the
+300s wait ran out), questions and answers logged, unreadable partitions
+counted by parent, the restore's grants note, and discovered names
+explained. Released as v0.5.0 on Tom's "go" (2026-11-02): minor, as a
+protected environment's dumps now need `encrypt`.
 
 ### Lookup keys, key-value values, card hashes; CI's crash (2026-10-31)
 

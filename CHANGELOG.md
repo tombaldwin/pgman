@@ -6,6 +6,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-02
+
 ### Added
 
 - Encrypted dumps. `encrypt = "kms:<key>"` on an environment wraps a
@@ -1118,7 +1120,8 @@ ratatui 0.30, crossterm 0.29, reqwest 0.12 (rustls only), `tb-tui-common`
 0.2 shared with ebman. `toml` 1.x is used but saved-query files are
 written with TOML 1.0-compatible escapes, pinned by test.
 
-[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tombaldwin/pgman/compare/v0.4.4...v0.5.0
 [0.4.4]: https://github.com/tombaldwin/pgman/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/tombaldwin/pgman/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/tombaldwin/pgman/compare/v0.4.1...v0.4.2
