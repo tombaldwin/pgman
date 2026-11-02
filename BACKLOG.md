@@ -83,7 +83,10 @@ note.
   `--jobs` reads stdin); hash a file while writing it rather than reading
   it again; a free-space check before decrypting a big dump; keys in the
   Keychain; rotating a KMS key's copies; a real `aws kms` run before
-  release (CI's is a stand-in).
+  release (CI's is a stand-in). The sweep of a dead restore's temp copy
+  judges a pid by this machine's processes: a cache shared between
+  machines could lose another machine's running restore's copy (an
+  owner file in the temp would settle it).
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.

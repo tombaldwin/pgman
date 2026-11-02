@@ -1514,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn a_forged_copy_id_is_refused_before_anything_is_decrypted_or_removed() {
+    fn a_forged_copy_id_is_refused_before_anything_is_written_or_removed() {
         let base = std::env::temp_dir().join(format!("pgman-forged-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let cache = base.join("cache/pgman");
