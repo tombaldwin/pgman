@@ -30,6 +30,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Over MCP, the confirmation for `dump`, `restore` and `apply_patches`
+  starts ticked. Claude Code kept showing the form again while its box
+  was unticked, and the call failed after 300s with "no answer from the
+  operator". Accept or Decline is the answer; a protected environment
+  still takes its typed name.
 - Masking rehashes a hash whose word isn't last
   (`long_value_hash_lower_case`), a bare `hash` on a cards or users
   table, and a card number's (`ccnum_hash`).

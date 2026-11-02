@@ -420,6 +420,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
     plan.protected = false;
     let (_, schema) = tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);
     assert_eq!(schema["required"], json!(["apply"]));
+    assert_eq!(schema["properties"]["apply"]["default"], json!(true));
     assert_eq!(
         tools::confirmed(
             &plan,

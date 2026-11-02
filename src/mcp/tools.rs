@@ -963,7 +963,8 @@ pub fn confirm_request(
         };
         json!({
             "type": "object",
-            "properties": {"apply": {"type": "boolean", "title": title}},
+            // Ticked from the start, as dump's is (`dumps::schema`).
+            "properties": {"apply": {"type": "boolean", "title": title, "default": true}},
             "required": ["apply"]
         })
     };

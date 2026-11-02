@@ -149,7 +149,10 @@ pub fn dump_out(cwd: &Path, file: Option<&str>) -> Result<PathBuf, String> {
     Ok(p)
 }
 
-/// What the operator answers with: a typed name, or a tick. Pure.
+/// What the operator answers with: a typed name, or a tick. The tick
+/// starts ticked: Accept or Decline is the answer, and a client may
+/// refuse to send a form with a required box left empty — it asks again
+/// while pgman waits out [`super::ELICIT_TIMEOUT`]. Pure.
 fn schema(typed: Option<&str>, key: &str, title: &str) -> Value {
     match typed {
         Some(name) => json!({
@@ -159,7 +162,7 @@ fn schema(typed: Option<&str>, key: &str, title: &str) -> Value {
         }),
         None => json!({
             "type": "object",
-            "properties": {key: {"type": "boolean", "title": title}},
+            "properties": {key: {"type": "boolean", "title": title, "default": true}},
             "required": [key]
         }),
     }
@@ -704,6 +707,12 @@ mod tests {
         let plain = dump_schema(false, Some("APP-1"));
         assert!(plain["properties"].get("reason").is_none());
         assert_eq!(plain["required"], json!(["dump"]));
+        // Unticked, a client may re-ask until the 300s wait runs out.
+        assert_eq!(plain["properties"]["dump"]["default"], json!(true));
+        assert_eq!(
+            schema(None, "restore", "Restore it")["properties"]["restore"]["default"],
+            json!(true)
+        );
         let asked = dump_schema(true, Some("APP-1"));
         assert_eq!(asked["required"], json!(["dump", "reason"]));
         assert!(asked["properties"]["reason"]["description"]
