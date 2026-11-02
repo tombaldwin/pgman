@@ -298,19 +298,36 @@ fn kinds(unreadable: &[crate::query::server::Unreadable]) -> String {
     format!("{kinds}; {}", reasons.join(", "))
 }
 
-/// The first few of `unreadable`, by name, and how many more. Pure.
+/// `unreadable` by name — what isn't a partition first, the first
+/// [`NAMED`] of it, then partitions counted by parent
+/// (`app.events: 106 partitions`): the tables and sequences are what
+/// decide whether leaving them out is safe, and a hundred partitions
+/// mustn't push them out of sight. Pure.
 fn some_names(unreadable: &[crate::query::server::Unreadable]) -> String {
-    let shown: Vec<String> = unreadable
+    const NAMED: usize = 20;
+    let (parted, others): (Vec<_>, Vec<_>) = unreadable.iter().partition(|u| u.parent.is_some());
+    let mut parts: Vec<String> = others
         .iter()
-        .take(8)
+        .take(NAMED)
         .map(|u| format!("{}.{}", u.schema, u.name))
         .collect();
-    let more = unreadable.len().saturating_sub(shown.len());
+    let more = others.len().saturating_sub(parts.len());
     if more > 0 {
-        format!("{} and {more} more", shown.join(", "))
-    } else {
-        shown.join(", ")
+        parts.push(format!("and {more} more"));
     }
+    let mut parents: Vec<(&str, usize)> = Vec::new();
+    for p in parted.iter().filter_map(|u| u.parent.as_deref()) {
+        match parents.iter_mut().find(|(q, _)| *q == p) {
+            Some((_, n)) => *n += 1,
+            None => parents.push((p, 1)),
+        }
+    }
+    parts.extend(
+        parents
+            .iter()
+            .map(|(p, n)| format!("{p}: {n} partition{}", if *n == 1 { "" } else { "s" })),
+    );
+    parts.join(", ")
 }
 
 /// What the pre-flight decided: what to leave out, and what to say.
@@ -2207,6 +2224,7 @@ mod tests {
             owner: "postgres".into(),
             reason: "no SELECT".into(),
             owned_by: None,
+            parent: None,
         }
     }
 
@@ -2234,14 +2252,14 @@ mod tests {
 
     #[test]
     fn the_refusal_counts_kinds_and_names_a_few() {
-        let list: Vec<_> = (1..=11)
-            .map(|i| unreadable("public", &format!("t_diary_w{i}"), "partition"))
+        let list: Vec<_> = (1..=23)
+            .map(|i| unreadable("public", &format!("t_diary_w{i}"), "table"))
             .collect();
         let o = parse_cli(&args(&["x"])).unwrap();
         let e = preflight("app_ro", &list, 0, &o).unwrap_err();
-        assert!(e.starts_with("app_ro can't read what the dump would cover: 11 object(s) (11 partitions; no SELECT; owned by postgres)"), "{e}");
+        assert!(e.starts_with("app_ro can't read what the dump would cover: 23 object(s) (23 tables; no SELECT; owned by postgres)"), "{e}");
         assert!(
-            e.contains("and 3 more") && e.contains("--skip-unreadable"),
+            e.contains("public.t_diary_w20, and 3 more") && e.contains("--skip-unreadable"),
             "{e}"
         );
         let o = parse_cli(&args(&["x", "--skip-unreadable"])).unwrap();
@@ -2249,8 +2267,45 @@ mod tests {
         assert_eq!(p.args, args(&["--exclude-table=\"public\".\"t_diary_w1\""]));
         assert_eq!(
             p.notes,
-            vec!["left out 1 object(s) app_ro can't read (1 partition; no SELECT): public.t_diary_w1".to_string()]
+            vec![
+                "left out 1 object(s) app_ro can't read (1 table; no SELECT): public.t_diary_w1"
+                    .to_string()
+            ]
         );
+    }
+
+    /// A hundred partitions are counted under their parent, after the
+    /// tables and sequences, which are named in full: those decide
+    /// whether --skip-unreadable is safe.
+    #[test]
+    fn partitions_are_counted_by_parent_after_what_decides() {
+        let mut list: Vec<_> = (1..=106)
+            .map(|i| {
+                let mut u = unreadable("app", &format!("events_w{i:03}"), "partition");
+                u.parent = Some("app.events".into());
+                u
+            })
+            .collect();
+        let mut odd = unreadable("app", "audit_y1", "partition");
+        odd.parent = Some("app.audit".into());
+        list.push(odd);
+        for t in ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"] {
+            list.push(unreadable("app", t, "table"));
+        }
+        list.push(unreadable("app", "golf_seq", "sequence"));
+        list.push(unreadable("app", "hotel_seq", "sequence"));
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        let o = parse_cli(&args(&["x"])).unwrap();
+        let e = preflight("app_ro", &list, 0, &o).unwrap_err();
+        assert!(
+            e.contains(
+                "app.alpha, app.bravo, app.charlie, app.delta, app.echo, app.foxtrot, \
+                 app.golf_seq, app.hotel_seq, app.audit: 1 partition, app.events: 106 partitions"
+            ),
+            "{e}"
+        );
+        assert!(!e.contains("events_w"), "no partition named: {e}");
+        assert!(!e.contains("more"), "nothing hidden: {e}");
     }
 
     #[test]

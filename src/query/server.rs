@@ -44,6 +44,9 @@ pub struct Unreadable {
     /// owned sequence with its table whatever `--exclude-table` says, so
     /// one whose table is dumped can't be left out on its own.
     pub owned_by: Option<(String, bool)>,
+    /// For a partition: its parent, `schema.name`, so a refusal can
+    /// count a hundred partitions as one line.
+    pub parent: Option<String>,
 }
 
 impl Unreadable {
@@ -77,7 +80,10 @@ pub const UNREADABLE_SQL: &str = "WITH me AS (SELECT rolsuper, rolbypassrls FROM
             ELSE 'row-level security' END, \
        CASE WHEN t.oid IS NOT NULL THEN tn.nspname::text || '.' || t.relname::text END, \
        CASE WHEN t.oid IS NOT NULL THEN pg_catalog.has_schema_privilege(tn.oid, 'USAGE') \
-              AND pg_catalog.has_table_privilege(t.oid, 'SELECT') END \
+              AND pg_catalog.has_table_privilege(t.oid, 'SELECT') END, \
+       CASE WHEN c.relispartition THEN (SELECT pn.nspname::text || '.' || p.relname::text \
+         FROM pg_catalog.pg_inherits i JOIN pg_catalog.pg_class p ON p.oid = i.inhparent \
+         JOIN pg_catalog.pg_namespace pn ON pn.oid = p.relnamespace WHERE i.inhrelid = c.oid LIMIT 1) END \
      FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
      LEFT JOIN pg_catalog.pg_depend d ON c.relkind = 'S' AND d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass \
        AND d.objid = c.oid AND d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.deptype IN ('a', 'i') \
@@ -127,6 +133,7 @@ pub async fn unreadable(
                     owned_by: r
                         .get::<_, Option<String>>(5)
                         .map(|t| (t, r.get::<_, Option<bool>>(6).unwrap_or(false))),
+                    parent: r.get(7),
                 })
                 .collect()
         })

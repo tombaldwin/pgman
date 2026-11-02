@@ -35,6 +35,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   was unticked, and the call failed after 300s with "no answer from the
   operator". Accept or Decline is the answer; a protected environment
   still takes its typed name.
+- A dump refused because its user can't read everything names the
+  tables and sequences in full, then counts partitions under their
+  parent (`app.events: 106 partitions`). It used to name the first 8
+  and say "and 106 more", which could hide the few tables that decide
+  whether `--skip-unreadable` is safe.
 - Masking rehashes a hash whose word isn't last
   (`long_value_hash_lower_case`), a bare `hash` on a cards or users
   table, and a card number's (`ccnum_hash`).

@@ -11516,6 +11516,9 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
          ALTER TABLE forced ENABLE ROW LEVEL SECURITY; ALTER TABLE forced FORCE ROW LEVEL SECURITY; \
          CREATE SCHEMA hidden; CREATE TABLE hidden.h (id int); \
          CREATE TABLE rls_t (id int); ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY; \
+         CREATE TABLE log_p (id int) PARTITION BY RANGE (id); \
+         CREATE TABLE log_p_1 PARTITION OF log_p FOR VALUES FROM (0) TO (10); \
+         CREATE TABLE log_p_2 PARTITION OF log_p FOR VALUES FROM (10) TO (20); \
          SELECT lo_create(0); \
          GRANT SELECT ON open_t, rls_t, hidden.h TO pgman_lim",
     );
@@ -11543,7 +11546,9 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success());
     for want in [
-        "5 object(s) (4 tables, 1 sequence; ",
+        "8 object(s) (5 tables, 2 partitions, 1 sequence; ",
+        // Partitions counted under their parent, never named.
+        "public.log_p: 2 partitions",
         "public.forced",
         "its table is left out",
         "no SELECT",
@@ -11557,6 +11562,7 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
         assert!(stderr.contains(want), "{want}: {stderr}");
     }
     assert!(!stderr.contains("closed_v"), "a view isn't read: {stderr}");
+    assert!(!stderr.contains("log_p_1"), "{stderr}");
     assert!(
         !stderr.contains("rls_part"),
         "a partitioned parent's policy doesn't stop pg_dump: {stderr}"
@@ -11570,7 +11576,7 @@ fn a_dump_refuses_what_it_cant_read_unless_told_to_skip_it() {
     );
     assert!(o.status.success(), "{stderr}");
     assert!(
-        stdout.contains("note: left out 5 object(s) pgman_lim can't read"),
+        stdout.contains("note: left out 8 object(s) pgman_lim can't read"),
         "{stdout}"
     );
     assert!(
