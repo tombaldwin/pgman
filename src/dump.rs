@@ -2231,13 +2231,13 @@ mod tests {
     #[test]
     fn excludes_name_exactly_what_cant_be_read() {
         let a = exclude_args(&[
-            unreadable("public", "t_diary_y2021w1", "partition"),
+            unreadable("public", "t_notes_y2021w1", "partition"),
             unreadable("Odd Schema", "we\"ird*.x", "table"),
         ]);
         assert_eq!(
             a,
             args(&[
-                "--exclude-table=\"public\".\"t_diary_y2021w1\"",
+                "--exclude-table=\"public\".\"t_notes_y2021w1\"",
                 "--exclude-table=\"Odd Schema\".\"we\"\"ird*.x\"",
             ])
         );
@@ -2253,22 +2253,22 @@ mod tests {
     #[test]
     fn the_refusal_counts_kinds_and_names_a_few() {
         let list: Vec<_> = (1..=23)
-            .map(|i| unreadable("public", &format!("t_diary_w{i}"), "table"))
+            .map(|i| unreadable("public", &format!("t_notes_w{i}"), "table"))
             .collect();
         let o = parse_cli(&args(&["x"])).unwrap();
         let e = preflight("app_ro", &list, 0, &o).unwrap_err();
         assert!(e.starts_with("app_ro can't read what the dump would cover: 23 object(s) (23 tables; no SELECT; owned by postgres)"), "{e}");
         assert!(
-            e.contains("public.t_diary_w20, and 3 more") && e.contains("--skip-unreadable"),
+            e.contains("public.t_notes_w20, and 3 more") && e.contains("--skip-unreadable"),
             "{e}"
         );
         let o = parse_cli(&args(&["x", "--skip-unreadable"])).unwrap();
         let p = preflight("app_ro", &list[..1], 0, &o).unwrap();
-        assert_eq!(p.args, args(&["--exclude-table=\"public\".\"t_diary_w1\""]));
+        assert_eq!(p.args, args(&["--exclude-table=\"public\".\"t_notes_w1\""]));
         assert_eq!(
             p.notes,
             vec![
-                "left out 1 object(s) app_ro can't read (1 table; no SELECT): public.t_diary_w1"
+                "left out 1 object(s) app_ro can't read (1 table; no SELECT): public.t_notes_w1"
                     .to_string()
             ]
         );
