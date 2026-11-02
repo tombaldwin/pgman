@@ -971,6 +971,9 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
             seal.describe()
         ));
     }
+    if !opts.keep_owners {
+        notes.push(grants_note(resolved.connect.dsn.user.as_deref()));
+    }
     let server_major = Major::from_num(facts.version_num);
     if let (Some(from), Some(to)) = (archive.dumped_from, server_major) {
         if from > to {
@@ -1118,8 +1121,32 @@ fn ellipsize(text: &str, max: usize) -> String {
     }
 }
 
+/// What leaving out owners and grants means for whoever uses the copy:
+/// it all belongs to `user` (the connecting user; `None`, libpq's
+/// default), and an application's own role reads nothing until it is
+/// granted. Pure.
+pub fn grants_note(user: Option<&str>) -> String {
+    let user = user.unwrap_or("the user pgman connected as");
+    format!(
+        "owners and grants were left out: everything restored belongs to {user}, and any other \
+         role (the application's) can read none of it until granted — GRANT USAGE ON SCHEMA … \
+         and GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA … (and USAGE ON ALL \
+         SEQUENCES) TO that role; or, at a terminal, restore with --keep-owners where the dump's \
+         roles exist"
+    )
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_restore_without_owners_says_who_owns_it_and_how_to_grant() {
+        let n = grants_note(Some("app_admin"));
+        assert!(grants_note(None).contains("belongs to the user pgman connected as"));
+        assert!(n.contains("belongs to app_admin"), "{n}");
+        assert!(n.contains("GRANT SELECT"), "{n}");
+        assert!(n.contains("--keep-owners"), "{n}");
+    }
     use super::*;
 
     #[test]

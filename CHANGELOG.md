@@ -35,6 +35,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   was unticked, and the call failed after 300s with "no answer from the
   operator". Accept or Decline is the answer; a protected environment
   still takes its typed name.
+- A restore's result says that owners and grants were left out, who
+  owns what it restored, and how to grant another role (the
+  application's) access: until then that role can read none of it.
 - A dump refused because its user can't read everything names the
   tables and sequences in full, then counts partitions under their
   parent (`app.events: 106 partitions`). It used to name the first 8

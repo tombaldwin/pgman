@@ -8746,6 +8746,12 @@ fn a_restore_goes_into_another_name_and_clean_replaces_it() {
         "{stdout}"
     );
     assert_eq!(count_in(&db, &t), Ok(25));
+    assert!(
+        stdout.contains(
+            "note: owners and grants were left out: everything restored belongs to pgman_test,"
+        ),
+        "{stdout}"
+    );
 
     // Into the existing database as it is: its table is already there.
     let o = pgman_in(
