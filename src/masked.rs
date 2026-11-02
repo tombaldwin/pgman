@@ -203,7 +203,8 @@ pub fn paths(
             }
             if !text.ends_with(archive::EXTENSION) {
                 return Err(format!(
-                    "{}: a masked dump is a directory named …{}; name one, or a directory to put it in",
+                    "{}: a masked or encrypted dump is a directory named …{}; name one, or a \
+                     directory to put it in",
                     p.display(),
                     archive::EXTENSION
                 ));

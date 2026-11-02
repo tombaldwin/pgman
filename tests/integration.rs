@@ -11209,7 +11209,9 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     ]);
     assert_eq!(code, Some(0), "{err}");
     assert!(err.contains("This is a raw copy"), "{err}");
-    assert_eq!(files().len(), 3, "two dumps and the link: {:?}", files());
+    // The schema plain (no rows, nothing encrypted), the raw copy an
+    // encrypted archive: each with its own -latest link.
+    assert_eq!(files().len(), 4, "two dumps and two links: {:?}", files());
 
     let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
     let events: Vec<serde_json::Value> = journal
@@ -11271,7 +11273,7 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     let (code, said, err) = run(&["copies", "rm", &raw_id[..8], "--yes"]);
     assert_eq!(code, Some(0), "{err}");
     assert!(
-        said.contains("deleted") && said.contains("now points at"),
+        said.contains("deleted") && said.contains("removed"),
         "{said}"
     );
     assert!(
@@ -11285,8 +11287,14 @@ fn the_dump_policy_and_the_journal_from_the_command_line() {
     .unwrap()
     .is_empty());
     assert!(!std::path::Path::new(&raw_file).exists());
+    assert!(
+        std::fs::symlink_metadata(&latest).is_err(),
+        "its link went with it"
+    );
     assert_eq!(
-        std::fs::read_link(&latest).unwrap().to_string_lossy(),
+        std::fs::read_link(out.join(format!("production-{db}-latest.dump")))
+            .unwrap()
+            .to_string_lossy(),
         std::path::Path::new(&schema_file)
             .file_name()
             .unwrap()

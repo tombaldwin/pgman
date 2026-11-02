@@ -1267,7 +1267,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         .clone()
         .unwrap_or_else(|| resolved.label.clone());
     let gate = crate::policy::gate(&policy, kind, via, &name)?;
-    opts.encrypt = encrypt_for(&policy);
+    opts.encrypt = encrypt_for(&policy, kind);
     let unsealed = unencrypted_note(&policy, kind, &name);
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let place_note = place_problem(
@@ -1351,11 +1351,16 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     result
 }
 
-/// What a dump under `policy` is encrypted to: its environment's
-/// `encrypt`, any kind of dump; `none`, or nothing set, is nothing. Pure.
+/// What a `kind` dump under `policy` is encrypted to: its environment's
+/// `encrypt`; `none`, nothing set, or the structure alone (no rows, and a
+/// plain-SQL schema is for reading) is nothing. Pure.
 pub fn encrypt_for(
     policy: &crate::policy::Policy,
+    kind: crate::policy::Kind,
 ) -> Option<(crate::crypt::Encrypt, crate::aws_cli::AwsScope)> {
+    if kind == crate::policy::Kind::Schema {
+        return None;
+    }
     match &policy.encrypt {
         None | Some(crate::crypt::Encrypt::None) => None,
         Some(e) => Some((e.clone(), policy.encrypt_scope.clone())),
@@ -1736,9 +1741,17 @@ mod tests {
         };
         let p = effective(true, Some(&keyed), None).unwrap();
         assert_eq!(unencrypted_note(&p, Kind::Masked, "production"), None);
-        assert!(encrypt_for(&p).is_some());
+        assert!(encrypt_for(&p, Kind::Masked).is_some());
+        assert!(encrypt_for(&p, Kind::Raw).is_some());
+        assert!(
+            encrypt_for(&p, Kind::Schema).is_none(),
+            "no rows: a schema stays readable"
+        );
         let p = effective(true, Some(&none), None).unwrap();
-        assert!(encrypt_for(&p).is_none(), "none is nothing to encrypt to");
+        assert!(
+            encrypt_for(&p, Kind::Masked).is_none(),
+            "none is nothing to encrypt to"
+        );
     }
 
     /// A dump is out of Time Machine at once, not after tmutil's ten

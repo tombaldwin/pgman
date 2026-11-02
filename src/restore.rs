@@ -897,6 +897,13 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     let (tool, found_in) = pgtool::find_tool_from("pg_restore", opts.pg_bin.as_deref())?;
     let have = pgtool::tool_version(&tool)?;
     let masked = if crate::masked::is_archive(&opts.file) {
+        if crate::masked::read_header(&opts.file).is_ok_and(|h| h.seal.is_some()) {
+            say(format!(
+                "decrypting {} ({}) to a private file in pgman's cache, removed when the restore ends",
+                opts.file.display(),
+                pgtool::size_of(pgtool::path_size(&opts.file))
+            ));
+        }
         let dir = opts.file.clone();
         Some(
             tokio::task::spawn_blocking(move || crate::masked::open_archive(&dir))

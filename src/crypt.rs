@@ -232,6 +232,12 @@ pub fn open(
         "age" => return find_identity(&seal.recipient),
         "kms" => {
             let key = seal.kms_key.as_deref().ok_or("the dump names no KMS key")?;
+            // From the header, so checked as the setting is: never an option.
+            if !crate::aws_cli::plain_arg(key, ":/_-.", 2048) {
+                return Err(format!(
+                    "the dump names a KMS key {key:?}: not a key id, alias or ARN"
+                ));
+            }
             let wrapped = seal
                 .wrapped
                 .as_deref()
@@ -285,12 +291,7 @@ pub fn new_key(name: &str) -> Result<(PathBuf, String), String> {
         ));
     }
     let dir = keys_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    }
+    crate::util::ensure_private_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join(format!("{name}.txt"));
     let identity = age::x25519::Identity::generate();
     let public = identity.to_public().to_string();
@@ -598,6 +599,13 @@ mod tests {
         let mut edited = ctx();
         edited.insert("database".into(), "other".into());
         assert!(open(&seal, &scope, &edited, &fake_kms).is_err());
+        // A key named in an edited header is never an option to the CLI.
+        let mut forged = seal.clone();
+        forged.kms_key = Some("--endpoint-url=https://elsewhere.example".into());
+        let e = open(&forged, &scope, &ctx(), &|_, _| panic!("aws must not run"))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(e.contains("not a key id"), "{e}");
         // A wrapped key that opens to another identity is refused.
         let mut swapped = seal.clone();
         swapped.recipient = age::x25519::Identity::generate().to_public().to_string();

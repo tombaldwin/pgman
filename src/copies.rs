@@ -71,6 +71,8 @@ pub struct Copy {
     /// Its fingerprint, when the dump recorded one.
     pub print: Option<String>,
     pub expires: Option<u64>,
+    /// What it is encrypted to: `kms:<key>`, `age:<public key>`.
+    pub encrypted: Option<String>,
     /// When it was deleted, and why.
     pub deleted: Option<(u64, String)>,
     pub restores: Vec<Restored>,
@@ -119,6 +121,7 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
                     bytes: e.bytes.unwrap_or(0),
                     print: e.print.clone(),
                     expires: e.expires,
+                    encrypted: e.encrypted.clone(),
                     deleted: None,
                     restores: Vec::new(),
                 });
@@ -574,6 +577,10 @@ pub fn render_show(c: &Copy, present: bool, now: u64, ticket_url: Option<&str>) 
     if let Some(e) = c.expires {
         out.push(format!("expires   {} ({})", when(e), relative(e, now)));
     }
+    out.push(match &c.encrypted {
+        Some(to) => format!("encrypted to {to}"),
+        None => "not encrypted".to_string(),
+    });
     for r in &c.restores {
         out.push(format!(
             "restored  into {} on {}, {}{}",
@@ -1725,5 +1732,20 @@ mod tests {
             .unwrap_err()
             .contains("isn't named like"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn show_says_what_a_copy_is_encrypted_to() {
+        let mut e = dump_event("c-1", 100, "production/ledger", "/tmp/x.pgman-dump");
+        e.encrypted = Some("kms:alias/pgman-dumps".into());
+        let plain = dump_event("c-2", 200, "staging/ledger", "/tmp/y.dump");
+        let copies = registry(&[e, plain]);
+        let shown = render_show(&copies[0], true, 150, None);
+        assert!(
+            shown.contains("encrypted to kms:alias/pgman-dumps"),
+            "{shown}"
+        );
+        let shown = render_show(&copies[1], true, 250, None);
+        assert!(shown.contains("not encrypted"), "{shown}");
     }
 }

@@ -334,7 +334,8 @@ impl Server {
             .clone()
             .unwrap_or_else(|| resolved.label.clone());
         let gate = crate::policy::gate(&policy, kind, crate::policy::Via::Mcp, &name)?;
-        opts.encrypt = crate::dump::encrypt_for(&policy);
+        opts.encrypt = crate::dump::encrypt_for(&policy, kind);
+        let unsealed = crate::dump::unencrypted_note(&policy, kind, &name);
         let masked = kind == crate::policy::Kind::Masked;
         let out = if masked {
             crate::masked::agent_out(&self.cwd, file.as_deref())?
@@ -448,6 +449,7 @@ impl Server {
         crate::dump::placed(&mut done, place_note, policy.protected);
         done.notes.extend(warn);
         done.notes.extend(unsent);
+        done.notes.extend(unsealed);
         Ok(json!({
             "file": done.file.display().to_string(),
             "latest": done.latest.as_ref().map(|l| l.display().to_string()),
