@@ -203,7 +203,8 @@ pub fn paths(
             }
             if !text.ends_with(archive::EXTENSION) {
                 return Err(format!(
-                    "{}: a masked dump is a directory named …{}; name one, or a directory to put it in",
+                    "{}: a masked or encrypted dump is a directory named …{}; name one, or a \
+                     directory to put it in",
                     p.display(),
                     archive::EXTENSION
                 ));
@@ -482,6 +483,36 @@ pub async fn run(
         })
         .collect();
 
+    let mut header = Header {
+        format: archive::FORMAT,
+        pgman: env!("CARGO_PKG_VERSION").to_string(),
+        copy: copy.to_string(),
+        label: label.clone(),
+        env: resolved.environment.clone(),
+        database: resolved.database.clone(),
+        created: now,
+        masked: true,
+        protected: resolved.protected,
+        seal: None,
+    };
+    // Encrypted before a byte is written: the seal is made first, a KMS
+    // wrap bound to the header's fields.
+    let to = match opts.encrypt.clone() {
+        None => None,
+        Some((enc, scope)) => {
+            let context = header.context();
+            let sealed = tokio::task::spawn_blocking(move || {
+                crate::crypt::seal(&enc, &scope, &context, &crate::aws_cli::run_with_input)
+            })
+            .await
+            .map_err(|e| format!("encryption task failed: {e}"))??;
+            sealed.map(|(seal, to)| {
+                header.seal = Some(seal);
+                to
+            })
+        }
+    };
+
     crate::dump::create_partial(&p.partial, crate::dump::Format::Directory)?;
     let made = crate::dump::identity(&p.partial);
     // Ctrl-C stops it at the command line, between chunks of rows. Not
@@ -508,6 +539,7 @@ pub async fn run(
         copied: &copied,
         stop: &stop,
         say,
+        to: to.as_ref(),
     })
     .await;
     if let Some(w) = watcher {
@@ -526,17 +558,6 @@ pub async fn run(
             return Err(format!("{e}\n  nothing written"));
         }
     };
-    let header = Header {
-        format: archive::FORMAT,
-        pgman: env!("CARGO_PKG_VERSION").to_string(),
-        copy: copy.to_string(),
-        label: label.clone(),
-        env: resolved.environment.clone(),
-        database: resolved.database.clone(),
-        created: now,
-        masked: true,
-        protected: resolved.protected,
-    };
     let manifest = Manifest {
         header: header.clone(),
         schema_sha256: archive::sha256_file(&p.partial.join(archive::SCHEMA))?,
@@ -546,6 +567,7 @@ pub async fn run(
         key: "fresh".to_string(),
         words: crate::masking::transform::WORDS_VERSION,
         sequences,
+        raw: None,
     };
     let written = (|| -> Result<(), String> {
         // In a work tree (an agent's dumps land in the project), git
@@ -560,12 +582,17 @@ pub async fn run(
                 .as_bytes(),
         )
         .map_err(|e| format!("header: {e}"))?;
-        let mut m = private_file(&p.partial.join(archive::MANIFEST))?;
+        let mut m = crate::crypt::Sink::new(
+            private_file(&p.partial.join(archive::MANIFEST))?,
+            to.as_ref(),
+        )
+        .map_err(|e| format!("manifest: {e}"))?;
         m.write_all(
             serde_json::to_string_pretty(&manifest)
                 .unwrap_or_default()
                 .as_bytes(),
         )
+        .and_then(|_| m.finish())
         .map_err(|e| format!("manifest: {e}"))
     })();
     if let Err(e) = written {
@@ -586,6 +613,9 @@ pub async fn run(
         )
     })?;
     let mut notes = archive::summary(&plan);
+    if let Some(seal) = &header.seal {
+        notes.push(seal.describe());
+    }
     notes.push(format!(
         "every masked password is {}; a fresh key for this copy, so its pseudonyms match no other",
         crate::masking::transform::TEST_PASSWORD
@@ -624,6 +654,8 @@ struct ArchiveRun<'a> {
     /// Set by Ctrl-C.
     stop: &'a std::sync::atomic::AtomicBool,
     say: &'a (dyn Fn(String) + Send + Sync),
+    /// Every file is encrypted to it, when there is one.
+    to: Option<&'a age::x25519::Recipient>,
 }
 
 /// pg_dump's no-rows archive, then each table's masked rows, into `dir`.
@@ -644,11 +676,32 @@ async fn write_archive(r: ArchiveRun<'_>) -> Result<Vec<TableEntry>, String> {
     args.extend(r.opts.extra.iter().cloned());
     let schema = private_file(&r.dir.join(archive::SCHEMA))?;
     let mut cmd = pgtool::private_command(r.tool, &args);
-    cmd.stdout(schema);
+    // Encrypted, pg_dump's archive goes through a pipe into the file: no
+    // plaintext of it is ever on disk.
+    let copier = match r.to {
+        None => {
+            cmd.stdout(schema);
+            None
+        }
+        Some(to) => {
+            let (mut from, into) = std::io::pipe().map_err(|e| format!("a pipe: {e}"))?;
+            cmd.stdout(into);
+            let mut sink = crate::crypt::Sink::new(schema, Some(to))
+                .map_err(|e| format!("{}: {e}", archive::SCHEMA))?;
+            Some(std::thread::spawn(move || -> std::io::Result<()> {
+                std::io::copy(&mut from, &mut sink)?;
+                sink.finish()
+            }))
+        }
+    };
     pgtool::set_child_env(&mut cmd, r.opened.password());
-    let (status, tail) = pgtool::run_tool_cli(cmd, r.opts.verbose)
-        .await
-        .map_err(|e| format!("pg_dump {e}"))?;
+    let ran = pgtool::run_tool_cli(cmd, r.opts.verbose).await;
+    if let Some(c) = copier {
+        c.join()
+            .map_err(|_| format!("encrypting {} failed", archive::SCHEMA))?
+            .map_err(|e| format!("{}: {e}", archive::SCHEMA))?;
+    }
+    let (status, tail) = ran.map_err(|e| format!("pg_dump {e}"))?;
     if !status.success() {
         return Err(crate::dump::explain_failure(&tail.text(), false, None));
     }
@@ -674,9 +727,9 @@ async fn write_archive(r: ArchiveRun<'_>) -> Result<Vec<TableEntry>, String> {
         let started = std::time::Instant::now();
         let file_name = archive::data_file(n);
         let path = data.join(&file_name);
-        let f = private_file(&path)?;
-        let mut gz =
-            flate2::write::GzEncoder::new(std::io::BufWriter::new(f), flate2::Compression::fast());
+        let sink = crate::crypt::Sink::new(private_file(&path)?, r.to)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut gz = flate2::write::GzEncoder::new(sink, flate2::Compression::fast());
         let stream = crate::query::masking::copy_out(
             r.client,
             &crate::query::masking::copy_out_sql(schema, name, &cols),
@@ -703,7 +756,7 @@ async fn write_archive(r: ArchiveRun<'_>) -> Result<Vec<TableEntry>, String> {
             rest.drain(..start);
         }
         gz.finish()
-            .and_then(|mut w| w.flush())
+            .and_then(crate::crypt::Sink::finish)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         if r.opts.verbose {
             (r.say)(format!(
@@ -818,7 +871,7 @@ pub async fn masking_cli(cmd: &MaskingCmd) -> Result<(String, bool), String> {
 pub async fn load(
     client: &tokio_postgres::Client,
     dir: &Path,
-    m: &Manifest,
+    m: &OpenArchive,
     stop: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<String>, String> {
     use std::io::Read;
@@ -826,7 +879,9 @@ pub async fn load(
     for t in &m.tables {
         let path = dir.join("data").join(&t.file);
         let f = std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut gz = flate2::read::GzDecoder::new(std::io::BufReader::new(f));
+        let r = crate::crypt::source(f, m.key.as_ref())
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut gz = flate2::read::GzDecoder::new(r);
         // Read as COPY takes them, a chunk at a time: a table's rows are
         // never all in memory, however big (or however a tampered file
         // decompresses).
@@ -1033,23 +1088,253 @@ pub fn is_archive(path: &Path) -> bool {
     path.is_dir() && path.join(archive::HEADER).is_file() && path.join(archive::MANIFEST).is_file()
 }
 
-/// The manifest of the archive at `dir`, checked: this pgman's format,
-/// generated file names, and every file's checksum. Reads it all.
+/// An archive checked and opened for a restore: its manifest, the key
+/// its files open with, and its schema as pg_restore reads it — the
+/// archive's own, or, encrypted, a private copy in pgman's cache removed
+/// when this is dropped.
+pub struct OpenArchive {
+    pub manifest: Manifest,
+    pub key: Option<age::x25519::Identity>,
+    pub schema: PathBuf,
+    temp: Option<PathBuf>,
+}
+
+impl std::ops::Deref for OpenArchive {
+    type Target = Manifest;
+    fn deref(&self) -> &Manifest {
+        &self.manifest
+    }
+}
+
+impl Drop for OpenArchive {
+    fn drop(&mut self) {
+        // Only ever a directory this pgman named.
+        if let Some(t) = self.temp.as_ref().filter(|t| restore_temp(t)) {
+            let _ = std::fs::remove_dir_all(t);
+        }
+    }
+}
+
+/// Whether `path` is a restore's temp directory as [`open_archive_with`]
+/// names it: `restore-<pid>-<random hex>`, nothing else. Pure.
+fn restore_temp(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("restore-"))
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(pid, tag)| {
+            !pid.is_empty()
+                && pid.bytes().all(|b| b.is_ascii_digit())
+                && !tag.is_empty()
+                && tag.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+}
+
+/// Whether process `pid` is running.
+fn alive(pid: i32) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: signal 0 delivers nothing; it only asks whether the
+        // process exists.
+        let r = unsafe { libc::kill(pid, 0) };
+        r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+/// Remove what restores that never ended left in `cache` (a killed
+/// process, a crash): their decrypted copies, plaintext. A running
+/// restore's is left alone. Reads and removes.
+pub fn sweep_restores(cache: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        if !restore_temp(&path) {
+            continue;
+        }
+        let pid = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix("restore-"))
+            .and_then(|r| r.split('-').next())
+            .and_then(|p| p.parse::<i32>().ok());
+        if pid.is_some_and(|p| p != std::process::id() as i32 && !alive(p)) {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+impl OpenArchive {
+    /// Whether its schema was decrypted to a private temp file.
+    pub fn decrypted(&self) -> bool {
+        self.temp.is_some()
+    }
+
+    /// An encrypted raw dump: [`OpenArchive::schema`] is its whole
+    /// pg_dump archive, restored as any other.
+    pub fn is_raw(&self) -> bool {
+        self.manifest.raw.is_some()
+    }
+}
+
+/// Write `header` and an encrypted raw dump's manifest into `dir`, beside
+/// its [`archive::RAW`]: the header plain, the manifest encrypted to `to`.
+pub fn finish_raw_archive(
+    dir: &Path,
+    header: &Header,
+    to: &age::x25519::Recipient,
+) -> Result<(), String> {
+    use std::io::Write;
+    let manifest = Manifest {
+        header: header.clone(),
+        schema_sha256: String::new(),
+        tables: Vec::new(),
+        large_objects: true,
+        rules: "raw".into(),
+        key: "none".into(),
+        words: 0,
+        sequences: Vec::new(),
+        raw: Some(archive::sha256_file(&dir.join(archive::RAW))?),
+    };
+    private_file(&dir.join(".gitignore"))?
+        .write_all(b"# A pgman dump: never committed.\n*\n")
+        .map_err(|e| format!(".gitignore: {e}"))?;
+    private_file(&dir.join(archive::HEADER))?
+        .write_all(
+            serde_json::to_string_pretty(header)
+                .unwrap_or_default()
+                .as_bytes(),
+        )
+        .map_err(|e| format!("header: {e}"))?;
+    let mut m = crate::crypt::Sink::new(private_file(&dir.join(archive::MANIFEST))?, Some(to))
+        .map_err(|e| format!("manifest: {e}"))?;
+    m.write_all(
+        serde_json::to_string_pretty(&manifest)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .and_then(|_| m.finish())
+    .map_err(|e| format!("manifest: {e}"))
+}
+
+/// The plain header of the archive at `dir`. Reads it.
+pub fn read_header(dir: &Path) -> Result<Header, String> {
+    std::fs::read_to_string(dir.join(archive::HEADER))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| format!("{}: no readable {}", dir.display(), archive::HEADER))
+}
+
+/// Where a KMS key of a dump of `env` is used: that environment's AWS
+/// source, if this machine knows it. Reads the config.
+fn kms_scope(env: Option<&str>) -> crate::aws_cli::AwsScope {
+    let envs = crate::inventory::load().environments.unwrap_or_default();
+    env.and_then(|n| envs.iter().find(|e| e.name == n))
+        .map(|e| e.dump_settings().encrypt_scope)
+        .unwrap_or_default()
+}
+
+/// Open the archive at `dir` for a restore: its key (the operator's, or
+/// KMS's unwrap of its own), its manifest checked, and its schema where
+/// pg_restore can read it. Blocking; KMS is a subprocess.
+pub fn open_archive(dir: &Path) -> Result<OpenArchive, String> {
+    let header = read_header(dir)?;
+    let key = match &header.seal {
+        None => None,
+        Some(seal) => Some(crate::crypt::open(
+            seal,
+            &kms_scope(header.env.as_deref()),
+            &header.context(),
+            &crate::aws_cli::run_with_input,
+        )?),
+    };
+    open_archive_with(dir, &header, key, &crate::util::cache_dir())
+}
+
+/// [`open_archive`] with its key found. Reads it.
+fn open_archive_with(
+    dir: &Path,
+    header: &Header,
+    key: Option<age::x25519::Identity>,
+    cache: &Path,
+) -> Result<OpenArchive, String> {
+    let manifest = checked_manifest_with(dir, header, key.as_ref())?;
+    // What pg_restore reads: the schema, or a raw dump's whole archive.
+    let inner = if manifest.raw.is_some() {
+        archive::RAW
+    } else {
+        archive::SCHEMA
+    };
+    let (schema, temp) = match &key {
+        None => (dir.join(inner), None),
+        Some(k) => {
+            sweep_restores(cache);
+            // Named by nothing from the archive.
+            let tag: String = crate::journal::new_id()
+                .chars()
+                .filter(char::is_ascii_hexdigit)
+                .take(12)
+                .collect();
+            let temp = cache.join(format!("restore-{}-{tag}", std::process::id()));
+            crate::util::ensure_private_dir(&temp)
+                .map_err(|e| format!("{}: {e}", temp.display()))?;
+            let out = temp.join(inner);
+            let copied = (|| -> Result<(), String> {
+                let from =
+                    std::fs::File::open(dir.join(inner)).map_err(|e| format!("{inner}: {e}"))?;
+                let mut r =
+                    crate::crypt::source(from, Some(k)).map_err(|e| format!("{inner}: {e}"))?;
+                let mut w = private_file(&out)?;
+                std::io::copy(&mut r, &mut w).map_err(|e| format!("decrypting {inner}: {e}"))?;
+                Ok(())
+            })();
+            if let Err(e) = copied {
+                let _ = std::fs::remove_dir_all(&temp);
+                return Err(e);
+            }
+            (out, Some(temp))
+        }
+    };
+    Ok(OpenArchive {
+        manifest,
+        key,
+        schema,
+        temp,
+    })
+}
+
+/// The manifest of the plain archive at `dir`, checked: this pgman's
+/// format, generated file names, and every file's checksum. Reads it all.
 pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
-    let text = std::fs::read_to_string(dir.join(archive::MANIFEST))
-        .map_err(|e| format!("{}: {e}", dir.join(archive::MANIFEST).display()))?;
-    let m: Manifest = serde_json::from_str(&text)
+    let header = read_header(dir)?;
+    checked_manifest_with(dir, &header, None)
+}
+
+/// [`checked_manifest`], the manifest decrypted with `key` when the
+/// archive is encrypted. Its checksums are of the files as they are on
+/// disk, so they are checked before anything is decrypted.
+fn checked_manifest_with(
+    dir: &Path,
+    header: &Header,
+    key: Option<&age::x25519::Identity>,
+) -> Result<Manifest, String> {
+    let bytes = crate::crypt::read_all(&dir.join(archive::MANIFEST), key)?;
+    let m: Manifest = serde_json::from_slice(&bytes)
         .map_err(|e| format!("{}: not a pgman manifest ({e})", dir.display()))?;
     if let Some(why) = archive::manifest_problem(&m) {
         return Err(why);
     }
     // header.json is what the archive says it is at a glance (copies
-    // lists it): the manifest's copy of it, which it must match.
-    let header: Header = std::fs::read_to_string(dir.join(archive::HEADER))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .ok_or_else(|| format!("{}: no readable {}", dir.display(), archive::HEADER))?;
-    if header != m.header {
+    // lists it): the manifest's copy of it, which it must match — the
+    // encrypted manifest's, for an encrypted archive, so a header edited
+    // to name another key or source is caught.
+    if *header != m.header {
         return Err(format!(
             "{}: {} disagrees with the manifest: the archive was changed; nothing restored",
             dir.display(),
@@ -1067,6 +1352,10 @@ pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
         }
         Ok(())
     };
+    if let Some(sha) = &m.raw {
+        check(dir.join(archive::RAW), sha)?;
+        return Ok(m);
+    }
     check(dir.join(archive::SCHEMA), &m.schema_sha256)?;
     for t in &m.tables {
         check(dir.join("data").join(&t.file), &t.sha256)?;
@@ -1095,6 +1384,7 @@ mod tests {
             created: 0,
             masked: true,
             protected: true,
+            seal: None,
         };
         let m = Manifest {
             header: header.clone(),
@@ -1105,6 +1395,7 @@ mod tests {
             key: "fresh".into(),
             words: 1,
             sequences: vec![],
+            raw: None,
         };
         std::fs::write(
             dir.join(archive::MANIFEST),
@@ -1127,6 +1418,185 @@ mod tests {
         let e = checked_manifest(&dir).unwrap_err();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(e.contains("disagrees with the manifest"), "{e}");
+    }
+
+    /// An encrypted archive as a dump writes one: every file but the
+    /// header through a [`crate::crypt::Sink`].
+    fn sealed_archive(dir: &Path, key: &age::x25519::Identity, header: &Header) {
+        use std::io::Write;
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir.join("data")).unwrap();
+        let to = key.to_public();
+        let write = |path: PathBuf, bytes: &[u8]| {
+            let mut s =
+                crate::crypt::Sink::new(std::fs::File::create(&path).unwrap(), Some(&to)).unwrap();
+            s.write_all(bytes).unwrap();
+            s.finish().unwrap();
+        };
+        write(dir.join(archive::SCHEMA), b"schema bytes");
+        let m = Manifest {
+            header: header.clone(),
+            schema_sha256: archive::sha256_file(&dir.join(archive::SCHEMA)).unwrap(),
+            tables: vec![],
+            large_objects: false,
+            rules: "defaults".into(),
+            key: "fresh".into(),
+            words: 1,
+            sequences: vec![],
+            raw: None,
+        };
+        write(
+            dir.join(archive::MANIFEST),
+            serde_json::to_string(&m).unwrap().as_bytes(),
+        );
+        std::fs::write(
+            dir.join(archive::HEADER),
+            serde_json::to_string(header).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_encrypted_archive_opens_with_its_key_and_its_header_is_bound() {
+        let dir =
+            std::env::temp_dir().join(format!("pgman-sealed-{}.pgman-dump", std::process::id()));
+        let key = age::x25519::Identity::generate();
+        let header = Header {
+            format: archive::FORMAT,
+            pgman: "0.4.5".into(),
+            copy: "c0ffee00-1".into(),
+            label: "production/ledger".into(),
+            env: Some("production".into()),
+            database: "ledger".into(),
+            created: 0,
+            masked: true,
+            protected: true,
+            seal: Some(crate::crypt::Seal {
+                kind: "age".into(),
+                recipient: key.to_public().to_string(),
+                kms_key: None,
+                kms_region: None,
+                wrapped: None,
+            }),
+        };
+        sealed_archive(&dir, &key, &header);
+        // Nothing readable on disk but the header.
+        let manifest = std::fs::read(dir.join(archive::MANIFEST)).unwrap();
+        assert!(
+            !manifest.windows(9).any(|w| w == b"\"tables\""),
+            "manifest encrypted"
+        );
+        let cache = dir.with_extension("cache");
+        let opened = open_archive_with(&dir, &header, Some(key.clone()), &cache).unwrap();
+        assert!(opened.decrypted());
+        assert_eq!(std::fs::read(&opened.schema).unwrap(), b"schema bytes");
+        let temp = opened.schema.parent().unwrap().to_path_buf();
+        drop(opened);
+        assert!(!temp.exists(), "the decrypted schema is removed with it");
+        // Another key opens nothing.
+        let other = age::x25519::Identity::generate();
+        assert!(open_archive_with(&dir, &header, Some(other), &cache).is_err());
+        // A plain header edited to say another source: the encrypted
+        // manifest's copy disagrees.
+        let mut edited = header.clone();
+        edited.protected = false;
+        std::fs::write(
+            dir.join(archive::HEADER),
+            serde_json::to_string(&edited).unwrap(),
+        )
+        .unwrap();
+        let e = open_archive_with(&dir, &edited, Some(key), &cache)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(e.contains("disagrees with the manifest"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn a_forged_copy_id_is_refused_before_anything_is_written_or_removed() {
+        let base = std::env::temp_dir().join(format!("pgman-forged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let cache = base.join("cache/pgman");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(base.join("sentinel"), b"keep").unwrap();
+        let dir = base.join("a.pgman-dump");
+        let key = age::x25519::Identity::generate();
+        for copy in ["../../..", "abcdefg\u{e9}", ""] {
+            let header = Header {
+                format: archive::FORMAT,
+                pgman: "0.4.5".into(),
+                copy: copy.into(),
+                label: "production/ledger".into(),
+                env: None,
+                database: "ledger".into(),
+                created: 0,
+                masked: true,
+                protected: true,
+                seal: Some(crate::crypt::Seal {
+                    kind: "age".into(),
+                    recipient: key.to_public().to_string(),
+                    kms_key: None,
+                    kms_region: None,
+                    wrapped: None,
+                }),
+            };
+            sealed_archive(&dir, &key, &header);
+            let e = open_archive_with(&dir, &header, Some(key.clone()), &cache)
+                .map(|_| ())
+                .unwrap_err();
+            assert!(e.contains("not an id pgman writes"), "{copy:?}: {e}");
+            assert!(base.join("sentinel").exists(), "{copy:?}");
+            assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0, "{copy:?}");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn only_a_restore_temp_pgman_named_is_ever_removed() {
+        for ok in ["restore-123-abc0", "restore-1-f"] {
+            assert!(restore_temp(Path::new(ok)), "{ok}");
+        }
+        for bad in [
+            "restore-123-../..",
+            "restore--abc",
+            "restore-12a-abc",
+            "restore-123-",
+            "schema.dump",
+            "..",
+        ] {
+            assert!(!restore_temp(Path::new(bad)), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_dead_restores_decrypted_copy_is_swept_and_a_live_ones_kept() {
+        let cache = std::env::temp_dir().join(format!("pgman-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
+        std::fs::create_dir_all(&cache).unwrap();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        let mut running = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let gone = cache.join(format!("restore-{dead}-ab12"));
+        let mine = cache.join(format!("restore-{}-cd34", std::process::id()));
+        let live = cache.join(format!("restore-{}-ef56", running.id()));
+        let other = cache.join("journal.sent");
+        for d in [&gone, &mine, &live] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("raw.dump"), b"rows").unwrap();
+        }
+        std::fs::write(&other, b"x").unwrap();
+        sweep_restores(&cache);
+        assert!(!gone.exists(), "a dead process's plaintext is removed");
+        assert!(mine.exists() && other.exists());
+        assert!(live.exists(), "another running restore's is left alone");
+        let _ = running.kill();
+        let _ = running.wait();
+        let _ = std::fs::remove_dir_all(&cache);
     }
 
     #[test]

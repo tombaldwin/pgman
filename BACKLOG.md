@@ -76,6 +76,17 @@ note.
   `fixed` on a nullable key isn't checked against the referenced table: a
   value it lacks fails the restore's foreign key (it can't be checked
   from the catalog; validate could).
+- **Encrypted dumps — left from phase 2b (2026-11-02).** Decrypt only
+  after the restore's confirmation (today the KMS unwrap and the temp
+  copy come first, before an agent's restore is approved too); restore a
+  raw dump without a temp copy (pg_restore of a custom dump without
+  `--jobs` reads stdin); hash a file while writing it rather than reading
+  it again; a free-space check before decrypting a big dump; keys in the
+  Keychain; rotating a KMS key's copies; a real `aws kms` run before
+  release (CI's is a stand-in). The sweep of a dead restore's temp copy
+  judges a pid by this machine's processes: a cache shared between
+  machines could lose another machine's running restore's copy (an
+  owner file in the temp would settle it).
 - **`pgman query` against an environment.** It takes `--dsn` only, so
   checking a column's type on an environment behind a bastion and a
   secret means the TUI. A `<target>` like dump's. Found 2026-10-30.

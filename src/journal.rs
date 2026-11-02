@@ -79,6 +79,9 @@ pub struct Event {
     /// A dump that failed: nothing written.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ok: Option<bool>,
+    /// What a dump is encrypted to: `kms:<key>` or `age:<public key>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted: Option<String>,
     /// A restore's target: server and database.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub into_server: Option<String>,

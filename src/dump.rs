@@ -139,6 +139,9 @@ pub struct Opts {
     pub masked: Option<bool>,
     /// `--masking FILE`: the rules, in place of the project's.
     pub masking: Option<PathBuf>,
+    /// What the dump is encrypted to, and where a KMS key is used: the
+    /// environment's `encrypt`, set from the policy, never a flag.
+    pub encrypt: Option<(crate::crypt::Encrypt, crate::aws_cli::AwsScope)>,
 }
 
 /// Parse the arguments after `pgman dump`. Pure.
@@ -211,6 +214,7 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
         ticket,
         masked,
         masking,
+        encrypt: None,
     })
 }
 
@@ -964,10 +968,15 @@ pub fn settle_reason(
 }
 
 /// The warning before a raw dump of a protected target. Pure.
-pub fn raw_warning(name: &str, why: &str) -> String {
+pub fn raw_warning(name: &str, why: &str, encrypted: bool) -> String {
     format!(
         "{name} is protected ({why}). This is a raw copy: every row, personal data included, \
-         written to this machine unencrypted. pgman copies rm deletes it when you're done."
+         written to this machine {}. pgman copies rm deletes it when you're done.",
+        if encrypted {
+            "encrypted"
+        } else {
+            "unencrypted"
+        }
     )
 }
 
@@ -1014,6 +1023,10 @@ pub fn journal_dump(
             });
             e.bytes = Some(done.bytes);
             e.print = crate::copies::fingerprint(&file);
+            e.encrypted = crate::masked::read_header(&file)
+                .ok()
+                .and_then(|h| h.seal)
+                .map(|s| s.journal());
             e.expires = Some(now.saturating_add(entry.ttl_secs));
         }
         Err(_) => e.ok = Some(false),
@@ -1243,18 +1256,19 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         crate::util::ensure_private_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         opts.out = Some(dir);
     }
-    let opts = &opts;
     let via = if tty {
         crate::policy::Via::Terminal
     } else {
         crate::policy::Via::NoTerminal
     };
-    let kind = kind(opts, crate::policy::default_kind(&policy));
+    let kind = kind(&opts, crate::policy::default_kind(&policy));
     let name = resolved
         .environment
         .clone()
         .unwrap_or_else(|| resolved.label.clone());
     let gate = crate::policy::gate(&policy, kind, via, &name)?;
+    opts.encrypt = encrypt_for(&policy, kind);
+    let unsealed = unencrypted_note(&policy, kind, &name);
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let place_note = place_problem(
         &place_dir(opts.out.as_deref(), &cwd),
@@ -1263,7 +1277,10 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         home.as_deref(),
     )?;
     if gate.typed.is_some() || gate.unattended {
-        eprintln!("pgman dump: {}", raw_warning(&name, &resolved.protection()));
+        eprintln!(
+            "pgman dump: {}",
+            raw_warning(&name, &resolved.protection(), opts.encrypt.is_some())
+        );
     }
     let keys = dumps.ticket_keys.clone();
     let branch_ticket = branch
@@ -1309,7 +1326,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     let say = |line: String| eprintln!("pgman dump: {line}");
     let mut result = if kind == crate::policy::Kind::Masked {
         crate::masked::run(
-            opts,
+            &opts,
             resolved,
             &entry.copy,
             &cwd,
@@ -1319,7 +1336,7 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         )
         .await
     } else {
-        run(opts, resolved, &say).await
+        run(&opts, resolved, &entry.copy, &say).await
     };
     let warn = journal_dump(&entry, env.as_deref(), &database, &label, &result);
     let unsent = crate::journal_send::flush_note().await;
@@ -1329,8 +1346,48 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
         done.notes.extend(warn);
         done.notes.extend(unsent);
         done.notes.extend(expired_note(&entry.copy));
+        done.notes.extend(unsealed);
     }
     result
+}
+
+/// What a `kind` dump under `policy` is encrypted to: its environment's
+/// `encrypt`; `none`, nothing set, or the structure alone (no rows, and a
+/// plain-SQL schema is for reading) is nothing. Pure.
+pub fn encrypt_for(
+    policy: &crate::policy::Policy,
+    kind: crate::policy::Kind,
+) -> Option<(crate::crypt::Encrypt, crate::aws_cli::AwsScope)> {
+    if kind == crate::policy::Kind::Schema {
+        return None;
+    }
+    match &policy.encrypt {
+        None | Some(crate::crypt::Encrypt::None) => None,
+        Some(e) => Some((e.clone(), policy.encrypt_scope.clone())),
+    }
+}
+
+/// What to say when a protected target's rows are written unencrypted:
+/// a masked copy of a target with no environment to name a key on, or one
+/// whose environment says `none`. Pure.
+pub fn unencrypted_note(
+    policy: &crate::policy::Policy,
+    kind: crate::policy::Kind,
+    name: &str,
+) -> Option<String> {
+    if !policy.protected || kind == crate::policy::Kind::Schema {
+        return None;
+    }
+    match &policy.encrypt {
+        Some(crate::crypt::Encrypt::None) => {
+            Some(format!("not encrypted: {name} says encrypt = \"none\""))
+        }
+        None => Some(format!(
+            "not encrypted: {name} isn't an environment in your environments.toml, so nothing \
+             says to what"
+        )),
+        Some(_) => None,
+    }
 }
 
 /// The directory a dump to `out` lands in, for [`place_problem`]: `out`
@@ -1377,12 +1434,22 @@ pub async fn resolve(opts: &Opts) -> Result<target::Resolved, String> {
         .map_err(|e| format!("resolve task failed: {e}"))?
 }
 
-/// Dump `resolved` as `opts` says, telling `say` what it is doing.
+/// Dump `resolved` as `opts` says, telling `say` what it is doing. With
+/// `opts.encrypt`, an archive (pgman's directory) holding pg_dump's custom
+/// archive encrypted, for the journal's `copy`.
 pub async fn run(
     opts: &Opts,
     resolved: target::Resolved,
+    copy: &str,
     say: &(dyn Fn(String) + Send + Sync),
 ) -> Result<Done, String> {
+    if opts.encrypt.is_some() && opts.format != Format::Custom {
+        return Err(
+            "an encrypted dump is pg_dump's custom format, kept in pgman's archive: leave out \
+             --format"
+                .to_string(),
+        );
+    }
     let (tool, found_in) = pgtool::find_tool_from("pg_dump", opts.pg_bin.as_deref())?;
     let have = pgtool::tool_version(&tool)?;
     say(format!("{} — {}", resolved.label, resolved.describe()));
@@ -1396,15 +1463,34 @@ pub async fn run(
         Some(env) => format!("{env}/{}", resolved.database),
         None => resolved.label.clone(),
     };
-    let p = paths(
-        &label,
-        opts.format,
-        opts.out.as_deref(),
-        out_is_dir,
-        now,
-        std::process::id(),
-    );
-    if let Some(why) = output_problem(opts, &p) {
+    let p = if opts.encrypt.is_some() {
+        crate::masked::paths(
+            &label,
+            opts.out.as_deref(),
+            out_is_dir,
+            now,
+            std::process::id(),
+        )?
+    } else {
+        paths(
+            &label,
+            opts.format,
+            opts.out.as_deref(),
+            out_is_dir,
+            now,
+            std::process::id(),
+        )
+    };
+    // Encrypted, it is an archive: a directory, replaced as one.
+    let as_written = Opts {
+        format: if opts.encrypt.is_some() {
+            Format::Directory
+        } else {
+            opts.format
+        },
+        ..opts.clone()
+    };
+    if let Some(why) = output_problem(&as_written, &p) {
         return Err(why);
     }
     let opened = pgtool::open(&resolved).await?;
@@ -1445,24 +1531,97 @@ pub async fn run(
         tool.display()
     ));
 
+    // Encrypted: the header, and the seal made before a byte is written.
+    let mut header = crate::masking::archive::Header {
+        format: crate::masking::archive::FORMAT,
+        pgman: env!("CARGO_PKG_VERSION").to_string(),
+        copy: copy.to_string(),
+        label: label.clone(),
+        env: resolved.environment.clone(),
+        database: resolved.database.clone(),
+        created: now,
+        masked: false,
+        protected: resolved.protected,
+        seal: None,
+    };
+    let to = match opts.encrypt.clone() {
+        None => None,
+        Some((enc, scope)) => {
+            let context = header.context();
+            let sealed = tokio::task::spawn_blocking(move || {
+                crate::crypt::seal(&enc, &scope, &context, &crate::aws_cli::run_with_input)
+            })
+            .await
+            .map_err(|e| format!("encryption task failed: {e}"))??;
+            sealed.map(|(seal, to)| {
+                header.seal = Some(seal);
+                to
+            })
+        }
+    };
+
     let conninfo = pgtool::conninfo(&opened.dsn, opened.via, "pgman-dump", have);
     let mut args = pg_dump_args(&conninfo, opts, &p.partial);
     args.extend(excludes);
-    let out_file = create_partial(&p.partial, opts.format)?;
+    let out_file = match &to {
+        Some(_) => create_partial(&p.partial, Format::Directory)?,
+        None => create_partial(&p.partial, opts.format)?,
+    };
     let made = identity(&p.partial);
     let mut cmd = pgtool::private_command(&tool, &args);
     // Never pgman's own stdout, which under MCP is the protocol.
-    match out_file {
-        Some(f) => cmd.stdout(f),
-        None => cmd
-            .current_dir(&p.partial)
-            .stdout(std::process::Stdio::null()),
+    // Encrypted, pg_dump's archive goes through a pipe into the encrypted
+    // file: no plaintext of it is ever on disk.
+    let mut copier = None;
+    match (out_file, &to) {
+        (_, Some(to)) => {
+            let mut o = std::fs::OpenOptions::new();
+            o.write(true).create_new(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+            let raw = o
+                .open(p.partial.join(crate::masking::archive::RAW))
+                .map_err(|e| format!("{}: {e}", p.partial.display()))?;
+            let (mut from, into) = std::io::pipe().map_err(|e| format!("a pipe: {e}"))?;
+            cmd.stdout(into);
+            let mut sink = crate::crypt::Sink::new(raw, Some(to))
+                .map_err(|e| format!("{}: {e}", p.partial.display()))?;
+            copier = Some(std::thread::spawn(move || -> std::io::Result<()> {
+                std::io::copy(&mut from, &mut sink)?;
+                sink.finish()
+            }));
+        }
+        (Some(f), None) => {
+            cmd.stdout(f);
+        }
+        (None, None) => {
+            cmd.current_dir(&p.partial)
+                .stdout(std::process::Stdio::null());
+        }
     };
     pgtool::set_child_env(&mut cmd, opened.password());
     tracing::info!(target: "pgman::dump", source = %resolved.describe(), file = %p.file.display(), "pg_dump starting");
     let started = std::time::Instant::now();
-    let result = pgtool::run_tool_cli(cmd, opts.verbose).await;
+    let mut result = pgtool::run_tool_cli(cmd, opts.verbose).await;
     drop(opened);
+    if let Some(c) = copier {
+        let sealed = c
+            .join()
+            .map_err(|_| "encrypting the dump failed".to_string())
+            .and_then(|r| r.map_err(|e| format!("encrypting the dump: {e}")))
+            .and_then(|()| match (&to, &result) {
+                (Some(to), Ok((status, _))) if status.success() => {
+                    crate::masked::finish_raw_archive(&p.partial, &header, to)
+                }
+                _ => Ok(()),
+            });
+        if let Err(e) = sealed {
+            result = Err(e);
+        }
+    }
+    if let Some(seal) = &header.seal {
+        notes.push(seal.describe());
+    }
     let (status, tail) = match result {
         Ok(r) => r,
         Err(e) => {
@@ -1556,6 +1715,44 @@ pub fn render(done: &Done) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_protected_targets_unencrypted_rows_are_said() {
+        use crate::policy::{effective, EnvSettings, Kind};
+        let none = EnvSettings {
+            encrypt: Some("none".into()),
+            ..EnvSettings::default()
+        };
+        let p = effective(true, Some(&none), None).unwrap();
+        assert!(unencrypted_note(&p, Kind::Masked, "production")
+            .is_some_and(|n| n.contains("encrypt = \"none\"")));
+        let p = effective(true, None, None).unwrap();
+        assert!(unencrypted_note(&p, Kind::Masked, "prod-db")
+            .is_some_and(|n| n.contains("isn't an environment")));
+        assert_eq!(unencrypted_note(&p, Kind::Schema, "prod-db"), None);
+        let p = effective(false, None, None).unwrap();
+        assert_eq!(unencrypted_note(&p, Kind::Raw, "staging"), None);
+        let keyed = EnvSettings {
+            encrypt: Some(format!(
+                "age:{}",
+                age::x25519::Identity::generate().to_public()
+            )),
+            ..EnvSettings::default()
+        };
+        let p = effective(true, Some(&keyed), None).unwrap();
+        assert_eq!(unencrypted_note(&p, Kind::Masked, "production"), None);
+        assert!(encrypt_for(&p, Kind::Masked).is_some());
+        assert!(encrypt_for(&p, Kind::Raw).is_some());
+        assert!(
+            encrypt_for(&p, Kind::Schema).is_none(),
+            "no rows: a schema stays readable"
+        );
+        let p = effective(true, Some(&none), None).unwrap();
+        assert!(
+            encrypt_for(&p, Kind::Masked).is_none(),
+            "none is nothing to encrypt to"
+        );
+    }
 
     /// A dump is out of Time Machine at once, not after tmutil's ten
     /// seconds on a directory: the attribute tmutil sets is there. (Not
@@ -1845,6 +2042,7 @@ mod tests {
         let w = raw_warning(
             "production",
             "the environment \"production\" has \"prod\" in its name",
+            false,
         );
         assert!(
             w.starts_with("production is protected (the environment"),
@@ -1855,6 +2053,11 @@ mod tests {
             "{w}"
         );
         assert!(w.contains("pgman copies rm"), "{w}");
+        let w = raw_warning("production", "protected = true", true);
+        assert!(
+            w.contains("machine encrypted") && !w.contains("unencrypted"),
+            "{w}"
+        );
     }
 
     #[test]

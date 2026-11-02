@@ -21,6 +21,9 @@ pub const FORMAT: u32 = 1;
 pub const HEADER: &str = "header.json";
 pub const MANIFEST: &str = "manifest.json";
 pub const SCHEMA: &str = "schema.dump";
+/// An encrypted raw dump's pg_dump archive, in place of the schema and
+/// the tables.
+pub const RAW: &str = "raw.dump";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Header {
@@ -35,6 +38,24 @@ pub struct Header {
     /// Taken from a protected target.
     #[serde(default)]
     pub protected: bool,
+    /// How every file but this header is encrypted, when it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal: Option<crate::crypt::Seal>,
+}
+
+impl Header {
+    /// What a KMS wrap of this dump's key is bound to: the header's fields,
+    /// so a header edited to say something else can't be opened. Pure.
+    pub fn context(&self) -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::from([
+            ("pgman:copy".to_string(), self.copy.clone()),
+            ("pgman:label".to_string(), self.label.clone()),
+            ("pgman:database".to_string(), self.database.clone()),
+            ("pgman:created".to_string(), self.created.to_string()),
+            ("pgman:masked".to_string(), self.masked.to_string()),
+            ("pgman:protected".to_string(), self.protected.to_string()),
+        ])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +83,10 @@ pub struct Manifest {
     /// Each sequence: schema, name, last value, whether it was called.
     #[serde(default)]
     pub sequences: Vec<(String, String, i64, bool)>,
+    /// An encrypted raw dump: the sha256 of its [`RAW`] file, which holds
+    /// every row as it is; `schema_sha256` and `tables` are empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
 }
 
 /// The generated name of the `n`th table's file. Pure.
@@ -111,6 +136,13 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
 /// Why `m` isn't an archive this pgman restores, if it isn't: another
 /// format, a file name that could be a path. Pure.
 pub fn manifest_problem(m: &Manifest) -> Option<String> {
+    // An id pgman makes (a uuid): never anything a path could be built of.
+    let c = &m.header.copy;
+    if c.is_empty() || c.len() > 64 || !c.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+        return Some(format!(
+            "the manifest names its copy {c:?}: not an id pgman writes"
+        ));
+    }
     if m.header.format != FORMAT {
         return Some(format!(
             "the archive is format {}, and this pgman reads format {FORMAT}: use a newer pgman",
@@ -317,6 +349,7 @@ mod tests {
                 created: 0,
                 masked: true,
                 protected: true,
+                seal: None,
             },
             schema_sha256: String::new(),
             tables: vec![TableEntry {
@@ -331,6 +364,7 @@ mod tests {
             key: "fresh".into(),
             words: 1,
             sequences: vec![],
+            raw: None,
         };
         assert!(manifest_problem(&m)
             .unwrap()

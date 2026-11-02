@@ -48,6 +48,10 @@ pub struct EnvSettings {
     pub ttl: Option<String>,
     pub reason: Option<ReasonRule>,
     pub unattended: bool,
+    /// `encrypt = "…"`, as written.
+    pub encrypt: Option<String>,
+    /// Where a KMS key is used: the environment's AWS source's scope.
+    pub encrypt_scope: crate::aws_cli::AwsScope,
 }
 
 /// A dump's effective policy.
@@ -64,6 +68,12 @@ pub struct Policy {
     /// Raw dumps of this environment may run without a terminal: only
     /// ever from the operator's own file.
     pub unattended: bool,
+    /// What its dumps are encrypted to; `None` when nothing says.
+    pub encrypt: Option<crate::crypt::Encrypt>,
+    pub encrypt_scope: crate::aws_cli::AwsScope,
+    /// The target is an environment the operator's file names: somewhere
+    /// `encrypt` can be said.
+    pub has_env: bool,
 }
 
 /// What was asked for.
@@ -153,6 +163,7 @@ pub fn effective(
     cap: Option<(DumpMode, &str)>,
 ) -> Result<Policy, String> {
     let default = EnvSettings::default();
+    let has_env = env.is_some();
     let env = env.unwrap_or(&default);
     // A protected environment is dumped masked unless its operator says
     // otherwise; anything else as it is.
@@ -178,6 +189,11 @@ pub fn effective(
     } else {
         ReasonRule::Optional
     });
+    let encrypt = env
+        .encrypt
+        .as_deref()
+        .map(crate::crypt::parse)
+        .transpose()?;
     Ok(Policy {
         protected,
         dump,
@@ -186,6 +202,9 @@ pub fn effective(
         ttl_secs,
         reason,
         unattended: env.unattended,
+        encrypt,
+        encrypt_scope: env.encrypt_scope.clone(),
+        has_env,
     })
 }
 
@@ -220,6 +239,31 @@ pub fn gate(policy: &Policy, kind: Kind, via: Via, name: &str) -> Result<Gate, S
             ))
         }
         _ => {}
+    }
+    // A protected environment's rows are encrypted, to what its operator
+    // says; `none` is an opt-out for masked copies only.
+    if policy.protected && kind != Kind::Schema {
+        match (&policy.encrypt, kind) {
+            // A protected connection, or a raw copy restored here: no
+            // environment to say a key on, so masked goes unencrypted (and
+            // says so). Raw it can't be: with no environment it is masked.
+            (None, Kind::Masked) if !policy.has_env => {}
+            (None, _) => {
+                return Err(format!(
+                    "{name} is protected, and its dumps are encrypted: say to what with encrypt \
+                     = \"kms:alias/…\" or encrypt = \"age:<public key>\" (`pgman key new` makes \
+                     one) on {name} in your own environments.toml. encrypt = \"none\" takes masked \
+                     copies unencrypted; --schema-only needs neither"
+                ))
+            }
+            (Some(crate::crypt::Encrypt::None), Kind::Raw) => {
+                return Err(format!(
+                "{name} is protected and says encrypt = \"none\", which is for masked copies: a \
+                     raw copy of it is always encrypted. Give a kms: or age: key"
+            ))
+            }
+            _ => {}
+        }
     }
     let raw_protected = policy.protected && kind == Kind::Raw;
     let reason = policy.reason == ReasonRule::Required;
@@ -284,12 +328,19 @@ pub fn for_target(
 mod tests {
     use super::*;
 
+    /// An operator's age key: the gates below are about everything else.
+    fn key() -> String {
+        format!("age:{}", age::x25519::Identity::generate().to_public())
+    }
+
     fn settings(dump: Option<DumpMode>, unattended: bool) -> EnvSettings {
         EnvSettings {
             dump,
             ttl: None,
             reason: None,
             unattended,
+            encrypt: Some(key()),
+            encrypt_scope: Default::default(),
         }
     }
 
@@ -463,5 +514,51 @@ mod tests {
         assert!(gate(&capped, Kind::Raw, Via::Terminal, "x")
             .unwrap_err()
             .contains("/repo/.pgman/pgman.toml caps x"));
+    }
+
+    #[test]
+    fn a_protected_environments_rows_are_encrypted_or_refused() {
+        let unset = EnvSettings {
+            dump: Some(DumpMode::Unmasked),
+            ..EnvSettings::default()
+        };
+        let p = effective(true, Some(&unset), None).unwrap();
+        for kind in [Kind::Raw, Kind::Masked] {
+            let e = gate(&p, kind, Via::Terminal, "production").unwrap_err();
+            assert!(
+                e.contains("encrypt = \"kms:alias/") && e.contains("pgman key new"),
+                "{e}"
+            );
+        }
+        assert!(gate(&p, Kind::Schema, Via::Terminal, "production").is_ok());
+        // Unprotected: nothing to say.
+        let p = effective(false, Some(&unset), None).unwrap();
+        assert!(gate(&p, Kind::Raw, Via::Terminal, "staging").is_ok());
+        // none: masked copies only.
+        let none = EnvSettings {
+            encrypt: Some("none".into()),
+            ..unset.clone()
+        };
+        let p = effective(true, Some(&none), None).unwrap();
+        assert!(gate(&p, Kind::Masked, Via::Terminal, "production").is_ok());
+        let e = gate(&p, Kind::Raw, Via::Terminal, "production").unwrap_err();
+        assert!(e.contains("always encrypted"), "{e}");
+        // No environment to say a key on: masked, unencrypted.
+        let p = effective(true, None, None).unwrap();
+        assert!(gate(&p, Kind::Masked, Via::Terminal, "prod-db").is_ok());
+        // A key: both.
+        let keyed = EnvSettings {
+            encrypt: Some(key()),
+            ..unset
+        };
+        let p = effective(true, Some(&keyed), None).unwrap();
+        assert!(matches!(p.encrypt, Some(crate::crypt::Encrypt::Age(_))));
+        assert!(gate(&p, Kind::Raw, Via::Terminal, "production").is_ok());
+        // A bad setting is refused where it is read.
+        let bad = EnvSettings {
+            encrypt: Some("age:nope".into()),
+            ..EnvSettings::default()
+        };
+        assert!(effective(true, Some(&bad), None).is_err());
     }
 }

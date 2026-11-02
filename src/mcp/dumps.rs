@@ -306,6 +306,7 @@ impl Server {
             ticket: None,
             masked: arg_bool(args, "masked").then_some(true),
             masking: None,
+            encrypt: None,
         };
         let mut resolved = crate::dump::resolve(&opts).await?;
         if let Some(why) = agent_tunnel(&target, &resolved) {
@@ -333,6 +334,8 @@ impl Server {
             .clone()
             .unwrap_or_else(|| resolved.label.clone());
         let gate = crate::policy::gate(&policy, kind, crate::policy::Via::Mcp, &name)?;
+        opts.encrypt = crate::dump::encrypt_for(&policy, kind);
+        let unsealed = crate::dump::unencrypted_note(&policy, kind, &name);
         let masked = kind == crate::policy::Kind::Masked;
         let out = if masked {
             crate::masked::agent_out(&self.cwd, file.as_deref())?
@@ -438,7 +441,7 @@ impl Server {
         let result = if masked {
             crate::masked::run(&opts, resolved, &entry.copy, &self.cwd, true, false, &say).await
         } else {
-            crate::dump::run(&opts, resolved, &say).await
+            crate::dump::run(&opts, resolved, &entry.copy, &say).await
         };
         let warn = crate::dump::journal_dump(&entry, env.as_deref(), &database, &label, &result);
         let unsent = crate::journal_send::flush_note().await;
@@ -446,6 +449,7 @@ impl Server {
         crate::dump::placed(&mut done, place_note, policy.protected);
         done.notes.extend(warn);
         done.notes.extend(unsent);
+        done.notes.extend(unsealed);
         Ok(json!({
             "file": done.file.display().to_string(),
             "latest": done.latest.as_ref().map(|l| l.display().to_string()),
@@ -463,7 +467,11 @@ impl Server {
         let rel = arg_string(args, "file")?.ok_or("file is required")?;
         let target = arg_string(args, "target")?.ok_or("target is required")?;
         let file = inside(&self.cwd, &rel, true)?;
-        if !crate::masked::is_archive(&file) {
+        // A masked archive is what an agent restores; an encrypted raw one
+        // is a raw copy, judged as any other by the journal.
+        let masked_archive = crate::masked::is_archive(&file)
+            && crate::masked::read_header(&file).is_ok_and(|h| h.masked);
+        if !masked_archive {
             let f = file.clone();
             let known = tokio::task::spawn_blocking(move || {
                 let (events, _) = crate::journal::read_in(&crate::journal::dir());

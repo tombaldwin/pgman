@@ -64,6 +64,22 @@ a re-check GO. The phases and panels up to v0.2.0 are in
 
 ## Window — after v0.3.0
 
+### Encrypted dumps (phase 2b), the panel's leftovers, polish (2026-11-02)
+
+On Tom's "all 3". Merged to main, unreleased:
+- **Phase 2b:** `encrypt = "kms:…" | "age:…" | "none"`, `pgman key new|list`,
+  masked and raw dumps encrypted with the header bound to the encrypted
+  manifest, and restore through a private temp copy. A protected
+  environment's raw and masked dumps need `encrypt`. Tom chose age 0.11
+  with two build-time advisories ignored. A Fable panel (crypto and
+  data path, then a closing reviewer) found a forged archive naming a
+  path to delete and plaintext left by a killed restore; both fixed, GO.
+- **The v0.4.4 panel's masking leftovers:** hash names, sub-lookups,
+  text-keyed lookups, translations by language.
+- **Polish:** the tap's narrow views, the connection-lost card's FATAL
+  paths, `demo.gif` re-recorded from a scratch HOME.
+Next: a release, on Tom's go, and the BACKLOG's 2b leftovers.
+
 ### Lookup keys, key-value values, card hashes; CI's crash (2026-10-31)
 
 On Tom's "go" after v0.4.3. On main, unreleased: a key into a lookup of

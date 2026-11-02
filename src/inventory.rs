@@ -111,6 +111,11 @@ pub struct Environment {
     /// group in its AWS account ([`crate::journal_send`]).
     #[serde(default)]
     pub journal: Option<JournalTarget>,
+    /// What its dumps are encrypted to: `kms:<key id or alias/…>`,
+    /// `age:<public key>`, or `none` ([`crate::crypt`]). Unset, a protected
+    /// environment's raw and masked dumps are refused until it says.
+    #[serde(default)]
+    pub encrypt: Option<String>,
 }
 
 /// `journal = { group = "/pgman/dumps", region = "eu-west-2", profile = "…" }`:
@@ -344,6 +349,8 @@ impl Environment {
             ttl: self.dump_ttl.clone(),
             reason: self.dump_reason,
             unattended: self.unattended,
+            encrypt: self.encrypt.clone(),
+            encrypt_scope: self.source.scope().unwrap_or_default(),
         }
     }
 
@@ -396,6 +403,9 @@ impl Environment {
         }
         if let Some(t) = &self.dump_ttl {
             crate::policy::parse_ttl(t)?;
+        }
+        if let Some(e) = &self.encrypt {
+            crate::crypt::parse(e)?;
         }
         if let Some(j) = &self.journal {
             if !crate::aws_cli::plain_arg(&j.group, "._-/#", 512) {
@@ -1097,6 +1107,7 @@ source = { kind = "static", connections = ["ledger-local"] }
             dump_reason: None,
             unattended: false,
             journal: None,
+            encrypt: None,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);

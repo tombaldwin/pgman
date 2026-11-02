@@ -643,7 +643,7 @@ and an MCP dump refuses rules that are uncommitted or not yet confirmed.
 | 1 | Policy fields and the project cap (`policy::effective`, pure); typed confirmation, warning and reason for raw protected dumps, refused without a terminal; reason for every protected dump, with the ticket from the branch and `ticket_url` links; MCP protected dumps schema-only; the dump id; the local journal; `pgman copies` list, show, rm for files (untracked v0.3 dumps listed); docs updated | 3½ days |
 | 1b | The journal to CloudWatch: `aws logs` builder (pure), cursor, retries, the IAM policy in the docs | 1½ days |
 | 2a | Classifier with defaults, placeholders and presets; core transformers (keep, null, fixed, password, hash, email, name, phone, ip, per-row date shift, drop rows); FK following; the data path and archive; restore with checksums and redaction; provenance; `copies rm` for databases; the dump directory and synced-folder checks; `masking show` and `check`; the leak test; `docs/privacy.md`. **The protected default moves to `masked`.** | 9 days |
-| 2b | Encryption: KMS envelope and age; header binding; private temp for `--jobs`. **`encrypt` becomes required.** | 2–3 days |
+| 2b | Encryption: KMS envelope and age; header binding; private temp for `--jobs`. **`encrypt` becomes required.** Built: see "Phase 2b as built". | 2–3 days |
 | 3 | The Masking screen and the copies view | 5 days |
 | 4 | Sampled validate, including the re-identification and frequency warnings | 2 days |
 | 5 | The rest of the transformers (addresses, postcodes, generalisations, JSON paths, conditions); stable keys and rotation; the policy editor | 3–4 days |
@@ -722,6 +722,58 @@ What shipped, and where it differs from the plan above:
   (defaults, view bodies), the operator's own fake login, the
   classifier's summary in the MCP confirmation, `copies prune`, the TUI
   header's expiry flag, fake addresses (NULL until phase 5).
+
+### Phase 2b as built
+
+- `src/crypt.rs` (the setting, the seal, the operator's keys, the
+  streams; pure but for the key store and the KMS call), `pgman key
+  new|list`. The stock `age` crate, no default features; X25519 only.
+- **The operator's keys are files**, `keys/<name>.txt` in pgman's config
+  directory (0600, the directory 0700), in the format `age -d -i` reads,
+  not the Keychain or the Secure Enclave: one code path on every
+  platform, testable with a scratch HOME, and readable by `age`/`rage`
+  without pgman. The Keychain is later.
+- **KMS through the `aws` CLI**, as the journal is: `kms encrypt` and
+  `kms decrypt` with the key on stdin (`fileb:///dev/stdin`), the
+  header's fields as a JSON encryption context, in the environment's
+  source scope (a restore on another machine falls back to the key's
+  recorded region).
+- **The header binding** is the encrypted manifest's copy of the header,
+  which must equal the plain one (as 2a checked for plain archives), and
+  for KMS the encryption context too.
+- **Every file but the header is encrypted**, schema and raw dumps
+  included, by piping pg_dump's stdout through the encryptor: no
+  plaintext is written. Checksums are of the files as they are, so they
+  are checked before anything is decrypted.
+- **An encrypted raw dump is pgman's archive** (`raw.dump`, pg_dump's
+  custom format, beside the header and manifest), so `copies`, the
+  journal's fingerprint and restore treat every encrypted dump alike;
+  `--format` other than custom is refused for one.
+- **Restores always use the private temp file** (the cache's
+  `restore-<pid>-<copy>/`), not only `--jobs`: pg_restore reads the
+  schema three times, by section. Removed when the restore ends however
+  it ends (the opened archive's drop), and said.
+- **`encrypt` is required where it can be said**: a protected
+  environment's raw and masked dumps are refused until it is set. A
+  protected target that isn't an environment (a connection protected by
+  its name, a raw copy restored here) is dumped masked and unencrypted,
+  said on the dump; raw it can't be.
+- MCP: the same seal; an encrypted raw archive is judged by the journal
+  as a raw copy, never as masked.
+- Schema-only dumps aren't encrypted: no rows, and a plain-SQL schema is
+  for reading.
+- **age 0.11**, not 0.12: 0.12 depends on p256 and hpke unconditionally,
+  bringing a timing advisory (crypto-bigint) into code pgman never runs.
+  Every release reads its translations with an i18n proc-macro whose two
+  build-time crates are unmaintained: ignored in deny.toml on Tom's
+  decision (2026-11-02).
+- **Integrity is against damage, not forgery** (age doesn't sign). The
+  temp directory is named by nothing in the archive, and a copy id must
+  be a uuid's characters, after the review panel found a forged archive
+  could name a path to delete.
+- Not built: rotating a KMS key's copies, the Keychain, a streamed
+  restore with no temp copy, decrypting only after the confirmation,
+  hashing while writing (a raw dump is read again for its checksum).
 
 ### Phase 1b as built
 
