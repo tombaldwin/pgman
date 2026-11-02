@@ -178,6 +178,9 @@ impl Server {
             "method": "elicitation/create",
             "params": {"message": message, "requestedSchema": schema},
         });
+        // The question's id and the answer's action, never what either
+        // says: a stall shows in the log without the form's contents.
+        tracing::info!(target: "pgman::mcp", id = %id, "asked the operator");
         let sent = out.send(frame.to_string()).await;
         let answer = match sent {
             Err(_) => Err("the client went away".to_string()),
@@ -202,6 +205,13 @@ impl Server {
         };
         if let Ok(mut w) = self.waiting.lock() {
             w.remove(&id);
+        }
+        match &answer {
+            Ok(r) => {
+                let action = r.get("action").and_then(Value::as_str).unwrap_or("none");
+                tracing::info!(target: "pgman::mcp", id = %id, action, "the operator answered");
+            }
+            Err(why) => tracing::warn!(target: "pgman::mcp", id = %id, "no answer: {why}"),
         }
         answer
     }
