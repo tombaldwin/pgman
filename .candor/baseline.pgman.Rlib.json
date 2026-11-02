@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 4678,
-    "digest": "14df137d7a0884f3"
+    "count": 4681,
+    "digest": "e11ec694f8691ffe"
   },
   "resolves": [
     "fs",
@@ -322,18 +322,6 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "53cd7f366ebd96155ab640333769b722",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl copies::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as copies::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:260:39: 260:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
       "hash": "53cd7f366ebd9615550a5e2ed44bc3ce",
       "invisible": [
         "serde_core"
@@ -358,6 +346,18 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
+      "hash": "53cd7f366ebd96155ab640333769b722",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl copies::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as copies::_::_serde::de::Visitor<'de>>::visit_bytes",
+      "loc": "src/inventory.rs:260:39: 260:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
       "hash": "53cd7f366ebd9615c762f9f684006e4d",
       "invisible": [
         "serde_core"
@@ -370,7 +370,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "53cd7f366ebd9615853a27e5d5e68b91",
+      "hash": "53cd7f366ebd961580c4da58d5f5c130",
       "invisible": [
         "serde_core"
       ]
@@ -406,7 +406,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "53cd7f366ebd961580c4da58d5f5c130",
+      "hash": "53cd7f366ebd9615853a27e5d5e68b91",
       "invisible": [
         "serde_core"
       ]
@@ -418,7 +418,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "53cd7f366ebd96158b630dd518cb36a7",
+      "hash": "53cd7f366ebd9615f8540cbb2cb26836",
       "invisible": [
         "serde"
       ]
@@ -430,7 +430,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "53cd7f366ebd9615f8540cbb2cb26836",
+      "hash": "53cd7f366ebd96158b630dd518cb36a7",
       "invisible": [
         "serde"
       ]
@@ -13793,7 +13793,7 @@
     },
     {
       "fn": "mcp::Server::deliver",
-      "loc": "src/mcp/mod.rs:211:5: 211:36",
+      "loc": "src/mcp/mod.rs:221:5: 221:36",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13807,19 +13807,32 @@
     {
       "fn": "mcp::Server::elicit",
       "loc": "src/mcp/mod.rs:150:5: 150:93",
-      "inferred": [],
+      "inferred": [
+        "Log"
+      ],
+      "direct": [
+        "Log"
+      ],
       "declared": [],
-      "undeclared": [],
+      "undeclared": [
+        "Log"
+      ],
       "overdeclared": [],
       "hash": "53cd7f366ebd9615fd485c0790a7d8d5",
+      "calls": [
+        "mcp::Server::elicit::{closure#0}::__CALLSITE",
+        "mcp::Server::elicit::{closure#0}::__CALLSITE",
+        "mcp::Server::elicit::{closure#0}::__CALLSITE"
+      ],
       "invisible": [
         "serde_json",
-        "tokio"
+        "tokio",
+        "tracing_core"
       ]
     },
     {
       "fn": "mcp::Server::handle_request",
-      "loc": "src/mcp/mod.rs:232:5: 232:69",
+      "loc": "src/mcp/mod.rs:242:5: 242:69",
       "inferred": [
         "Clock",
         "Db",
@@ -14021,7 +14034,7 @@
     },
     {
       "fn": "mcp::dumps::<impl mcp::Server>::tool_dump",
-      "loc": "src/mcp/dumps.rs:290:5: 290:81",
+      "loc": "src/mcp/dumps.rs:293:5: 293:81",
       "inferred": [
         "Clock",
         "Db",
@@ -14090,6 +14103,7 @@
         "masked::run",
         "masking::archive::sha256_file",
         "masking::rules::find",
+        "mcp::Server::elicit",
         "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::__CALLSITE",
         "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::{closure#9}::__CALLSITE",
         "mcp::dumps::dump_out",
@@ -14121,7 +14135,7 @@
     },
     {
       "fn": "mcp::dumps::<impl mcp::Server>::tool_restore",
-      "loc": "src/mcp/dumps.rs:465:5: 465:84",
+      "loc": "src/mcp/dumps.rs:468:5: 468:84",
       "inferred": [
         "Clock",
         "Db",
@@ -14175,6 +14189,7 @@
         "journal_send::flush_note",
         "masked::is_archive",
         "masked::read_header",
+        "mcp::Server::elicit",
         "mcp::dumps::<impl mcp::Server>::tool_restore::{closure#0}::__CALLSITE",
         "mcp::dumps::<impl mcp::Server>::tool_restore::{closure#0}::{closure#3}::__CALLSITE",
         "mcp::dumps::inside",
@@ -14208,7 +14223,7 @@
     },
     {
       "fn": "mcp::dumps::accepted",
-      "loc": "src/mcp/dumps.rs:170:1: 170:86",
+      "loc": "src/mcp/dumps.rs:173:1: 173:86",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14220,7 +14235,7 @@
     },
     {
       "fn": "mcp::dumps::arg_bool",
-      "loc": "src/mcp/dumps.rs:263:1: 263:45",
+      "loc": "src/mcp/dumps.rs:266:1: 266:45",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14232,7 +14247,7 @@
     },
     {
       "fn": "mcp::dumps::arg_string",
-      "loc": "src/mcp/dumps.rs:267:1: 267:73",
+      "loc": "src/mcp/dumps.rs:270:1: 270:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14269,7 +14284,7 @@
     },
     {
       "fn": "mcp::dumps::dump_schema",
-      "loc": "src/mcp/dumps.rs:243:1: 243:63",
+      "loc": "src/mcp/dumps.rs:246:1: 246:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14303,7 +14318,7 @@
     },
     {
       "fn": "mcp::dumps::schema",
-      "loc": "src/mcp/dumps.rs:153:1: 153:64",
+      "loc": "src/mcp/dumps.rs:156:1: 156:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14327,7 +14342,7 @@
     },
     {
       "fn": "mcp::parse_error",
-      "loc": "src/mcp/mod.rs:404:1: 404:27",
+      "loc": "src/mcp/mod.rs:414:1: 414:27",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14339,7 +14354,7 @@
     },
     {
       "fn": "mcp::run",
-      "loc": "src/mcp/mod.rs:412:1: 412:56",
+      "loc": "src/mcp/mod.rs:422:1: 422:56",
       "inferred": [
         "Clock",
         "Db",
@@ -14428,7 +14443,7 @@
     },
     {
       "fn": "mcp::serve",
-      "loc": "src/mcp/mod.rs:428:1: 431:55",
+      "loc": "src/mcp/mod.rs:438:1: 441:55",
       "inferred": [
         "Clock",
         "Db",
@@ -14691,6 +14706,7 @@
       "calls": [
         "inventory::patching::apply_for",
         "inventory::patching::plan_for",
+        "mcp::Server::elicit",
         "mcp::tools::<impl mcp::Server>::tool_apply_patches::{closure#0}::__CALLSITE",
         "mcp::tools::<impl mcp::Server>::tool_apply_patches::{closure#0}::__CALLSITE",
         "mcp::tools::merged_safety",
@@ -15113,7 +15129,7 @@
     },
     {
       "fn": "mcp::tools::arg_str",
-      "loc": "src/mcp/tools.rs:1348:1: 1348:70",
+      "loc": "src/mcp/tools.rs:1349:1: 1349:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15137,7 +15153,7 @@
     },
     {
       "fn": "mcp::tools::confirmed",
-      "loc": "src/mcp/tools.rs:978:1: 981:24",
+      "loc": "src/mcp/tools.rs:979:1: 982:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15321,7 +15337,7 @@
     },
     {
       "fn": "mcp::tools::parse_max_rows",
-      "loc": "src/mcp/tools.rs:1408:1: 1408:66",
+      "loc": "src/mcp/tools.rs:1409:1: 1409:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15333,7 +15349,7 @@
     },
     {
       "fn": "mcp::tools::parse_tables",
-      "loc": "src/mcp/tools.rs:1356:1: 1356:70",
+      "loc": "src/mcp/tools.rs:1357:1: 1357:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15379,7 +15395,7 @@
     },
     {
       "fn": "mcp::tools::render_apply",
-      "loc": "src/mcp/tools.rs:1007:1: 1011:12",
+      "loc": "src/mcp/tools.rs:1008:1: 1012:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15391,7 +15407,7 @@
     },
     {
       "fn": "mcp::tools::render_connections",
-      "loc": "src/mcp/tools.rs:1503:1: 1503:85",
+      "loc": "src/mcp/tools.rs:1504:1: 1504:85",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15403,7 +15419,7 @@
     },
     {
       "fn": "mcp::tools::render_environments",
-      "loc": "src/mcp/tools.rs:1204:1: 1208:12",
+      "loc": "src/mcp/tools.rs:1205:1: 1209:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15415,7 +15431,7 @@
     },
     {
       "fn": "mcp::tools::render_found",
-      "loc": "src/mcp/tools.rs:1139:1: 1139:73",
+      "loc": "src/mcp/tools.rs:1140:1: 1140:73",
       "inferred": [
         "Env"
       ],
@@ -15435,7 +15451,7 @@
     },
     {
       "fn": "mcp::tools::render_log_errors",
-      "loc": "src/mcp/tools.rs:1047:1: 1052:12",
+      "loc": "src/mcp/tools.rs:1048:1: 1053:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15459,7 +15475,7 @@
     },
     {
       "fn": "mcp::tools::render_probe",
-      "loc": "src/mcp/tools.rs:1099:1: 1099:73",
+      "loc": "src/mcp/tools.rs:1100:1: 1100:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15471,7 +15487,7 @@
     },
     {
       "fn": "mcp::tools::render_query",
-      "loc": "src/mcp/tools.rs:1538:1: 1543:12",
+      "loc": "src/mcp/tools.rs:1539:1: 1544:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15496,7 +15512,7 @@
     },
     {
       "fn": "mcp::tools::render_schema_lint",
-      "loc": "src/mcp/tools.rs:1064:1: 1069:12",
+      "loc": "src/mcp/tools.rs:1065:1: 1070:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15508,7 +15524,7 @@
     },
     {
       "fn": "mcp::tools::render_sessions_locks",
-      "loc": "src/mcp/tools.rs:1373:1: 1380:12",
+      "loc": "src/mcp/tools.rs:1374:1: 1381:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15520,7 +15536,7 @@
     },
     {
       "fn": "mcp::tools::replica_state",
-      "loc": "src/mcp/tools.rs:1272:1: 1275:26",
+      "loc": "src/mcp/tools.rs:1273:1: 1276:26",
       "inferred": [
         "Db"
       ],
@@ -15542,7 +15558,7 @@
     },
     {
       "fn": "mcp::tools::save_names",
-      "loc": "src/mcp/tools.rs:1184:1: 1184:63",
+      "loc": "src/mcp/tools.rs:1185:1: 1185:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15554,7 +15570,7 @@
     },
     {
       "fn": "mcp::tools::scope_from_args",
-      "loc": "src/mcp/tools.rs:1122:1: 1122:81",
+      "loc": "src/mcp/tools.rs:1123:1: 1123:81",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15566,7 +15582,7 @@
     },
     {
       "fn": "mcp::tools::single_checked_statement",
-      "loc": "src/mcp/tools.rs:1451:1: 1455:28",
+      "loc": "src/mcp/tools.rs:1452:1: 1456:28",
       "inferred": [
         "Log"
       ],
@@ -15681,7 +15697,7 @@
     },
     {
       "fn": "mcp::tools::tool_environments_discover",
-      "loc": "src/mcp/tools.rs:1163:1: 1166:28",
+      "loc": "src/mcp/tools.rs:1164:1: 1167:28",
       "inferred": [
         "Env",
         "Exec",
@@ -15745,7 +15761,7 @@
     },
     {
       "fn": "mcp::tools::with_replica",
-      "loc": "src/mcp/tools.rs:1327:1: 1327:80",
+      "loc": "src/mcp/tools.rs:1328:1: 1328:80",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -15757,7 +15773,7 @@
     },
     {
       "fn": "mcp::tools::within_budget",
-      "loc": "src/mcp/tools.rs:1583:1: 1583:58",
+      "loc": "src/mcp/tools.rs:1584:1: 1584:58",
       "inferred": [],
       "declared": [],
       "undeclared": [],
