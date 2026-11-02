@@ -1054,6 +1054,8 @@ async fn drop_restored(
 
 /// Run `pgman copies`, printing the result.
 pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
+    // A restore that never ended left its decrypted copy: gone now.
+    crate::masked::sweep_restores(&crate::util::cache_dir());
     let dir = journal::dir();
     let (events, bad) = journal::read_in(&dir);
     let copies = registry(&events);

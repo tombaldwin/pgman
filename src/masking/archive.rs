@@ -136,6 +136,13 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
 /// Why `m` isn't an archive this pgman restores, if it isn't: another
 /// format, a file name that could be a path. Pure.
 pub fn manifest_problem(m: &Manifest) -> Option<String> {
+    // An id pgman makes (a uuid): never anything a path could be built of.
+    let c = &m.header.copy;
+    if c.is_empty() || c.len() > 64 || !c.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+        return Some(format!(
+            "the manifest names its copy {c:?}: not an id pgman writes"
+        ));
+    }
     if m.header.format != FORMAT {
         return Some(format!(
             "the archive is format {}, and this pgman reads format {FORMAT}: use a newer pgman",

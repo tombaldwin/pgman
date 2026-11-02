@@ -1107,8 +1107,64 @@ impl std::ops::Deref for OpenArchive {
 
 impl Drop for OpenArchive {
     fn drop(&mut self) {
-        if let Some(t) = &self.temp {
+        // Only ever a directory this pgman named.
+        if let Some(t) = self.temp.as_ref().filter(|t| restore_temp(t)) {
             let _ = std::fs::remove_dir_all(t);
+        }
+    }
+}
+
+/// Whether `path` is a restore's temp directory as [`open_archive_with`]
+/// names it: `restore-<pid>-<random hex>`, nothing else. Pure.
+fn restore_temp(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("restore-"))
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(pid, tag)| {
+            !pid.is_empty()
+                && pid.bytes().all(|b| b.is_ascii_digit())
+                && !tag.is_empty()
+                && tag.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+}
+
+/// Whether process `pid` is running.
+fn alive(pid: i32) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: signal 0 delivers nothing; it only asks whether the
+        // process exists.
+        let r = unsafe { libc::kill(pid, 0) };
+        r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+/// Remove what restores that never ended left in `cache` (a killed
+/// process, a crash): their decrypted copies, plaintext. A running
+/// restore's is left alone. Reads and removes.
+pub fn sweep_restores(cache: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        if !restore_temp(&path) {
+            continue;
+        }
+        let pid = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix("restore-"))
+            .and_then(|r| r.split('-').next())
+            .and_then(|p| p.parse::<i32>().ok());
+        if pid.is_some_and(|p| p != std::process::id() as i32 && !alive(p)) {
+            let _ = std::fs::remove_dir_all(&path);
         }
     }
 }
@@ -1217,12 +1273,14 @@ fn open_archive_with(
     let (schema, temp) = match &key {
         None => (dir.join(inner), None),
         Some(k) => {
-            let temp = cache.join(format!(
-                "restore-{}-{}",
-                std::process::id(),
-                &header.copy[..8.min(header.copy.len())]
-            ));
-            let _ = std::fs::remove_dir_all(&temp);
+            sweep_restores(cache);
+            // Named by nothing from the archive.
+            let tag: String = crate::journal::new_id()
+                .chars()
+                .filter(char::is_ascii_hexdigit)
+                .take(12)
+                .collect();
+            let temp = cache.join(format!("restore-{}-{tag}", std::process::id()));
             crate::util::ensure_private_dir(&temp)
                 .map_err(|e| format!("{}: {e}", temp.display()))?;
             let out = temp.join(inner);
@@ -1451,6 +1509,92 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("disagrees with the manifest"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn a_forged_copy_id_is_refused_before_anything_is_decrypted_or_removed() {
+        let base = std::env::temp_dir().join(format!("pgman-forged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let cache = base.join("cache/pgman");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(base.join("sentinel"), b"keep").unwrap();
+        let dir = base.join("a.pgman-dump");
+        let key = age::x25519::Identity::generate();
+        for copy in ["../../..", "abcdefg\u{e9}", ""] {
+            let header = Header {
+                format: archive::FORMAT,
+                pgman: "0.4.5".into(),
+                copy: copy.into(),
+                label: "production/ledger".into(),
+                env: None,
+                database: "ledger".into(),
+                created: 0,
+                masked: true,
+                protected: true,
+                seal: Some(crate::crypt::Seal {
+                    kind: "age".into(),
+                    recipient: key.to_public().to_string(),
+                    kms_key: None,
+                    kms_region: None,
+                    wrapped: None,
+                }),
+            };
+            sealed_archive(&dir, &key, &header);
+            let e = open_archive_with(&dir, &header, Some(key.clone()), &cache)
+                .map(|_| ())
+                .unwrap_err();
+            assert!(e.contains("not an id pgman writes"), "{copy:?}: {e}");
+            assert!(base.join("sentinel").exists(), "{copy:?}");
+            assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0, "{copy:?}");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn only_a_restore_temp_pgman_named_is_ever_removed() {
+        for ok in ["restore-123-abc0", "restore-1-f"] {
+            assert!(restore_temp(Path::new(ok)), "{ok}");
+        }
+        for bad in [
+            "restore-123-../..",
+            "restore--abc",
+            "restore-12a-abc",
+            "restore-123-",
+            "schema.dump",
+            "..",
+        ] {
+            assert!(!restore_temp(Path::new(bad)), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_dead_restores_decrypted_copy_is_swept_and_a_live_ones_kept() {
+        let cache = std::env::temp_dir().join(format!("pgman-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
+        std::fs::create_dir_all(&cache).unwrap();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        let mut running = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let gone = cache.join(format!("restore-{dead}-ab12"));
+        let mine = cache.join(format!("restore-{}-cd34", std::process::id()));
+        let live = cache.join(format!("restore-{}-ef56", running.id()));
+        let other = cache.join("journal.sent");
+        for d in [&gone, &mine, &live] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("raw.dump"), b"rows").unwrap();
+        }
+        std::fs::write(&other, b"x").unwrap();
+        sweep_restores(&cache);
+        assert!(!gone.exists(), "a dead process's plaintext is removed");
+        assert!(mine.exists() && other.exists());
+        assert!(live.exists(), "another running restore's is left alone");
+        let _ = running.kill();
+        let _ = running.wait();
         let _ = std::fs::remove_dir_all(&cache);
     }
 
