@@ -45,7 +45,7 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   owns what it restored, and how to grant another role (the
   application's) access: until then that role can read none of it.
 - A dump refused because its user can't read everything names the
-  tables and sequences in full, then counts partitions under their
+  first 20 tables and sequences, then counts partitions under their
   parent (`app.events: 106 partitions`). It used to name the first 8
   and say "and 106 more", which could hide the few tables that decide
   whether `--skip-unreadable` is safe.
