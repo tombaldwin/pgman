@@ -308,6 +308,19 @@ batch.
 - **Possible flake**: `a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently`
   failed once in a full parallel integration run; not reproduced.
 
+### From a client's first MCP dump and restore (2026-11-02)
+
+- **Discovered names as dump/restore targets** (needs Tom's decision).
+  `connections` lists data sources discovered in the project, but
+  `dump` and `restore` take only environments.toml/connections.toml
+  names or a URL; they now say so. Accepting discovered names would let
+  a project's own config (which an agent can edit) choose a dump's
+  source. Decide whether that is fine behind `--project-connections`.
+- **Restore: grant to a named role.** The result now says grants were
+  left out and gives the GRANTs. An option (`grant_to = "app_role"`,
+  over MCP too) could run them after the restore, on a local database
+  only.
+
 ### From the dump/restore review (2026-10-28)
 
 - **The formula's `brew audit --strict` notes** (all older than 0.3.1):
