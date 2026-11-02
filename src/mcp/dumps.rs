@@ -196,6 +196,25 @@ pub fn accepted(answer: &Value, typed: Option<&str>, key: &str) -> Result<(), St
     Ok(())
 }
 
+/// `err` from resolving `target`, and why, when `target` is a name only
+/// discovery knows (`connections` lists it): dump and restore take the
+/// operator's own names, so a discovered one reads as a typo without
+/// this. Pure.
+pub fn discovered_name(err: String, target: &str, entries: &[super::connections::Entry]) -> String {
+    let discovered = entries
+        .iter()
+        .any(|e| e.name == target && matches!(e.source, super::connections::Source::Discovered(_)));
+    if discovered && err.starts_with("no environment or connection named") {
+        format!(
+            "{target:?} is a connection discovered in the project, and dump and restore take only \
+             the operator's own names (environments.toml, connections.toml) or a postgres:// URL: \
+             pass its URL, or add it to connections.toml"
+        )
+    } else {
+        err
+    }
+}
+
 /// Why `target` — as an agent wrote it — may not be dumped: a URL that
 /// opens an ssh tunnel would run the operator's ssh to a bastion the
 /// agent chose. A tunnel the operator configured (connections.toml,
@@ -290,6 +309,15 @@ impl Server {
         Ok(())
     }
 
+    /// [`discovered_name`] with what discovery finds now.
+    async fn explain_unresolved(&self, err: String, target: &str) -> String {
+        let (cwd, allow) = (self.cwd.clone(), self.opts.project_connections);
+        match tokio::task::spawn_blocking(move || super::connections::load(&cwd, allow).0).await {
+            Ok(entries) => discovered_name(err, target, &entries),
+            Err(_) => err,
+        }
+    }
+
     pub(super) async fn tool_dump(&self, args: &Value) -> Result<String, String> {
         self.refuse_side_effects("dump")?;
         let target = arg_string(args, "target")?.ok_or("target is required")?;
@@ -311,7 +339,10 @@ impl Server {
             masking: None,
             encrypt: None,
         };
-        let mut resolved = crate::dump::resolve(&opts).await?;
+        let mut resolved = match crate::dump::resolve(&opts).await {
+            Ok(r) => r,
+            Err(e) => return Err(self.explain_unresolved(e, &target).await),
+        };
         if let Some(why) = agent_tunnel(&target, &resolved) {
             return Err(why);
         }
@@ -500,11 +531,15 @@ impl Server {
             terminate: arg_bool(args, "terminate"),
             ..Default::default()
         };
-        let ready = crate::restore::prepare(
+        let ready = match crate::restore::prepare(
             &opts,
             &|line| tracing::info!(target: "pgman::mcp", "restore: {line}"),
         )
-        .await?;
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return Err(self.explain_unresolved(e, &target).await),
+        };
         let database = ready.plan.database.clone();
         if self.declined("restore", ready.server(), &database) {
             return Err(format!(
@@ -700,6 +735,45 @@ mod tests {
         assert!(m.starts_with("Dump the schema of ledger"), "{m}");
         assert!(m.contains("(no rows)"), "{m}");
         assert!(m.contains("It is protected (the environment"), "{m}");
+    }
+
+    /// A name only discovery knows is said to be one, not "no such
+    /// name"; a personal one of that name, or another error, is left be.
+    #[test]
+    fn a_discovered_name_is_said_to_be_one() {
+        use crate::mcp::connections::{Entry, Source};
+        let entry = |name: &str, source| Entry {
+            name: name.into(),
+            source,
+            dsn: None,
+            refusal: None,
+            password_source: String::new(),
+            secret: None,
+            role: Default::default(),
+        };
+        let missing =
+            "no environment or connection named \"app@localhost (ledger)\" (…)".to_string();
+        let found = [entry(
+            "app@localhost (ledger)",
+            Source::Discovered("IntelliJ"),
+        )];
+        let e = discovered_name(missing.clone(), "app@localhost (ledger)", &found);
+        assert!(
+            e.contains("is a connection discovered in the project"),
+            "{e}"
+        );
+        assert!(e.contains("pass its URL"), "{e}");
+        let mine = [entry("app@localhost (ledger)", Source::Personal)];
+        assert_eq!(
+            discovered_name(missing.clone(), "app@localhost (ledger)", &mine),
+            missing
+        );
+        assert_eq!(discovered_name(missing.clone(), "other", &found), missing);
+        let other = "a different refusal".to_string();
+        assert_eq!(
+            discovered_name(other.clone(), "app@localhost (ledger)", &found),
+            other
+        );
     }
 
     #[test]

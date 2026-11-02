@@ -35,6 +35,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   was unticked, and the call failed after 300s with "no answer from the
   operator". Accept or Decline is the answer; a protected environment
   still takes its typed name.
+- Over MCP, `dump` and `restore` given a connection name only
+  discovery knows (one `connections` lists from the project) say so,
+  and to pass its URL or add it to connections.toml. They used to say
+  there was no such name.
 - A restore's result says that owners and grants were left out, who
   owns what it restored, and how to grant another role (the
   application's) access: until then that role can read none of it.
