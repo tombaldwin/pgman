@@ -362,6 +362,8 @@ impl Server {
 
     fn tool_doctor(&self) -> String {
         let (entries, personal) = connections::load(&self.cwd, self.opts.project_connections);
+        // A parse error, or keys that match nothing: both are why a
+        // setting seems to be ignored.
         let (_, safety_error) = crate::safety::SafetyConfig::load_personal();
         let usable = entries.iter().filter(|e| e.refusal.is_none()).count();
         let project_root = crate::project::find_root(&self.cwd);

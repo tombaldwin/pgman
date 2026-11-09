@@ -187,6 +187,35 @@ impl SafetyConfig {
         self.databases.get(db).unwrap_or(&self.default)
     }
 
+    /// `[databases.*]` keys that can never match: entries are looked up
+    /// by database name alone, so `"demo/ledger"` (written like a
+    /// target) is accepted and ignored. Sorted. Pure.
+    pub fn unmatchable_keys(&self) -> Vec<&str> {
+        let mut keys: Vec<&str> = self
+            .databases
+            .keys()
+            .map(String::as_str)
+            .filter(|k| k.contains('/'))
+            .collect();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// What [`SafetyConfig::unmatchable_keys`] finds, said once. Pure.
+    pub fn unmatchable_warning(&self) -> Option<String> {
+        let keys = self.unmatchable_keys();
+        (!keys.is_empty()).then(|| {
+            format!(
+                "safety.toml: {} match nothing — [databases.*] is keyed by database name \
+                 alone (e.g. [databases.ledger]), which applies to that name on every server",
+                keys.iter()
+                    .map(|k| format!("[databases.\"{k}\"]"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+    }
+
     /// Where `db`'s `read_only` came from. Without a project merge
     /// everything is the personal side's: its own entry when it has
     /// one, else `[default]`. Pure.
@@ -230,8 +259,11 @@ impl SafetyConfig {
 
     /// The pure half of [`SafetyConfig::load_personal`].
     pub fn parse_personal(text: &str) -> (SafetyConfig, Option<String>) {
-        match toml::from_str(text) {
-            Ok(cfg) => (cfg, None),
+        match toml::from_str::<SafetyConfig>(text) {
+            Ok(cfg) => {
+                let warning = cfg.unmatchable_warning();
+                (cfg, warning)
+            }
             Err(e) => (
                 SafetyConfig::default(),
                 Some(format!("safety.toml parse error ({e}); using defaults")),
@@ -2214,6 +2246,31 @@ mod tests {
         let (cfg, warning) = SafetyConfig::parse_personal("[default]\nread_only = false\n");
         assert!(!cfg.default.read_only);
         assert_eq!(warning, None);
+    }
+
+    /// A key written like a target (`"demo/ledger"`) can never match a
+    /// database name: accepted by the parser, so said, not ignored.
+    #[test]
+    fn a_key_written_like_a_target_is_said_to_match_nothing() {
+        let text = "[databases.\"demo/ledger\"]\nread_only = false\n[databases.ledger]\nread_only = true\n";
+        let (cfg, warning) = SafetyConfig::parse_personal(text);
+        assert_eq!(cfg.unmatchable_keys(), ["demo/ledger"]);
+        assert!(
+            cfg.profile_for("ledger").read_only,
+            "the bare key is the one used"
+        );
+        let warning = warning.expect("an unmatchable key is reported");
+        assert!(
+            warning.contains("[databases.\"demo/ledger\"] match nothing"),
+            "{warning}"
+        );
+        assert!(!warning.contains("[databases.\"ledger\"]"), "{warning}");
+        let refused =
+            crate::query::apply::check_patch(&cfg, "ledger", "SELECT 1", false).unwrap_err();
+        assert!(
+            refused.contains("demo/ledger"),
+            "the refusal says why it was ignored: {refused}"
+        );
     }
 
     #[test]

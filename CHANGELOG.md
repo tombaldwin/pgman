@@ -16,6 +16,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   and entry to change, says the next apply reads it with no restart, and
   warns that a `[databases.<name>]` entry opens that name on every
   server, protected ones included.
+- A safety.toml entry written like a target, `[databases."demo/ledger"]`,
+  was accepted and ignored. It is now reported in the patch refusal,
+  MCP's `doctor` and pgman's log: entries are keyed by database name.
 
 ## [0.5.1] — 2026-11-09
 

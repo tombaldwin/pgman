@@ -173,11 +173,15 @@ pub fn check_patch(
     outside: bool,
 ) -> Result<Checked, String> {
     if safety.profile_for(db).read_only {
-        return Err(read_only_refusal(
+        let mut why = read_only_refusal(
             &safety.read_only_origin(db),
             db,
             &crate::util::config_file("safety.toml"),
-        ));
+        );
+        if let Some(w) = safety.unmatchable_warning() {
+            why.push_str(&format!(". {w}"));
+        }
+        return Err(why);
     }
     let statements =
         crate::batch::check_statements(safety, db, sql, true).map_err(|r| match r {
