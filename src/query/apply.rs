@@ -121,6 +121,47 @@ pub fn guard_confirms(
         .collect()
 }
 
+/// Why `db`'s patches can't run, read-only as `origin` records: where
+/// the setting is, the exact key, that the next apply reads it (no
+/// restart), and that a `[databases.<db>]` entry is by name alone, so
+/// it opens that name on every server, protected ones too. `personal`
+/// is safety.toml's path. Pure.
+pub fn read_only_refusal(
+    origin: &crate::safety::ReadOnlyOrigin,
+    db: &str,
+    personal: &std::path::Path,
+) -> String {
+    let mut places = Vec::new();
+    if origin.personal {
+        places.push(if origin.personal_own_entry {
+            format!(
+                "set read_only = false in [databases.{db}] in {}",
+                personal.display()
+            )
+        } else {
+            format!(
+                "add [databases.{db}] with read_only = false to {} (pgman --init-config \
+                 writes the file if there is none)",
+                personal.display()
+            )
+        });
+    }
+    if let Some(block) = &origin.project {
+        places.push(format!(
+            "set read_only = false in this project's .pgman/pgman.toml ({block})"
+        ));
+    }
+    if places.is_empty() {
+        places.push(format!("set read_only = false for [databases.{db}]"));
+    }
+    format!(
+        "'{db}' is read-only, so no patch runs. To apply patches: {}. The next apply reads it, \
+         no restart. A [databases.{db}] entry is by database name alone: it makes '{db}' \
+         writable on every server, protected ones included, so put it back when done",
+        places.join("; and ")
+    )
+}
+
 /// The statements of `sql`, checked for applying to `db`, or why not.
 /// `outside` lets a patch through that holds a statement no transaction
 /// can run (`VACUUM`, `CONCURRENTLY`…): the operator chose to run it
@@ -132,8 +173,10 @@ pub fn check_patch(
     outside: bool,
 ) -> Result<Checked, String> {
     if safety.profile_for(db).read_only {
-        return Err(format!(
-            "safety.toml keeps '{db}' read-only; set read_only = false for it to apply patches"
+        return Err(read_only_refusal(
+            &safety.read_only_origin(db),
+            db,
+            &crate::util::config_file("safety.toml"),
         ));
     }
     let statements =
@@ -612,6 +655,44 @@ pub async fn applied_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A read-only refusal names the file and key to change, says no
+    /// restart is needed, and warns that the entry is by name alone.
+    #[test]
+    fn a_read_only_refusal_names_the_fix_and_its_reach() {
+        let path = std::path::Path::new("/cfg/pgman/safety.toml");
+        let by_default = crate::safety::ReadOnlyOrigin {
+            personal: true,
+            personal_own_entry: false,
+            project: None,
+        };
+        let r = read_only_refusal(&by_default, "ledger", path);
+        assert!(
+            r.contains("add [databases.ledger] with read_only = false to /cfg/pgman/safety.toml"),
+            "{r}"
+        );
+        assert!(r.contains("pgman --init-config"), "{r}");
+        assert!(r.contains("no restart"), "{r}");
+        assert!(r.contains("every server, protected ones included"), "{r}");
+        let own = crate::safety::ReadOnlyOrigin {
+            personal_own_entry: true,
+            ..by_default.clone()
+        };
+        let r = read_only_refusal(&own, "ledger", path);
+        assert!(
+            r.contains("set read_only = false in [databases.ledger] in /cfg"),
+            "{r}"
+        );
+        assert!(!r.contains("--init-config"), "{r}");
+        let project = crate::safety::ReadOnlyOrigin {
+            personal: false,
+            personal_own_entry: false,
+            project: Some("[safety.default]".into()),
+        };
+        let r = read_only_refusal(&project, "ledger", path);
+        assert!(r.contains(".pgman/pgman.toml ([safety.default])"), "{r}");
+        assert!(!r.contains("/cfg/pgman/safety.toml"), "{r}");
+    }
     use crate::safety::SafetyConfig;
 
     fn writable() -> SafetyConfig {

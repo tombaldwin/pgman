@@ -12,6 +12,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   a blocked statement) says "refused, nothing applied" and why. MCP's
   `apply_patches` and `pgman apply` said "nothing to apply", which read
   as up to date; the TUI's hint now says the first patch is refused.
+- A patch refused because the database is read-only names the file
+  and entry to change, says the next apply reads it with no restart, and
+  warns that a `[databases.<name>]` entry opens that name on every
+  server, protected ones included.
 
 ## [0.5.1] — 2026-11-09
 
