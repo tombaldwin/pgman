@@ -85,6 +85,13 @@ counted by parent, the restore's grants note, and discovered names
 explained. Released as v0.5.0 on Tom's "go" (2026-11-02): minor, as a
 protected environment's dumps now need `encrypt`.
 
+### The MCP Registry listing (2026-11-09)
+
+On Tom's ask, passed on by agentlink: `server.json` (a cargo package,
+`pgman mcp serve`), the README's visible `mcp-name:` line, and a
+release job publishing to registry.modelcontextprotocol.io after
+crates.io. Released as v0.5.1 on Tom's "go", the job's first real run.
+
 ### Lookup keys, key-value values, card hashes; CI's crash (2026-10-31)
 
 On Tom's "go" after v0.4.3. On main, unreleased: a key into a lookup of
