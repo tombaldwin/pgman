@@ -246,6 +246,7 @@ coverage, fuzzing, and what CI runs on every push.
 - [`docs/run.md`](https://github.com/tombaldwin/pgman/blob/main/docs/run.md) — `pgman run`, scripts with their own transactions and `\c`.
 - [`docs/dump-restore.md`](https://github.com/tombaldwin/pgman/blob/main/docs/dump-restore.md) — `pgman dump` and `pgman restore`.
 - [`docs/mcp.md`](https://github.com/tombaldwin/pgman/blob/main/docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
+- MCP Registry name: `mcp-name: io.github.tombaldwin/pgman`
 - [`docs/safety-and-privacy.md`](https://github.com/tombaldwin/pgman/blob/main/docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
 - [`docs/privacy.md`](https://github.com/tombaldwin/pgman/blob/main/docs/privacy.md) — what pgman does with copies of personal data, for a client's DPO.
 - [`docs/logs-to-sql.md`](https://github.com/tombaldwin/pgman/blob/main/docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.

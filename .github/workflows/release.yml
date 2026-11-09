@@ -264,9 +264,7 @@ jobs:
     # configured the step is skipped (rather than failing), so forks /
     # scratch installations that don't own the crate don't fail loudly.
     #
-    # This is the last job in the workflow (pgman has no MCP registry
-    # publish step — that's an ebman-specific job, not ported here). The
-    # release.published trigger keeps the maintainer in the loop —
+    # The release.published trigger keeps the maintainer in the loop —
     # crates.io can't be unpublished, so the human gate matters.
     name: publish to crates.io
     if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch') && !github.event.repository.fork
@@ -325,3 +323,50 @@ jobs:
           # workflow that built clean from Cargo.lock publishes the same
           # resolved dependency graph.
           cargo publish --locked
+
+  mcp_registry:
+    # The MCP Registry entry (server.json) for the version just put on
+    # crates.io. The registry proves the crate is ours from the
+    # `mcp-name:` line in README.md as crates.io renders it, and refuses
+    # a version crates.io doesn't serve yet, so it waits for that page.
+    # GitHub OIDC proves the io.github.tombaldwin namespace: no secret.
+    name: publish to the MCP Registry
+    needs: crates_io
+    if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch') && !github.event.repository.fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # Pinned, its sha256 from the release's registry_1.8.4_checksums.txt.
+      PUBLISHER: v1.8.4
+      PUBLISHER_SHA256: 5dc2fd415369c73551259f31cd33e2aacc9e0d1021e7f08fef1492d93b781628
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - name: Check server.json is for this release
+        run: |
+          v=$(jq -r .version server.json)
+          p=$(jq -r '.packages[0].version' server.json)
+          [ "$TAG" = "v$v" ] && [ "$TAG" = "v$p" ] || { echo "server.json is for $v/$p, not $TAG"; exit 1; }
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSLo publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/$PUBLISHER/mcp-publisher_linux_amd64.tar.gz"
+          echo "$PUBLISHER_SHA256  publisher.tar.gz" | sha256sum -c -
+          tar xzf publisher.tar.gz mcp-publisher
+      - name: Wait for crates.io to serve this version's README
+        run: |
+          name=$(jq -r .name server.json)
+          url="https://static.crates.io/readmes/pgman/pgman-${TAG#v}.html"
+          for i in $(seq 1 40); do
+            if curl -fsS "$url" 2>/dev/null | grep -qF "mcp-name: $name"; then exit 0; fi
+            sleep 15
+          done
+          echo "$url doesn't show mcp-name: $name after 10 minutes"; exit 1
+      - name: Publish to the MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

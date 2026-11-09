@@ -41,6 +41,13 @@ checklist and `CLAUDE.md` for the AI-assisted-contributor rules.
   `aarch64-apple-darwin`, and `x86_64-apple-darwin`, and attaches tarballs +
   SHA-256 checksums to a draft release. Publishing to crates.io happens once
   the maintainer flips that draft to published.
+- **MCP Registry**: after crates.io, the release workflow publishes
+  `server.json` to registry.modelcontextprotocol.io as
+  `io.github.tombaldwin/pgman` (GitHub OIDC, no secret). The registry
+  checks the `mcp-name:` line in README.md as crates.io shows it, so
+  that line stays visible text. The release commit bumps both versions
+  in `server.json` with `Cargo.toml`; `tests/guards.rs` fails until it
+  does.
 - **Homebrew**: tap lives at
   [`tombaldwin/homebrew-tap`](https://github.com/tombaldwin/homebrew-tap).
   Per-release, the formula there is bumped by `scripts/update-formula.sh`

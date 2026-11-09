@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tombaldwin/pgman",
+  "title": "pgman",
+  "description": "PostgreSQL for coding agents: schema, read-only queries, EXPLAIN, masked dumps, confirmed writes.",
+  "websiteUrl": "https://www.poly.io/products/pgman/",
+  "repository": { "url": "https://github.com/tombaldwin/pgman", "source": "github" },
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "pgman",
+      "version": "0.5.0",
+      "packageArguments": [
+        { "type": "positional", "value": "mcp" },
+        { "type": "positional", "value": "serve" }
+      ],
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

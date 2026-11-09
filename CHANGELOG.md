@@ -6,6 +6,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- pgman's MCP server is listed in the official MCP Registry as
+  `io.github.tombaldwin/pgman`, which MCP directories read from.
+
 ## [0.5.0] — 2026-11-02
 
 ### Added

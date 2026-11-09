@@ -1891,3 +1891,42 @@ fn the_system_clipboard_is_reached_only_through_write_clipboard() {
         "src/app/yank.rs should name arboard once, in write_clipboard: {in_yank:?}"
     );
 }
+
+/// `server.json` (the MCP Registry entry) names the version being
+/// released, for the server and its crates.io package, and README.md —
+/// the crates.io page the registry reads to prove the crate is ours —
+/// carries its name as visible text (crates.io drops HTML comments).
+/// The registry refuses an entry whose version isn't on crates.io, or
+/// whose README lacks the name, so a release that forgot either would
+/// fail in its last job, after the crate is public.
+#[test]
+fn the_mcp_registry_entry_matches_the_crate() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let entry = std::fs::read_to_string(root.join("server.json")).unwrap();
+    let version = env!("CARGO_PKG_VERSION");
+    let field = |key: &str| -> Vec<String> {
+        let needle = format!("\"{key}\": \"");
+        entry
+            .match_indices(&needle)
+            .map(|(i, _)| {
+                let rest = &entry[i + needle.len()..];
+                rest[..rest.find('"').unwrap()].to_string()
+            })
+            .collect()
+    };
+    assert_eq!(
+        field("version"),
+        [version, version],
+        "server.json's two versions"
+    );
+    assert_eq!(field("identifier"), ["pgman"]);
+    let name = &field("name")[0];
+    assert_eq!(name, "io.github.tombaldwin/pgman");
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let token = format!("mcp-name: {name}");
+    let line = readme
+        .lines()
+        .find(|l| l.contains(&token))
+        .unwrap_or_else(|| panic!("README.md has no `{token}`"));
+    assert!(!line.contains("<!--"), "crates.io drops comments: {line}");
+}
