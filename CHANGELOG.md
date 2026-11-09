@@ -18,6 +18,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A patch plan lists every statement a `block` guard stops, with its
   file and line: all of them in the patch it stops at, and those in the
   pending patches after it, so one change to safety.toml covers the run.
+- A patch can allow its own statement past a `block` guard with
+  `-- pgman: allow <guard>` on the line before it. The plan names each
+  one, and confirming takes the environment's name typed, so `--yes`
+  doesn't confirm it. A mistyped or misplaced declaration refuses the
+  patch.
 
 ### Fixed
 

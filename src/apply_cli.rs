@@ -105,6 +105,12 @@ pub fn render_plan(plan: &PatchPlan) -> String {
         if !kinds.is_empty() {
             out.push_str(&format!("; includes {}", kinds.join(", ")));
         }
+        for g in &p.declared {
+            out.push_str(&format!(
+                "\n    ALLOWS ITSELF past a block guard: {}",
+                g.describe()
+            ));
+        }
     }
     if !plan.below_recorded.is_empty() {
         out.push_str(&format!(
@@ -131,12 +137,7 @@ pub fn question(plan: &PatchPlan, mode: RunMode) -> (String, String) {
         RunMode::DryRun => "run them in one transaction and roll it back",
         RunMode::Copy => "apply them to a copy of the database, then drop it",
     };
-    if plan.needs_typed() {
-        let why = if plan.protected {
-            "is protected"
-        } else {
-            "runs a patch outside a transaction"
-        };
+    if let Some(why) = plan.typed_reason() {
         (
             format!(
                 "{how}? {} {why}: type {} to go on: ",
@@ -195,15 +196,10 @@ pub async fn run_cli(opts: &Opts) -> Result<(String, bool), String> {
     if plan.patches.is_empty() {
         return Ok((plan.empty_summary(), plan.stopped_at.is_none()));
     }
-    if plan.needs_typed() && opts.yes {
+    if let Some(why) = plan.typed_reason().filter(|_| opts.yes) {
         return Err(format!(
-            "{} {}: it is confirmed by typing its name, which --yes doesn't answer",
+            "{} {why}: it is confirmed by typing its name, which --yes doesn't answer",
             plan.environment,
-            if plan.protected {
-                "is protected"
-            } else {
-                "runs a patch outside a transaction"
-            }
         ));
     }
     if plan.needs_typed() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
@@ -286,6 +282,7 @@ mod tests {
                 statements: vec!["x".into(), "y".into()],
                 outside,
                 confirms: vec!["TRUNCATE".into()],
+                declared: Vec::new(),
             }],
             stopped_at: Some(("043-x.sql".into(), "uses VACUUM".into())),
             dir: "/patches".into(),
@@ -337,6 +334,24 @@ mod tests {
             !r.contains("043-x.sql: DROP"),
             "the stop's refusal names its own: {r}"
         );
+        // A patch allowing itself past a guard is named, and wants the name.
+        let mut p = plan(false, None);
+        p.patches[0].declared = vec![drop(5)];
+        let r = render_plan(&p);
+        assert!(
+            r.contains(
+                "\n    ALLOWS ITSELF past a block guard: DROP at line 5 (DROP TABLE legacy)"
+            ),
+            "{r}"
+        );
+        let (q, a) = question(&p, RunMode::Apply);
+        assert!(
+            q.contains(
+                "staging runs statements its guards block, which their patches allow: type staging"
+            ),
+            "{q}"
+        );
+        assert_eq!(a, "staging");
     }
 
     #[test]

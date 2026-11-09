@@ -60,6 +60,10 @@ pub struct PlannedPatch {
     /// are (`query::apply::guard_confirms`): the plan's one confirmation
     /// answers them, so the plan names them.
     pub confirms: Vec<String>,
+    /// Its statements a `Block` guard stops that it allows for itself
+    /// (`-- pgman: allow <guard>`): named in the plan, and confirming
+    /// takes the typed environment name.
+    pub declared: Vec<crate::query::apply::Guarded>,
 }
 
 /// What [`apply`] would do, for the operator to confirm.
@@ -145,9 +149,37 @@ impl PatchPlan {
     }
 
     /// Whether confirming takes typing the environment's name: a
-    /// protected one, or any patch running outside a transaction.
+    /// protected one, any patch running outside a transaction, or one
+    /// allowing itself a statement a `Block` guard stops.
     pub fn needs_typed(&self) -> bool {
-        self.protected || self.patches.iter().any(|p| p.outside.is_some())
+        self.typed_reason().is_some()
+    }
+
+    /// Why confirming takes the typed name, worded after the
+    /// environment's: `is protected`. Pure.
+    pub fn typed_reason(&self) -> Option<&'static str> {
+        if self.protected {
+            Some("is protected")
+        } else if self.patches.iter().any(|p| p.outside.is_some()) {
+            Some("runs a patch outside a transaction")
+        } else if self.patches.iter().any(|p| !p.declared.is_empty()) {
+            Some("runs statements its guards block, which their patches allow")
+        } else {
+            None
+        }
+    }
+
+    /// The statements patches allow themselves past a `Block` guard,
+    /// each as `file: DROP at line 3 (DROP TABLE legacy)`. Pure.
+    pub fn declared(&self) -> Vec<String> {
+        self.patches
+            .iter()
+            .flat_map(|p| {
+                p.declared
+                    .iter()
+                    .map(move |g| format!("{}: {}", p.file.file, g.describe()))
+            })
+            .collect()
     }
 
     /// How many planned statements safety.toml's guards would ask about
@@ -640,6 +672,7 @@ pub async fn plan(
                 statements: checked.statements,
                 outside: checked.outside,
                 confirms: checked.confirms,
+                declared: checked.declared,
             }),
             Err(r) => {
                 plan.outside_would_help = !outside
@@ -866,7 +899,10 @@ impl Run<'_> {
             plan.outside_transaction,
         )
         .map_err(|r| r.why)?;
-        if checked.statements != p.statements || checked.outside != p.outside {
+        if checked.statements != p.statements
+            || checked.outside != p.outside
+            || checked.declared != p.declared
+        {
             return Err("the patch's statements differ from the plan".to_string());
         }
         // The confirmation answered the guards' questions the plan named;
@@ -1083,6 +1119,7 @@ mod tests {
                     statements: Vec::new(),
                     outside: None,
                     confirms: Vec::new(),
+                    declared: Vec::new(),
                 })
                 .collect(),
             stopped_at: None,

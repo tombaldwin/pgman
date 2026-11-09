@@ -9457,8 +9457,41 @@ fn pgman_apply_takes_environment_keys_and_lists_every_blocked_statement() {
         "{stderr}"
     );
     assert!(stdout.starts_with("dry run: ran 1 patch(es)"), "{stdout}");
+
+    // 003 allows its own DROP: planned and named, and --yes doesn't
+    // confirm it.
+    std::fs::write(
+        dir.join("003-drop.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (3);\n-- pgman: allow drop\nDROP TABLE {tbl};\n"),
+    )
+    .unwrap();
+    let o = pgman_in(&home, &out, &["apply", "keyenv", "--dry-run", "--yes"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success());
+    assert!(
+        stderr.contains("2 pending patch(es)")
+            && stderr.contains(&format!(
+                "ALLOWS ITSELF past a block guard: DROP at line 3 (DROP TABLE {tbl})"
+            ))
+            && stderr.contains("stops before 004-purge.sql"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "keyenv runs statements its guards block, which their patches allow: it is confirmed \
+             by typing its name, which --yes doesn't answer"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(
+        on("pgman_test", &format!("SELECT id FROM {vt}"))
+            .unwrap()
+            .len(),
+        1,
+        "nothing ran"
+    );
     let _ = on("pgman_test", &format!("DROP TABLE {vt}"));
-    let _ = on("pgman_test", &format!("DROP TABLE {tbl}"));
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {tbl}"));
 }
 
 /// MCP's `dump` and `restore`, through a real server and an operator

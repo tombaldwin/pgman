@@ -1404,6 +1404,7 @@ pub fn patch_plan(
             database,
             &statements.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
         ),
+        declared: Vec::new(),
     };
     let (last, rest) = PATCHES.split_last().expect("demo patches");
     let mut patches: Vec<PlannedPatch> = rest

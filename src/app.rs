@@ -6904,14 +6904,20 @@ fn patch_hint(plan: &Result<crate::inventory::patching::PatchPlan, String>) -> S
         }
         Ok(p) if p.patches.is_empty() => "nothing to apply · q back".into(),
         Ok(p) => {
+            let outside = p.patches.iter().any(|p| p.outside.is_some());
             let first = if p.protected {
                 format!(
                     "{} is protected: type its name, then Enter · Esc cancel",
                     p.environment
                 )
-            } else if p.needs_typed() {
+            } else if outside {
                 format!(
                     "outside a transaction: type {}, then Enter · Esc cancel",
+                    p.environment
+                )
+            } else if p.needs_typed() {
+                format!(
+                    "a patch allows itself past a guard: type {}, then Enter · Esc cancel",
                     p.environment
                 )
             } else {

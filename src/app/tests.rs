@@ -12502,6 +12502,22 @@ fn a_plan_with_nothing_but_a_no_transaction_patch_offers_o() {
 }
 
 #[test]
+fn a_patch_allowing_itself_past_a_guard_takes_the_typed_name() {
+    let mut p = crate::demo::patch_plan("staging", "staging", "shop", false);
+    p.outside_would_help = false;
+    assert_eq!(patch_hint(&Ok(p.clone())), "y apply · q cancel");
+    p.patches[0].declared = vec![crate::query::apply::Guarded {
+        line: 2,
+        kind: "DROP".into(),
+        statement: "DROP TABLE legacy".into(),
+    }];
+    assert_eq!(
+        patch_hint(&Ok(p)),
+        "a patch allows itself past a guard: type staging, then Enter · Esc cancel"
+    );
+}
+
+#[test]
 fn while_a_name_is_typed_o_is_a_letter_and_ctrl_o_plans_outside() {
     let mut a = patching_app(Default::default());
     a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {

@@ -1933,6 +1933,12 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
                 false,
             ));
         }
+        for g in &p.declared {
+            out.push((
+                format!("    ⚠ allows itself past a block guard: {}", g.describe()),
+                true,
+            ));
+        }
         // Every line that will run: a confirmation covers what it saw.
         for s in &p.statements {
             for line in s.lines().filter(|l| !l.trim().is_empty()) {
@@ -3807,6 +3813,21 @@ mod tests {
         assert_eq!(
             ltext[10],
             "  also blocked, in a later patch: 322-purge.sql: DELETE without WHERE at line 3 (DELETE FROM audit)"
+        );
+        let mut declared = plan.clone();
+        declared.patches[0].declared = vec![crate::query::apply::Guarded {
+            line: 2,
+            kind: "DROP".into(),
+            statement: "DROP TABLE legacy".into(),
+        }];
+        let dv = PatchView {
+            stage: PatchStage::Plan(Ok(declared)),
+            ..v.clone()
+        };
+        let dtext: Vec<String> = patch_lines(&dv).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            dtext[4],
+            "    ⚠ allows itself past a block guard: DROP at line 2 (DROP TABLE legacy)"
         );
         // A risky statement the guards would ask about: the one
         // confirmation stands in for that question, so it is said.

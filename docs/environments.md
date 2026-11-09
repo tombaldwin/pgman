@@ -278,10 +278,15 @@ steps:
    that are numbered above the highest version it has, in order, each
    checked against `safety.toml` like a `--batch` script — as a
    project's `.pgman/pgman.toml` `[safety]` block tightens it, when
-   pgman (or the MCP server) runs in that project. The plan stops
+   pgman (or the MCP server) runs in that project, and with the
+   environment's own `[databases."ENV/DATABASE"]` entries
+   ([configuration.md](configuration.md)). The plan stops
    before the first patch that can't run here: the database's profile
-   is read-only (the default — set `read_only = false` for it), a guard
-   blocks a statement, the patch has its own `BEGIN`/`COMMIT` or changes
+   is read-only (the default — set `read_only = false` for it in
+   `[databases."ENV/DATABASE"]`, which reaches no other environment),
+   a guard blocks a statement (every such statement is listed, with
+   its file and line, in that patch and the pending ones after it), the
+   patch has its own `BEGIN`/`COMMIT` or changes
    session settings, or it holds a statement no transaction can run
    (`VACUUM`, `CREATE INDEX CONCURRENTLY`, `CREATE DATABASE`, …; see
    below). A pending file numbered *below* the highest recorded version
@@ -305,6 +310,24 @@ steps:
    before its next statement (or its commit) should it land between
    two: a patch in its transaction rolls back; outside one, what ran
    stays, and the result says how much.
+
+**A patch can allow its own statement past a `block` guard** with a
+line comment before it, naming the statement's guard:
+
+```sql
+-- pgman: allow drop
+DROP TABLE legacy_invoices;
+```
+
+The guard names are safety.toml's: `drop`, `update_without_where`,
+`delete_without_where`, `truncate`, `ddl`, `other`, `insert`, `update`,
+`delete`. It covers that statement alone, and only a guard: not a
+read-only database, a `SET` or the patch's own `BEGIN`. The plan names
+each such statement in red, and confirming it takes the environment's
+name typed, as a protected environment does, so `--yes` doesn't
+confirm it. Anything else after `pgman:`, an unknown guard, a guard
+that isn't the statement's, or the line inside the statement refuses
+the patch rather than being ignored.
 
 **Tab** in the plan picks how it runs, and the plan says which in red
 before you confirm:

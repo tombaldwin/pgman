@@ -884,8 +884,8 @@ async fn tool_environment_logs(args: &Value) -> Result<String, String> {
 }
 
 /// The question `apply_patches` puts to the operator, and the answer's
-/// schema: a typed name for a protected environment, a yes otherwise.
-/// Pure.
+/// schema: a typed name for a protected environment, or a plan with a
+/// patch allowing itself past a block guard; a yes otherwise. Pure.
 pub fn confirm_request(
     plan: &crate::inventory::patching::PatchPlan,
     mode: RunMode,
@@ -923,6 +923,14 @@ pub fn confirm_request(
             " {asked}. This one confirmation answers them all."
         ));
     }
+    let declared = plan.declared();
+    if !declared.is_empty() {
+        message.push_str(&format!(
+            " WARNING: these statements are ones your guards block, and their patches allow \
+             them (`-- pgman: allow`): {}.",
+            declared.join("; ")
+        ));
+    }
     if let Some((file, why)) = &plan.stopped_at {
         message.push_str(&format!(" Not included: {file} ({why})."));
     }
@@ -954,9 +962,9 @@ pub fn confirm_request(
             message.push_str(&format!("\n{s};"));
         }
     }
-    let schema = if plan.protected {
+    let schema = if let Some(why) = plan.typed_reason() {
         message.push_str(&format!(
-            " {} is protected: type its name to confirm.",
+            " {} {why}: type its name to confirm.",
             plan.environment
         ));
         json!({
@@ -995,7 +1003,7 @@ pub fn confirmed(
         None => return Err("the answer has no action".to_string()),
     }
     let content = answer.get("content");
-    if plan.protected {
+    if plan.needs_typed() {
         let typed = content
             .and_then(|c| c.get("environment"))
             .and_then(Value::as_str)

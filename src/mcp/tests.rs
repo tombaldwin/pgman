@@ -343,6 +343,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
             statements: vec!["ALTER TABLE orders\n  DROP COLUMN notes".into()],
             outside: None,
             confirms: vec!["ALTER / DDL".into()],
+            declared: Vec::new(),
         }],
         stopped_at: Some(("253-idx.sql".into(), "CONCURRENTLY".into())),
         dir: "/src/patches".into(),
@@ -481,6 +482,33 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         &json!({"action": "accept", "content": {"apply": false}})
     )
     .is_err());
+    // A patch allowing itself past a block guard: said, and the name typed.
+    plan.patches[0].declared = vec![crate::query::apply::Guarded {
+        line: 3,
+        kind: "DROP".into(),
+        statement: "DROP TABLE legacy".into(),
+    }];
+    let (message, schema) = tools::confirm_request(&plan, RunMode::Apply);
+    assert!(
+        message.contains(
+            "WARNING: these statements are ones your guards block, and their patches allow them \
+             (`-- pgman: allow`): 252-x.sql: DROP at line 3 (DROP TABLE legacy)."
+        ),
+        "{message}"
+    );
+    assert!(
+        message.contains(
+            "production runs statements its guards block, which their patches allow: type its name"
+        ),
+        "{message}"
+    );
+    assert_eq!(schema["required"], json!(["environment"]));
+    assert!(tools::confirmed(
+        &plan,
+        &json!({"action": "accept", "content": {"apply": true}})
+    )
+    .is_err());
+    assert_eq!(tools::confirmed(&plan, &ok), Ok(()));
 }
 
 #[tokio::test]

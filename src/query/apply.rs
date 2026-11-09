@@ -91,6 +91,10 @@ pub struct Checked {
     /// ([`guard_confirms`]): the plan's one confirmation answers them, so
     /// the plan names them.
     pub confirms: Vec<String>,
+    /// The statements a `Block` guard stops that the patch allows for
+    /// itself ([`declared_allows`]), in order: the plan names them, and
+    /// confirming it takes the typed environment name.
+    pub declared: Vec<Guarded>,
 }
 
 /// What each of `statements` that safety.toml's guards would ask about
@@ -239,6 +243,49 @@ impl From<&str> for Refused {
     }
 }
 
+/// What a patch statement allows for itself: the guards named by
+/// `-- pgman: allow <guard>[, <guard>…]` lines among the comments
+/// leading it — a line comment, before the statement's first code.
+/// Anything else after `pgman:`, an unknown guard, or such a line inside
+/// the statement is an error, never ignored: a typo would leave the
+/// guard standing with nothing said. Pure.
+pub fn declared_allows(stmt: &str) -> Result<Vec<&'static str>, String> {
+    use crate::safety::{SpanKind, GUARD_NAMES};
+    let code = crate::safety::code_start(stmt);
+    let mut allows = Vec::new();
+    for span in crate::safety::scan(stmt) {
+        if span.kind != SpanKind::LineComment {
+            continue;
+        }
+        let text = stmt[span.start..span.end].trim_start_matches('-').trim();
+        let Some(rest) = text.strip_prefix("pgman:") else {
+            continue;
+        };
+        if span.start > code {
+            return Err(format!(
+                "`-- {text}` is inside a statement; it goes on a line before the statement it allows"
+            ));
+        }
+        let Some(names) = rest.trim().strip_prefix("allow ") else {
+            return Err(format!(
+                "`-- {text}`: a patch line can only say `-- pgman: allow <guard>`"
+            ));
+        };
+        for name in names.split(',').map(str::trim) {
+            match GUARD_NAMES.iter().find(|g| **g == name) {
+                Some(g) => allows.push(*g),
+                None => {
+                    return Err(format!(
+                        "`-- {text}`: {name:?} isn't a guard; one of {}",
+                        GUARD_NAMES.join(", ")
+                    ))
+                }
+            }
+        }
+    }
+    Ok(allows)
+}
+
 /// The line each of `statements` (split from `sql`, in order) starts its
 /// code on, 1-based ([`crate::safety::code_start`]); 0 for one not
 /// found verbatim. Pure.
@@ -277,7 +324,10 @@ fn first_code_line(stmt: &str) -> String {
 /// without one. What only a statement-by-statement fix answers (its own
 /// `BEGIN`, a `SET`…) is refused at the first; a `Block` guard and a
 /// read-only profile after looking at every statement, so the refusal
-/// names each blocked one. Pure but for safety.toml's path, read from
+/// names each blocked one. A statement whose patch allows its guard
+/// ([`declared_allows`]) passes a `Block`, and is named in
+/// [`Checked::declared`]; a declaration naming another guard than the
+/// statement's is refused. Pure but for safety.toml's path, read from
 /// the environment for a read-only refusal to name it.
 pub fn check_patch(
     safety: &crate::safety::SafetyConfig,
@@ -308,7 +358,10 @@ pub fn check_patch(
     let lines = statement_lines(sql, &statements);
     let mut needs = None;
     let mut blocked = Vec::new();
+    let mut declared = Vec::new();
+    let mut blocking: Vec<&str> = Vec::new();
     for (s, &line) in statements.iter().zip(&lines) {
+        let allows = declared_allows(s).map_err(|e| Refused::from(format!("line {line}: {e}")))?;
         if crate::safety::has_unicode_escape(s) {
             return Err(
                 "the patch uses unicode-escaped names (U&\"…\"), which pgman can't check; apply it by hand"
@@ -339,6 +392,16 @@ pub fn check_patch(
             needs.get_or_insert(what);
         }
         let decision = crate::safety::evaluate(&writable, db, s);
+        let guard = crate::safety::guard_name(decision.kind);
+        if let Some(other) = allows.iter().find(|a| Some(**a) != guard) {
+            return Err(format!(
+                "line {line} allows {other}, but the statement is {} ({}); a declaration \
+                 names the statement's own guard",
+                decision.kind.describe(),
+                guard.unwrap_or("no guard")
+            )
+            .into());
+        }
         if decision.guard == crate::safety::Guard::Block {
             if decision.read_only_escape {
                 return Err(crate::safety::READ_ONLY_ESCAPE_REFUSAL.into());
@@ -346,11 +409,19 @@ pub fn check_patch(
             if decision.server_control {
                 return Err(crate::safety::SERVER_CONTROL_REFUSAL.into());
             }
-            blocked.push(Guarded {
+            let g = Guarded {
                 line,
                 kind: decision.kind.describe(),
                 statement: first_code_line(s),
-            });
+            };
+            if allows.is_empty() {
+                blocked.push(g);
+                if let Some(name) = guard.filter(|n| !blocking.contains(n)) {
+                    blocking.push(name);
+                }
+            } else {
+                declared.push(g);
+            }
         }
     }
     let mut why = Vec::new();
@@ -363,12 +434,19 @@ pub fn check_patch(
     }
     if !blocked.is_empty() {
         why.push(format!(
-            "blocked by safety: {}",
+            "blocked by safety: {}. To run them, set {} to \"confirm\" in safety.toml, or \
+             allow each in its patch on a line before it: `-- pgman: allow {}`",
             blocked
                 .iter()
                 .map(Guarded::describe)
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            blocking
+                .iter()
+                .map(|n| format!("guards.{n}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            blocking[0]
         ));
     }
     if !why.is_empty() {
@@ -381,6 +459,7 @@ pub fn check_patch(
         confirms: guard_confirms(safety, db, &statements),
         statements,
         outside: needs,
+        declared,
     })
 }
 
@@ -1012,7 +1091,9 @@ mod tests {
         assert_eq!(
             r.why,
             "blocked by safety: DROP at line 4 (DROP TABLE legacy), UPDATE without WHERE at \
-             line 6 (UPDATE t)"
+             line 6 (UPDATE t). To run them, set guards.drop, guards.update_without_where to \
+             \"confirm\" in safety.toml, or allow each in its patch on a line before it: \
+             `-- pgman: allow drop`"
         );
         // Read-only too: both said, and the statements still listed.
         let r = check_patch(&SafetyConfig::default(), "ledger", sql, false).unwrap_err();
@@ -1026,6 +1107,93 @@ mod tests {
         // What a statement-by-statement fix answers stops at once.
         let r = check_patch(&writable(), "ledger", "DROP TABLE a; SET x = 1;", false).unwrap_err();
         assert!(r.why.contains("session settings"), "{}", r.why);
+    }
+
+    #[test]
+    fn a_patch_line_allows_a_guard_and_nothing_else() {
+        assert_eq!(declared_allows("SELECT 1"), Ok(vec![]));
+        assert_eq!(
+            declared_allows("-- why\n-- pgman: allow drop\nDROP TABLE legacy"),
+            Ok(vec!["drop"])
+        );
+        assert_eq!(
+            declared_allows("--pgman: allow drop, truncate\nDROP TABLE legacy"),
+            Ok(vec!["drop", "truncate"])
+        );
+        // Not a line comment before the statement: not a declaration.
+        assert_eq!(
+            declared_allows("/* pgman: allow drop */ DROP TABLE legacy"),
+            Ok(vec![])
+        );
+        assert_eq!(declared_allows("SELECT '-- pgman: allow drop'"), Ok(vec![]));
+        for (bad, why) in [
+            (
+                "-- pgman: allow dorp\nDROP TABLE legacy",
+                "\"dorp\" isn't a guard",
+            ),
+            ("-- pgman: permit drop\nDROP TABLE legacy", "can only say"),
+            ("-- pgman: allow\nDROP TABLE legacy", "can only say"),
+            (
+                "DROP TABLE legacy -- pgman: allow drop",
+                "inside a statement",
+            ),
+        ] {
+            let e = declared_allows(bad).unwrap_err();
+            assert!(e.contains(why), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_patch_that_allows_its_own_statement_names_it() {
+        let sql = "INSERT INTO t_schema_version (schema_version_id) VALUES (261);\n\
+                   -- pgman: allow drop\n\
+                   DROP TABLE legacy;\n\
+                   DROP TABLE older;\n";
+        let r = check_patch(&writable(), "ledger", sql, false).unwrap_err();
+        assert_eq!(r.blocked.len(), 1, "the undeclared one is still blocked");
+        assert_eq!(r.blocked[0].line, 4);
+        let sql = sql.replace("DROP TABLE older;\n", "");
+        let c = check_patch(&writable(), "ledger", &sql, false).unwrap();
+        assert_eq!(
+            c.declared,
+            [Guarded {
+                line: 3,
+                kind: "DROP".into(),
+                statement: "DROP TABLE legacy".into()
+            }]
+        );
+        // Where the guard only confirms, nothing is lifted to name.
+        let mut confirming = writable();
+        confirming.default.guards.drop = crate::safety::Guard::Confirm;
+        assert!(check_patch(&confirming, "ledger", &sql, false)
+            .unwrap()
+            .declared
+            .is_empty());
+        // A declaration doesn't lift read-only.
+        let r = check_patch(&SafetyConfig::default(), "ledger", &sql, false).unwrap_err();
+        assert!(r.why.starts_with("'ledger' is read-only"), "{}", r.why);
+        // Nor another statement's guard.
+        let e = check_patch(
+            &writable(),
+            "ledger",
+            "-- pgman: allow drop\nDELETE FROM audit;",
+            false,
+        )
+        .unwrap_err()
+        .why;
+        assert!(
+            e.contains("line 2 allows drop, but the statement is DELETE without WHERE (delete_without_where)"),
+            "{e}"
+        );
+        let e = check_patch(
+            &writable(),
+            "ledger",
+            "-- pgman: allow dorp\nDROP TABLE x;",
+            false,
+        )
+        .unwrap_err()
+        .why;
+        assert!(e.starts_with("line 2: `-- pgman: allow dorp`"), "{e}");
     }
 
     #[test]

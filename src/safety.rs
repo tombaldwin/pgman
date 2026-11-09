@@ -1494,6 +1494,37 @@ mod read_only_floor_tests {
     }
 }
 
+/// The `[*.guards]` key that decides `kind`: `drop`,
+/// `update_without_where`… `None` for a `SELECT`, which no guard
+/// decides. Pure.
+pub fn guard_name(kind: StatementKind) -> Option<&'static str> {
+    Some(match kind {
+        StatementKind::Select => return None,
+        StatementKind::Insert => "insert",
+        StatementKind::Update { has_where: true } => "update",
+        StatementKind::Update { has_where: false } => "update_without_where",
+        StatementKind::Delete { has_where: true } => "delete",
+        StatementKind::Delete { has_where: false } => "delete_without_where",
+        StatementKind::Truncate => "truncate",
+        StatementKind::Drop => "drop",
+        StatementKind::AlterDdl => "ddl",
+        StatementKind::Other => "other",
+    })
+}
+
+/// Every `[*.guards]` key, as [`guard_name`] gives them.
+pub const GUARD_NAMES: [&str; 9] = [
+    "insert",
+    "update",
+    "update_without_where",
+    "delete",
+    "delete_without_where",
+    "truncate",
+    "drop",
+    "ddl",
+    "other",
+];
+
 /// The guard for `kind` under `profile`.
 pub fn guard_for(profile: &SafetyProfile, kind: StatementKind) -> Guard {
     let g = &profile.guards;
