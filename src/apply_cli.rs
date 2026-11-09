@@ -190,7 +190,7 @@ pub async fn run_cli(opts: &Opts) -> Result<(String, bool), String> {
     .await?;
     eprintln!("{}", render_plan(&plan));
     if plan.patches.is_empty() {
-        return Ok(("nothing to apply".to_string(), plan.stopped_at.is_none()));
+        return Ok((plan.empty_summary(), plan.stopped_at.is_none()));
     }
     if plan.needs_typed() && opts.yes {
         return Err(format!(

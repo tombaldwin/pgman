@@ -267,7 +267,7 @@ impl Server {
         )
         .await?;
         if plan.patches.is_empty() {
-            return Ok(render_apply(&plan, None, "nothing to apply"));
+            return Ok(render_apply(&plan, None, &plan.empty_summary()));
         }
         let (message, schema) = confirm_request(&plan, mode);
         let answer = self.elicit(&message, schema).await?;

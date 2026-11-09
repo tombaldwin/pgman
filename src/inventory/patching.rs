@@ -113,6 +113,16 @@ impl PlannedPatch {
 }
 
 impl PatchPlan {
+    /// The summary of a plan with no patches in it: nothing pending, or
+    /// the first pending patch refused — which "nothing to apply" read
+    /// as up to date. Pure.
+    pub fn empty_summary(&self) -> String {
+        match &self.stopped_at {
+            Some((file, why)) => format!("refused, nothing applied: {file} can't run here: {why}"),
+            None => "nothing to apply".to_string(),
+        }
+    }
+
     /// The patch's id, as the version table records it.
     fn id(p: &PatchFile) -> Option<i64> {
         p.version_id.or(p.filename_number)

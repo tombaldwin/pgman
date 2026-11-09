@@ -12442,6 +12442,13 @@ fn a_plan_with_nothing_but_a_no_transaction_patch_offers_o() {
         "nothing to apply in a transaction · o plan outside one · q back"
     );
     p.outside_would_help = false;
+    assert!(p.stopped_at.is_some(), "fixture: the demo plan stops at a patch");
+    assert_eq!(
+        patch_hint(&Ok(p.clone())),
+        "the first pending patch is refused (see why) · q back",
+        "a refusal isn't \"nothing to apply\""
+    );
+    p.stopped_at = None;
     assert_eq!(patch_hint(&Ok(p)), "nothing to apply · q back");
 }
 

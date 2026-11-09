@@ -277,6 +277,38 @@ async fn an_elicitation_goes_out_and_its_answer_comes_back() {
     serving.await.unwrap();
 }
 
+/// A plan emptied by its first pending patch's refusal says so: it
+/// read "nothing to apply", as if the database were up to date.
+#[test]
+fn a_plan_refused_at_its_first_patch_is_not_nothing_to_apply() {
+    use crate::inventory::patching::PatchPlan;
+    let mut plan = PatchPlan {
+        environment: "demo".into(),
+        server: "demo".into(),
+        database: "ledger".into(),
+        protected: false,
+        applied_max: Some(251),
+        patches: Vec::new(),
+        stopped_at: Some((
+            "252-backfill.sql".into(),
+            "blocked by safety: UPDATE without WHERE".into(),
+        )),
+        dir: "/src/patches".into(),
+        recorded: (1..=251).collect(),
+        below_recorded: Vec::new(),
+        outside_transaction: false,
+        outside_would_help: false,
+    };
+    let s = plan.empty_summary();
+    assert!(
+        s.starts_with("refused, nothing applied: 252-backfill.sql"),
+        "{s}"
+    );
+    assert!(s.contains("UPDATE without WHERE"), "{s}");
+    plan.stopped_at = None;
+    assert_eq!(plan.empty_summary(), "nothing to apply");
+}
+
 #[test]
 fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
     use crate::inventory::patching::PatchPlan;

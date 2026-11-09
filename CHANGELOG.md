@@ -6,6 +6,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Applying patches when the first pending one is refused (read-only, or
+  a blocked statement) says "refused, nothing applied" and why. MCP's
+  `apply_patches` and `pgman apply` said "nothing to apply", which read
+  as up to date; the TUI's hint now says the first patch is refused.
+
 ## [0.5.1] — 2026-11-09
 
 ### Added

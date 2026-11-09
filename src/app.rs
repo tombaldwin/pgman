@@ -6877,6 +6877,9 @@ fn patch_hint(plan: &Result<crate::inventory::patching::PatchPlan, String>) -> S
         Ok(p) if p.patches.is_empty() && p.outside_would_help => {
             "nothing to apply in a transaction · o plan outside one · q back".into()
         }
+        Ok(p) if p.patches.is_empty() && p.stopped_at.is_some() => {
+            "the first pending patch is refused (see why) · q back".into()
+        }
         Ok(p) if p.patches.is_empty() => "nothing to apply · q back".into(),
         Ok(p) => {
             let first = if p.protected {
