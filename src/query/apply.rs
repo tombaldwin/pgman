@@ -165,7 +165,8 @@ pub fn read_only_refusal(
 /// The statements of `sql`, checked for applying to `db`, or why not.
 /// `outside` lets a patch through that holds a statement no transaction
 /// can run (`VACUUM`, `CONCURRENTLY`…): the operator chose to run it
-/// without one. Pure (reads only `safety`).
+/// without one. Pure but for safety.toml's path, read from the
+/// environment for a read-only refusal to name it.
 pub fn check_patch(
     safety: &crate::safety::SafetyConfig,
     db: &str,
