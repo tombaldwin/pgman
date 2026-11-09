@@ -121,29 +121,41 @@ pub fn guard_confirms(
         .collect()
 }
 
-/// Why `db`'s patches can't run, read-only as `origin` records: where
-/// the setting is, the exact key, that the next apply reads it (no
-/// restart), and that a `[databases.<db>]` entry is by name alone, so
-/// it opens that name on every server, protected ones too. `personal`
-/// is safety.toml's path. Pure.
+/// Why `db`'s patches can't run, read-only as `safety` keeps it: where
+/// the setting is, the exact key — the narrowest
+/// ([`SafetyConfig::narrowest_key`]) — that `pgman apply` and MCP read
+/// it at the next apply, and how far the key reaches: a bare
+/// `[databases.<db>]` opens that name on every server, protected ones
+/// too. `personal` is safety.toml's path. Pure.
+///
+/// [`SafetyConfig::narrowest_key`]: crate::safety::SafetyConfig::narrowest_key
 pub fn read_only_refusal(
-    origin: &crate::safety::ReadOnlyOrigin,
+    safety: &crate::safety::SafetyConfig,
     db: &str,
     personal: &std::path::Path,
 ) -> String {
+    use crate::safety::databases_table;
+    let origin = safety.read_only_origin(db);
+    let own = safety.entry_key(db);
+    let key = safety.narrowest_key(db);
+    let table = databases_table(&key);
     let mut places = Vec::new();
     if origin.personal {
-        places.push(if origin.personal_own_entry {
-            format!(
-                "set read_only = false in [databases.{db}] in {}",
-                personal.display()
-            )
+        places.push(if own.as_deref() == Some(key.as_str()) {
+            format!("set read_only = false in {table} in {}", personal.display())
         } else {
-            format!(
-                "add [databases.{db}] with read_only = false to {} (pgman --init-config \
-                 writes the file if there is none)",
+            let mut add = format!(
+                "add {table} with read_only = false to {} (pgman --init-config writes the \
+                 file if there is none)",
                 personal.display()
-            )
+            );
+            if let Some(own) = own {
+                add.push_str(&format!(
+                    "; it replaces {} there, so copy across what else that sets",
+                    databases_table(&own)
+                ));
+            }
+            add
         });
     }
     if let Some(block) = &origin.project {
@@ -152,14 +164,30 @@ pub fn read_only_refusal(
         ));
     }
     if places.is_empty() {
-        places.push(format!("set read_only = false for [databases.{db}]"));
+        places.push(format!("set read_only = false for {table}"));
     }
-    format!(
-        "'{db}' is read-only, so no patch runs. To apply patches: {}. The next apply reads it, \
-         no restart. A [databases.{db}] entry is by database name alone: it makes '{db}' \
-         writable on every server, protected ones included, so put it back when done",
+    let reach = match key.split('/').collect::<Vec<_>>()[..] {
+        [env, _] => format!(
+            "{table} opens '{db}' in {env} alone ([databases.\"{env}/SERVER/{db}\"] narrows it \
+             to one server)"
+        ),
+        [env, server, _] => format!("{table} opens '{db}' on {env}'s {server} alone"),
+        _ => format!(
+            "{table} is by database name alone: it makes '{db}' writable on every server, \
+             protected ones included, so put it back when done"
+        ),
+    };
+    let mut why = format!(
+        "'{db}' is read-only, so no patch runs. To apply patches: {}. pgman apply and MCP read \
+         it at the next apply; the TUI when it starts",
         places.join("; and ")
-    )
+    );
+    // Only where the personal key is the fix: the project's block is
+    // the project's.
+    if origin.personal || origin.project.is_none() {
+        why.push_str(&format!(". {reach}"));
+    }
+    why
 }
 
 /// The statements of `sql`, checked for applying to `db`, or why not.
@@ -174,11 +202,7 @@ pub fn check_patch(
     outside: bool,
 ) -> Result<Checked, String> {
     if safety.profile_for(db).read_only {
-        let mut why = read_only_refusal(
-            &safety.read_only_origin(db),
-            db,
-            &crate::util::config_file("safety.toml"),
-        );
+        let mut why = read_only_refusal(safety, db, &crate::util::config_file("safety.toml"));
         if let Some(w) = safety.unmatchable_warning() {
             why.push_str(&format!(". {w}"));
         }
@@ -666,37 +690,62 @@ mod tests {
     #[test]
     fn a_read_only_refusal_names_the_fix_and_its_reach() {
         let path = std::path::Path::new("/cfg/pgman/safety.toml");
-        let by_default = crate::safety::ReadOnlyOrigin {
-            personal: true,
-            personal_own_entry: false,
-            project: None,
-        };
+        let by_default = SafetyConfig::default();
         let r = read_only_refusal(&by_default, "ledger", path);
         assert!(
             r.contains("add [databases.ledger] with read_only = false to /cfg/pgman/safety.toml"),
             "{r}"
         );
         assert!(r.contains("pgman --init-config"), "{r}");
-        assert!(r.contains("no restart"), "{r}");
+        assert!(r.contains("at the next apply"), "{r}");
         assert!(r.contains("every server, protected ones included"), "{r}");
-        let own = crate::safety::ReadOnlyOrigin {
-            personal_own_entry: true,
-            ..by_default.clone()
-        };
+        let mut own = SafetyConfig::default();
+        own.databases
+            .insert("ledger".into(), crate::safety::SafetyProfile::default());
         let r = read_only_refusal(&own, "ledger", path);
         assert!(
             r.contains("set read_only = false in [databases.ledger] in /cfg"),
             "{r}"
         );
         assert!(!r.contains("--init-config"), "{r}");
-        let project = crate::safety::ReadOnlyOrigin {
-            personal: false,
-            personal_own_entry: false,
-            project: Some("[safety.default]".into()),
-        };
+        // Placed in an environment, the fix is the environment's key,
+        // which reaches no further.
+        let r = read_only_refusal(&by_default.scoped("demo", Some("demo-db")), "ledger", path);
+        assert!(
+            r.contains("add [databases.\"demo/ledger\"] with read_only = false to /cfg"),
+            "{r}"
+        );
+        assert!(r.contains("opens 'ledger' in demo alone"), "{r}");
+        assert!(!r.contains("every server"), "{r}");
+        let r = read_only_refusal(&own.scoped("demo", None), "ledger", path);
+        assert!(
+            r.contains("it replaces [databases.ledger] there, so copy across"),
+            "{r}"
+        );
+        let mut qualified = own.clone();
+        qualified.databases.insert(
+            "demo/demo-db/ledger".into(),
+            crate::safety::SafetyProfile::default(),
+        );
+        let r = read_only_refusal(&qualified.scoped("demo", Some("demo-db")), "ledger", path);
+        assert!(
+            r.contains("set read_only = false in [databases.\"demo/demo-db/ledger\"] in /cfg"),
+            "{r}"
+        );
+        assert!(r.contains("on demo's demo-db alone"), "{r}");
+        let mut project = SafetyConfig::default();
+        project.default.read_only = false;
+        let project = crate::project::merge_safety(
+            project,
+            Some(&crate::project::ProjectSafety {
+                default: Some(crate::safety::SafetyProfile::default()),
+                databases: Default::default(),
+            }),
+        );
         let r = read_only_refusal(&project, "ledger", path);
         assert!(r.contains(".pgman/pgman.toml ([safety.default])"), "{r}");
         assert!(!r.contains("/cfg/pgman/safety.toml"), "{r}");
+        assert!(!r.contains("every server"), "{r}");
     }
     use crate::safety::SafetyConfig;
 

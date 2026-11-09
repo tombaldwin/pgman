@@ -92,14 +92,20 @@ pub fn readonly_off_refusal(
     safety_toml_exists: bool,
 ) -> String {
     let origin = cfg.read_only_origin(db);
+    // The narrowest key: in an environment, its `ENV/DATABASE` one.
+    let own = cfg.entry_key(db).map(|k| safety::databases_table(&k));
+    let key = safety::databases_table(&cfg.narrowest_key(db));
     let personal = || {
-        match (safety_toml_exists, origin.personal_own_entry) {
+        match (safety_toml_exists, &own) {
         (false, _) => crate::conn::READ_ONLY_DEFAULT_HINT.to_string(),
-        (true, true) => format!(
-            "{db} is read-only in safety.toml ([databases.{db}]) · set read_only = false there and restart pgman to write"
+        (true, Some(own)) if *own == key => format!(
+            "{db} is read-only in safety.toml ({own}) · set read_only = false there and restart pgman to write"
         ),
-        (true, false) => format!(
-            "read-only is safety.toml's [default] · add [databases.{db}] with read_only = false and restart pgman to write"
+        (true, Some(own)) => format!(
+            "{db} is read-only in safety.toml ({own}) · add {key} with read_only = false for this environment alone and restart pgman to write"
+        ),
+        (true, None) => format!(
+            "read-only is safety.toml's [default] · add {key} with read_only = false and restart pgman to write"
         ),
     }
     };
@@ -111,10 +117,10 @@ pub fn readonly_off_refusal(
             "{db} is read-only in this project's .pgman/pgman.toml ({block}) · set read_only = false there and restart pgman to write"
         );
     }
-    let mine = match (safety_toml_exists, origin.personal_own_entry) {
+    let mine = match (safety_toml_exists, &own) {
         (false, _) => "by default (no safety.toml)".to_string(),
-        (true, true) => format!("in safety.toml ([databases.{db}])"),
-        (true, false) => "in safety.toml's [default]".to_string(),
+        (true, Some(own)) => format!("in safety.toml ({own})"),
+        (true, None) => "in safety.toml's [default]".to_string(),
     };
     format!(
         "{db} is read-only {mine} and in this project's .pgman/pgman.toml ({block}) · both need read_only = false, then restart pgman"
@@ -5176,6 +5182,10 @@ impl App {
             }
         };
         let read_only = target.role == crate::mcp::connections::Role::Replica;
+        let scope = crate::safety::Scope {
+            environment: env.name.clone(),
+            server: Some(target.server.clone()),
+        };
         let mut origin = format!(
             "environment {what} ({}{})",
             target.role.label(),
@@ -5190,7 +5200,7 @@ impl App {
             if let Some(var) = &spec.password_env {
                 origin.push_str(&format!(" · password from ${var}"));
             }
-            self.connect_from_environments(dsn, origin, read_only);
+            self.connect_from_environments(dsn, origin, read_only, scope);
             return;
         };
         origin.push_str(&format!(" · creds from {}", secret.provenance()));
@@ -5201,6 +5211,7 @@ impl App {
             dsn: spec.dsn,
             origin,
             read_only,
+            scope,
         });
         if self.spawn_secret_fetch(token, secret.clone()) {
             self.last_status = Some(format!("{what}: reading secret {}…", secret.id));
@@ -5216,10 +5227,16 @@ impl App {
     /// overview text (`environments · 2 · 3 databases`, or the secret
     /// being read) goes with it: it would sit under the start card,
     /// describing a screen that's gone.
-    fn connect_from_environments(&mut self, dsn: Dsn, origin: String, read_only: bool) {
+    fn connect_from_environments(
+        &mut self,
+        dsn: Dsn,
+        origin: String,
+        read_only: bool,
+        scope: crate::safety::Scope,
+    ) {
         self.environments.opened_from = None;
         self.last_status = None;
-        self.connect_to_target(dsn, origin, read_only);
+        self.connect_to_target(dsn, origin, read_only, Some(scope));
     }
 
     /// `l` in the overview: recent errors from the focused server's RDS
@@ -5801,7 +5818,12 @@ impl App {
             Ok(creds) => {
                 let mut dsn = pending.dsn;
                 crate::creds::aws_secrets::apply(&mut dsn, creds);
-                self.connect_from_environments(dsn, pending.origin, pending.read_only);
+                self.connect_from_environments(
+                    dsn,
+                    pending.origin,
+                    pending.read_only,
+                    pending.scope,
+                );
             }
             Err(e) => {
                 self.last_status = None;

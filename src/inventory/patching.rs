@@ -981,6 +981,8 @@ pub async fn plan_for(
     outside: bool,
     safety: crate::safety::SafetyConfig,
 ) -> Result<PatchPlan, String> {
+    // Its `ENV/DATABASE` and `ENV/SERVER/DATABASE` entries apply here.
+    let safety = safety.scoped(&environment, Some(&server));
     let (env, target) =
         tokio::task::spawn_blocking(move || resolve(&environment, &server, &database))
             .await
@@ -996,6 +998,7 @@ pub async fn apply_for(
     cancel: CancelSlot,
     safety: crate::safety::SafetyConfig,
 ) -> ApplyReport {
+    let safety = safety.scoped(&p.environment, Some(&p.server));
     let (e, s, d) = (p.environment.clone(), p.server.clone(), p.database.clone());
     let resolved = tokio::task::spawn_blocking(move || resolve(&e, &s, &d))
         .await

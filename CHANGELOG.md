@@ -6,19 +6,30 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- safety.toml entries can be keyed `[databases."ENV/DATABASE"]` or
+  `[databases."ENV/SERVER/DATABASE"]`, with environments.toml's names,
+  so a demo database can be made writable without opening production's
+  database of the same name. A qualified entry applies when patching, in
+  `pgman run`, and in a TUI session opened from the environments
+  overview, where it wins over the bare name. A project's `[safety]`
+  block tightens qualified entries too.
+
 ### Fixed
 
 - Applying patches when the first pending one is refused (read-only, or
   a blocked statement) says "refused, nothing applied" and why. MCP's
   `apply_patches` and `pgman apply` said "nothing to apply", which read
   as up to date; the TUI's hint now says the first patch is refused.
-- A patch refused because the database is read-only names the file
-  and entry to change, says the next apply reads it with no restart, and
-  warns that a `[databases.<name>]` entry opens that name on every
-  server, protected ones included.
-- A safety.toml entry written like a target, `[databases."demo/ledger"]`,
-  was accepted and ignored. It is now reported in the patch refusal,
-  MCP's `doctor` and pgman's log: entries are keyed by database name.
+- A patch refused because the database is read-only names the file and
+  the narrowest entry to change: the environment's own. It also says
+  which tools read the change at the next apply, and warns that a bare
+  `[databases.<name>]` entry opens that name on every server, protected
+  ones included. `:readonly off` and `pgman run` name the same entry.
+- A safety.toml key that can never match (`[databases."a/b/c/d"]`, or
+  one with an empty part) is reported in the patch refusal, MCP's
+  `doctor` and pgman's log rather than ignored.
 
 ## [0.5.1] — 2026-11-09
 

@@ -9736,6 +9736,16 @@ fn readonly_off_refusal_names_the_entry_to_change() {
         readonly_off_refusal(&cfg, "ledger", false),
         crate::conn::READ_ONLY_DEFAULT_HINT
     );
+    // Opened from an environment: the environment's key.
+    let demo = cfg.scoped("demo", Some("demo-b"));
+    assert_eq!(
+        readonly_off_refusal(&demo, "ledger", true),
+        "ledger is read-only in safety.toml ([databases.ledger]) · add [databases.\"demo/ledger\"] with read_only = false for this environment alone and restart pgman to write"
+    );
+    assert_eq!(
+        readonly_off_refusal(&demo, "ledgerlog", true),
+        "read-only is safety.toml's [default] · add [databases.\"demo/ledgerlog\"] with read_only = false and restart pgman to write"
+    );
 }
 
 /// A database read-only by the project's `.pgman/pgman.toml` is
@@ -11182,6 +11192,42 @@ async fn enter_on_a_replica_connects_read_only_whatever_the_profile_says() {
     // Closing nothing: the overview is gone, and q no longer returns to
     // the picker it was opened from.
     assert_eq!(a.environments.opened_from, None);
+}
+
+#[tokio::test]
+async fn an_environment_connect_places_the_session_for_its_safety_keys() {
+    let mut a = writable_app();
+    let timeout = |ms| crate::safety::SafetyProfile {
+        statement_timeout_ms: ms,
+        ..Default::default()
+    };
+    a.safety_config
+        .databases
+        .insert("demo/demo-replica/ledger".into(), timeout(1234));
+    a.safety_config
+        .databases
+        .insert("demo/other".into(), timeout(4321));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Normal, "{:?}", a.last_error);
+    assert_eq!(
+        a.safety_config.scope,
+        Some(crate::safety::Scope {
+            environment: "demo".into(),
+            server: Some("demo-replica".into()),
+        })
+    );
+    assert_eq!(
+        a.statement_timeout_ms, 1234,
+        "demo/demo-replica/ledger applies"
+    );
+    // \c stays on the server, so in the environment.
+    a.dispatch_command("connect other");
+    assert_eq!(a.statement_timeout_ms, 4321, "demo/other applies");
+    // Anywhere else: bare names only.
+    let dsn = crate::conn::Dsn::parse("postgres://127.0.0.1:1/ledger").unwrap();
+    a.connect_to_target(dsn, "typed".into(), false, None);
+    assert_eq!(a.safety_config.scope, None);
+    assert_eq!(a.statement_timeout_ms, 30_000);
 }
 
 #[tokio::test]

@@ -266,7 +266,7 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
     let base = tokio::task::spawn_blocking(move || target::resolve(&t, Want::Primary))
         .await
         .map_err(|e| format!("resolve task failed: {e}"))??;
-    let safety = crate::project::merge_safety(
+    let mut safety = crate::project::merge_safety(
         crate::safety::SafetyConfig::load_personal().0,
         std::env::current_dir()
             .ok()
@@ -274,6 +274,10 @@ pub async fn run_cli(opts: &Opts) -> Result<String, String> {
             .and_then(|(_, cfg)| cfg.safety)
             .as_ref(),
     );
+    // An environment's database: its `ENV/…` entries apply.
+    if let Some(env) = &base.environment {
+        safety = safety.scoped(env, Some(&base.server));
+    }
     let plan = script::plan(&safety, &base.database, &segments)?;
     let mut targets = Vec::new();
     for seg in &plan.segments {

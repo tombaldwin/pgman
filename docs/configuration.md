@@ -92,14 +92,33 @@ drop = "block"
 ddl = "confirm"
 other = "confirm"
 
-# Per-database override — only list what differs from [default].
+# Per-database override. A field left out takes the built-in default,
+# not [default]'s.
 [databases.production]
 read_only = true
 statement_timeout_ms = 5000
 
 [databases.production.guards]
 truncate = "block"
+
+# Only in one environment of environments.toml, or on one of its servers.
+[databases."demo/ledger"]
+read_only = false
 ```
+
+A `[databases.*]` key is `DATABASE`, `ENV/DATABASE` or
+`ENV/SERVER/DATABASE`, the target syntax `pgman apply` takes. A bare
+name applies to that database on every server. A qualified key applies
+only where pgman knows the session is in that environment: patching
+(`pgman apply`, the overview's `P`, MCP's `apply_patches`), `pgman run`
+on an environment's database, and a TUI session opened from the
+environments overview (`\c` keeps it). There it wins over the bare
+name: `ENV/SERVER/DATABASE` first, then `ENV/DATABASE`, then
+`DATABASE`. A connection by URL or from connections.toml uses bare
+names only. An entry replaces the less specific one whole, and a field
+it leaves out takes the built-in default (above), not `[default]`'s, so
+copy across what the bare entry sets. A key with more parts, or an
+empty one, matches nothing, and pgman says so.
 
 `SELECT` is always allowed and never routed through the guard table.
 Default guards:
@@ -159,6 +178,10 @@ applies the same merge. When this file is what keeps a database
 read-only, `:readonly off`, `u` and a refused write name it and its
 block (`.pgman/pgman.toml ([safety.databases.ledger])`), not a
 `safety.toml` section — and both files when both say so.
+A `[safety.databases.ledger]` block tightens your `ENV/ledger` and
+`ENV/SERVER/ledger` entries too, and a project key can be qualified the
+same way; one the personal file doesn't have starts from the entry that
+applies there, never from `[default]`.
 
 `[patches]` is read only by the MCP server's `pending_patches` tool
 ([MCP server](mcp.md)). A patch's id is the value its own version-row

@@ -1497,6 +1497,8 @@ pub struct PendingEnvConnect {
     pub origin: String,
     /// A replica: the session opens read-only whatever safety.toml says.
     pub read_only: bool,
+    /// Where it is, for safety.toml's `ENV/…` entries.
+    pub scope: crate::safety::Scope,
 }
 
 /// Reads a secret for an environment connect. Injected like

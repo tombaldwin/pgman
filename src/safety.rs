@@ -149,12 +149,20 @@ impl Default for SafetyProfile {
 }
 
 /// Top-level safety config: a default profile plus per-database overrides,
-/// keyed by database name.
+/// keyed by `DATABASE`, `ENV/DATABASE` or `ENV/SERVER/DATABASE` — the
+/// target syntax `pgman apply` takes. A bare name applies on every
+/// server; a qualified key only where the session is placed in that
+/// environment ([`SafetyConfig::scoped`]), and wins over the bare one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SafetyConfig {
     pub default: SafetyProfile,
     pub databases: HashMap<String, SafetyProfile>,
+    /// The environment (and server) the session is on, when pgman knows
+    /// it: qualified keys are matched against it. Never read from or
+    /// written to a file.
+    #[serde(skip)]
+    pub scope: Option<Scope>,
     /// Where `read_only` came from once a project's `[safety]` block
     /// was merged in (`project::merge_safety`): per database the merge
     /// touched, and for `[default]` when the project set one. Empty
@@ -163,6 +171,13 @@ pub struct SafetyConfig {
     pub read_only_origins: HashMap<String, ReadOnlyOrigin>,
     #[serde(skip)]
     pub default_read_only_origin: Option<ReadOnlyOrigin>,
+}
+
+/// Where a session is, for matching qualified `[databases.*]` keys.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Scope {
+    pub environment: String,
+    pub server: Option<String>,
 }
 
 /// Which file made a database read-only, so a refusal names the file
@@ -181,21 +196,59 @@ pub struct ReadOnlyOrigin {
 }
 
 impl SafetyConfig {
-    /// The profile for `db`, falling back to `default` when the database has no
-    /// explicit entry.
-    pub fn profile_for(&self, db: &str) -> &SafetyProfile {
-        self.databases.get(db).unwrap_or(&self.default)
+    /// This config placed in `environment` (on `server`, when known), so
+    /// `ENV/DATABASE` and `ENV/SERVER/DATABASE` keys for it apply.
+    /// Replaces any earlier scope. Pure.
+    pub fn scoped(&self, environment: &str, server: Option<&str>) -> SafetyConfig {
+        SafetyConfig {
+            scope: Some(Scope {
+                environment: environment.to_string(),
+                server: server.map(str::to_string),
+            }),
+            ..self.clone()
+        }
     }
 
-    /// `[databases.*]` keys that can never match: entries are looked up
-    /// by database name alone, so `"demo/ledger"` (written like a
-    /// target) is accepted and ignored. Sorted. Pure.
+    /// This config placed nowhere: bare keys only. Pure.
+    pub fn unscoped(&self) -> SafetyConfig {
+        SafetyConfig {
+            scope: None,
+            ..self.clone()
+        }
+    }
+
+    /// The `[databases.*]` key that holds `db`'s entry here, most
+    /// specific first: `ENV/SERVER/DATABASE`, `ENV/DATABASE`, then the
+    /// bare name. `None` when the database has no entry and `[default]`
+    /// applies. Pure.
+    pub fn entry_key(&self, db: &str) -> Option<String> {
+        let mut keys = Vec::new();
+        if let Some(scope) = &self.scope {
+            if let Some(server) = &scope.server {
+                keys.push(format!("{}/{server}/{db}", scope.environment));
+            }
+            keys.push(format!("{}/{db}", scope.environment));
+        }
+        keys.push(db.to_string());
+        keys.into_iter().find(|k| self.databases.contains_key(k))
+    }
+
+    /// The profile for `db`, falling back to `default` when the database has no
+    /// entry ([`SafetyConfig::entry_key`]).
+    pub fn profile_for(&self, db: &str) -> &SafetyProfile {
+        self.entry_key(db)
+            .and_then(|k| self.databases.get(&k))
+            .unwrap_or(&self.default)
+    }
+
+    /// `[databases.*]` keys that can never match: more than
+    /// `ENV/SERVER/DATABASE`, or an empty part (`"demo/"`). Sorted. Pure.
     pub fn unmatchable_keys(&self) -> Vec<&str> {
         let mut keys: Vec<&str> = self
             .databases
             .keys()
             .map(String::as_str)
-            .filter(|k| k.contains('/'))
+            .filter(|k| parse_key(k).is_none())
             .collect();
         keys.sort_unstable();
         keys
@@ -206,8 +259,8 @@ impl SafetyConfig {
         let keys = self.unmatchable_keys();
         (!keys.is_empty()).then(|| {
             format!(
-                "safety.toml: {} match nothing — [databases.*] is keyed by database name \
-                 alone (e.g. [databases.ledger]), which applies to that name on every server",
+                "safety.toml: {} match nothing — a [databases.*] key is DATABASE, \
+                 ENV/DATABASE or ENV/SERVER/DATABASE (e.g. [databases.\"demo/ledger\"])",
                 keys.iter()
                     .map(|k| format!("[databases.\"{k}\"]"))
                     .collect::<Vec<_>>()
@@ -220,17 +273,38 @@ impl SafetyConfig {
     /// everything is the personal side's: its own entry when it has
     /// one, else `[default]`. Pure.
     pub fn read_only_origin(&self, db: &str) -> ReadOnlyOrigin {
-        if let Some(origin) = self.read_only_origins.get(db) {
+        match self.entry_key(db) {
+            Some(key) => self.read_only_origin_of_key(&key),
+            None => self
+                .read_only_origins
+                .get(db)
+                .cloned()
+                .unwrap_or_else(|| self.read_only_origin_of_default()),
+        }
+    }
+
+    /// The key that makes `db` writable here with the least reach: its
+    /// own qualified entry when it has one; else `ENV/DATABASE` when the
+    /// session is placed in an environment; else the bare name. Pure.
+    pub fn narrowest_key(&self, db: &str) -> String {
+        match (self.entry_key(db), &self.scope) {
+            (Some(own), _) if own.contains('/') => own,
+            (_, Some(scope)) => format!("{}/{db}", scope.environment),
+            _ => db.to_string(),
+        }
+    }
+
+    /// [`SafetyConfig::read_only_origin`] for the entry `key`, which
+    /// exists. Pure.
+    pub fn read_only_origin_of_key(&self, key: &str) -> ReadOnlyOrigin {
+        if let Some(origin) = self.read_only_origins.get(key) {
             return origin.clone();
         }
-        if let Some(own) = self.databases.get(db) {
-            return ReadOnlyOrigin {
-                personal: own.read_only,
-                personal_own_entry: true,
-                project: None,
-            };
+        ReadOnlyOrigin {
+            personal: self.databases.get(key).is_some_and(|p| p.read_only),
+            personal_own_entry: true,
+            project: None,
         }
-        self.read_only_origin_of_default()
     }
 
     /// Where `[default]`'s `read_only` came from. Pure.
@@ -269,6 +343,52 @@ impl SafetyConfig {
                 Some(format!("safety.toml parse error ({e}); using defaults")),
             ),
         }
+    }
+}
+
+/// A `[databases.*]` key as (environment, server, database): `ledger`,
+/// `demo/ledger` or `demo/demo-b/ledger`. `None` for one that can never
+/// match: more parts, or an empty one. Pure.
+pub fn parse_key(key: &str) -> Option<(Option<&str>, Option<&str>, &str)> {
+    let parts: Vec<&str> = key.split('/').collect();
+    if parts.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    match parts[..] {
+        [db] => Some((None, None, db)),
+        [env, db] => Some((Some(env), None, db)),
+        [env, server, db] => Some((Some(env), Some(server), db)),
+        _ => None,
+    }
+}
+
+/// Whether the entry `key` applies everywhere `wider` does, or more
+/// narrowly: the same database, and the same environment and server
+/// where `wider` names them. Pure.
+pub fn key_within(key: &str, wider: &str) -> bool {
+    match (parse_key(key), parse_key(wider)) {
+        (Some((env, server, db)), Some((w_env, w_server, w_db))) => {
+            db == w_db
+                && w_env.is_none_or(|w| env == Some(w))
+                && w_server.is_none_or(|w| server == Some(w))
+        }
+        _ => false,
+    }
+}
+
+/// The TOML table header for the `[databases.*]` entry `key`:
+/// `[databases.ledger]`, `[databases."demo/ledger"]`. Pure.
+pub fn databases_table(key: &str) -> String {
+    if key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        format!("[databases.{key}]")
+    } else {
+        format!(
+            "[databases.\"{}\"]",
+            key.replace('\\', "\\\\").replace('"', "\\\"")
+        )
     }
 }
 
@@ -322,8 +442,9 @@ drop = "block"
 ddl = "confirm"                  # ALTER / CREATE / GRANT / VACUUM / …
 other = "confirm"                # anything unrecognised (e.g. MERGE)
 
-# Per-database override — only list what differs from [default].
-# Uncomment and edit to tighten a specific database, e.g.:
+# Per-database override. A field left out takes the built-in default
+# shown above, not your edits to [default]. Uncomment and edit to
+# tighten a specific database, e.g.:
 #
 # [databases.production]
 # read_only = true
@@ -331,6 +452,13 @@ other = "confirm"                # anything unrecognised (e.g. MERGE)
 #
 # [databases.production.guards]
 # truncate = "block"
+#
+# A bare name applies on every server. ENV/DATABASE or
+# ENV/SERVER/DATABASE (environments.toml's names) applies in that
+# environment alone, and wins there over the bare name:
+#
+# [databases."demo/ledger"]
+# read_only = false
 "#;
 
 /// The outcome of checking one statement against a database's profile.
@@ -2251,25 +2379,102 @@ mod tests {
     /// A key written like a target (`"demo/ledger"`) can never match a
     /// database name: accepted by the parser, so said, not ignored.
     #[test]
-    fn a_key_written_like_a_target_is_said_to_match_nothing() {
-        let text = "[databases.\"demo/ledger\"]\nread_only = false\n[databases.ledger]\nread_only = true\n";
+    fn a_key_that_is_not_a_target_is_said_to_match_nothing() {
+        let text = "[databases.\"demo/ledger\"]\nread_only = false\n\
+                    [databases.\"a/b/c/ledger\"]\nread_only = false\n\
+                    [databases.\"demo/\"]\nread_only = false\n\
+                    [databases.ledger]\nread_only = true\n";
         let (cfg, warning) = SafetyConfig::parse_personal(text);
-        assert_eq!(cfg.unmatchable_keys(), ["demo/ledger"]);
-        assert!(
-            cfg.profile_for("ledger").read_only,
-            "the bare key is the one used"
-        );
+        assert_eq!(cfg.unmatchable_keys(), ["a/b/c/ledger", "demo/"]);
         let warning = warning.expect("an unmatchable key is reported");
         assert!(
-            warning.contains("[databases.\"demo/ledger\"] match nothing"),
+            warning.contains("[databases.\"a/b/c/ledger\"], [databases.\"demo/\"] match nothing"),
             "{warning}"
         );
-        assert!(!warning.contains("[databases.\"ledger\"]"), "{warning}");
+        assert!(
+            !warning.contains("[databases.\"demo/ledger\"],"),
+            "{warning}"
+        );
         let refused =
             crate::query::apply::check_patch(&cfg, "ledger", "SELECT 1", false).unwrap_err();
         assert!(
-            refused.contains("demo/ledger"),
+            refused.contains("a/b/c/ledger"),
             "the refusal says why it was ignored: {refused}"
+        );
+    }
+
+    #[test]
+    fn a_qualified_key_applies_in_its_environment_alone() {
+        let text = "[databases.ledger]\nread_only = true\nstatement_timeout_ms = 1\n\
+                    [databases.\"demo/ledger\"]\nread_only = false\nstatement_timeout_ms = 2\n\
+                    [databases.\"demo/demo-b/ledger\"]\nread_only = false\nstatement_timeout_ms = 3\n";
+        let (cfg, warning) = SafetyConfig::parse_personal(text);
+        assert_eq!(warning, None);
+        let timeout = |c: &SafetyConfig| c.profile_for("ledger").statement_timeout_ms;
+        // Placed nowhere, or elsewhere: the bare name.
+        assert_eq!(timeout(&cfg), 1);
+        assert!(cfg.profile_for("ledger").read_only);
+        assert_eq!(timeout(&cfg.scoped("live", Some("demo-b"))), 1);
+        // In demo: ENV/DATABASE, and ENV/SERVER/DATABASE on its server.
+        assert_eq!(timeout(&cfg.scoped("demo", Some("demo-a"))), 2);
+        assert_eq!(timeout(&cfg.scoped("demo", None)), 2);
+        assert_eq!(timeout(&cfg.scoped("demo", Some("demo-b"))), 3);
+        assert_eq!(
+            cfg.scoped("demo", Some("demo-b"))
+                .entry_key("ledger")
+                .as_deref(),
+            Some("demo/demo-b/ledger")
+        );
+        // A scope replaces the last one, and unscoped drops it.
+        let moved = cfg.scoped("demo", Some("demo-b")).scoped("live", None);
+        assert_eq!(timeout(&moved), 1);
+        assert_eq!(timeout(&cfg.scoped("demo", None).unscoped()), 1);
+        // Another database is untouched: [default].
+        assert_eq!(cfg.scoped("demo", None).entry_key("other"), None);
+        assert_eq!(
+            cfg.scoped("demo", None).read_only_origin("ledger"),
+            ReadOnlyOrigin {
+                personal: false,
+                personal_own_entry: true,
+                project: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_key_is_within_a_wider_one_for_the_same_database() {
+        assert_eq!(parse_key("ledger"), Some((None, None, "ledger")));
+        assert_eq!(
+            parse_key("demo/b/ledger"),
+            Some((Some("demo"), Some("b"), "ledger"))
+        );
+        assert_eq!(parse_key("demo//ledger"), None);
+        assert!(key_within("demo/b/ledger", "ledger"));
+        assert!(key_within("demo/b/ledger", "demo/ledger"));
+        assert!(key_within("demo/ledger", "demo/ledger"));
+        assert!(!key_within("ledger", "demo/ledger"));
+        assert!(!key_within("live/ledger", "demo/ledger"));
+        assert!(!key_within("demo/a/ledger", "demo/b/ledger"));
+        assert!(!key_within("demo/other", "ledger"));
+        assert!(!key_within("x/y/z/ledger", "ledger"));
+    }
+
+    #[test]
+    fn a_databases_table_is_quoted_when_it_has_to_be() {
+        assert_eq!(databases_table("ledger"), "[databases.ledger]");
+        assert_eq!(
+            databases_table("demo/ledger"),
+            "[databases.\"demo/ledger\"]"
+        );
+        assert_eq!(databases_table("a\"b"), "[databases.\"a\\\"b\"]");
+        let (cfg, _) = SafetyConfig::parse_personal(&format!(
+            "{}\nread_only = false\n",
+            databases_table("a\"b/l")
+        ));
+        assert!(
+            cfg.databases.contains_key("a\"b/l"),
+            "{:?}",
+            cfg.databases.keys()
         );
     }
 

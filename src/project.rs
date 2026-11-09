@@ -259,25 +259,49 @@ pub fn merge_safety(global: SafetyConfig, project: Option<&ProjectSafety>) -> Sa
             ..personal
         });
     }
-    for (db, profile) in &p.databases {
-        // The base for a database the personal config doesn't mention
-        // is the (already-tightened) personal default — otherwise a
-        // project could relax a database simply by naming it.
-        let base = out
-            .databases
-            .get(db)
-            .cloned()
-            .unwrap_or_else(|| out.default.clone());
-        let before = out.read_only_origin(db);
-        let merged = tighten_profile(&base, profile, &format!("safety.databases.{db}"));
-        out.databases.insert(db.clone(), merged);
-        let project = if profile.read_only {
-            Some(format!("[safety.databases.{db}]"))
-        } else {
-            before.project.clone()
+    for (key, profile) in &p.databases {
+        let Some((env, server, db)) = crate::safety::parse_key(key) else {
+            tracing::warn!("project [safety.databases.\"{key}\"] matches nothing; ignoring");
+            continue;
         };
-        out.read_only_origins
-            .insert(db.clone(), ReadOnlyOrigin { project, ..before });
+        // Every entry it covers is tightened: the key's own, and the
+        // narrower `ENV/…` ones, which replace it where they apply and
+        // must not escape the project's block.
+        let mut keys: Vec<String> = out
+            .databases
+            .keys()
+            .filter(|k| crate::safety::key_within(k, key))
+            .cloned()
+            .collect();
+        if !out.databases.contains_key(key) {
+            keys.push(key.clone());
+        }
+        let block = format!("[safety.{}", &crate::safety::databases_table(key)[1..]);
+        for k in keys {
+            // A key the personal config doesn't have starts from what
+            // applies there now — the (already-tightened) entry or
+            // default — otherwise a project could relax a database
+            // simply by naming it.
+            let (base, before) = match out.databases.get(&k) {
+                Some(own) => (own.clone(), out.read_only_origin_of_key(&k)),
+                None => {
+                    let placed = match env {
+                        Some(env) => out.scoped(env, server),
+                        None => out.unscoped(),
+                    };
+                    (placed.profile_for(db).clone(), placed.read_only_origin(db))
+                }
+            };
+            let merged = tighten_profile(&base, profile, &block[1..block.len() - 1]);
+            out.databases.insert(k.clone(), merged);
+            let project = if profile.read_only {
+                Some(block.clone())
+            } else {
+                before.project.clone()
+            };
+            out.read_only_origins
+                .insert(k, ReadOnlyOrigin { project, ..before });
+        }
     }
     out
 }
@@ -742,6 +766,68 @@ statement_timeout_ms = 5000
 
     /// A `ProjectSafety` carrying just one `[safety.databases.<db>]`
     /// profile.
+    #[test]
+    fn a_project_block_tightens_the_environments_entries_too() {
+        let mut personal = SafetyConfig::default();
+        let writable = SafetyProfile {
+            read_only: false,
+            ..SafetyProfile::default()
+        };
+        personal
+            .databases
+            .insert("demo/ledger".into(), writable.clone());
+        personal
+            .databases
+            .insert("demo/demo-b/ledger".into(), writable.clone());
+        personal.databases.insert("demo/other".into(), writable);
+        let read_only = SafetyProfile {
+            read_only: true,
+            ..SafetyProfile::default()
+        };
+        let merged = merge_safety(personal, Some(&project_db("ledger", read_only)));
+        for scoped in [
+            merged.scoped("demo", None),
+            merged.scoped("demo", Some("demo-b")),
+        ] {
+            assert!(scoped.profile_for("ledger").read_only, "{:?}", scoped.scope);
+            assert_eq!(
+                scoped.read_only_origin("ledger").project.as_deref(),
+                Some("[safety.databases.ledger]")
+            );
+        }
+        assert!(!merged.scoped("demo", None).profile_for("other").read_only);
+
+        // A project's own `ENV/…` key starts from what applies there,
+        // never [default]: it can't loosen the personal bare entry.
+        let mut personal = SafetyConfig::default();
+        personal.default.read_only = false;
+        personal.databases.insert(
+            "ledger".into(),
+            SafetyProfile {
+                read_only: true,
+                statement_timeout_ms: 1000,
+                ..SafetyProfile::default()
+            },
+        );
+        let mut project = project_db(
+            "demo/ledger",
+            SafetyProfile {
+                read_only: false,
+                statement_timeout_ms: 0,
+                ..SafetyProfile::default()
+            },
+        );
+        project
+            .databases
+            .insert("a/b/c/ledger".into(), SafetyProfile::default());
+        let merged = merge_safety(personal, Some(&project));
+        let demo = merged.scoped("demo", Some("demo-b"));
+        assert_eq!(demo.entry_key("ledger").as_deref(), Some("demo/ledger"));
+        assert!(demo.profile_for("ledger").read_only);
+        assert_eq!(demo.profile_for("ledger").statement_timeout_ms, 1000);
+        assert!(!merged.databases.contains_key("a/b/c/ledger"));
+    }
+
     fn project_db(db: &str, profile: SafetyProfile) -> ProjectSafety {
         ProjectSafety {
             default: None,

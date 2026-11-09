@@ -648,7 +648,7 @@ impl App {
             let shown = crate::conn::redact_url(&name);
             match crate::conn::Dsn::parse(&name) {
                 Ok(dsn) => {
-                    self.connect_to_target(dsn, format!("typed at :connect ({shown})"), false)
+                    self.connect_to_target(dsn, format!("typed at :connect ({shown})"), false, None)
                 }
                 Err(e) => {
                     self.last_error = Some(format!("can't connect to {shown}: {e}"));
@@ -703,9 +703,16 @@ impl App {
             return;
         };
         dsn.dbname = name.clone();
-        // Same server: a replica stays pinned read-only.
+        // Same server: a replica stays pinned read-only, and an
+        // environment's database stays in its environment.
         let pin = self.replica_pin;
-        self.connect_to_target(dsn, format!("\\c switched database to '{name}'"), pin);
+        let scope = self.safety_config.scope.clone();
+        self.connect_to_target(
+            dsn,
+            format!("\\c switched database to '{name}'"),
+            pin,
+            scope,
+        );
     }
 
     /// `\i <path>` handler. Reads the whole file and replaces the

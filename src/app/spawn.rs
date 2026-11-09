@@ -376,18 +376,27 @@ impl App {
     /// pointing at a connection it never opened, with the *new*
     /// database's safety profile installed over the demo's.
     pub(super) fn connect_to_pick(&mut self, dsn: Dsn, origin: String) {
-        self.connect_to_target(dsn, origin, false);
+        self.connect_to_target(dsn, origin, false, None);
     }
 
     /// [`Self::connect_to_pick`], with `pin_read_only` opening the
     /// session read-only whatever the database's profile says — a
-    /// replica, where a write can only fail.
-    pub(super) fn connect_to_target(&mut self, dsn: Dsn, origin: String, pin_read_only: bool) {
+    /// replica, where a write can only fail. `scope` places the session
+    /// in an environment for safety.toml's `ENV/…` entries; `None`
+    /// leaves bare names only.
+    pub(super) fn connect_to_target(
+        &mut self,
+        dsn: Dsn,
+        origin: String,
+        pin_read_only: bool,
+        scope: Option<crate::safety::Scope>,
+    ) {
         if self.demo {
             self.last_status =
                 Some("--demo has no server — restart without --demo to connect".into());
             return;
         }
+        self.safety_config.scope = scope;
         let profile = self.safety_config.profile_for(&dsn.dbname);
         // The new database's profile decides the floor; a session
         // `:readonly on` still applies on top of it. Without the

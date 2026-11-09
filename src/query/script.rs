@@ -292,7 +292,8 @@ pub fn read_only_refusal(safety: &crate::safety::SafetyConfig, db: &str) -> Stri
     };
     format!(
         "{db} is read-only ({why}). To run scripts on it, set in your safety.toml \
-         (pgman --init-config writes one):\n  [databases.{db}]\n  read_only = false"
+         (pgman --init-config writes one):\n  {}\n  read_only = false",
+        crate::safety::databases_table(&safety.narrowest_key(db))
     )
 }
 
