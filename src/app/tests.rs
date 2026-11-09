@@ -1605,8 +1605,11 @@ fn a_client_side_refusal_after_a_server_error_drops_the_stale_sqlstate() {
     );
     run_command(&mut a, "readonly off");
     let err = a.last_error.clone().unwrap_or_default();
+    // Either form: which depends on whether this machine has a
+    // safety.toml (as in readonly_off_under_a_read_only_profile_…).
     assert!(
-        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        err == readonly_off_refusal(&SafetyConfig::default(), "default", true)
+            || err == readonly_off_refusal(&SafetyConfig::default(), "default", false),
         "fixture check: the refusal landed: {err}"
     );
     assert!(
