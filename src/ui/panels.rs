@@ -1943,6 +1943,9 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     if let Some((file, why)) = &plan.stopped_at {
         out.push((format!("  not included: {file} — {why}"), true));
     }
+    for b in plan.later_blocked() {
+        out.push((format!("  also blocked, in a later patch: {b}"), true));
+    }
     below_recorded_lines(plan, &mut out);
     out
 }
@@ -3786,6 +3789,25 @@ mod tests {
             text[9].starts_with("  not included: 321-APP-104-open-invoices-by-customer-idx.sql")
         );
         assert_eq!(text.len(), 10, "the prompt is pinned, not in the list");
+        // Blocked statements in later patches are listed after the stop.
+        let mut later = plan.clone();
+        later.blocked = vec![(
+            "322-purge.sql".into(),
+            crate::query::apply::Guarded {
+                line: 3,
+                kind: "DELETE without WHERE".into(),
+                statement: "DELETE FROM audit".into(),
+            },
+        )];
+        let lv = PatchView {
+            stage: PatchStage::Plan(Ok(later)),
+            ..v.clone()
+        };
+        let ltext: Vec<String> = patch_lines(&lv).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            ltext[10],
+            "  also blocked, in a later patch: 322-purge.sql: DELETE without WHERE at line 3 (DELETE FROM audit)"
+        );
         // A risky statement the guards would ask about: the one
         // confirmation stands in for that question, so it is said.
         let mut risky = plan.clone();

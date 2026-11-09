@@ -190,44 +190,125 @@ pub fn read_only_refusal(
     why
 }
 
+/// A statement of a patch a `Block` guard stops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Guarded {
+    /// The line the statement starts on in its file, after any comment
+    /// lines leading it; 1-based.
+    pub line: usize,
+    /// What it is: `DROP`, `UPDATE without WHERE`…
+    pub kind: String,
+    /// Its first line, cut short.
+    pub statement: String,
+}
+
+impl Guarded {
+    /// `DROP at line 3 (DROP TABLE legacy)`. Pure.
+    pub fn describe(&self) -> String {
+        format!("{} at line {} ({})", self.kind, self.line, self.statement)
+    }
+}
+
+/// Why [`check_patch`] refused a patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refused {
+    pub why: String,
+    /// Every statement of the patch a `Block` guard stops, in order —
+    /// not only the first — so a plan can list them all.
+    pub blocked: Vec<Guarded>,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.why)
+    }
+}
+
+impl From<String> for Refused {
+    fn from(why: String) -> Self {
+        Refused {
+            why,
+            blocked: Vec::new(),
+        }
+    }
+}
+
+impl From<&str> for Refused {
+    fn from(why: &str) -> Self {
+        why.to_string().into()
+    }
+}
+
+/// The line each of `statements` (split from `sql`, in order) starts its
+/// code on, 1-based ([`crate::safety::code_start`]); 0 for one not
+/// found verbatim. Pure.
+pub fn statement_lines(sql: &str, statements: &[String]) -> Vec<usize> {
+    let mut from = 0;
+    statements
+        .iter()
+        .map(|s| match sql[from..].find(s.as_str()) {
+            Some(at) => {
+                let start = from + at;
+                from = start + s.len();
+                1 + sql[..start + crate::safety::code_start(s)]
+                    .matches('\n')
+                    .count()
+            }
+            None => 0,
+        })
+        .collect()
+}
+
+/// `stmt`'s first line of code, cut short for a message. Pure.
+fn first_code_line(stmt: &str) -> String {
+    let code = &stmt[crate::safety::code_start(stmt)..];
+    let line = code.lines().next().unwrap_or("").trim();
+    let line = crate::batch::terminal_safe(line);
+    let mut s: String = line.chars().take(60).collect();
+    if line.chars().count() > 60 {
+        s.push('…');
+    }
+    s
+}
+
 /// The statements of `sql`, checked for applying to `db`, or why not.
 /// `outside` lets a patch through that holds a statement no transaction
 /// can run (`VACUUM`, `CONCURRENTLY`…): the operator chose to run it
-/// without one. Pure but for safety.toml's path, read from the
-/// environment for a read-only refusal to name it.
+/// without one. What only a statement-by-statement fix answers (its own
+/// `BEGIN`, a `SET`…) is refused at the first; a `Block` guard and a
+/// read-only profile after looking at every statement, so the refusal
+/// names each blocked one. Pure but for safety.toml's path, read from
+/// the environment for a read-only refusal to name it.
 pub fn check_patch(
     safety: &crate::safety::SafetyConfig,
     db: &str,
     sql: &str,
     outside: bool,
-) -> Result<Checked, String> {
-    if safety.profile_for(db).read_only {
-        let mut why = read_only_refusal(safety, db, &crate::util::config_file("safety.toml"));
-        if let Some(w) = safety.unmatchable_warning() {
-            why.push_str(&format!(". {w}"));
-        }
-        return Err(why);
-    }
-    let statements =
-        crate::batch::check_statements(safety, db, sql, true).map_err(|r| match r {
-            // `assume_yes` answers a Confirm, so only a Block lands here.
-            crate::batch::Refusal::Block { kind, stmt, .. }
-            | crate::batch::Refusal::Confirm { kind, stmt, .. } => {
-                format!("blocked by safety: {kind} (statement: {stmt})")
-            }
-            crate::batch::Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
-            crate::batch::Refusal::ReadOnlyEscape => {
-                crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
-            }
-            crate::batch::Refusal::ServerControl => {
-                crate::safety::SERVER_CONTROL_REFUSAL.to_string()
-            }
-        })?;
+) -> Result<Checked, Refused> {
+    let read_only = safety.profile_for(db).read_only;
+    // Statements are judged as on a writable session: read-only is
+    // refused as itself, after them.
+    let writable = if read_only {
+        let mut w = safety.clone();
+        let mut profile = safety.profile_for(db).clone();
+        profile.read_only = false;
+        w.databases.insert(
+            safety.entry_key(db).unwrap_or_else(|| db.to_string()),
+            profile,
+        );
+        w
+    } else {
+        safety.clone()
+    };
+    let statements = crate::safety::split_verified(sql)
+        .map_err(|_| Refused::from(crate::safety::SPLIT_REFUSAL))?;
     if statements.is_empty() {
-        return Err("the patch has no statements".to_string());
+        return Err("the patch has no statements".into());
     }
+    let lines = statement_lines(sql, &statements);
     let mut needs = None;
-    for s in &statements {
+    let mut blocked = Vec::new();
+    for (s, &line) in statements.iter().zip(&lines) {
         if crate::safety::has_unicode_escape(s) {
             return Err(
                 "the patch uses unicode-escaped names (U&\"…\"), which pgman can't check; apply it by hand"
@@ -252,10 +333,49 @@ pub fn check_patch(
             if !outside {
                 return Err(format!(
                     "the patch uses {what}, which can't run in a transaction; {OUTSIDE_HINT}"
-                ));
+                )
+                .into());
             }
             needs.get_or_insert(what);
         }
+        let decision = crate::safety::evaluate(&writable, db, s);
+        if decision.guard == crate::safety::Guard::Block {
+            if decision.read_only_escape {
+                return Err(crate::safety::READ_ONLY_ESCAPE_REFUSAL.into());
+            }
+            if decision.server_control {
+                return Err(crate::safety::SERVER_CONTROL_REFUSAL.into());
+            }
+            blocked.push(Guarded {
+                line,
+                kind: decision.kind.describe(),
+                statement: first_code_line(s),
+            });
+        }
+    }
+    let mut why = Vec::new();
+    if read_only {
+        let mut r = read_only_refusal(safety, db, &crate::util::config_file("safety.toml"));
+        if let Some(w) = safety.unmatchable_warning() {
+            r.push_str(&format!(". {w}"));
+        }
+        why.push(r);
+    }
+    if !blocked.is_empty() {
+        why.push(format!(
+            "blocked by safety: {}",
+            blocked
+                .iter()
+                .map(Guarded::describe)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !why.is_empty() {
+        return Err(Refused {
+            why: why.join(". Also "),
+            blocked,
+        });
     }
     Ok(Checked {
         confirms: guard_confirms(safety, db, &statements),
@@ -832,6 +952,7 @@ mod tests {
         assert!(
             check_patch(&SafetyConfig::default(), "ledger", ok, false)
                 .unwrap_err()
+                .why
                 .contains("read-only"),
             "the default profile is read-only"
         );
@@ -857,9 +978,66 @@ mod tests {
                 "session settings",
             ),
         ] {
-            let e = check_patch(&writable(), "ledger", bad, false).unwrap_err();
+            let e = check_patch(&writable(), "ledger", bad, false)
+                .unwrap_err()
+                .why;
             assert!(e.contains(why), "{bad:?}: {e}");
         }
+    }
+
+    #[test]
+    fn every_blocked_statement_is_named_with_its_line() {
+        let sql = "-- 260: tidy up\n\
+                   INSERT INTO t_schema_version (schema_version_id) VALUES (260);\n\
+                   -- the old table\n\
+                   DROP TABLE legacy;\n\
+                   ALTER TABLE t ADD COLUMN c int;\n\
+                   UPDATE t\n   SET c = 0;\n";
+        let r = check_patch(&writable(), "ledger", sql, false).unwrap_err();
+        assert_eq!(
+            r.blocked,
+            [
+                Guarded {
+                    line: 4,
+                    kind: "DROP".into(),
+                    statement: "DROP TABLE legacy".into()
+                },
+                Guarded {
+                    line: 6,
+                    kind: "UPDATE without WHERE".into(),
+                    statement: "UPDATE t".into()
+                },
+            ]
+        );
+        assert_eq!(
+            r.why,
+            "blocked by safety: DROP at line 4 (DROP TABLE legacy), UPDATE without WHERE at \
+             line 6 (UPDATE t)"
+        );
+        // Read-only too: both said, and the statements still listed.
+        let r = check_patch(&SafetyConfig::default(), "ledger", sql, false).unwrap_err();
+        assert!(r.why.starts_with("'ledger' is read-only"), "{}", r.why);
+        assert!(
+            r.why.contains(". Also blocked by safety: DROP at line 4"),
+            "{}",
+            r.why
+        );
+        assert_eq!(r.blocked.len(), 2);
+        // What a statement-by-statement fix answers stops at once.
+        let r = check_patch(&writable(), "ledger", "DROP TABLE a; SET x = 1;", false).unwrap_err();
+        assert!(r.why.contains("session settings"), "{}", r.why);
+    }
+
+    #[test]
+    fn a_statement_starts_on_the_line_after_its_comments() {
+        let sql = "/* a\nb */ SELECT 1;\n\n  -- c\n  SELECT 2; SELECT 3;\nSELECT\n4";
+        let statements = crate::safety::split_verified(sql).unwrap();
+        assert_eq!(statement_lines(sql, &statements), [2, 5, 5, 6]);
+        assert_eq!(crate::safety::code_start("-- x\n  SELECT"), 7);
+        assert_eq!(crate::safety::code_start("'a'"), 0);
+        assert_eq!(crate::safety::code_start("-- a\n  -- b\nX"), 12);
+        assert_eq!(crate::safety::code_start("-- only"), 7);
+        assert_eq!(statement_lines("SELECT 1", &["SELECT 2".to_string()]), [0]);
     }
 
     #[test]
@@ -899,7 +1077,9 @@ mod tests {
     fn outside_lets_through_only_what_needs_no_transaction() {
         let vacuum = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
                       VACUUM ANALYZE t;";
-        let e = check_patch(&writable(), "ledger", vacuum, false).unwrap_err();
+        let e = check_patch(&writable(), "ledger", vacuum, false)
+            .unwrap_err()
+            .why;
         assert!(e.contains("plan it to run outside one (o)"), "{e}");
         let c = check_patch(&writable(), "ledger", vacuum, true).unwrap();
         assert_eq!(c.outside, Some("VACUUM"));
@@ -918,12 +1098,15 @@ mod tests {
             ("SET lock_timeout = 0; VACUUM t;", "session settings"),
             ("DROP TABLE t; VACUUM t;", "blocked"),
         ] {
-            let e = check_patch(&writable(), "ledger", bad, true).unwrap_err();
+            let e = check_patch(&writable(), "ledger", bad, true)
+                .unwrap_err()
+                .why;
             assert!(e.contains(why), "{bad:?}: {e}");
         }
         assert!(
             check_patch(&SafetyConfig::default(), "ledger", vacuum, true)
                 .unwrap_err()
+                .why
                 .contains("read-only")
         );
     }

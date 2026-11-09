@@ -2093,6 +2093,24 @@ fn canonical_for_compare(sql: &str) -> String {
 /// Remove `-- line` and `/* block */` comments, leaving string literals,
 /// quoted identifiers, and dollar-quoted bodies intact (a `--` inside a
 /// `$$ … $$` function body — or inside `"a--b"` — is data, not a comment).
+/// The byte offset of `stmt`'s first character that isn't space or a
+/// comment: where the statement itself starts, after any comment lines
+/// leading it. `stmt.len()` when there is none. Pure.
+pub fn code_start(stmt: &str) -> usize {
+    scan(stmt)
+        .iter()
+        .find_map(|span| match span.kind {
+            SpanKind::LineComment | SpanKind::BlockComment => None,
+            SpanKind::Code => {
+                let text = &stmt[span.start..span.end];
+                let lead = text.len() - text.trim_start().len();
+                (lead < text.len()).then_some(span.start + lead)
+            }
+            _ => Some(span.start),
+        })
+        .unwrap_or(stmt.len())
+}
+
 pub(crate) fn strip_sql_comments(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     for span in scan(sql) {
@@ -2395,8 +2413,9 @@ mod tests {
             !warning.contains("[databases.\"demo/ledger\"],"),
             "{warning}"
         );
-        let refused =
-            crate::query::apply::check_patch(&cfg, "ledger", "SELECT 1", false).unwrap_err();
+        let refused = crate::query::apply::check_patch(&cfg, "ledger", "SELECT 1", false)
+            .unwrap_err()
+            .why;
         assert!(
             refused.contains("a/b/c/ledger"),
             "the refusal says why it was ignored: {refused}"

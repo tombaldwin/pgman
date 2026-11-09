@@ -1442,6 +1442,7 @@ pub fn patch_plan(
         below_recorded: Vec::new(),
         outside_transaction: outside,
         outside_would_help: concurrent_pending && !outside,
+        blocked: Vec::new(),
         stopped_at,
     }
 }

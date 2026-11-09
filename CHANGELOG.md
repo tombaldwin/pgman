@@ -15,6 +15,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `pgman run`, and in a TUI session opened from the environments
   overview, where it wins over the bare name. A project's `[safety]`
   block tightens qualified entries too.
+- A patch plan lists every statement a `block` guard stops, with its
+  file and line: all of them in the patch it stops at, and those in the
+  pending patches after it, so one change to safety.toml covers the run.
 
 ### Fixed
 

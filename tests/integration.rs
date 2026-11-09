@@ -5556,7 +5556,7 @@ fn a_patch_cannot_smuggle_statements_past_the_scanner() {
     // The check refuses it outright now…
     let refused =
         pgman::query::apply::check_patch(&writable, "pgman_test", &text, false).unwrap_err();
-    assert!(refused.contains("SET"), "{refused}");
+    assert!(refused.why.contains("SET"), "{refused}");
     // …and were a statement like it to get through, the server runs it alone.
     let statements: Vec<String> = vec![
         format!("INSERT INTO {vt} (id) VALUES (2)"),
@@ -5874,6 +5874,7 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         below_recorded: Vec::new(),
         outside_transaction: false,
         outside_would_help: false,
+        blocked: Vec::new(),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let r = rt.block_on(pgman::inventory::patching::apply(
@@ -9373,6 +9374,89 @@ fn pgman_apply_applies_patches_and_outside_needs_the_typed_name() {
         stderr.contains("isn't an environment's database"),
         "{stderr}"
     );
+    let _ = on("pgman_test", &format!("DROP TABLE {vt}"));
+    let _ = on("pgman_test", &format!("DROP TABLE {tbl}"));
+}
+
+/// safety.toml's `ENV/DATABASE` entries open a database for patching in
+/// one environment only, and a plan lists every blocked statement — in
+/// the patch it stops at and in each pending one after it.
+#[cfg(unix)]
+#[test]
+fn pgman_apply_takes_environment_keys_and_lists_every_blocked_statement() {
+    let (home, out) = run_home("apply-keys");
+    let (vt, tbl) = (it_name("ak_v"), it_name("ak_t"));
+    let dir = home.join("patches");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-col.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\nALTER TABLE {tbl} ADD COLUMN c int;\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("003-drop.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (3);\n-- gone\nDROP TABLE {tbl};\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("004-purge.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (4);\nDELETE FROM {tbl};\n"),
+    )
+    .unwrap();
+    let mut envs = std::fs::read_to_string(home.join(".config/pgman/environments.toml")).unwrap();
+    for name in ["keyenv", "otherenv"] {
+        envs.push_str(&format!(
+            "[[environments]]\nname = \"{name}\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ));
+    }
+    std::fs::write(home.join(".config/pgman/environments.toml"), envs).unwrap();
+    // Read-only everywhere but keyenv's pgman_test.
+    std::fs::write(
+        home.join(".config/pgman/safety.toml"),
+        "[default]\nread_only = true\n[databases.\"keyenv/pgman_test\"]\nread_only = false\n",
+    )
+    .unwrap();
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {vt}"));
+    let _ = on("pgman_test", &format!("DROP TABLE IF EXISTS {tbl}"));
+    on("pgman_test", &format!("CREATE TABLE {vt} (id int)")).unwrap();
+    on("pgman_test", &format!("INSERT INTO {vt} VALUES (1)")).unwrap();
+    on("pgman_test", &format!("CREATE TABLE {tbl} (id int)")).unwrap();
+
+    let o = pgman_in(&home, &out, &["apply", "otherenv", "--dry-run", "--yes"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(!o.status.success());
+    assert!(
+        stdout.contains("add [databases.\"otherenv/pgman_test\"] with read_only = false"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("opens 'pgman_test' in otherenv alone"),
+        "{stdout}"
+    );
+
+    let o = pgman_in(&home, &out, &["apply", "keyenv", "--dry-run", "--yes"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(
+        stderr.contains("1 pending patch(es)")
+            && stderr.contains(&format!(
+                "stops before 003-drop.sql: blocked by safety: DROP at line 3 (DROP TABLE {tbl})"
+            )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "also blocked, in a later patch: 004-purge.sql: DELETE without WHERE at line 2 \
+             (DELETE FROM {tbl})"
+        )),
+        "{stderr}"
+    );
+    assert!(stdout.starts_with("dry run: ran 1 patch(es)"), "{stdout}");
     let _ = on("pgman_test", &format!("DROP TABLE {vt}"));
     let _ = on("pgman_test", &format!("DROP TABLE {tbl}"));
 }

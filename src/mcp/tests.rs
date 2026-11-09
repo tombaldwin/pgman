@@ -298,6 +298,7 @@ fn a_plan_refused_at_its_first_patch_is_not_nothing_to_apply() {
         below_recorded: Vec::new(),
         outside_transaction: false,
         outside_would_help: false,
+        blocked: Vec::new(),
     };
     let s = plan.empty_summary();
     assert!(
@@ -305,6 +306,20 @@ fn a_plan_refused_at_its_first_patch_is_not_nothing_to_apply() {
         "{s}"
     );
     assert!(s.contains("UPDATE without WHERE"), "{s}");
+    plan.blocked = vec![(
+        "253-purge.sql".into(),
+        crate::query::apply::Guarded {
+            line: 4,
+            kind: "DELETE without WHERE".into(),
+            statement: "DELETE FROM audit".into(),
+        },
+    )];
+    let r: serde_json::Value =
+        serde_json::from_str(&tools::render_apply(&plan, None, &plan.empty_summary())).unwrap();
+    assert_eq!(
+        r["blocked"],
+        serde_json::json!([{"file": "253-purge.sql", "line": 4, "kind": "DELETE without WHERE", "statement": "DELETE FROM audit"}])
+    );
     plan.stopped_at = None;
     assert_eq!(plan.empty_summary(), "nothing to apply");
 }
@@ -335,6 +350,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         below_recorded: Vec::new(),
         outside_transaction: false,
         outside_would_help: false,
+        blocked: Vec::new(),
     };
     let (message, schema) =
         tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);

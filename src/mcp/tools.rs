@@ -926,6 +926,13 @@ pub fn confirm_request(
     if let Some((file, why)) = &plan.stopped_at {
         message.push_str(&format!(" Not included: {file} ({why})."));
     }
+    let later = plan.later_blocked();
+    if !later.is_empty() {
+        message.push_str(&format!(
+            " Also blocked, in later patches: {}.",
+            later.join("; ")
+        ));
+    }
     if !plan.below_recorded.is_empty() {
         message.push_str(&format!(
             " WARNING, not included: {} — pending but numbered below the recorded version, so they would run out of order.",
@@ -1030,6 +1037,7 @@ pub fn render_apply(
         "recorded_up_to": plan.applied_max,
         "planned": plan.patches.iter().map(|p| p.file.file.as_str()).collect::<Vec<_>>(),
         "not_included": plan.stopped_at.as_ref().map(|(f, why)| json!({"file": f, "reason": why})),
+        "blocked": plan.blocked.iter().map(|(f, g)| json!({"file": f, "line": g.line, "kind": g.kind, "statement": g.statement})).collect::<Vec<_>>(),
         "below_recorded": plan.below_recorded,
         "guard_confirms": plan.confirm_summary(),
         "results": results,

@@ -89,6 +89,10 @@ pub struct PatchPlan {
     /// The plan stopped at a patch that would run outside a transaction:
     /// planning again with `outside_transaction` gets further.
     pub outside_would_help: bool,
+    /// Every statement a `Block` guard stops, in the patch the plan
+    /// stops at and in each pending one after it, with its file: the
+    /// whole list for one decision, not the first only.
+    pub blocked: Vec<(String, crate::query::apply::Guarded)>,
 }
 
 impl PlannedPatch {
@@ -121,6 +125,18 @@ impl PatchPlan {
             Some((file, why)) => format!("refused, nothing applied: {file} can't run here: {why}"),
             None => "nothing to apply".to_string(),
         }
+    }
+
+    /// The blocked statements in pending patches after the one the plan
+    /// stops at — whose refusal names its own — each as `file: DROP at
+    /// line 3 (DROP TABLE legacy)`. Pure.
+    pub fn later_blocked(&self) -> Vec<String> {
+        let stop = self.stopped_at.as_ref().map(|(f, _)| f.as_str());
+        self.blocked
+            .iter()
+            .filter(|(file, _)| Some(file.as_str()) != stop)
+            .map(|(file, g)| format!("{file}: {}", g.describe()))
+            .collect()
     }
 
     /// The patch's id, as the version table records it.
@@ -567,6 +583,7 @@ pub async fn plan(
         below_recorded: Vec::new(),
         outside_transaction: outside,
         outside_would_help: false,
+        blocked: Vec::new(),
         dir: dir.display().to_string(),
         recorded: {
             let mut r = applied.clone();
@@ -580,27 +597,40 @@ pub async fn plan(
     let (pending, below) = split_at_recorded(report.pending, report.applied_max);
     plan.below_recorded = below.into_iter().map(|f| f.file).collect();
     for file in pending {
+        let path = dir.join(&file.file);
+        if plan.stopped_at.is_some() {
+            // Past the stop nothing is planned, but each file's blocked
+            // statements are listed with the stop's.
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if let Err(r) =
+                    crate::query::apply::check_patch(safety, &target.database, &text, outside)
+                {
+                    plan.blocked
+                        .extend(r.blocked.into_iter().map(|g| (file.file.clone(), g)));
+                }
+            }
+            continue;
+        }
         let id = PatchPlan::id(&file).unwrap_or_default();
         if duplicated.contains(&id) {
             plan.stopped_at = Some((
                 file.file,
                 format!("another file records version {id} too; fix the files first"),
             ));
-            break;
+            continue;
         }
         if let Some(n) = file.filename_number.filter(|n| *n != id) {
             plan.stopped_at = Some((
                 file.file,
                 format!("its name says {n} but it records version {id}; fix the file first"),
             ));
-            break;
+            continue;
         }
-        let path = dir.join(&file.file);
         let text = match std::fs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) => {
                 plan.stopped_at = Some((file.file, format!("could not read it: {e}")));
-                break;
+                continue;
             }
         };
         match crate::query::apply::check_patch(safety, &target.database, &text, outside) {
@@ -611,12 +641,13 @@ pub async fn plan(
                 outside: checked.outside,
                 confirms: checked.confirms,
             }),
-            Err(e) => {
+            Err(r) => {
                 plan.outside_would_help = !outside
                     && crate::query::apply::check_patch(safety, &target.database, &text, true)
                         .is_ok();
-                plan.stopped_at = Some((file.file, e));
-                break;
+                plan.blocked
+                    .extend(r.blocked.into_iter().map(|g| (file.file.clone(), g)));
+                plan.stopped_at = Some((file.file, r.why));
             }
         }
     }
@@ -833,7 +864,8 @@ impl Run<'_> {
             self.database,
             &p.text,
             plan.outside_transaction,
-        )?;
+        )
+        .map_err(|r| r.why)?;
         if checked.statements != p.statements || checked.outside != p.outside {
             return Err("the patch's statements differ from the plan".to_string());
         }
@@ -1059,6 +1091,7 @@ mod tests {
             below_recorded: Vec::new(),
             outside_transaction: false,
             outside_would_help: false,
+            blocked: Vec::new(),
         }
     }
 

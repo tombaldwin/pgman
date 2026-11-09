@@ -118,6 +118,9 @@ pub fn render_plan(plan: &PatchPlan) -> String {
             out.push_str(" (--outside plans it)");
         }
     }
+    for b in plan.later_blocked() {
+        out.push_str(&format!("\n  also blocked, in a later patch: {b}"));
+    }
     out
 }
 
@@ -290,6 +293,7 @@ mod tests {
             below_recorded: vec!["007-old.sql".into()],
             outside_transaction: outside.is_some(),
             outside_would_help: true,
+            blocked: Vec::new(),
         }
     }
 
@@ -314,6 +318,24 @@ mod tests {
         assert!(
             r.contains("stops before 043-x.sql: uses VACUUM (--outside plans it)"),
             "{r}"
+        );
+        let mut p = plan(false, None);
+        let drop = |line| crate::query::apply::Guarded {
+            line,
+            kind: "DROP".into(),
+            statement: "DROP TABLE legacy".into(),
+        };
+        p.blocked = vec![("043-x.sql".into(), drop(2)), ("044-y.sql".into(), drop(7))];
+        let r = render_plan(&p);
+        assert!(
+            r.contains(
+                "\n  also blocked, in a later patch: 044-y.sql: DROP at line 7 (DROP TABLE legacy)"
+            ),
+            "{r}"
+        );
+        assert!(
+            !r.contains("043-x.sql: DROP"),
+            "the stop's refusal names its own: {r}"
         );
     }
 
