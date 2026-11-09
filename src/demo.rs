@@ -1405,6 +1405,7 @@ pub fn patch_plan(
             &statements.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
         ),
         declared: Vec::new(),
+        lifted: Vec::new(),
     };
     let (last, rest) = PATCHES.split_last().expect("demo patches");
     let mut patches: Vec<PlannedPatch> = rest
@@ -1444,6 +1445,9 @@ pub fn patch_plan(
         outside_transaction: outside,
         outside_would_help: concurrent_pending && !outside,
         blocked: Vec::new(),
+        lift: false,
+        read_only_lifted: false,
+        liftable: false,
         stopped_at,
     }
 }

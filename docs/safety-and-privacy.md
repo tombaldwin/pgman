@@ -234,7 +234,9 @@ A project's `[safety]` block can only *tighten* your personal
 `~/.config/pgman/safety.toml`, never relax it — in the editor, in
 MCP's `query`, and when applying patches (`P`, MCP's
 `apply_patches`), where a database the project keeps read-only gets
-no patch. And a discovered
+no patch: `apply_patches` can lift what your own `safety.toml`
+refuses for one run, on your typed confirmation, but never what the
+project's block refuses. And a discovered
 `ssh_tunnel` asks before pgman runs `ssh` with your keys, because that
 happens before any Postgres traffic.
 

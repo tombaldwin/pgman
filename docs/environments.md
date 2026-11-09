@@ -311,6 +311,20 @@ steps:
    two: a patch in its transaction rolls back; outside one, what ran
    stays, and the result says how much.
 
+**Over MCP, you can lift a refusal for one run.** When `apply_patches`
+stops at a patch refused only because the database is read-only or a
+guard blocks statements in it, pgman plans again past those and puts
+that plan to you: the confirmation lists the read-only database and
+every lifted statement with its file and line, and takes the
+environment's name typed. Confirmed, that run applies them;
+`safety.toml` is untouched, and the next run is refused again. The
+agent can't ask for it: it is offered to you, and only for those two
+refusals, and only where your `safety.toml` (or the built-in default)
+is what refuses: what the project's committed `.pgman/pgman.toml`
+`[safety]` refuses on its own is never lifted, and the plan says that
+only a change there lifts it. The TUI and `pgman apply` don't offer
+it: change `safety.toml`, or declare the statement in its patch.
+
 **A patch can allow its own statement past a `block` guard** with a
 line comment before it, naming the statement's guard:
 

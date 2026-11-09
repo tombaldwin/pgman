@@ -95,6 +95,11 @@ pub struct Checked {
     /// itself ([`declared_allows`]), in order: the plan names them, and
     /// confirming it takes the typed environment name.
     pub declared: Vec<Guarded>,
+    /// The statements a `Block` guard stops that this run lifts
+    /// ([`check_patch_as`] with `lift`), in order.
+    pub lifted: Vec<Guarded>,
+    /// The database is read-only and this run writes anyway (`lift`).
+    pub read_only_lifted: bool,
 }
 
 /// What each of `statements` that safety.toml's guards would ask about
@@ -220,6 +225,9 @@ pub struct Refused {
     /// Every statement of the patch a `Block` guard stops, in order —
     /// not only the first — so a plan can list them all.
     pub blocked: Vec<Guarded>,
+    /// Refused only for a read-only database and blocked statements:
+    /// what [`check_patch_as`] with `lift` lets through.
+    pub liftable: bool,
 }
 
 impl std::fmt::Display for Refused {
@@ -233,6 +241,7 @@ impl From<String> for Refused {
         Refused {
             why,
             blocked: Vec::new(),
+            liftable: false,
         }
     }
 }
@@ -335,6 +344,21 @@ pub fn check_patch(
     sql: &str,
     outside: bool,
 ) -> Result<Checked, Refused> {
+    check_patch_as(safety, db, sql, outside, false)
+}
+
+/// [`check_patch`], with `lift` letting through, for one run the
+/// operator confirmed, what a [`Refused::liftable`] refusal names: a
+/// read-only database and statements a `Block` guard stops. Named in
+/// [`Checked::read_only_lifted`] and [`Checked::lifted`]. Nothing else
+/// is lifted. Pure as [`check_patch`] is.
+pub fn check_patch_as(
+    safety: &crate::safety::SafetyConfig,
+    db: &str,
+    sql: &str,
+    outside: bool,
+    lift: bool,
+) -> Result<Checked, Refused> {
     let read_only = safety.profile_for(db).read_only;
     // Statements are judged as on a writable session: read-only is
     // refused as itself, after them.
@@ -424,6 +448,16 @@ pub fn check_patch(
             }
         }
     }
+    if lift {
+        return Ok(Checked {
+            confirms: guard_confirms(safety, db, &statements),
+            statements,
+            outside: needs,
+            declared,
+            lifted: blocked,
+            read_only_lifted: read_only,
+        });
+    }
     let mut why = Vec::new();
     if read_only {
         let mut r = read_only_refusal(safety, db, &crate::util::config_file("safety.toml"));
@@ -453,6 +487,7 @@ pub fn check_patch(
         return Err(Refused {
             why: why.join(". Also "),
             blocked,
+            liftable: true,
         });
     }
     Ok(Checked {
@@ -460,6 +495,8 @@ pub fn check_patch(
         statements,
         outside: needs,
         declared,
+        lifted: Vec::new(),
+        read_only_lifted: false,
     })
 }
 
@@ -1194,6 +1231,52 @@ mod tests {
         .unwrap_err()
         .why;
         assert!(e.starts_with("line 2: `-- pgman: allow dorp`"), "{e}");
+    }
+
+    #[test]
+    fn a_lifted_run_lets_through_read_only_and_blocked_statements_alone() {
+        let sql = "INSERT INTO t_schema_version (schema_version_id) VALUES (262);\n\
+                   -- pgman: allow drop\n\
+                   DROP TABLE legacy;\n\
+                   DELETE FROM audit;\n";
+        let r = check_patch(&SafetyConfig::default(), "ledger", sql, false).unwrap_err();
+        assert!(r.liftable, "{}", r.why);
+        let c = check_patch_as(&SafetyConfig::default(), "ledger", sql, false, true).unwrap();
+        assert!(c.read_only_lifted);
+        assert_eq!(c.statements.len(), 3);
+        assert_eq!(
+            c.lifted,
+            [Guarded {
+                line: 4,
+                kind: "DELETE without WHERE".into(),
+                statement: "DELETE FROM audit".into()
+            }]
+        );
+        assert_eq!(c.declared.len(), 1, "the patch's own allow stays its own");
+        // Writable and unblocked: nothing to lift, nothing said.
+        let c = check_patch_as(
+            &writable(),
+            "ledger",
+            "ALTER TABLE t ADD c int;",
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(!c.read_only_lifted && c.lifted.is_empty());
+        // Anything else is not the operator's to lift here.
+        for bad in [
+            "DROP TABLE a; SET lock_timeout = 0;",
+            "BEGIN; DROP TABLE a; COMMIT;",
+            "VACUUM t;",
+            "-- pgman: allow dorp\nDROP TABLE a;",
+        ] {
+            let r = check_patch(&SafetyConfig::default(), "ledger", bad, false).unwrap_err();
+            assert!(!r.liftable, "{bad:?}: {}", r.why);
+            assert!(
+                check_patch_as(&SafetyConfig::default(), "ledger", bad, false, true).is_err(),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]

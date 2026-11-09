@@ -189,6 +189,7 @@ pub async fn run_cli(opts: &Opts) -> Result<(String, bool), String> {
         resolved.server.clone(),
         resolved.database.clone(),
         opts.outside,
+        None,
         safety.clone(),
     )
     .await?;
@@ -283,6 +284,7 @@ mod tests {
                 outside,
                 confirms: vec!["TRUNCATE".into()],
                 declared: Vec::new(),
+                lifted: Vec::new(),
             }],
             stopped_at: Some(("043-x.sql".into(), "uses VACUUM".into())),
             dir: "/patches".into(),
@@ -291,6 +293,9 @@ mod tests {
             outside_transaction: outside.is_some(),
             outside_would_help: true,
             blocked: Vec::new(),
+            lift: false,
+            read_only_lifted: false,
+            liftable: false,
         }
     }
 

@@ -23,6 +23,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   one, and confirming takes the environment's name typed, so `--yes`
   doesn't confirm it. A mistyped or misplaced declaration refuses the
   patch.
+- MCP's `apply_patches` puts a read-only database, or statements a
+  guard blocks, to the operator instead of refusing: the confirmation
+  lists each, and typing the environment's name lifts them for that one
+  run, leaving safety.toml as it is. The agent can't ask for it, and
+  what a project's `.pgman/pgman.toml` `[safety]` refuses on its own is
+  never lifted. The result's `lifted_for_this_run` and pgman's log say
+  what was lifted.
 
 ### Fixed
 

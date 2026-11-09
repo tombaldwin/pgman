@@ -306,6 +306,41 @@ pub fn merge_safety(global: SafetyConfig, project: Option<&ProjectSafety>) -> Sa
     out
 }
 
+/// The project's `[safety]` rules alone: laid over a config that refuses
+/// nothing but has `personal`'s `[databases.*]` keys, so each project
+/// block reaches the databases it reaches in [`merge_safety`]. What
+/// this refuses, the project refuses — whatever the personal side
+/// says. Pure.
+pub fn project_floor(personal: &SafetyConfig, project: Option<&ProjectSafety>) -> SafetyConfig {
+    let open = SafetyProfile {
+        read_only: false,
+        statement_timeout_ms: 0,
+        auto_tx: false,
+        guards: crate::safety::Guards {
+            insert: Guard::Allow,
+            update: Guard::Allow,
+            update_without_where: Guard::Allow,
+            delete: Guard::Allow,
+            delete_without_where: Guard::Allow,
+            truncate: Guard::Allow,
+            drop: Guard::Allow,
+            ddl: Guard::Allow,
+            other: Guard::Allow,
+        },
+        ..SafetyProfile::default()
+    };
+    let base = SafetyConfig {
+        default: open.clone(),
+        databases: personal
+            .databases
+            .keys()
+            .map(|k| (k.clone(), open.clone()))
+            .collect(),
+        ..SafetyConfig::default()
+    };
+    merge_safety(base, project)
+}
+
 /// How strict a guard is. `Allow < Confirm < Block`.
 fn guard_rank(g: Guard) -> u8 {
     match g {
@@ -766,6 +801,33 @@ statement_timeout_ms = 5000
 
     /// A `ProjectSafety` carrying just one `[safety.databases.<db>]`
     /// profile.
+    #[test]
+    fn the_project_floor_refuses_only_what_the_project_does() {
+        let mut personal = SafetyConfig::default();
+        personal
+            .databases
+            .insert("demo/ledger".into(), SafetyProfile::default());
+        // No project: nothing refused.
+        let floor = project_floor(&personal, None);
+        assert!(!floor.profile_for("ledger").read_only);
+        assert_eq!(floor.profile_for("ledger").guards.drop, Guard::Allow);
+        // A project block: its database read-only, others not.
+        let project = project_db("ledger", SafetyProfile::default());
+        let floor = project_floor(&personal, Some(&project));
+        assert!(floor.profile_for("ledger").read_only);
+        assert!(floor.scoped("demo", None).profile_for("ledger").read_only);
+        assert!(!floor.profile_for("other").read_only);
+        // A project default reaches what has no personal entry, as in
+        // merge_safety: not the personal demo/ledger.
+        let project = ProjectSafety {
+            default: Some(SafetyProfile::default()),
+            databases: HashMap::new(),
+        };
+        let floor = project_floor(&personal, Some(&project));
+        assert!(floor.profile_for("other").read_only);
+        assert!(!floor.scoped("demo", None).profile_for("ledger").read_only);
+    }
+
     #[test]
     fn a_project_block_tightens_the_environments_entries_too() {
         let mut personal = SafetyConfig::default();

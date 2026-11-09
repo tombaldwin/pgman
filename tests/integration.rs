@@ -3978,7 +3978,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
     use pgman::inventory::patching::{apply, plan};
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let p = plan(&env, &target, &writable, &no_secrets, false)
+        let p = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         assert!(p.protected, "named prod");
@@ -3996,6 +3996,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             &pgman::safety::SafetyConfig::default(),
             &no_secrets,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -4029,7 +4030,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
 
         // Fix 003 on disk and plan again.
         std::fs::write(dir.join("003-bad.sql"), row(3)).unwrap();
-        let p2 = plan(&env, &target, &writable, &no_secrets, false)
+        let p2 = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         assert_eq!(p2.applied_max, Some(2));
@@ -4059,7 +4060,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
 
         // Now 003 is a gap below the recorded 4: planned again, it's left
         // out and named, not run after 004.
-        let gap = plan(&env, &target, &writable, &no_secrets, false)
+        let gap = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         assert!(gap.patches.is_empty(), "{:?}", gap.patches);
@@ -4073,20 +4074,20 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         // A replica is refused outright.
         let mut replica = target.clone();
         replica.role = pgman::mcp::connections::Role::Replica;
-        assert!(plan(&env, &replica, &writable, &no_secrets, false)
+        assert!(plan(&env, &replica, &writable, &no_secrets, false, None)
             .await
             .unwrap_err()
             .contains("replica"));
         env.protected = Some(false);
         assert!(
-            !plan(&env, &target, &writable, &no_secrets, false)
+            !plan(&env, &target, &writable, &no_secrets, false, None)
                 .await
                 .unwrap()
                 .protected
         );
 
         // A plan whose statements aren't its text's is refused.
-        let mut fresh = plan(&env, &target, &writable, &no_secrets, false)
+        let mut fresh = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         assert_eq!(fresh.patches[0].file.file, "003-bad.sql");
@@ -4105,7 +4106,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         assert!(err.contains("differ from the plan"), "{err}");
 
         // A patch that runs but doesn't record its own id stops the run.
-        let mut fresh = plan(&env, &target, &writable, &no_secrets, false)
+        let mut fresh = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         let wrong = format!("INSERT INTO {vt} (id) VALUES (33);");
@@ -4133,7 +4134,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
 
         // Two files with one id, or a name that disagrees with its id: fix the files first.
         std::fs::write(dir.join("003-dup.sql"), row(3)).unwrap();
-        let (at, why) = plan(&env, &target, &writable, &no_secrets, false)
+        let (at, why) = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap()
             .stopped_at
@@ -4146,7 +4147,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         // (Without 005, which would sort first and stop on CONCURRENTLY.)
         std::fs::remove_file(dir.join("005-idx.sql")).unwrap();
         std::fs::write(dir.join("003-bad.sql"), row(7)).unwrap();
-        let (at, why) = plan(&env, &target, &writable, &no_secrets, false)
+        let (at, why) = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap()
             .stopped_at
@@ -4238,7 +4239,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
     use pgman::inventory::patching::{apply, plan};
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let inside = plan(&env, &target, &writable, &no_secrets, false)
+        let inside = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         let files: Vec<&str> = inside
@@ -4251,7 +4252,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         assert!(at == "003-vac.sql" && why.contains("VACUUM"), "{why}");
         assert!(inside.outside_would_help);
 
-        let p = plan(&env, &target, &writable, &no_secrets, true)
+        let p = plan(&env, &target, &writable, &no_secrets, true, None)
             .await
             .unwrap();
         let shape: Vec<(&str, Option<&str>)> = p
@@ -4288,7 +4289,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         .unwrap();
 
         // A plan made outside can't be run as one made inside.
-        let p = plan(&env, &target, &writable, &no_secrets, true)
+        let p = plan(&env, &target, &writable, &no_secrets, true, None)
             .await
             .unwrap();
         let mut forged = p.clone();
@@ -4307,7 +4308,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         assert!(err.contains("can't run in a transaction"), "{err}");
 
         // 002 ran in a transaction above; plan again from where it is.
-        let p = plan(&env, &target, &writable, &no_secrets, true)
+        let p = plan(&env, &target, &writable, &no_secrets, true, None)
             .await
             .unwrap();
         // Nor run with a patch's no-transaction mark taken off.
@@ -4562,7 +4563,7 @@ fn cancelling_a_run_stops_the_running_statement() {
             }
         };
 
-        let p = plan(&env, &target, &writable, &no_secrets, true)
+        let p = plan(&env, &target, &writable, &no_secrets, true, None)
             .await
             .unwrap();
         assert_eq!(p.patches.len(), 2);
@@ -4595,7 +4596,7 @@ fn cancelling_a_run_stops_the_running_statement() {
         );
         assert_eq!(r.results.len(), 1, "and nothing after it runs");
 
-        let p = plan(&env, &target, &writable, &no_secrets, true)
+        let p = plan(&env, &target, &writable, &no_secrets, true, None)
             .await
             .unwrap();
         assert_eq!(p.patches[0].file.file, "003-slow.sql");
@@ -4710,7 +4711,7 @@ fn a_cancel_between_statements_stops_the_patch() {
             }
         };
 
-        let p = plan(&env, &target, &writable, &no_secrets, false)
+        let p = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         assert_eq!(p.patches.len(), 1);
@@ -4740,7 +4741,7 @@ fn a_cancel_between_statements_stops_the_patch() {
             format!("{}{wait}VACUUM {made};\n", row(3)),
         )
         .unwrap();
-        let p = plan(&env, &target, &writable, &no_secrets, true)
+        let p = plan(&env, &target, &writable, &no_secrets, true, None)
             .await
             .unwrap();
         assert_eq!(p.patches.len(), 2);
@@ -5005,7 +5006,7 @@ fn a_dry_run_runs_every_patch_then_rolls_it_all_back() {
             .unwrap()
             .get::<_, i64>(0)
         };
-        let p = plan(&env, &target, &writable, &no_secrets, false)
+        let p = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         assert_eq!(p.patches.len(), 3);
@@ -5032,7 +5033,7 @@ fn a_dry_run_runs_every_patch_then_rolls_it_all_back() {
 
         // A patch with no transaction ends the dry run before it starts.
         write("004-bad.sql", format!("{}VACUUM {tbl};\n", row(4)));
-        let p = plan(&env, &target, &writable, &no_secrets, true)
+        let p = plan(&env, &target, &writable, &no_secrets, true, None)
             .await
             .unwrap();
         assert_eq!(p.patches[2].outside, Some("VACUUM"));
@@ -5111,7 +5112,7 @@ fn applying_to_a_copy_patches_the_copy_then_drops_it() {
             ))
             .await
             .unwrap();
-        let p = plan(&env, &target, &writable, &no_secrets, false)
+        let p = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
             .unwrap();
         assert_eq!(p.patches.len(), 2);
@@ -5318,8 +5319,148 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
     assert!(child.wait().unwrap().success());
 }
 
+/// A database safety.toml keeps read-only, and a statement a guard
+/// blocks, are put to the operator over `apply_patches` instead of
+/// refused: typing the environment's name lifts them for that one run,
+/// and the next run asks again.
+#[test]
+fn mcp_apply_patches_lets_the_operator_lift_safety_for_one_run() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply-lift", WRITABLE_PROFILE);
+    let (vt, tbl) = (it_name("mlv"), it_name("mlt"));
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!(
+                "CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); \
+                 CREATE TABLE {tbl} (id int); INSERT INTO {tbl} VALUES (7)"
+            ),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Read-only from here on: the built-in default.
+    std::fs::remove_file(home.join(".config/pgman/safety.toml")).unwrap();
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("003-purge.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (3);\nDELETE FROM {tbl};\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-dev\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args =
+        serde_json::json!({"environment": "it-dev", "server": "local", "database": "pgman_test"});
+    let mut call = |id: u64, answer: serde_json::Value| -> (String, bool, String) {
+        writeln!(stdin, "{}", tool_call(id, "apply_patches", args.clone())).unwrap();
+        let ask = next();
+        assert_eq!(ask["method"], "elicitation/create", "{ask}");
+        let message = ask["params"]["message"].as_str().unwrap().to_string();
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": answer})
+        )
+        .unwrap();
+        let (text, is_error) = reply(&[next()], id);
+        (text, is_error, message)
+    };
+    // A tick isn't enough: the name is typed.
+    let (text, is_error, message) = call(
+        2,
+        serde_json::json!({"action": "accept", "content": {"apply": true}}),
+    );
+    assert!(
+        message.contains(&format!(
+            "FOR THIS RUN ONLY: pgman's safety settings refuse what follows, and confirming \
+             lifts that for these patches, this once: 'pgman_test' is read-only; 003-purge.sql: \
+             DELETE without WHERE at line 2 (DELETE FROM {tbl})."
+        )),
+        "{message}"
+    );
+    assert!(
+        message.contains(
+            "it-dev runs what its safety settings refuse, for this run only: type its name"
+        ),
+        "{message}"
+    );
+    assert!(is_error && text.contains("doesn't match it-dev"), "{text}");
+    assert!(!table_has_id(&home, &vt, 2));
+
+    let (text, is_error, _) = call(
+        3,
+        serde_json::json!({"action": "accept", "content": {"environment": "it-dev"}}),
+    );
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["results"][1]["applied"], true, "{text}");
+    assert_eq!(
+        v["lifted_for_this_run"].as_array().unwrap().len(),
+        2,
+        "{text}"
+    );
+    assert!(table_has_id(&home, &vt, 3));
+    assert!(!table_has_id(&home, &tbl, 7), "the lifted DELETE ran");
+
+    // The next run is refused again, so asked again.
+    std::fs::write(
+        dir.join("004-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (4);\n"),
+    )
+    .unwrap();
+    let (text, is_error, message) = call(4, serde_json::json!({"action": "decline"}));
+    assert!(message.contains("'pgman_test' is read-only"), "{message}");
+    assert!(is_error && text.contains("That answer is final"), "{text}");
+    assert!(!table_has_id(&home, &vt, 4));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+    let _ = on("pgman_test", &format!("DROP TABLE {vt}"));
+    let _ = on("pgman_test", &format!("DROP TABLE {tbl}"));
+}
+
 /// A project's `.pgman/pgman.toml` that keeps a database read-only stops
-/// `apply_patches` there, though the personal safety.toml lets it write:
+/// `apply_patches` there, without offering the operator a one-run lift, though the personal safety.toml lets it write:
 /// a project's `[safety]` can only tighten, and patching takes it as
 /// `query` does. Found by the 2026-10-22 release panel.
 #[test]
@@ -5397,7 +5538,12 @@ fn mcp_apply_patches_takes_the_projects_safety_tightening() {
     assert_eq!(v["planned"], serde_json::json!([]), "{text}");
     assert_eq!(v["not_included"]["file"], "002-x.sql", "{text}");
     let why = v["not_included"]["reason"].as_str().unwrap();
-    assert!(why.contains("read-only"), "{why}");
+    // Not put to the operator to lift for one run: a committed rule.
+    assert_eq!(
+        why,
+        "this project's .pgman/pgman.toml [safety] keeps 'pgman_test' read-only, which only a \
+         change there lifts"
+    );
     assert!(!table_has_id(&home, &vt, 2));
     drop(stdin);
     assert!(child.wait().unwrap().success());
@@ -5875,6 +6021,9 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         outside_transaction: false,
         outside_would_help: false,
         blocked: Vec::new(),
+        lift: false,
+        read_only_lifted: false,
+        liftable: false,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let r = rt.block_on(pgman::inventory::patching::apply(

@@ -299,6 +299,9 @@ fn a_plan_refused_at_its_first_patch_is_not_nothing_to_apply() {
         outside_transaction: false,
         outside_would_help: false,
         blocked: Vec::new(),
+        lift: false,
+        read_only_lifted: false,
+        liftable: false,
     };
     let s = plan.empty_summary();
     assert!(
@@ -344,6 +347,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
             outside: None,
             confirms: vec!["ALTER / DDL".into()],
             declared: Vec::new(),
+            lifted: Vec::new(),
         }],
         stopped_at: Some(("253-idx.sql".into(), "CONCURRENTLY".into())),
         dir: "/src/patches".into(),
@@ -352,6 +356,9 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         outside_transaction: false,
         outside_would_help: false,
         blocked: Vec::new(),
+        lift: false,
+        read_only_lifted: false,
+        liftable: false,
     };
     let (message, schema) =
         tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);
@@ -509,6 +516,46 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
     )
     .is_err());
     assert_eq!(tools::confirmed(&plan, &ok), Ok(()));
+    // The operator's one-run lift: said first and loudly, and typed.
+    plan.patches[0].declared.clear();
+    plan.protected = false;
+    plan.lift = true;
+    plan.read_only_lifted = true;
+    plan.patches[0].lifted = vec![crate::query::apply::Guarded {
+        line: 4,
+        kind: "DELETE without WHERE".into(),
+        statement: "DELETE FROM audit".into(),
+    }];
+    let (message, schema) = tools::confirm_request(&plan, RunMode::Apply);
+    assert!(
+        message.contains(
+            "WARNING, FOR THIS RUN ONLY: pgman's safety settings refuse what follows, and \
+             confirming lifts that for these patches, this once: 'ledger' is read-only; \
+             252-x.sql: DELETE without WHERE at line 4 (DELETE FROM audit)."
+        ),
+        "{message}"
+    );
+    assert!(
+        message.contains(
+            "production runs what its safety settings refuse, for this run only: type its name"
+        ),
+        "{message}"
+    );
+    assert_eq!(schema["required"], json!(["environment"]));
+    assert!(tools::confirmed(
+        &plan,
+        &json!({"action": "accept", "content": {"apply": true}})
+    )
+    .is_err());
+    assert_eq!(tools::confirmed(&plan, &ok), Ok(()));
+    let result: Value = serde_json::from_str(&tools::render_apply(&plan, None, "")).unwrap();
+    assert_eq!(
+        result["lifted_for_this_run"],
+        json!([
+            "'ledger' is read-only",
+            "252-x.sql: DELETE without WHERE at line 4 (DELETE FROM audit)"
+        ])
+    );
 }
 
 #[tokio::test]

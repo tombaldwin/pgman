@@ -123,7 +123,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "apply_patches",
-            "description": "Apply an environment database's pending schema patches, after the OPERATOR confirms through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name). Plans first, read-only: the pending patches in order, each checked against safety.toml, stopping before the first that can't run here (a read-only profile, a blocked statement, its own BEGIN/COMMIT, CONCURRENTLY). Then each runs in its own transaction with a 5s lock_timeout, re-reading the version table before each, and it stops at the first failure. `mode`: \"apply\" (the default) for real; \"dry_run\" runs them all in ONE transaction and rolls it back — nothing kept, but the same locks and work as applying, on the same server, so it is confirmed like a real run; \"copy\" applies them for real to a copy of the database made on the same server (CREATE DATABASE … TEMPLATE, which needs nobody else connected to it: an idle local or dev database), then drops the copy. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica, and on a database safety.toml keeps read-only (the default); only an environment with a version_table naming its patches directory. Never call it to 'see' what is pending: use `environments` with probe, or `pending_patches`. If the call times out, a patch may have committed: check before calling again.",
+            "description": "Apply an environment database's pending schema patches, after the OPERATOR confirms through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name). Plans first, read-only: the pending patches in order, each checked against safety.toml, stopping before the first that can't run here (its own BEGIN/COMMIT, CONCURRENTLY, …). A database safety.toml keeps read-only, or statements its guards block, are shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. Then each runs in its own transaction with a 5s lock_timeout, re-reading the version table before each, and it stops at the first failure. `mode`: \"apply\" (the default) for real; \"dry_run\" runs them all in ONE transaction and rolls it back — nothing kept, but the same locks and work as applying, on the same server, so it is confirmed like a real run; \"copy\" applies them for real to a copy of the database made on the same server (CREATE DATABASE … TEMPLATE, which needs nobody else connected to it: an idle local or dev database), then drops the copy. CAVEATS: refused under --read-only, by a client that can't elicit, and on a replica; only an environment with a version_table naming its patches directory. Never call it to 'see' what is pending: use `environments` with probe, or `pending_patches`. If the call times out, a patch may have committed: check before calling again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -256,16 +256,40 @@ impl Server {
         }
         // As `query` reads it: the project's `[safety]` tightens patching
         // too. Planned and run with the same one.
-        let safety = merged_safety(crate::safety::SafetyConfig::load_personal().0, &self.cwd);
+        let personal = crate::safety::SafetyConfig::load_personal().0;
+        let safety = merged_safety(personal.clone(), &self.cwd);
         // Never outside a transaction: that takes the TUI's typed confirm.
-        let plan = crate::inventory::patching::plan_for(
+        let mut plan = crate::inventory::patching::plan_for(
             environment.clone(),
             server.clone(),
             database.clone(),
             false,
+            None,
             safety.clone(),
         )
         .await?;
+        // Refused only for a read-only database or blocked statements:
+        // the operator, not the agent, may lift that for this one run,
+        // by typing the environment's name over the plan that says so —
+        // what safety.toml refuses, never what the project's [safety]
+        // does (its floor).
+        if plan.liftable {
+            let floor = crate::project::project_floor(
+                &personal,
+                crate::project::load_from(&self.cwd)
+                    .and_then(|(_, cfg)| cfg.safety)
+                    .as_ref(),
+            );
+            plan = crate::inventory::patching::plan_for(
+                environment.clone(),
+                server.clone(),
+                database.clone(),
+                false,
+                Some(floor),
+                safety.clone(),
+            )
+            .await?;
+        }
         if plan.patches.is_empty() {
             return Ok(render_apply(&plan, None, &plan.empty_summary()));
         }
@@ -281,6 +305,10 @@ impl Server {
             ));
         }
         tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, patches = plan.patches.len(), mode = mode.name(), "apply_patches confirmed");
+        let lifted = plan.lifted();
+        if !lifted.is_empty() {
+            tracing::warn!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, "apply_patches: the operator lifted safety for this run: {}", lifted.join("; "));
+        }
         // Its own task: if this call times out, the run still finishes
         // (and logs each patch) rather than being dropped mid-patch.
         let report = tokio::spawn(crate::inventory::patching::apply_for(
@@ -923,6 +951,15 @@ pub fn confirm_request(
             " {asked}. This one confirmation answers them all."
         ));
     }
+    let lifted = plan.lifted();
+    if !lifted.is_empty() {
+        message.push_str(&format!(
+            " WARNING, FOR THIS RUN ONLY: pgman's safety settings refuse what follows, and \
+             confirming lifts that for these patches, this once: {}. The settings stay as they \
+             are for every other run.",
+            lifted.join("; ")
+        ));
+    }
     let declared = plan.declared();
     if !declared.is_empty() {
         message.push_str(&format!(
@@ -1048,6 +1085,7 @@ pub fn render_apply(
         "blocked": plan.blocked.iter().map(|(f, g)| json!({"file": f, "line": g.line, "kind": g.kind, "statement": g.statement})).collect::<Vec<_>>(),
         "below_recorded": plan.below_recorded,
         "guard_confirms": plan.confirm_summary(),
+        "lifted_for_this_run": plan.lifted(),
         "results": results,
         "error": report.and_then(|r| r.error.clone()),
         "recorded_after": report.and_then(|r| r.recorded_after),

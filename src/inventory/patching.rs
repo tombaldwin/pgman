@@ -64,6 +64,9 @@ pub struct PlannedPatch {
     /// (`-- pgman: allow <guard>`): named in the plan, and confirming
     /// takes the typed environment name.
     pub declared: Vec<crate::query::apply::Guarded>,
+    /// Its statements a `Block` guard stops that this run lifts
+    /// ([`PatchPlan::lift`]).
+    pub lifted: Vec<crate::query::apply::Guarded>,
 }
 
 /// What [`apply`] would do, for the operator to confirm.
@@ -97,6 +100,15 @@ pub struct PatchPlan {
     /// stops at and in each pending one after it, with its file: the
     /// whole list for one decision, not the first only.
     pub blocked: Vec<(String, crate::query::apply::Guarded)>,
+    /// Planned to lift, for this run alone, what safety.toml refuses: a
+    /// read-only database and blocked statements (MCP's operator
+    /// override; never the TUI or `pgman apply`).
+    pub lift: bool,
+    /// The database is read-only, and this run (`lift`) writes anyway.
+    pub read_only_lifted: bool,
+    /// Planned without `lift`, it stopped at a patch refused only for
+    /// what `lift` lets through.
+    pub liftable: bool,
 }
 
 impl PlannedPatch {
@@ -162,11 +174,30 @@ impl PatchPlan {
             Some("is protected")
         } else if self.patches.iter().any(|p| p.outside.is_some()) {
             Some("runs a patch outside a transaction")
+        } else if self.read_only_lifted || self.patches.iter().any(|p| !p.lifted.is_empty()) {
+            Some("runs what its safety settings refuse, for this run only")
         } else if self.patches.iter().any(|p| !p.declared.is_empty()) {
             Some("runs statements its guards block, which their patches allow")
         } else {
             None
         }
+    }
+
+    /// What this run lifts ([`PatchPlan::lift`]): the read-only
+    /// database, then each blocked statement as `file: DROP at line 3
+    /// (DROP TABLE legacy)`. Pure.
+    pub fn lifted(&self) -> Vec<String> {
+        let read_only = self
+            .read_only_lifted
+            .then(|| format!("'{}' is read-only", self.database));
+        read_only
+            .into_iter()
+            .chain(self.patches.iter().flat_map(|p| {
+                p.lifted
+                    .iter()
+                    .map(move |g| format!("{}: {}", p.file.file, g.describe()))
+            }))
+            .collect()
     }
 
     /// The statements patches allow themselves past a `Block` guard,
@@ -581,12 +612,17 @@ pub fn split_at_recorded(
 }
 
 /// The pending patches of `target`, checked, for the operator to confirm.
+/// `lift` plans past a read-only database and blocked statements, for
+/// one run ([`PatchPlan::lift`]) — but not past what its floor, the
+/// project's `[safety]` alone (`project::project_floor`), refuses: a
+/// committed rule holds against a one-run lift.
 pub async fn plan(
     env: &Environment,
     target: &Target,
     safety: &crate::safety::SafetyConfig,
     fetch_secret: &FetchSecret,
     outside: bool,
+    lift: Option<&crate::safety::SafetyConfig>,
 ) -> Result<PatchPlan, String> {
     let cfg = refuse(env, target)?;
     let dir = env
@@ -616,6 +652,9 @@ pub async fn plan(
         outside_transaction: outside,
         outside_would_help: false,
         blocked: Vec::new(),
+        lift: lift.is_some(),
+        read_only_lifted: false,
+        liftable: false,
         dir: dir.display().to_string(),
         recorded: {
             let mut r = applied.clone();
@@ -665,16 +704,35 @@ pub async fn plan(
                 continue;
             }
         };
-        match crate::query::apply::check_patch(safety, &target.database, &text, outside) {
-            Ok(checked) => plan.patches.push(PlannedPatch {
-                file,
-                text,
-                statements: checked.statements,
-                outside: checked.outside,
-                confirms: checked.confirms,
-                declared: checked.declared,
-            }),
+        if let Some(floor) = lift {
+            if let Err(r) =
+                crate::query::apply::check_patch(floor, &target.database, &text, outside)
+            {
+                plan.stopped_at = Some((file.file, project_refusal(floor, &target.database, &r)));
+                continue;
+            }
+        }
+        match crate::query::apply::check_patch_as(
+            safety,
+            &target.database,
+            &text,
+            outside,
+            lift.is_some(),
+        ) {
+            Ok(checked) => {
+                plan.read_only_lifted |= checked.read_only_lifted;
+                plan.patches.push(PlannedPatch {
+                    file,
+                    text,
+                    statements: checked.statements,
+                    outside: checked.outside,
+                    confirms: checked.confirms,
+                    declared: checked.declared,
+                    lifted: checked.lifted,
+                })
+            }
             Err(r) => {
+                plan.liftable = r.liftable;
                 plan.outside_would_help = !outside
                     && crate::query::apply::check_patch(safety, &target.database, &text, true)
                         .is_ok();
@@ -685,6 +743,36 @@ pub async fn plan(
         }
     }
     Ok(plan)
+}
+
+/// Why a lifted plan stops at a patch its project's rules alone refuse
+/// (`r`, from checking against `floor`): those aren't lifted. Pure.
+pub fn project_refusal(
+    floor: &crate::safety::SafetyConfig,
+    db: &str,
+    r: &crate::query::apply::Refused,
+) -> String {
+    if !r.liftable {
+        return r.why.clone();
+    }
+    let mut what = Vec::new();
+    if floor.profile_for(db).read_only {
+        what.push(format!("keeps '{db}' read-only"));
+    }
+    if !r.blocked.is_empty() {
+        what.push(format!(
+            "blocks {}",
+            r.blocked
+                .iter()
+                .map(crate::query::apply::Guarded::describe)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    format!(
+        "this project's .pgman/pgman.toml [safety] {}, which only a change there lifts",
+        what.join(" and ")
+    )
 }
 
 async fn connect(
@@ -892,16 +980,19 @@ impl Run<'_> {
         let applied = crate::query::apply::applied_ids(client, self.cfg).await?;
         still_as_planned(plan, i, &applied)?;
         // Checked again: safety.toml may have changed since the plan.
-        let checked = crate::query::apply::check_patch(
+        let checked = crate::query::apply::check_patch_as(
             self.safety,
             self.database,
             &p.text,
             plan.outside_transaction,
+            plan.lift,
         )
         .map_err(|r| r.why)?;
         if checked.statements != p.statements
             || checked.outside != p.outside
             || checked.declared != p.declared
+            || checked.lifted != p.lifted
+            || checked.read_only_lifted != plan.read_only_lifted
         {
             return Err("the patch's statements differ from the plan".to_string());
         }
@@ -1047,15 +1138,25 @@ pub async fn plan_for(
     server: String,
     database: String,
     outside: bool,
+    lift: Option<crate::safety::SafetyConfig>,
     safety: crate::safety::SafetyConfig,
 ) -> Result<PatchPlan, String> {
     // Its `ENV/DATABASE` and `ENV/SERVER/DATABASE` entries apply here.
     let safety = safety.scoped(&environment, Some(&server));
+    let lift = lift.map(|floor| floor.scoped(&environment, Some(&server)));
     let (env, target) =
         tokio::task::spawn_blocking(move || resolve(&environment, &server, &database))
             .await
             .map_err(|e| format!("resolve task failed: {e}"))??;
-    plan(&env, &target, &safety, &aws_secrets(), outside).await
+    plan(
+        &env,
+        &target,
+        &safety,
+        &aws_secrets(),
+        outside,
+        lift.as_ref(),
+    )
+    .await
 }
 
 /// [`apply`] for a plan from [`plan_for`], resolving its database again;
@@ -1090,6 +1191,77 @@ pub fn aws_secrets() -> FetchSecret {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_lifted_plan_stops_where_the_project_refuses_and_says_why() {
+        use crate::query::apply::{check_patch, Refused};
+        let sql = "-- x\nDROP TABLE legacy;";
+        let project = crate::project::ProjectSafety {
+            default: None,
+            databases: [(
+                "ledger".to_string(),
+                crate::safety::SafetyProfile {
+                    read_only: false,
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let floor = crate::project::project_floor(&Default::default(), Some(&project));
+        let r = check_patch(&floor, "ledger", sql, false).unwrap_err();
+        assert_eq!(
+            project_refusal(&floor, "ledger", &r),
+            "this project's .pgman/pgman.toml [safety] blocks DROP at line 2 (DROP TABLE \
+             legacy), which only a change there lifts"
+        );
+        let ro = crate::project::project_floor(
+            &Default::default(),
+            Some(&crate::project::ProjectSafety {
+                default: Some(Default::default()),
+                databases: Default::default(),
+            }),
+        );
+        let r = check_patch(&ro, "ledger", "ALTER TABLE t ADD c int;", false).unwrap_err();
+        assert_eq!(
+            project_refusal(&ro, "ledger", &r),
+            "this project's .pgman/pgman.toml [safety] keeps 'ledger' read-only, which only a \
+             change there lifts"
+        );
+        // What isn't liftable keeps its own words.
+        let r = Refused::from("the patch has no statements");
+        assert_eq!(
+            project_refusal(&ro, "ledger", &r),
+            "the patch has no statements"
+        );
+    }
+
+    #[test]
+    fn a_lifted_plan_says_what_it_lifts_and_takes_the_typed_name() {
+        let mut p = crate::demo::patch_plan("staging", "staging", "shop", false);
+        assert_eq!(p.lifted(), Vec::<String>::new());
+        assert_eq!(p.typed_reason(), None);
+        p.read_only_lifted = true;
+        assert_eq!(p.lifted(), ["'shop' is read-only"]);
+        assert_eq!(
+            p.typed_reason(),
+            Some("runs what its safety settings refuse, for this run only")
+        );
+        p.read_only_lifted = false;
+        p.patches[0].lifted = vec![crate::query::apply::Guarded {
+            line: 2,
+            kind: "DROP".into(),
+            statement: "DROP TABLE legacy".into(),
+        }];
+        assert_eq!(
+            p.lifted(),
+            [format!(
+                "{}: DROP at line 2 (DROP TABLE legacy)",
+                p.patches[0].file.file
+            )]
+        );
+        assert!(p.needs_typed());
+    }
+
     fn env(name: &str, protected: Option<bool>) -> Environment {
         let mut e = super::super::parse_config(&format!(
             "[[environments]]\nname = \"{name}\"\nsource = {{ kind = \"static\", connections = [\"x\"] }}\n"
@@ -1120,6 +1292,7 @@ mod tests {
                     outside: None,
                     confirms: Vec::new(),
                     declared: Vec::new(),
+                    lifted: Vec::new(),
                 })
                 .collect(),
             stopped_at: None,
@@ -1129,6 +1302,9 @@ mod tests {
             outside_transaction: false,
             outside_would_help: false,
             blocked: Vec::new(),
+            lift: false,
+            read_only_lifted: false,
+            liftable: false,
         }
     }
 

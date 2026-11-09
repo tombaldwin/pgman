@@ -669,6 +669,8 @@ async fn main() -> anyhow::Result<()> {
                 server,
                 database,
                 outside,
+                // Only MCP's operator override lifts.
+                None,
                 safety,
             ))
         }),
