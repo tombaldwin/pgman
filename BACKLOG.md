@@ -308,6 +308,25 @@ batch.
 - **Possible flake**: `a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently`
   failed once in a full parallel integration run; not reproduced.
 
+### Patching a non-production twin of production (2026-11-09) — needs Tom
+
+From a release morning: demo and production each have a database of
+the same name, and patching demo meant loosening production too.
+- **Safety keyed by ENV/DATABASE** (or ENV/SERVER/DATABASE, the target
+  syntax `pgman apply` takes), bare names still working. The key fix:
+  today `[databases.<name>]` opens that name on every server. Touches
+  `safety.rs`'s lookup and every caller that knows only a db name.
+- **A one-run override over MCP:** `apply_patches` on a read-only
+  database, or a patch statement a `block` guard stops, offered to the
+  operator as an elicitation (typed environment name, the statement,
+  file and line shown) instead of a config edit. Loosens a guard from
+  inside the agent's flow, so it's a posture decision.
+- **A patch that declares its own exception** (`-- pgman: allow
+  update_without_where` on the line before), still shown in the
+  confirm. Same decision.
+- **Plan past a blocked statement:** list every guarded statement in
+  the plan, not stop at the first, so one decision covers the run.
+
 ### From a client's first MCP dump and restore (2026-11-02)
 
 - **Discovered names as dump/restore targets** (needs Tom's decision).
