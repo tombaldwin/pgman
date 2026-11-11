@@ -5,13 +5,13 @@
   "description": "PostgreSQL for coding agents: schema, read-only queries, EXPLAIN, masked dumps, confirmed writes.",
   "websiteUrl": "https://www.poly.io/products/pgman/",
   "repository": { "url": "https://github.com/tombaldwin/pgman", "source": "github" },
-  "version": "0.5.1",
+  "version": "0.5.2",
   "packages": [
     {
       "registryType": "cargo",
       "registryBaseUrl": "https://crates.io",
       "identifier": "pgman",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "packageArguments": [
         { "type": "positional", "value": "mcp" },
         { "type": "positional", "value": "serve" }

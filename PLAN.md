@@ -85,6 +85,16 @@ counted by parent, the restore's grants note, and discovered names
 explained. Released as v0.5.0 on Tom's "go" (2026-11-02): minor, as a
 protected environment's dumps now need `encrypt`.
 
+### Production-twin patching; rules confirmed over MCP (2026-11-11)
+
+On Tom's "build all 4": safety.toml keys by `ENV/DATABASE` and
+`ENV/SERVER/DATABASE`, every blocked statement listed in a plan,
+`-- pgman: allow <guard>` in a patch, and MCP's one-run lift of a
+refusal (never past a project's own rules). Then, on the client Lead's
+ask with Tom's go, MCP's `dump` confirms a new or changed committed
+masking rules file by the database's name typed. Released as v0.5.2 on
+Tom's "go".
+
 ### The MCP Registry listing (2026-11-09)
 
 On Tom's ask, passed on by agentlink: `server.json` (a cargo package,
