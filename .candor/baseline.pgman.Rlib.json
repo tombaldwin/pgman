@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 4729,
-    "digest": "f05e6ef4a8971a5b"
+    "count": 4737,
+    "digest": "6763ca4ce11a9778"
   },
   "resolves": [
     "fs",
@@ -322,6 +322,18 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
+      "hash": "8fc421c1b2d98c15afe94a05ab64b28a",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl copies::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as copies::_::_serde::de::Visitor<'de>>::visit_bytes",
+      "loc": "src/inventory.rs:260:39: 260:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
       "hash": "8fc421c1b2d98c157cd90f652c8ed9c1",
       "invisible": [
         "serde_core"
@@ -335,18 +347,6 @@
       "undeclared": [],
       "overdeclared": [],
       "hash": "8fc421c1b2d98c154e3d7d1f02acb00d",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl copies::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as copies::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:260:39: 260:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "8fc421c1b2d98c15afe94a05ab64b28a",
       "invisible": [
         "serde_core"
       ]
@@ -382,6 +382,18 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
+      "hash": "8fc421c1b2d98c15e7837e7ee71ec0b7",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl copies::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as copies::_::_serde::de::Visitor<'de>>::visit_u64",
+      "loc": "src/inventory.rs:260:39: 260:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
       "hash": "8fc421c1b2d98c157170a340b0db2bd8",
       "invisible": [
         "serde_core"
@@ -400,25 +412,13 @@
       ]
     },
     {
-      "fn": "<inventory::_::<impl copies::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as copies::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:260:39: 260:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "8fc421c1b2d98c15e7837e7ee71ec0b7",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
       "fn": "<inventory::_::<impl copies::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__Visitor<'de> as copies::_::_serde::de::Visitor<'de>>::visit_map",
       "loc": "src/inventory.rs:260:39: 260:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8fc421c1b2d98c1529007fb340487ff4",
+      "hash": "8fc421c1b2d98c1590bee9c0a75d9894",
       "invisible": [
         "serde"
       ]
@@ -430,7 +430,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "8fc421c1b2d98c1590bee9c0a75d9894",
+      "hash": "8fc421c1b2d98c1529007fb340487ff4",
       "invisible": [
         "serde"
       ]
@@ -473,7 +473,7 @@
     },
     {
       "fn": "<masked::OpenArchive as std::ops::Drop>::drop",
-      "loc": "src/masked.rs:1110:5: 1110:23",
+      "loc": "src/masked.rs:1169:5: 1169:23",
       "inferred": [
         "Fs"
       ],
@@ -12665,7 +12665,7 @@
     },
     {
       "fn": "masked::agent_out",
-      "loc": "src/masked.rs:1068:1: 1068:76",
+      "loc": "src/masked.rs:1127:1: 1127:76",
       "inferred": [
         "Fs"
       ],
@@ -12689,8 +12689,8 @@
       ]
     },
     {
-      "fn": "masked::agent_rules_problem",
-      "loc": "src/masked.rs:969:1: 969:72",
+      "fn": "masked::agent_rules",
+      "loc": "src/masked.rs:999:1: 999:60",
       "inferred": [
         "Env",
         "Exec",
@@ -12698,6 +12698,35 @@
       ],
       "direct": [
         "Exec"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Exec",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "hash": "8fc421c1b2d98c1526e24f8444a77a4f",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "git"
+      ],
+      "calls": [
+        "masked::confirmed"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
+      "fn": "masked::agent_rules_problem",
+      "loc": "src/masked.rs:1046:1: 1046:72",
+      "inferred": [
+        "Env",
+        "Exec",
+        "Fs"
       ],
       "declared": [],
       "undeclared": [
@@ -12714,7 +12743,7 @@
         "git"
       ],
       "calls": [
-        "masked::confirmed"
+        "masked::agent_rules"
       ],
       "incomplete": [
         "Fs"
@@ -12722,7 +12751,7 @@
     },
     {
       "fn": "masked::alive",
-      "loc": "src/masked.rs:1134:1: 1134:27",
+      "loc": "src/masked.rs:1193:1: 1193:27",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12734,7 +12763,7 @@
     },
     {
       "fn": "masked::checked_manifest",
-      "loc": "src/masked.rs:1314:1: 1314:64",
+      "loc": "src/masked.rs:1373:1: 1373:64",
       "inferred": [
         "Fs",
         "Unknown"
@@ -12764,7 +12793,7 @@
     },
     {
       "fn": "masked::checked_manifest_with",
-      "loc": "src/masked.rs:1322:1: 1326:30",
+      "loc": "src/masked.rs:1381:1: 1385:30",
       "inferred": [
         "Fs",
         "Unknown"
@@ -12794,7 +12823,7 @@
     },
     {
       "fn": "masked::confirm",
-      "loc": "src/masked.rs:956:1: 956:64",
+      "loc": "src/masked.rs:969:1: 969:75",
       "inferred": [
         "Clock",
         "Env",
@@ -12821,6 +12850,7 @@
       ],
       "calls": [
         "journal::dir",
+        "journal::now",
         "masked::confirmed_file",
         "util::ensure_private_dir",
         "util::write_private"
@@ -12834,7 +12864,7 @@
     },
     {
       "fn": "masked::confirm_rules_cli",
-      "loc": "src/masked.rs:1004:1: 1008:36",
+      "loc": "src/masked.rs:1063:1: 1067:36",
       "inferred": [
         "Clock",
         "Env",
@@ -12936,7 +12966,7 @@
     },
     {
       "fn": "masked::finish_raw_archive",
-      "loc": "src/masked.rs:1188:1: 1192:24",
+      "loc": "src/masked.rs:1247:1: 1251:24",
       "inferred": [
         "Fs",
         "Unknown"
@@ -12986,7 +13016,7 @@
     },
     {
       "fn": "masked::is_archive",
-      "loc": "src/masked.rs:1087:1: 1087:39",
+      "loc": "src/masked.rs:1146:1: 1146:39",
       "inferred": [
         "Fs"
       ],
@@ -13005,7 +13035,7 @@
     },
     {
       "fn": "masked::kms_scope",
-      "loc": "src/masked.rs:1236:1: 1236:60",
+      "loc": "src/masked.rs:1295:1: 1295:60",
       "inferred": [
         "Env",
         "Fs"
@@ -13151,7 +13181,7 @@
     },
     {
       "fn": "masked::open_archive",
-      "loc": "src/masked.rs:1246:1: 1246:63",
+      "loc": "src/masked.rs:1305:1: 1305:63",
       "inferred": [
         "Clock",
         "Env",
@@ -13209,7 +13239,7 @@
     },
     {
       "fn": "masked::open_archive_with",
-      "loc": "src/masked.rs:1261:1: 1266:33",
+      "loc": "src/masked.rs:1320:1: 1325:33",
       "inferred": [
         "Clock",
         "Fs",
@@ -13318,7 +13348,7 @@
     },
     {
       "fn": "masked::read_header",
-      "loc": "src/masked.rs:1227:1: 1227:57",
+      "loc": "src/masked.rs:1286:1: 1286:57",
       "inferred": [
         "Fs"
       ],
@@ -13339,6 +13369,25 @@
       ],
       "incomplete": [
         "Fs"
+      ]
+    },
+    {
+      "fn": "masked::rules_commit",
+      "loc": "src/masked.rs:1029:1: 1029:51",
+      "inferred": [
+        "Exec"
+      ],
+      "direct": [
+        "Exec"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Exec"
+      ],
+      "overdeclared": [],
+      "hash": "8fc421c1b2d98c158c6b2e409718a5b4",
+      "cmds": [
+        "git"
       ]
     },
     {
@@ -13452,7 +13501,7 @@
     },
     {
       "fn": "masked::sweep_restores",
-      "loc": "src/masked.rs:1152:1: 1152:36",
+      "loc": "src/masked.rs:1211:1: 1211:36",
       "inferred": [
         "Fs"
       ],
@@ -13594,7 +13643,7 @@
     },
     {
       "fn": "masking::rules::find",
-      "loc": "src/masking/rules.rs:350:1: 350:90",
+      "loc": "src/masking/rules.rs:373:1: 373:90",
       "inferred": [
         "Fs"
       ],
@@ -13622,7 +13671,7 @@
     },
     {
       "fn": "masking::rules::locate",
-      "loc": "src/masking/rules.rs:341:1: 341:63",
+      "loc": "src/masking/rules.rs:364:1: 364:63",
       "inferred": [
         "Fs"
       ],
@@ -14041,7 +14090,7 @@
     },
     {
       "fn": "mcp::dumps::<impl mcp::Server>::explain_unresolved",
-      "loc": "src/mcp/dumps.rs:313:5: 313:76",
+      "loc": "src/mcp/dumps.rs:345:5: 345:76",
       "inferred": [
         "Env",
         "Fs",
@@ -14075,7 +14124,7 @@
     },
     {
       "fn": "mcp::dumps::<impl mcp::Server>::tool_dump",
-      "loc": "src/mcp/dumps.rs:321:5: 321:81",
+      "loc": "src/mcp/dumps.rs:353:5: 353:81",
       "inferred": [
         "Clock",
         "Db",
@@ -14140,14 +14189,17 @@
         "journal::new_id",
         "journal_send::flush_note",
         "masked::agent_out",
-        "masked::agent_rules_problem",
+        "masked::agent_rules",
+        "masked::confirm",
+        "masked::rules_commit",
         "masked::run",
         "masking::archive::sha256_file",
         "masking::rules::find",
         "mcp::Server::elicit",
         "mcp::dumps::<impl mcp::Server>::explain_unresolved",
         "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::__CALLSITE",
-        "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::{closure#9}::__CALLSITE",
+        "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::__CALLSITE",
+        "mcp::dumps::<impl mcp::Server>::tool_dump::{closure#0}::{closure#12}::__CALLSITE",
         "mcp::dumps::dump_out",
         "policy::for_target",
         "project::load_dumps"
@@ -14178,7 +14230,7 @@
     },
     {
       "fn": "mcp::dumps::<impl mcp::Server>::tool_restore",
-      "loc": "src/mcp/dumps.rs:499:5: 499:84",
+      "loc": "src/mcp/dumps.rs:564:5: 564:84",
       "inferred": [
         "Clock",
         "Db",
@@ -14280,7 +14332,7 @@
     },
     {
       "fn": "mcp::dumps::arg_bool",
-      "loc": "src/mcp/dumps.rs:285:1: 285:45",
+      "loc": "src/mcp/dumps.rs:317:1: 317:45",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14292,7 +14344,7 @@
     },
     {
       "fn": "mcp::dumps::arg_string",
-      "loc": "src/mcp/dumps.rs:289:1: 289:73",
+      "loc": "src/mcp/dumps.rs:321:1: 321:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -14329,7 +14381,7 @@
     },
     {
       "fn": "mcp::dumps::dump_schema",
-      "loc": "src/mcp/dumps.rs:265:1: 265:63",
+      "loc": "src/mcp/dumps.rs:297:1: 297:84",
       "inferred": [],
       "declared": [],
       "undeclared": [],
