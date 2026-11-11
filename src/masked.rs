@@ -930,7 +930,7 @@ fn confirmed_file() -> PathBuf {
 }
 
 /// Whether `digest` (a rules file's sha256) is one the operator has
-/// confirmed at a terminal. Reads the data directory.
+/// confirmed, at a terminal or over MCP. Reads the data directory.
 pub fn confirmed(digest: &str, file: &Path) -> bool {
     confirmed_in(
         &std::fs::read_to_string(confirmed_file()).unwrap_or_default(),
@@ -952,21 +952,51 @@ pub fn confirmed_in(text: &str, digest: &str, file: &Path) -> bool {
     })
 }
 
-/// Record `digest` of `file` as confirmed. Writes the data directory.
-pub fn confirm(digest: &str, file: &Path) -> Result<(), String> {
+/// The confirmed list's lines for `digest` of `file`, confirmed `how`
+/// ("at a terminal", "over MCP") at `at` (unix seconds): a comment
+/// saying when and how, then the `digest  path` line [`confirmed_in`]
+/// reads. Pure.
+pub fn confirmation_lines(digest: &str, file: &Path, how: &str, at: u64) -> String {
+    format!(
+        "# {} confirmed {how}\n{digest}  {}\n",
+        crate::app::format_unix_secs_utc(at),
+        file.display()
+    )
+}
+
+/// Record `digest` of `file` as confirmed `how`. Writes the data
+/// directory.
+pub fn confirm(digest: &str, file: &Path, how: &str) -> Result<(), String> {
     let path = confirmed_file();
     crate::util::ensure_private_dir(&crate::journal::dir()).map_err(|e| e.to_string())?;
     let mut text = std::fs::read_to_string(&path).unwrap_or_default();
     let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
-    text.push_str(&format!("{digest}  {}\n", file.display()));
+    text.push_str(&confirmation_lines(
+        digest,
+        &file,
+        how,
+        crate::journal::now(),
+    ));
     crate::util::write_private(&path, &text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Why the rules file at `file` can't be used by an agent, if it can't:
-/// it must be committed, as it is, and confirmed at a terminal — so an
-/// agent that edits it (to keep a column) can't use the edit until the
-/// operator has seen it. Reads git and the data directory.
-pub fn agent_rules_problem(file: &Path, digest: &str) -> Option<String> {
+/// Where an agent's rules file stands.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AgentRules {
+    /// Committed as it is, and confirmed: used.
+    Confirmed,
+    /// Committed as it is, not yet confirmed (new, or changed since):
+    /// the operator confirms it, over MCP or at a terminal, first.
+    Unconfirmed,
+    /// Not usable by an agent at all: why.
+    Refused(String),
+}
+
+/// Where the rules file at `file` stands for an agent: it must be
+/// committed, as it is, and confirmed — so an agent that edits it (to
+/// keep a column) can't use the edit until the operator has seen it.
+/// Reads git and the data directory.
+pub fn agent_rules(file: &Path, digest: &str) -> AgentRules {
     let dir = file.parent().unwrap_or(Path::new("."));
     let git = |args: &[&str]| {
         std::process::Command::new("git")
@@ -981,20 +1011,49 @@ pub fn agent_rules_problem(file: &Path, digest: &str) -> Option<String> {
     let clean = git(&["status", "--porcelain", "--"])
         .is_ok_and(|o| o.status.success() && o.stdout.is_empty());
     if !tracked || !clean {
-        return Some(format!(
-            "{} isn't committed as it is: an agent's dump uses committed rules only. Commit it, then \
-             run pgman dump --masked at a terminal once to confirm it",
+        return AgentRules::Refused(format!(
+            "{} isn't committed as it is: an agent's dump uses committed rules only. Commit it; \
+             the next dump asks the operator to confirm it",
             file.display()
         ));
     }
-    if !confirmed(digest, file) {
-        return Some(format!(
-            "{} hasn't been confirmed at a terminal: run pgman dump <target> --masked there once, \
-             which shows what it keeps and asks",
-            file.display()
-        ));
+    if confirmed(digest, file) {
+        AgentRules::Confirmed
+    } else {
+        AgentRules::Unconfirmed
     }
-    None
+}
+
+/// The commit that last changed `file`, abbreviated, if git says.
+/// Reads git.
+pub fn rules_commit(file: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%h", "--"])
+        .arg(file)
+        .current_dir(file.parent().unwrap_or(Path::new(".")))
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let h = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !h.is_empty()).then_some(h)
+}
+
+/// Why the rules file at `file` can't be used by an agent now, if it
+/// can't: [`agent_rules`] short of confirmed. What a dump checks again
+/// as it starts, after any confirmation. Reads git and the data
+/// directory.
+pub fn agent_rules_problem(file: &Path, digest: &str) -> Option<String> {
+    match agent_rules(file, digest) {
+        AgentRules::Confirmed => None,
+        AgentRules::Unconfirmed => Some(format!(
+            "{} is new or changed since the operator confirmed it: the dump asks them to confirm \
+             it first (or run pgman dump <target> --masked at a terminal, which shows what it \
+             keeps and asks)",
+            file.display()
+        )),
+        AgentRules::Refused(why) => Some(why),
+    }
 }
 
 /// At a terminal, a rules file not yet confirmed: what it loosens, and a
@@ -1032,7 +1091,7 @@ pub fn confirm_rules_cli(
     if !crate::pgtool::confirm_cli("use these rules? [y/N] ", "y")? {
         return Err("rules not confirmed; nothing dumped".into());
     }
-    confirm(digest, file)?;
+    confirm(digest, file, "at a terminal")?;
     Ok(None)
 }
 
@@ -1047,7 +1106,7 @@ pub fn unconfirmed_without_terminal(
 ) -> Result<Option<String>, String> {
     if loose.is_empty() {
         return Ok(Some(format!(
-            "{file} isn't confirmed at a terminal yet: an agent can't use it until it is"
+            "{file} isn't confirmed yet: an agent's dump asks the operator to confirm it first"
         )));
     }
     if unattended {
@@ -1664,6 +1723,25 @@ mod tests {
             "the same bytes, another database"
         );
         assert!(!confirmed_in(&list, "def456", &ledger), "another digest");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_confirmation_says_when_and_how_and_is_read_back() {
+        let dir = std::env::temp_dir().join(format!("pgman-confirm-how-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger = dir.join("ledger.toml");
+        std::fs::write(&ledger, "version = 1\n").unwrap();
+        let lines = confirmation_lines("abc123", &ledger, "over MCP", 1_794_000_000);
+        assert_eq!(
+            lines,
+            format!(
+                "# 2026-11-06T21:20:00Z confirmed over MCP\nabc123  {}\n",
+                ledger.display()
+            )
+        );
+        assert!(confirmed_in(&lines, "abc123", &ledger));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

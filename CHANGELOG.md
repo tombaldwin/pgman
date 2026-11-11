@@ -30,6 +30,15 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   what a project's `.pgman/pgman.toml` `[safety]` refuses on its own is
   never lifted. The result's `lifted_for_this_run` and pgman's log say
   what was lifted.
+- MCP's `dump` lets the operator confirm a project's masking rules
+  file that is committed but new or changed since they last confirmed
+  it, instead of refusing until `pgman dump --masked` runs at a
+  terminal. The question shows the file's commit and sha256, every
+  column it keeps that the defaults would mask, with its reason, and
+  every `null`, `fixed` and `hash` it sets; typing the database's name
+  confirms. The agent can't confirm it, a decline records nothing, and
+  an uncommitted or edited file is still refused. Confirmations, at a
+  terminal or over MCP, are recorded with when and how.
 
 ### Fixed
 

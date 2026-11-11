@@ -336,6 +336,29 @@ pub fn loosening(set: &RuleSet) -> Vec<String> {
     out
 }
 
+/// What in `set` replaces a column's values with the team's own choice
+/// — each `null`, `fixed` (with its value) and `hash` — and each table
+/// whose rows are dropped. What a confirmation shows beside
+/// [`loosening`]. Pure.
+pub fn overrides(set: &RuleSet) -> Vec<String> {
+    let mut out = Vec::new();
+    for t in &set.tables {
+        if t.rows == Some(Rows::Drop) {
+            out.push(format!("{}: rows dropped", t.key));
+        }
+        for c in t.columns.iter().chain(t.every.as_ref()) {
+            let what = match &c.rule {
+                Rule::Null => "null".to_string(),
+                Rule::Fixed(v) => format!("fixed {v:?}"),
+                Rule::Hash => "hash".to_string(),
+                _ => continue,
+            };
+            out.push(format!("{}.{} {what}", t.key, c.column));
+        }
+    }
+    out
+}
+
 /// `.pgman/masking/<database>.toml` above `start`, if there is one.
 /// Reads the filesystem.
 pub fn locate(start: &Path, database: &str) -> Option<PathBuf> {
@@ -410,6 +433,27 @@ mod tests {
             ]
         );
         assert!(loosening(&RuleSet::default()).is_empty());
+    }
+
+    #[test]
+    fn what_the_team_sets_itself_is_listed() {
+        let set = parse(
+            "[tables.customers]\nnotes = { rule = \"keep\", reason = \"reviewed\" }\n\
+             email = \"hash\"\nsecret = { rule = \"fixed\", value = \"x\" }\ncontact = \"email\"\n\
+             \"*\" = \"null\"\n[tables.\"audit.events\"]\nrows = \"drop\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            overrides(&set),
+            [
+                "audit.events: rows dropped",
+                "customers.email hash",
+                "customers.secret fixed \"x\"",
+                "customers.* null"
+            ],
+            "not keep (loosening's), not the defaults' own kinds"
+        );
+        assert!(overrides(&RuleSet::default()).is_empty());
     }
 
     #[test]

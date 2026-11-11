@@ -418,14 +418,22 @@ for. A bound on a text column's length is taken as its length, as
   go as it is; `--strict` also wants every column the defaults mask
   decided in the file. It reads the catalog alone, so CI can run it
   against an empty migrated database.
-- **A new or changed rules file is confirmed at a terminal.** The first
-  masked dump with it shows what it keeps that the defaults would mask,
-  and asks. Without a terminal (CI, a script, an agent's shell) one that
-  keeps something is refused until it has been confirmed, unless the
-  environment is `unattended`; an agent's dump (MCP) uses it only when
-  it is committed, as it is, and was confirmed so. A confirmation is for
-  that file: the same rules under another database's name are asked
-  about again.
+- **A new or changed rules file is confirmed by the operator.** The
+  first masked dump with it shows what it keeps that the defaults would
+  mask, and asks. Without a terminal (CI, a script, an agent's shell)
+  one that keeps something is refused until it has been confirmed,
+  unless the environment is `unattended`. An agent's dump (MCP) uses it
+  only when it is committed, as it is; when it is new or changed since
+  the last confirmation, the dump's elicitation shows the file's commit
+  and sha256, every column it keeps that the defaults would mask (with
+  its reason) and every `null`, `fixed` and `hash` it sets, and the
+  operator confirms by typing the database's name. The agent can't
+  confirm it: no tool argument does. A decline records nothing and is
+  final for that database while the server runs. Either way the
+  confirmation is recorded in `~/.local/share/pgman/masking.confirmed`
+  with when and how, and a later edit to the file is asked about again.
+  A confirmation is for that file: the same rules under another
+  database's name are asked about again.
 
 ## Where dumps go
 

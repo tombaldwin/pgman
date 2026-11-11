@@ -10703,7 +10703,11 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     git(&["init", "-q"]);
     std::fs::create_dir_all(out.join(".pgman/masking")).unwrap();
     let rules = out.join(format!(".pgman/masking/{src}.toml"));
-    std::fs::write(&rules, "version = 1\n").unwrap();
+    std::fs::write(
+        &rules,
+        "version = 1\n[tables.customers]\nnotes = { rule = \"fixed\", value = \"redacted\" }\n",
+    )
+    .unwrap();
 
     let mut child = pgman()
         .env("HOME", &home)
@@ -10724,6 +10728,8 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
     writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
     next();
+    // Run once a question arrives, before it is answered.
+    let before_answer: std::cell::RefCell<Option<Box<dyn FnOnce() + '_>>> = Default::default();
     let mut call =
         |id: u64, tool: &str, args: serde_json::Value, answer: Option<serde_json::Value>| {
             writeln!(stdin, "{}", tool_call(id, tool, args)).unwrap();
@@ -10731,6 +10737,9 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
             let mut message = String::new();
             if frame["method"] == "elicitation/create" {
                 message = frame["params"]["message"].as_str().unwrap().to_string();
+                if let Some(f) = before_answer.borrow_mut().take() {
+                    f();
+                }
                 let a = answer.clone().expect("a question was asked");
                 writeln!(
                     stdin,
@@ -10763,19 +10772,29 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     assert!(err && t.contains("isn't committed"), "{t}");
     git(&["add", "."]);
     git(&["commit", "-q", "-m", "rules"]);
-    let (t, err, _) = call(3, "dump", masked.clone(), None);
-    assert!(
-        err && t.contains("hasn't been confirmed at a terminal"),
-        "{t}"
-    );
-    // The operator confirms it (at a terminal, the dump asks and records).
+    // Committed, not yet confirmed: the dump's question shows the rules
+    // and the operator confirms them by typing the database's name.
     let digest = pgman::masking::archive::sha256_file(&rules).unwrap();
-    std::fs::create_dir_all(home.join(".local/share/pgman")).unwrap();
-    std::fs::write(
-        home.join(".local/share/pgman/masking.confirmed"),
-        format!("{digest}  {}\n", rules.display()),
-    )
-    .unwrap();
+    let confirmed_list = home.join(".local/share/pgman/masking.confirmed");
+    let typed = Some(serde_json::json!({
+        "action": "accept",
+        "content": {"name": src.clone(), "reason": "APP-7 agent copy"}
+    }));
+    let (t, err, message) = call(3, "dump", masked.clone(), typed);
+    assert!(!err, "{t}");
+    for want in [
+        format!("sha256 {digest}"),
+        "customers.notes fixed \"redacted\"".to_string(),
+        format!("Type {src} to confirm"),
+    ] {
+        assert!(message.contains(&want), "{want:?} in {message}");
+    }
+    let list = std::fs::read_to_string(&confirmed_list).unwrap();
+    assert!(
+        list.contains("confirmed over MCP") && list.contains(&digest),
+        "{list}"
+    );
+    // Confirmed: the next dump only says so, and takes a tick.
     let (t, err, message) = call(4, "dump", masked.clone(), yes());
     assert!(!err, "{t}");
     assert!(message.contains("committed, confirmed"), "{message}");
@@ -10992,6 +11011,45 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         restore_yes.clone(),
     );
     assert!(err && t.contains("journal doesn't know"), "{t}");
+    // A file edited while the question is open: the confirmation is for
+    // what was shown, and the dump refuses the edit rather than use it.
+    std::fs::write(
+        &rules,
+        "version = 1\n[tables.customers]\nnotes = \"null\"\n",
+    )
+    .unwrap();
+    git(&["commit", "-q", "-am", "null notes"]);
+    let shown = pgman::masking::archive::sha256_file(&rules).unwrap();
+    {
+        let (rules, git) = (rules.clone(), git);
+        *before_answer.borrow_mut() = Some(Box::new(move || {
+            std::fs::write(
+                &rules,
+                "version = 1\n[tables.customers]\nnotes = { rule = \"keep\", reason = \"codes only\" }\n",
+            )
+            .unwrap();
+            git(&["commit", "-q", "-am", "keep notes"]);
+        }));
+    }
+    let typed = Some(serde_json::json!({
+        "action": "accept",
+        "content": {"name": src.clone(), "reason": "APP-7 agent copy"}
+    }));
+    let (t, err, message) = call(12, "dump", masked.clone(), typed);
+    assert!(message.contains(&format!("sha256 {shown}")), "{message}");
+    assert!(err && t.contains("new or changed since"), "{t}");
+    // The edit, keeping a column, asks again; a tick doesn't confirm it,
+    // and records nothing.
+    let changed = pgman::masking::archive::sha256_file(&rules).unwrap();
+    assert_ne!(changed, shown);
+    let (t, err, message) = call(13, "dump", masked.clone(), yes());
+    assert!(err && t.contains("doesn't match"), "{t}");
+    assert!(
+        message.contains("customers.notes kept: codes only"),
+        "{message}"
+    );
+    let list = std::fs::read_to_string(&confirmed_list).unwrap();
+    assert!(!list.contains(&changed), "{list}");
     drop(stdin);
     let _ = child.wait();
     for db in [
