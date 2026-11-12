@@ -34,6 +34,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A read-only session could be made writable by `set_config` with a
+  column for the setting's name
+  (`SELECT set_config(n, 'off', false) FROM (SELECT
+  'default_transaction_read_only' AS n) s`): a bare word was read as the
+  name itself. Any first argument but a string literal not naming a
+  read-only setting now counts as lifting read-only.
+  `SET default_transaction_read_only = 'on'` is no longer refused as one.
 - MCP's `restore` took any masked archive in the working directory
   without asking the journal, so an agent could build an archive of its
   own, whose schema pg_restore would run, and have it restored (without

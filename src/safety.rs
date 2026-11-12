@@ -829,7 +829,25 @@ pub fn attempts_read_only_escape(sql: &str) -> bool {
     if value == Some("to") {
         value = toks.get(pos + 2).map(String::as_str);
     }
-    !matches!(value, Some("on" | "true" | "1"))
+    !matches!(value, Some("on" | "true" | "1")) && !set_to_truthy_literal(&stripped)
+}
+
+/// `SET <guc> = 'on'` (or `TO 'true'`): the read-only GUC set to a quoted
+/// truthy value and nothing after it, which keeps the floor. Pure.
+fn set_to_truthy_literal(sql: &str) -> bool {
+    let toks = call_tokens(sql);
+    let Some(pos) = toks
+        .iter()
+        .position(|t| matches!(t, CallTok::Word(w) if READ_ONLY_GUCS.contains(&w.as_str())))
+    else {
+        return false;
+    };
+    let rest = match &toks[pos + 1..] {
+        [CallTok::Opaque, rest @ ..] => rest,
+        [CallTok::Word(to), rest @ ..] if to == "to" => rest,
+        _ => return false,
+    };
+    matches!(rest, [CallTok::Literal(v)] if matches!(v.trim(), "on" | "true" | "1"))
 }
 
 /// `true` if `sql` is a transaction-control statement: `BEGIN`, `START
@@ -1267,10 +1285,10 @@ fn call_tokens(sql: &str) -> Vec<CallTok> {
 }
 
 /// `true` if `sql` calls `set_config()` with a first argument that names one
-/// of [`READ_ONLY_GUCS`] — as a string literal, a dollar-quoted literal, or an
-/// identifier, quoted or not, in any case — or with a first argument this
-/// classifier cannot read: an expression, a nested call, an escape string
-/// with backslashes. A name that cannot be read is not one that can be
+/// of [`READ_ONLY_GUCS`] — as a string literal or a dollar-quoted literal,
+/// in any case — or with a first argument this classifier cannot read: a
+/// column (an identifier, quoted or not), an expression, a nested call, an
+/// escape string with backslashes. A name that cannot be read is not one that can be
 /// vouched for. `pg_catalog.set_config(…)` and `"set_config"(…)` count too.
 fn set_config_names_read_only_guc(sql: &str) -> bool {
     let toks = call_tokens(sql);
@@ -1296,7 +1314,10 @@ fn set_config_names_read_only_guc(sql: &str) -> bool {
         }
         let names_guc = match arg.as_slice() {
             [] => false,
-            [CallTok::Word(s)] | [CallTok::Literal(s)] => READ_ONLY_GUCS.contains(&s.trim()),
+            [CallTok::Literal(s)] => READ_ONLY_GUCS.contains(&s.trim()),
+            // A bare or quoted word is a column, whatever it is called:
+            // the name is its value, which can be anything
+            // (`set_config(n, 'off', false) FROM (SELECT '…' AS n) s`).
             _ => true,
         };
         if names_guc {
@@ -1367,6 +1388,10 @@ mod read_only_floor_tests {
             "SELECT set_config(E'default\\137transaction_read_only', 'off', false)",
             "SELECT set_config((SELECT 'default_transaction_read_only'), 'off', false)",
             "SELECT set_config(t.name, 'off', false) FROM t",
+            // A column's value is the name: anything at all.
+            "SELECT set_config(n, 'off', false) FROM (SELECT 'default_transaction_read_only' AS n) s",
+            "SELECT set_config(name, 'off', false) FROM pg_settings WHERE name = 'default_transaction_read_only'",
+            "SELECT set_config(\"n\", 'off', false) FROM (VALUES ('transaction_read_only')) v(n)",
         ] {
             assert!(attempts_read_only_escape(sql), "{sql}");
         }
@@ -1400,6 +1425,24 @@ mod read_only_floor_tests {
         assert!(!attempts_read_only_escape(
             "SET \"default_transaction_read_only\" = on"
         ));
+    }
+
+    #[test]
+    fn a_quoted_truthy_value_keeps_the_floor() {
+        for sql in [
+            "SET default_transaction_read_only = 'on'",
+            "SET default_transaction_read_only TO 'true'",
+            "SET transaction_read_only = ' ON '",
+        ] {
+            assert!(!attempts_read_only_escape(sql), "{sql}");
+        }
+        for sql in [
+            "SET default_transaction_read_only = 'off'",
+            "SET default_transaction_read_only = 'on' || 'x'",
+            "SET default_transaction_read_only = $$off$$",
+        ] {
+            assert!(attempts_read_only_escape(sql), "{sql}");
+        }
     }
 
     #[test]

@@ -11,13 +11,6 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **TUI: `set_config` with a column for the name lifts read-only.**
-  `set_config_names_read_only_guc` (safety.rs) treats a bare word first
-  argument as safe; `SELECT set_config(n, 'off', false) FROM (SELECT
-  'default_transaction_read_only' AS n) s` passes, and the next run
-  writes. Treat anything but a literal not naming a read-only GUC as an
-  escape. `SET default_transaction_read_only = 'on'` is also refused
-  (a false positive).
 - **TUI: a script with its own COMMIT under auto_tx.** `request_run_batch`
   wraps it in BEGIN and then offers a rollback that rolls back nothing.
   Refuse, or run it unwrapped with no TxDecision and say so.
