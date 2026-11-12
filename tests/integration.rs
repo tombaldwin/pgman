@@ -3493,6 +3493,75 @@ fn mcp_describe_lists_tables_and_gives_one_in_full() {
     assert!(is_error && text.contains("describe without"), "{text}");
 }
 
+/// `explain` over MCP: an analyzed plan of a big scan, with its finding;
+/// a write and an EXPLAIN of its own are refused, nothing run.
+#[test]
+fn mcp_explain_gives_a_plan_and_what_is_worth_an_index() {
+    let home = scratch_home("mcp-explain", WRITABLE_PROFILE);
+    let table = format!("pgman_it_expl_{}", std::process::id());
+    let sql = format!(
+        "CREATE TABLE {table} (id int, v int); \
+         INSERT INTO {table} SELECT g, g % 100 FROM generate_series(1, 20000) g; \
+         ANALYZE {table}"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &sql]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[
+            tool_call(
+                1,
+                "explain",
+                serde_json::json!({"connection": "local", "sql": format!("SELECT * FROM {table} WHERE v = 5"), "analyze": true}),
+            ),
+            tool_call(
+                2,
+                "explain",
+                serde_json::json!({"connection": "local", "sql": format!("DELETE FROM {table}")}),
+            ),
+            tool_call(
+                3,
+                "explain",
+                serde_json::json!({"connection": "local", "sql": format!("EXPLAIN SELECT * FROM {table}")}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["analyzed"], true);
+    assert_eq!(v["plan"]["Node Type"], "Seq Scan", "{text}");
+    assert!(v["execution_ms"].is_number(), "{text}");
+    assert!(
+        v["findings"].as_array().unwrap().iter().any(|f| f
+            .as_str()
+            .unwrap()
+            .contains(&format!("Seq Scan on {table}"))),
+        "{text}"
+    );
+    let (text, is_error) = reply(&frames, 2);
+    assert!(is_error && text.contains("only reads"), "{text}");
+    let (text, is_error) = reply(&frames, 3);
+    assert!(is_error && text.contains("without EXPLAIN"), "{text}");
+    let rows = batch_with_home(&home, &["--sql", &format!("SELECT count(*) FROM {table}")]);
+    assert!(
+        String::from_utf8_lossy(&rows.stdout).contains("20000"),
+        "the DELETE never ran"
+    );
+}
+
 /// `slow_queries` over MCP on a server without pg_stat_statements says
 /// how to install it, and refuses an argument out of range before
 /// connecting.

@@ -121,6 +121,21 @@ pub fn tool_table() -> Value {
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
         },
         {
+            "name": "explain",
+            "description": "One statement's plan, as Postgres's EXPLAIN (FORMAT JSON) gives it, with `findings`: big sequential scans, row estimates ten times off, sorts and hashes that spilled to disk, nested loops whose inner side ran many times — what is worth an index or a rewrite. With `analyze: true` the statement really runs (EXPLAIN ANALYZE, BUFFERS) in the same read-only session `query` uses, and the plan carries actual rows and times. The statement passes the same guards as `query`: one statement, nothing a guard would ask about, so not an INSERT, UPDATE or DELETE. CAVEATS: `analyze` takes as long as the statement does, within the 30 s cap, and its timings include the server's caching at that moment. Without it the row counts are the planner's estimates. On a replica the plan is the replica's, with its statistics. A plan over 256 KiB of JSON comes back as findings only (`plan_cut`).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connection": {"type": "string", "description": "A name from `connections`."},
+                    "sql": {"type": "string", "description": "One statement, without EXPLAIN."},
+                    "analyze": {"type": "boolean", "description": "Run it for actual rows and times (default false)."}
+                },
+                "required": ["connection", "sql"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
             "name": "slow_queries",
             "description": "The statements that cost a connection's database the most, from pg_stat_statements, as pgman's slow-query panel reads them: each normalized statement with its calls, total and mean time in milliseconds, and rows. `order_by` is `total` (the default: where the time goes overall) or `mean` (the slowest per call); `limit` is 1 to 50, default 20. Use it to find the queries worth an index or a rewrite, then the code that sends them. CAVEATS: needs the pg_stat_statements extension installed in that database (the error says how). The figures run since the last reset or restart, not a recent window. Literals are replaced by $1, $2…, so one row stands for every value. On a read replica the figures are the replica's own reads, not the primary's writes. A statement's text past 2000 characters comes back cut (`queries_cut`).",
             "inputSchema": {
@@ -229,7 +244,7 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         "schema_lint" => 120,
         // The catalog, then one table's DDL.
         "describe" => 120,
-        "slow_queries" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 60,
+        "slow_queries" | "explain" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 60,
         // A listing, then one download per log file.
         "environment_logs" => 180,
         // The operator's answer (`ELICIT_TIMEOUT`), then the patches.
@@ -254,6 +269,7 @@ impl Server {
             "schema_lint" => self.tool_schema_lint(args).await,
             "describe" => self.tool_describe(args).await,
             "slow_queries" => self.tool_slow_queries(args).await,
+            "explain" => self.tool_explain(args).await,
             "environment_logs" => tool_environment_logs(args).await,
             "apply_patches" => self.tool_apply_patches(args).await,
             "dump" => self.tool_dump(args).await,
@@ -412,6 +428,38 @@ impl Server {
             &cache,
             (&schema, &table),
             ddl,
+        ))
+    }
+
+    async fn tool_explain(&self, args: &Value) -> Result<String, String> {
+        let name = arg_str(args, "connection")?;
+        let sql = arg_str(args, "sql")?;
+        let analyze = match args.get("analyze") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err("analyze must be true or false".to_string()),
+        };
+        let target = self.prepare(name, "explain")?;
+        // The statement itself through query's guards; the EXPLAIN
+        // around it is pgman's.
+        let statement = single_checked_statement(&target.safety, &target.dsn.dbname, sql)?;
+        let wrapped = super::stats::explain_sql(&statement, analyze)?;
+        tracing::info!(target: "pgman::mcp", connection = name, analyze, "explain");
+        let role = target.role;
+        let (client, _tunnel) = connect(name, target, &self.tunnels).await?;
+        let grid = conn::run_query(&client, &wrapped)
+            .await
+            .map_err(|e| e.msg)?;
+        let plan = grid
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|c| c.clone())
+            .ok_or("EXPLAIN returned no plan")?;
+        let replica = replica_state(&client, role).await;
+        Ok(with_replica(
+            super::stats::render_explain(name, analyze, &plan)?,
+            replica,
         ))
     }
 
@@ -1853,6 +1901,7 @@ mod tests {
                 "environments",
                 "schema_lint",
                 "describe",
+                "explain",
                 "slow_queries",
                 "environment_logs",
                 "apply_patches",

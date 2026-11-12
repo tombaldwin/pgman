@@ -171,6 +171,135 @@ impl PlanNode {
     }
 }
 
+/// A scan reading at least this many rows is worth a finding.
+const BIG_SCAN_ROWS: f64 = 10_000.0;
+/// A row estimate this many times off, either way, is a finding…
+const ESTIMATE_FACTOR: f64 = 10.0;
+/// …when the larger side is at least this many rows.
+const ESTIMATE_FLOOR: f64 = 1_000.0;
+/// A nested loop's inner side run this many times is a finding.
+const MANY_LOOPS: f64 = 1_000.0;
+
+impl PlanNode {
+    /// One of its extras, by the key Postgres gave it.
+    fn extra(&self, key: &str) -> Option<&str> {
+        self.extras
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The rows it produced in all its loops, when the plan was
+    /// analyzed.
+    fn actual_total_rows(&self) -> Option<f64> {
+        Some(self.actual_rows? * self.actual_loops.unwrap_or(1.0))
+    }
+
+    /// `Seq Scan on orders`: its type and relation.
+    fn label(&self) -> String {
+        match &self.relation_name {
+            Some(r) => format!("{} on {r}", self.node_type),
+            None => self.node_type.clone(),
+        }
+    }
+}
+
+/// What in `root`'s plan is worth looking at, worded for someone about
+/// to add an index or rewrite the query: big sequential scans, row
+/// estimates far off what an `ANALYZE` run found, sorts that spilled to
+/// disk, hashes split into batches, nested loops whose inner side ran
+/// many times. Top-down, each once. Pure.
+pub fn findings(root: &PlanNode) -> Vec<String> {
+    let mut out = Vec::new();
+    walk_findings(root, &mut out);
+    out
+}
+
+fn walk_findings(n: &PlanNode, out: &mut Vec<String>) {
+    // What a scan read: the rows it returned and the ones its filter
+    // threw away (both per loop), or, unanalyzed, the estimate.
+    let removed = n
+        .extra("Rows Removed by Filter")
+        .and_then(|r| r.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let read = n
+        .actual_rows
+        .map(|r| (r + removed) * n.actual_loops.unwrap_or(1.0))
+        .or(n.plan_rows);
+    if n.node_type == "Seq Scan" && read.is_some_and(|r| r >= BIG_SCAN_ROWS) {
+        let filter = n
+            .extra("Filter")
+            .map(|f| format!(" filtered by {f}"))
+            .unwrap_or_default();
+        let kept = n
+            .actual_total_rows()
+            .filter(|_| removed > 0.0)
+            .map(|k| format!(", keeping {}", k.round()))
+            .unwrap_or_default();
+        out.push(format!(
+            "{} reads about {} rows{filter}{kept}: an index on the columns it filters or joins by \
+             may serve it",
+            n.label(),
+            read.unwrap_or_default().round()
+        ));
+    }
+    if let (Some(got), Some(est)) = (n.actual_rows, n.plan_rows) {
+        let (hi, lo) = (got.max(est), got.min(est).max(1.0));
+        if hi >= ESTIMATE_FLOOR && hi / lo >= ESTIMATE_FACTOR {
+            let table = n
+                .relation_name
+                .as_deref()
+                .map(|r| format!(" (ANALYZE {r})"))
+                .unwrap_or_default();
+            out.push(format!(
+                "{} was estimated at {} rows a loop and returned {}: the planner's statistics may \
+                 be stale{table}, or the columns correlated",
+                n.label(),
+                est.round(),
+                got.round()
+            ));
+        }
+    }
+    if n.extra("Sort Method")
+        .is_some_and(|m| m.contains("external"))
+    {
+        out.push(format!(
+            "{} spilled to disk ({}, {} kB): more work_mem, or fewer rows to sort",
+            n.label(),
+            n.extra("Sort Method").unwrap_or_default(),
+            n.extra("Sort Space Used").unwrap_or("?")
+        ));
+    }
+    if n.extra("Hash Batches")
+        .and_then(|b| b.parse::<f64>().ok())
+        .is_some_and(|b| b > 1.0)
+    {
+        out.push(format!(
+            "{} split its hash table into {} batches on disk: more work_mem, or a smaller side to \
+             hash",
+            n.label(),
+            n.extra("Hash Batches").unwrap_or_default()
+        ));
+    }
+    if n.node_type == "Nested Loop" {
+        if let Some(inner) = n
+            .children
+            .get(1)
+            .filter(|c| c.actual_loops.is_some_and(|l| l >= MANY_LOOPS))
+        {
+            out.push(format!(
+                "Nested Loop runs its inner {} {} times: an index on its join key, or a hash join, \
+                 may serve it",
+                inner.label(),
+                inner.actual_loops.unwrap_or_default().round()
+            ));
+        }
+    }
+    for c in &n.children {
+        walk_findings(c, out);
+    }
+}
+
 /// Run `EXPLAIN (FORMAT JSON) …` against `client` and pluck the top
 /// node's `Plan Rows` estimate. The one I/O helper in this module (the
 /// parse path above is pure); it lives here, in the data layer, so the
@@ -199,6 +328,89 @@ pub async fn run_cost_explain(
 
 #[cfg(test)]
 mod tests {
+
+    fn node(kind: &str, relation: Option<&str>) -> PlanNode {
+        let mut n = PlanNode::default_with_type(kind);
+        n.relation_name = relation.map(str::to_string);
+        n
+    }
+
+    #[test]
+    fn findings_name_what_is_worth_an_index_or_a_rewrite() {
+        let mut scan = node("Seq Scan", Some("orders"));
+        scan.plan_rows = Some(5.0);
+        scan.actual_rows = Some(25_000.0);
+        scan.actual_loops = Some(1.0);
+        scan.extras
+            .push(("Filter".into(), "(status = 'open'::text)".into()));
+        let mut sort = node("Sort", None);
+        sort.extras
+            .push(("Sort Method".into(), "external merge".into()));
+        sort.extras.push(("Sort Space Used".into(), "20480".into()));
+        let mut hash = node("Hash", None);
+        hash.extras.push(("Hash Batches".into(), "8".into()));
+        let mut inner = node("Index Scan", Some("customers"));
+        inner.actual_loops = Some(25_000.0);
+        inner.actual_rows = Some(1.0);
+        inner.plan_rows = Some(1.0);
+        let mut nl = node("Nested Loop", None);
+        nl.children = vec![scan, inner];
+        sort.children = vec![nl, hash];
+        let f = findings(&sort);
+        let all = f.join("\n");
+        for want in [
+            "Seq Scan on orders reads about 25000 rows filtered by (status = 'open'::text)",
+            "Seq Scan on orders was estimated at 5 rows a loop and returned 25000",
+            "(ANALYZE orders)",
+            "Sort spilled to disk (external merge, 20480 kB)",
+            "Hash split its hash table into 8 batches",
+            "Nested Loop runs its inner Index Scan on customers 25000 times",
+        ] {
+            assert!(all.contains(want), "{want:?} in\n{all}");
+        }
+        assert_eq!(f.len(), 5, "each once: {all}");
+    }
+
+    #[test]
+    fn a_small_or_well_estimated_plan_has_nothing_to_say() {
+        let mut scan = node("Seq Scan", Some("settings"));
+        scan.plan_rows = Some(40.0);
+        // Ten times off, but too few rows to matter.
+        let mut small = node("Index Scan", Some("tags"));
+        small.plan_rows = Some(10.0);
+        small.actual_rows = Some(200.0);
+        // Returns few, reads few: nothing removed.
+        let mut close = node("Index Scan", Some("orders"));
+        close.plan_rows = Some(900.0);
+        close.actual_rows = Some(2_000.0);
+        let mut nl = node("Nested Loop", None);
+        let mut few = node("Index Scan", Some("customers"));
+        few.actual_loops = Some(40.0);
+        nl.children = vec![scan, few];
+        let mut sort = node("Sort", None);
+        sort.extras.push(("Sort Method".into(), "quicksort".into()));
+        sort.children = vec![nl, close, small];
+        assert!(findings(&sort).is_empty(), "{:?}", findings(&sort));
+        // Unanalyzed, a big table's scan is still worth naming.
+        let mut big = node("Seq Scan", Some("events"));
+        big.plan_rows = Some(2_000_000.0);
+        assert_eq!(findings(&big).len(), 1);
+        // What a filter threw away was read too: 200 kept of 20000.
+        let mut filtered = node("Seq Scan", Some("orders"));
+        filtered.plan_rows = Some(200.0);
+        filtered.actual_rows = Some(200.0);
+        filtered.actual_loops = Some(1.0);
+        filtered
+            .extras
+            .push(("Rows Removed by Filter".into(), "19800".into()));
+        let f = findings(&filtered);
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert!(
+            f[0].contains("reads about 20000 rows") && f[0].contains("keeping 200"),
+            "{f:?}"
+        );
+    }
+
     use super::*;
 
     fn sample_seq_scan() -> &'static str {

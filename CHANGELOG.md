@@ -8,6 +8,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- MCP `explain`: one statement's plan, with findings — big sequential
+  scans, row estimates ten times off, sorts and hashes spilled to disk,
+  nested loops run thousands of times. `analyze: true` runs it in the
+  read-only session `query` uses, for actual rows and times.
 - MCP `slow_queries`: the statements `pg_stat_statements` says cost the
   most, by total or mean time, as the TUI's slow-query panel reads them,
   for an agent to find the code that sends them.
