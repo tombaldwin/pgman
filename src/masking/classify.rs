@@ -1103,7 +1103,8 @@ fn by_name_and_type(
             (Rule::Null, why("a password, by name"))
         };
     }
-    if last == "at"
+    // When something happened is kept, but not when someone was born.
+    if (last == "at" && !any(&w, BIRTH))
         || matches!(
             col.name.as_str(),
             "created" | "updated" | "deleted" | "modified"
@@ -1193,8 +1194,10 @@ fn by_name_and_type(
     // is personal whatever it's called: a postcode, an identifier, a
     // device's, family details. (An integer `*_id` is a key, kept.)
     // A key into a lookup of nationalities or birthplaces says which.
+    // A text `email_id` is the address: the name many teams give it.
     let itself = ((last != "id" || text)
         && (any(&w, IDENTIFIER) || any(&w, POSTCODE) || any(&w, DEVICE)))
+        || (last == "id" && text && (any(&w, EMAIL) || any(&w, PHONE)))
         || any(&w, FAMILY)
         || any(&w, BIRTH);
     // A colour is a setting, but not a person's: eye_colour, skin_tone.
@@ -1228,10 +1231,18 @@ fn by_name_and_type(
         }
         // A people's table by its last word too: app_user, tbl_customer.
         let table_words = words(table_name);
+        // Or of holders: passengers, payees, beneficiaries (not
+        // `deliveries`, which say how, not who).
         let peoples = PEOPLE.contains(&table_name)
             || table_words
                 .last()
-                .is_some_and(|t| PEOPLE.contains(&t.as_str()));
+                .is_some_and(|t| PEOPLE.contains(&t.as_str()))
+            || singular(table_name).last().is_some_and(|t| {
+                // `singular` leaves beneficiaries as beneficiarie.
+                let one = t.strip_suffix("ie").map_or(t.clone(), |s| format!("{s}y"));
+                HOLDER.contains(&one.as_str())
+                    && !matches!(one.as_str(), "billing" | "shipping" | "delivery")
+            });
         let whose = last == "name"
             && w.len() >= 2
             && (PEOPLE.contains(&w[w.len() - 2].as_str())
@@ -2109,6 +2120,40 @@ mod tests {
         assert_eq!(words("cancellation"), ["cancellation"]);
         assert_eq!(words("warehouse"), ["warehouse"]);
         assert_eq!(words("company"), ["company"]);
+    }
+
+    #[test]
+    fn names_that_slipped_past_the_classifier_are_caught() {
+        for (table, name, base, want) in [
+            // A text `*_id` that is the address, not a key.
+            ("customers", "email_id", "varchar", Rule::Email),
+            ("customers", "emailid", "varchar", Rule::Email),
+            ("customers", "mobile_id", "varchar", Rule::Phone),
+            // When someone was born isn't when something happened.
+            ("patients", "born_at", "timestamptz", Rule::Year),
+            // A holder's table names its holder.
+            ("passengers", "name", "varchar", Rule::Name(NamePart::Full)),
+            ("payees", "name", "varchar", Rule::Name(NamePart::Full)),
+            (
+                "beneficiaries",
+                "name",
+                "varchar",
+                Rule::Name(NamePart::Full),
+            ),
+        ] {
+            assert_eq!(rule(table, name, base, Some(255)), want, "{table}.{name}");
+        }
+        // What stays as it was: a key, a timestamp, a method's name.
+        assert_eq!(rule("orders", "email_id", "int8", None), Rule::Keep);
+        assert_eq!(
+            rule("orders", "shipped_at", "timestamptz", None),
+            Rule::Keep
+        );
+        assert_eq!(rule("deliveries", "name", "varchar", Some(50)), Rule::Keep);
+        assert_eq!(
+            rule("orders", "email_status", "varchar", Some(20)),
+            Rule::Keep
+        );
     }
 
     #[test]
