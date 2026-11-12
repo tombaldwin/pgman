@@ -52,6 +52,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A statement starting `explain8` (EXPLAIN's letters, then more) sent
+  the safety classifier into endless recursion and crashed pgman with a
+  stack overflow; a long run of `EXPLAIN EXPLAIN …` recursed as deep.
+  Found by the new fuzz job's first run; the classifier now strips
+  EXPLAINs in a loop and calls such a statement Other.
 - The unknown-command message now lists `key` (and `doctor`) with the
   other commands.
 - A DSN with no password stopped at "password missing" with no hint.

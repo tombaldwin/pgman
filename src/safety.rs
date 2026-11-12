@@ -520,7 +520,7 @@ pub fn classify(sql: &str) -> StatementKind {
         "do" | "call" => StatementKind::Other,
         // `EXPLAIN ANALYZE <dml>` *executes* the DML — classify the inner
         // statement, not the EXPLAIN wrapper.
-        "explain" => classify(strip_explain_prefix(trimmed)),
+        "explain" => explained(trimmed).map_or(StatementKind::Other, classify),
         // A CTE can front any DML. Over-guard: if the body mentions a
         // destructive verb, treat the whole statement as that verb.
         "with" => classify_cte(&stripped, word_present_in_code(&stripped, "where")),
@@ -2400,12 +2400,38 @@ mod ident_token_tests {
 /// Given a string starting with `EXPLAIN`, return the inner statement — the
 /// slice from the first statement keyword onward. Falls back to the slice after
 /// the `EXPLAIN` token so recursion in `classify` always makes progress.
+/// The statement an `EXPLAIN …` wraps, every EXPLAIN in front stripped
+/// in a loop, never by recursion: `explain explain … select` is one
+/// pass however many there are. None when stripping gets nowhere —
+/// `explain8` starts with the letters but isn't the keyword — which
+/// recursing on would never end (the fuzzer's first find). Pure.
+fn explained(trimmed: &str) -> Option<&str> {
+    let mut s = trimmed;
+    loop {
+        let next = strip_explain_prefix(s).trim_start();
+        if next.len() >= s.len() {
+            return None;
+        }
+        let first: String = next
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if first != "explain" {
+            return Some(next);
+        }
+        s = next;
+    }
+}
+
 fn strip_explain_prefix(s: &str) -> &str {
     const STMT_KW: &[&str] = &[
         "select", "insert", "update", "delete", "with", "values", "table",
     ];
     let bytes = s.as_bytes();
     let mut after_explain = 0usize;
+    // Every EXPLAIN before the first other word goes in one pass.
+    let mut leading = true;
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i].is_ascii_alphabetic() {
@@ -2414,10 +2440,12 @@ fn strip_explain_prefix(s: &str) -> &str {
                 i += 1;
             }
             let word = s[start..i].to_ascii_lowercase();
-            if word == "explain" && after_explain == 0 {
+            if word == "explain" && leading {
                 after_explain = i;
             } else if STMT_KW.contains(&word.as_str()) {
                 return &s[start..];
+            } else {
+                leading = false;
             }
         } else {
             i += 1;
@@ -2428,6 +2456,31 @@ fn strip_explain_prefix(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+
+    /// The fuzzer's first find: `explain8` starts with EXPLAIN's letters,
+    /// the stripper saw no EXPLAIN word, and classify recursed on the same
+    /// text until the stack ran out. And a long run of EXPLAINs is a loop,
+    /// not a recursion as deep as the run.
+    #[test]
+    fn explain_like_words_and_long_runs_of_explain_end() {
+        for sql in ["explain8", "EXPLAIN_x", "explainfoo(1)", "explain"] {
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+        }
+        let many = "explain ".repeat(200_000) + "delete from t";
+        assert_eq!(classify(&many), StatementKind::Delete { has_where: false });
+        // No statement keyword after them: still one pass, not one per
+        // EXPLAIN over the whole text.
+        let merge = "explain ".repeat(200_000) + "merge into t using s on true";
+        assert_eq!(classify(&merge), StatementKind::Other);
+        assert_eq!(
+            classify("EXPLAIN ANALYZE DELETE FROM t WHERE id = 1"),
+            StatementKind::Delete { has_where: true }
+        );
+        assert_eq!(
+            classify("explain (costs off) select 1"),
+            StatementKind::Select
+        );
+    }
 
     /// `U&"…"` names a function or GUC with unicode escapes that Postgres
     /// decodes and this classifier doesn't: `U&"pg_\0074erminate_backend"`
