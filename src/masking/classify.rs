@@ -554,6 +554,7 @@ const PHONE: &[&str] = &[
     "cell",
     "mob",
     "sms number",
+    "whatsapp",
 ];
 const FIRST: &[&str] = &[
     "first name",
@@ -699,7 +700,18 @@ const IDENTIFIER: &[&str] = &[
 ];
 /// A person's account elsewhere.
 const HANDLE: &[&str] = &[
-    "linkedin", "twitter", "discord", "mastodon", "bluesky", "orcid", "skype",
+    "linkedin",
+    "twitter",
+    "discord",
+    "mastodon",
+    "bluesky",
+    "orcid",
+    "skype",
+    "instagram",
+    "facebook",
+    "tiktok",
+    "telegram",
+    "snapchat",
 ];
 const ADDRESS: &[&str] = &[
     "address", "street", "city", "town", "county", "line 1", "line 2", "line 3", "house", "flat",
@@ -826,6 +838,13 @@ const KEY_VALUE: &[&str] = &[
     "metadata",
     "extra",
     "extras",
+    // A custom field's value, a survey's answer: whatever was typed.
+    "field",
+    "fields",
+    "answer",
+    "answers",
+    "response",
+    "responses",
 ];
 /// A last word for a column that holds whatever was put in it.
 const BAG: &[&str] = &[
@@ -1181,7 +1200,10 @@ fn by_name_and_type(
     // What can hold anything whatever its length: a key-value table's
     // value (Keycloak's user_attribute.value is a phone or an address,
     // realm_smtp_config.value a password), or a bag of data.
-    if text && matches!(last, "value" | "val" | "data") && any(&words(table_name), KEY_VALUE) {
+    if text
+        && matches!(last, "value" | "val" | "data" | "answer" | "response")
+        && any(&words(table_name), KEY_VALUE)
+    {
         return (
             Rule::Null,
             why("a key-value table's value: anything can be in it"),
@@ -2155,6 +2177,13 @@ mod tests {
                 "varchar",
                 Rule::Name(NamePart::Full),
             ),
+            // Elsewhere a person can be reached.
+            ("customers", "whatsapp", "varchar", Rule::Phone),
+            ("customers", "instagram_handle", "varchar", Rule::Null),
+            ("customers", "telegram", "varchar", Rule::Null),
+            // What someone typed into a form.
+            ("custom_field_values", "value", "varchar", Rule::Null),
+            ("survey_answers", "answer", "varchar", Rule::Null),
         ] {
             assert_eq!(rule(table, name, base, Some(255)), want, "{table}.{name}");
         }

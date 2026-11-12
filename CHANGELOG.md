@@ -34,6 +34,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Masked dumps now mask a few more personal columns by name: WhatsApp
+  numbers, Instagram, Facebook, TikTok, Telegram and Snapchat handles,
+  and what someone typed into a form (`custom_field_values.value`,
+  `survey_answers.answer`, a response's `response`).
 - Masked dumps kept Flyway's `installed_by` and Liquibase's `author`
   as they were (people's names, in every row), since a migration tool's
   table is kept whole. Who ran a migration is now `pgman`.
