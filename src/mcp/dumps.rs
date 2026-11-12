@@ -283,9 +283,16 @@ pub fn rules_question(
             format!("\n  - {}", items.join("\n  - "))
         }
     };
+    // A keep reaches along foreign keys, or the join would break.
+    let joined = if loose.iter().any(|l| l.contains(" kept")) {
+        "\nA kept column also keeps the columns joined to it by a foreign key: pgman masking show \
+         lists them."
+    } else {
+        ""
+    };
     format!(
         "\n\nThe rules file {} (commit {}, sha256 {digest}) is new or changed since you last \
-         confirmed it. What it keeps that pgman's defaults would mask:{}\nWhat it sets itself:{}\n\
+         confirmed it. What it keeps that pgman's defaults would mask:{}\nWhat it sets itself:{}{joined}\n\
          Type {database} to confirm these rules and the dump. Your confirmation is recorded, so \
          later dumps use these rules until the file changes; a decline records nothing.",
         file.display(),
@@ -942,6 +949,7 @@ mod tests {
             ".pgman/masking/ledger.toml (commit abc1234, sha256 d1g35t)",
             "would mask:\n  - customers.notes kept: codes only\n",
             "sets itself:\n  - customers.secret fixed \"x\"\n",
+            "also keeps the columns joined to it by a foreign key",
             "Type ledger to confirm",
             "a decline records nothing",
         ] {
@@ -951,6 +959,10 @@ mod tests {
         assert!(
             none.contains("commit unknown") && none.contains("would mask: nothing."),
             "{none}"
+        );
+        assert!(
+            !none.contains("foreign key"),
+            "nothing kept, nothing joined: {none}"
         );
     }
 }

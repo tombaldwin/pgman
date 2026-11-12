@@ -301,12 +301,30 @@ pub fn parse(text: &str) -> Result<RuleSet, String> {
 }
 
 /// What in `set` masks less than the defaults would: each `keep` (with
-/// its reason), the `[classify]` words that aren't personal, large
-/// objects kept. What a confirmation shows. Pure.
+/// its reason), each rule that keeps part of the value (a postcode's
+/// district, a year, a date moved a few days: on a column the defaults
+/// would mask whole, that is more than they keep), the `[classify]`
+/// words that aren't personal, large objects kept. What a confirmation
+/// shows. Pure.
 pub fn loosening(set: &RuleSet) -> Vec<String> {
     let mut out = Vec::new();
     for t in &set.tables {
         for c in t.columns.iter().chain(t.every.as_ref()) {
+            let partly = match &c.rule {
+                Rule::Postcode => Some(
+                    "postcode, which keeps what's before a space, else all but the last 3 \
+                     characters"
+                        .to_string(),
+                ),
+                Rule::Year => Some("year, which keeps the year".to_string()),
+                Rule::DateShift(days) => Some(format!(
+                    "date.shift, which keeps the date to within {days} days"
+                )),
+                _ => None,
+            };
+            if let Some(how) = partly {
+                out.push(format!("{}.{} partly kept: {how}", t.key, c.column));
+            }
             if c.rule == Rule::Keep {
                 out.push(format!(
                     "{}.{} kept{}",
@@ -336,10 +354,10 @@ pub fn loosening(set: &RuleSet) -> Vec<String> {
     out
 }
 
-/// What in `set` replaces a column's values with the team's own choice
-/// — each `null`, `fixed` (with its value) and `hash` — and each table
-/// whose rows are dropped. What a confirmation shows beside
-/// [`loosening`]. Pure.
+/// What else `set` gives a column — each `null`, `fixed` (with its
+/// value), `hash` and replacing transform — and each table whose rows
+/// are dropped: every rule the file names that [`loosening`] doesn't
+/// list, so the operator confirms the whole file. Pure.
 pub fn overrides(set: &RuleSet) -> Vec<String> {
     let mut out = Vec::new();
     for t in &set.tables {
@@ -348,10 +366,10 @@ pub fn overrides(set: &RuleSet) -> Vec<String> {
         }
         for c in t.columns.iter().chain(t.every.as_ref()) {
             let what = match &c.rule {
-                Rule::Null => "null".to_string(),
                 Rule::Fixed(v) => format!("fixed {v:?}"),
-                Rule::Hash => "hash".to_string(),
-                _ => continue,
+                // loosening's.
+                Rule::Keep | Rule::Postcode | Rule::Year | Rule::DateShift(_) => continue,
+                r => r.name().to_string(),
             };
             out.push(format!("{}.{} {what}", t.key, c.column));
         }
@@ -420,13 +438,18 @@ mod tests {
     fn what_loosens_is_listed() {
         let set = parse(
             "large_objects = \"keep\"\n[classify]\nnot_personal = [\"memo\"]\nreason = \"codes\"\n\
-             [tables.customers]\nnotes = { rule = \"keep\", reason = \"reviewed\" }\nemail = \"hash\"\n\"*\" = \"keep\"\n",
+             [tables.customers]\nnotes = { rule = \"keep\", reason = \"reviewed\" }\nemail = \"hash\"\n\"*\" = \"keep\"\n\
+             nino = \"postcode\"\nborn = \"year\"\nseen_on = { rule = \"date.shift\", days = 3 }\n",
         )
         .unwrap();
         assert_eq!(
             loosening(&set),
             [
+                "customers.born partly kept: year, which keeps the year",
+                "customers.nino partly kept: postcode, which keeps what's before a space, else all \
+                 but the last 3 characters",
                 "customers.notes kept: reviewed",
+                "customers.seen_on partly kept: date.shift, which keeps the date to within 3 days",
                 "customers.* kept",
                 "not personal here: memo (codes)",
                 "large objects kept"
@@ -440,6 +463,7 @@ mod tests {
         let set = parse(
             "[tables.customers]\nnotes = { rule = \"keep\", reason = \"reviewed\" }\n\
              email = \"hash\"\nsecret = { rule = \"fixed\", value = \"x\" }\ncontact = \"email\"\n\
+             mobile = \"phone\"\nzip = \"postcode\"\n\
              \"*\" = \"null\"\n[tables.\"audit.events\"]\nrows = \"drop\"\n",
         )
         .unwrap();
@@ -447,11 +471,13 @@ mod tests {
             overrides(&set),
             [
                 "audit.events: rows dropped",
+                "customers.contact email",
                 "customers.email hash",
+                "customers.mobile phone",
                 "customers.secret fixed \"x\"",
                 "customers.* null"
             ],
-            "not keep (loosening's), not the defaults' own kinds"
+            "every rule but keep and the partial ones (loosening's)"
         );
         assert!(overrides(&RuleSet::default()).is_empty());
     }

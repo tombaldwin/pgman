@@ -21,6 +21,17 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   still asked about. The result says it ran unasked; the journal
   records it as before. Only the operator's own files can set it.
 
+### Changed
+
+- A rules file's confirmation lists every rule it sets, not only `keep`,
+  `null`, `fixed` and `hash`. A `postcode`, `year` or `date.shift` is
+  listed with what it keeps, because on a column the defaults mask whole
+  it keeps more than they do: `postcode` keeps all but the last three
+  characters of a value with no space in it. Such a file is no longer
+  used unconfirmed without a terminal unless the environment is
+  `unattended`. The confirmation also says a kept column keeps what a
+  foreign key joins to it, and the dump's summary lists those columns.
+
 ### Fixed
 
 - MCP's `query` no longer lets a safety.toml guard set to `allow` reach

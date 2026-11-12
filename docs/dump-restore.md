@@ -420,13 +420,17 @@ for. A bound on a text column's length is taken as its length, as
   against an empty migrated database.
 - **A new or changed rules file is confirmed by the operator.** The
   first masked dump with it shows what it keeps that the defaults would
-  mask, and asks. Without a terminal (CI, a script, an agent's shell)
-  one that keeps something is refused until it has been confirmed,
+  mask, and every other rule it sets, and asks. A `postcode`, `year` or
+  `date.shift` counts as keeping part of the value. A kept column also
+  keeps the columns a foreign key joins to it, or the join would break;
+  `pgman masking show` and the dump's summary list them. Without a
+  terminal (CI, a script, an agent's shell) one that keeps something is
+  refused until it has been confirmed,
   unless the environment is `unattended`. An agent's dump (MCP) uses it
   only when it is committed, as it is; when it is new or changed since
   the last confirmation, the dump's elicitation shows the file's commit
   and sha256, every column it keeps that the defaults would mask (with
-  its reason) and every `null`, `fixed` and `hash` it sets, and the
+  its reason, or the part it keeps) and every other rule it sets, and the
   operator confirms by typing the database's name. The agent can't
   confirm it: no tool argument does. A decline records nothing and is
   final for that database while the server runs. Either way the

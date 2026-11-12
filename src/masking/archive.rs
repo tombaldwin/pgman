@@ -180,8 +180,11 @@ pub fn summary(plan: &Plan) -> Vec<String> {
                 _ => at,
             };
             match &d.rule {
-                // What a reviewer wants to see: the rules file's keeps.
-                Rule::Keep if d.origin == Origin::Rules => kept.push(at),
+                // What a reviewer wants to see: the rules file's keeps,
+                // and what a key joins to one, kept with it.
+                Rule::Keep if matches!(d.origin, Origin::Rules | Origin::Follows(_)) => {
+                    kept.push(at)
+                }
                 Rule::Keep => {}
                 Rule::Null => nulled.push(at),
                 r => match by_rule.iter_mut().find(|(n, _)| *n == r.name()) {
@@ -322,16 +325,25 @@ mod tests {
                 table: "public.customers".into(),
                 drop_rows: false,
                 drop_why: None,
-                columns: vec![dec("notes", Rule::Keep, Origin::Rules)],
+                columns: vec![
+                    dec("notes", Rule::Keep, Origin::Rules),
+                    dec(
+                        "email",
+                        Rule::Keep,
+                        Origin::Follows("public.orders.customer_email".into()),
+                    ),
+                ],
                 primary_key: vec![],
             }],
             large_objects: true,
             problems: vec![],
         };
         let s = summary(&kept).join("\n");
+        assert!(s.contains("kept       public.customers.notes, "), "{s}");
+        assert!(s.contains(" (the rules file)"), "{s}");
         assert!(
-            s.contains("kept       public.customers.notes (the rules file)"),
-            "{s}"
+            s.contains("public.customers.email (follows public.orders.customer_email)"),
+            "a keep reached by a key is listed too: {s}"
         );
         assert!(s.contains("warning: nothing was masked"), "{s}");
     }

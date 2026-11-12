@@ -1076,8 +1076,9 @@ pub fn confirm_rules_cli(
     if !std::io::stdin().is_terminal() {
         return unconfirmed_without_terminal(&file.display().to_string(), &loose, unattended);
     }
+    let sets = crate::masking::rules::overrides(rules);
     eprintln!(
-        "pgman dump: {} is new or changed since you last confirmed it.{}",
+        "pgman dump: {} is new or changed since you last confirmed it.{}{}",
         file.display(),
         if loose.is_empty() {
             " It masks no less than the defaults.".to_string()
@@ -1086,6 +1087,11 @@ pub fn confirm_rules_cli(
                 " What it keeps that the defaults would mask:\n  {}",
                 loose.join("\n  ")
             )
+        },
+        if sets.is_empty() {
+            String::new()
+        } else {
+            format!("\nWhat it sets itself:\n  {}", sets.join("\n  "))
         }
     );
     if !crate::pgtool::confirm_cli("use these rules? [y/N] ", "y")? {
