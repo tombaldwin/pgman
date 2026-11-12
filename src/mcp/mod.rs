@@ -21,6 +21,7 @@
 //! (`dumps`). `--read-only` refuses all four.
 
 pub mod connections;
+pub mod describe;
 pub mod dumps;
 pub mod tools;
 

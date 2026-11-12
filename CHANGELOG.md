@@ -8,6 +8,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- MCP `describe`: the tables a connection can see (kind, column count,
+  size), or one table in full — columns, primary key, foreign keys both
+  ways, indexes, size, partitions and its `CREATE` statement — from the
+  catalog read the schema browser makes. An agent no longer hand-writes
+  `information_schema` queries through `query`.
 - `pgman doctor`: what pgman sees from the directory it runs in — each
   config file and whether it loads (exit 1 when one doesn't), the
   programs it runs and where they are, and every connection it knows,

@@ -17,7 +17,7 @@ left.
   .pgpass or pg_service.conf; editor
   Ctrl-A/Ctrl-E (EXPLAIN) vs prompts' Home/End.
 - **Features, by value for effort:** MCP `explain` (S–M, explain.rs
-  parses plans), MCP `describe`/`tables` (S), MCP `slow_queries` (S),
+  parses plans), MCP `slow_queries` (S),
   schema diff between environments (M), a patch dry run reporting the
   schema diff (M), index advice from the tap and pg_stat_statements (M);
   and `pgman query ENV/DATABASE`, below, deserves to move up.

@@ -3419,6 +3419,80 @@ fn mcp_schema_lint_reports_a_table_without_a_primary_key() {
     assert!(hit, "{text}");
 }
 
+/// `describe` over MCP: the list, then one table with its keys both ways,
+/// its indexes and the CREATE statement the catalog rebuilds.
+#[test]
+fn mcp_describe_lists_tables_and_gives_one_in_full() {
+    let home = scratch_home("mcp-describe", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let (parent, child) = (
+        format!("pgman_it_dcust_{pid}"),
+        format!("pgman_it_dord_{pid}"),
+    );
+    let sql = format!(
+        "CREATE TABLE {parent} (id int PRIMARY KEY, email text NOT NULL); \
+         CREATE TABLE {child} (id bigint PRIMARY KEY, cust int REFERENCES {parent}(id)); \
+         CREATE INDEX {child}_cust ON {child} (cust)"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &sql]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[
+            tool_call(1, "describe", serde_json::json!({"connection": "local"})),
+            tool_call(
+                2,
+                "describe",
+                serde_json::json!({"connection": "local", "table": child}),
+            ),
+            tool_call(
+                3,
+                "describe",
+                serde_json::json!({"connection": "local", "table": "pgman_it_no_such"}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    assert!(text.contains(&format!("\"public.{child}\"")), "{text}");
+    let (text, is_error) = reply(&frames, 2);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["table"], format!("public.{child}"));
+    assert_eq!(v["primary_key"], serde_json::json!(["id"]));
+    assert_eq!(
+        v["references"][0]["references"],
+        format!("public.{parent}.id")
+    );
+    assert!(
+        v["indexes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["name"] == format!("{child}_cust")),
+        "{text}"
+    );
+    let ddl = v["ddl"].as_str().unwrap();
+    assert!(
+        ddl.starts_with(&format!("CREATE TABLE public.{child}")),
+        "{ddl}"
+    );
+    let (text, is_error) = reply(&frames, 3);
+    assert!(is_error && text.contains("describe without"), "{text}");
+}
+
 /// With no version table configured, a probe recognises the migration
 /// tool from its own table: one database per tool, real table shapes.
 #[test]
