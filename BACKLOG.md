@@ -14,8 +14,7 @@ left.
 - **Housekeeping:** CLAUDE.md says docs/backlog/archive.md doesn't exist
   and main.rs is thin (3000 lines: move log rotation to logging.rs and
   batch DSN resolution to batch.rs); PLAN.md's head is stale and "Require
-  CI checks" is in both files; fuzz targets never run in CI; `arboard`
-  default features pull ~25 image crates.
+  CI checks" is in both files; fuzz targets never run in CI.
 - **First-minute UX:** `pgman query --dsn URL 'select 1'` (SQL must come
   first); no hint for tokio-postgres's `password missing`;
   connections.toml entries absent from the TUI picker; no libpq env,
