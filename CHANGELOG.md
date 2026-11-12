@@ -15,7 +15,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - A patch dry run (`pgman apply --dry-run`, MCP `apply_patches` with
   `mode: "dry_run"`) now says what its patches change in the schema —
   tables, columns, keys and indexes added, dropped or changed — read in
-  its transaction before the rollback.
+  its transaction before the rollback. The TUI's patch view (`P`) lists
+  them too.
 - `pgman diff <A> <B>` and MCP `schema_diff`: what differs between two
   databases' schemas — tables and views in one only, and per table,
   columns added, dropped or changed, the primary key, indexes and

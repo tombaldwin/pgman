@@ -1852,6 +1852,16 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
                 out.push((format!("  recorded up to {v} now (was {recorded})"), false))
             }
         }
+        // A dry run's: what the patches would change in the schema.
+        if let Some(d) = &report.schema_changes {
+            let changes = crate::schema_diff::render_changes(d);
+            if changes.is_empty() {
+                out.push(("  schema changes: none".into(), false));
+            } else {
+                out.push(("  schema changes:".into(), false));
+                out.extend(changes.lines().map(|l| (format!("  {l}"), false)));
+            }
+        }
         if let Some(c) = &report.copy {
             match &c.dropped {
                 Ok(()) => out.push((format!("  copy {} dropped", c.name), false)),
@@ -4052,13 +4062,23 @@ mod tests {
             copy,
             ..Default::default()
         };
-        v.stage = PatchStage::Done(plan.clone(), done(RunMode::DryRun, None));
+        let mut dry = done(RunMode::DryRun, None);
+        dry.schema_changes = Some(crate::schema_diff::Diff {
+            only_b: vec!["public.dunning_stages".into()],
+            ..Default::default()
+        });
+        v.stage = PatchStage::Done(plan.clone(), dry);
         let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
         assert_eq!(
             text[1],
             "  dry run — everything below was rolled back; nothing was kept"
         );
         assert!(text.contains(&"  recorded up to 319 still (was 318)".to_string()));
+        assert!(text.contains(&"  schema changes:".to_string()), "{text:?}");
+        assert!(
+            text.contains(&"    + table public.dunning_stages".to_string()),
+            "{text:?}"
+        );
         let copy = CopyNote {
             name: "shop_pgman_copy_7".into(),
             dropped: Err("in use".into()),

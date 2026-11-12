@@ -20,8 +20,7 @@ left.
   (which reads one plan's filters): across pg_stat_statements' top
   statements and the tap's hotspots, with hypopg to try an index
   before building it (M). Schema diff (and the dry run's) could compare
-  CHECKs, views' definitions and functions too; the TUI's patch view
-  could show the dry run's schema changes.
+  CHECKs, views' definitions and functions too.
 
 ### Postgres-compatible databases — from a compatibility run (2026-10-29)
 
