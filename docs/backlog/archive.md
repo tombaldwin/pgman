@@ -7,6 +7,164 @@ open items. Newest at the top within each section.
 
 Historical record. Newest at the top within each section.
 
+### Release plan history (from PLAN.md, 2026-11-12)
+
+PLAN.md's windows from v0.2.1 to v0.5.2, as they stood.
+
+#### Where we were (2026-10-28)
+
+
+**v0.2.1 is released** (2026-10-25): GitHub release (Latest), crates.io,
+and the Homebrew tap, with the in-repo formula to match. v0.2.0 and
+v0.1.0 went out on 2026-10-24 and 2026-10-22. The release flow is the
+one in `docs/development.md`: one bump commit (Cargo.toml, Cargo.lock,
+CHANGELOG heading and links), tag on a green SHA, draft from
+`release.yml`, publish on Tom's go, then the formula.
+
+v0.2.1 went: a four-reviewer panel, two fix branches merged on main, a
+re-review of the fixes (two MEDs: the reload's lock bound racing
+earlier work, a reload aborting the operator's transaction), fixed, and
+a re-check GO. The phases and panels up to v0.2.0 are in
+`docs/backlog/archive.md` → Release plan history.
+
+
+#### Encrypted dumps (phase 2b), the panel's leftovers, polish (2026-11-02)
+
+On Tom's "all 3". Merged to main, unreleased:
+- **Phase 2b:** `encrypt = "kms:…" | "age:…" | "none"`, `pgman key new|list`,
+  masked and raw dumps encrypted with the header bound to the encrypted
+  manifest, and restore through a private temp copy. A protected
+  environment's raw and masked dumps need `encrypt`. Tom chose age 0.11
+  with two build-time advisories ignored. A Fable panel (crypto and
+  data path, then a closing reviewer) found a forged archive naming a
+  path to delete and plaintext left by a killed restore; both fixed, GO.
+- **The v0.4.4 panel's masking leftovers:** hash names, sub-lookups,
+  text-keyed lookups, translations by language.
+- **Polish:** the tap's narrow views, the connection-lost card's FATAL
+  paths, `demo.gif` re-recorded from a scratch HOME.
+Then, from a client's first MCP dump and restore: the confirmation box
+starts ticked (Claude Code re-showed an unticked required box until the
+300s wait ran out), questions and answers logged, unreadable partitions
+counted by parent, the restore's grants note, and discovered names
+explained. Released as v0.5.0 on Tom's "go" (2026-11-02): minor, as a
+protected environment's dumps now need `encrypt`.
+
+#### Production-twin patching; rules confirmed over MCP (2026-11-11)
+
+On Tom's "build all 4": safety.toml keys by `ENV/DATABASE` and
+`ENV/SERVER/DATABASE`, every blocked statement listed in a plan,
+`-- pgman: allow <guard>` in a patch, and MCP's one-run lift of a
+refusal (never past a project's own rules). Then, on the client Lead's
+ask with Tom's go, MCP's `dump` confirms a new or changed committed
+masking rules file by the database's name typed. Released as v0.5.2 on
+Tom's "go".
+
+#### The MCP Registry listing (2026-11-09)
+
+On Tom's ask, passed on by agentlink: `server.json` (a cargo package,
+`pgman mcp serve`), the README's visible `mcp-name:` line, and a
+release job publishing to registry.modelcontextprotocol.io after
+crates.io. Released as v0.5.1 on Tom's "go", the job's first real run.
+
+#### Lookup keys, key-value values, card hashes; CI's crash (2026-10-31)
+
+On Tom's "go" after v0.4.3. On main, unreleased: a key into a lookup of
+personal answers NULLed rather than following the lookup's keep (the
+client's plan hashed five special-category keys in step with their
+lookups, so they still joined), a key-value table's value and a bag of
+data NULLed (Keycloak's SMTP password), card/account/user hashes
+rehashed, an Odoo preset. CI prints the test server's log on failure
+and gives it a 512 MB /dev/shm; the concurrent index test has its own
+database. A Fable panel (two reviewers, a closing one, and a re-check
+of its fixes) found a rules-file null still hashed and joined, lookup
+keys unlinked far too widely (a health schema's staff keys), audited and
+tenant-scoped lookups missed, and Keycloak's session notes kept; all
+fixed. Released as v0.4.4 on the panel's GO (2026-10-31).
+
+#### The classifier on open-source schemas, and a client's rules file (2026-10-30)
+
+On Tom's "both". `masking show` over GitLab, Keycloak, Odoo 18, Synapse
+and AdventureWorks found leaks (an employee's national ID, hashes of a
+card's last digits, a login id, external ids, pay words), noise, and 850
+CHECK "problems" on GitLab that the masked value passes for certain. On
+main, unreleased: CHECKs that only bound a length pass and bound the
+fit (GitLab 850 → 87 real), the leak vocabulary, a hash of something
+guessable rehashed, settings and free-text words on flags kept,
+framework presets. The rest is in BACKLOG.md (masked dumps). A reviewed
+`.pgman/masking/<db>.toml` is drafted on a branch of the client's repo,
+not pushed; Tom confirms it at a terminal before its first dump.
+A Fable panel (three reviewers, then a closing one on the fixes) found
+privacy regressions in the new rules, a short unique column passing the
+plan, and domain CHECKs unread; all fixed. Released as v0.4.3 on the
+panel's GO (2026-10-31).
+
+#### The first masked dump of a real schema (2026-10-30)
+
+On Tom's "staging": `masking show`, a masked dump, a restore and `copies
+rm` against a client's demo environment, with the journal to CloudWatch.
+Found and fixed on main, unreleased: folded camelCase names kept as they
+were (dates of birth, phones, bank and passport numbers: a leak), a
+masked value a CHECK constraint refuses stopping the restore, and `copies
+rm`'s unexplained "password missing". CloudWatch carried every event.
+Released as v0.4.2 on Tom's go (2026-10-30).
+
+#### v0.4.1 released (2026-10-29)
+
+Compatibility fixes from checking pgman against PostgreSQL 10–17,
+YugabyteDB, TimescaleDB, PostGIS and Supabase in docker: slow queries
+on 12, masked dumps on 10 and 11, restores into YugabyteDB, extension
+schemas out of the lint, masked dumps refusing TimescaleDB hypertables,
+and LINT101's index column. Released on Tom's "release".
+
+#### 0. v0.3.1 released (2026-10-28)
+
+The Homebrew formula depends on libpq and its wrapper names it in
+PGMAN_PG_BIN; dump and restore look in --pg-bin, PGMAN_PG_BIN,
+Homebrew's libpq, then PATH. Published on Tom's ask: GitHub release,
+crates.io, the tap (11e8b14). Checked with a real `brew upgrade pgman`
+(it pulled libpq in; a dump with libpq off PATH found it).
+
+#### v0.3.0 released (2026-10-28)
+
+`pgman dump`, `restore`, `run`, `apply` and MCP `dump` / `restore`, on
+Tom's go. Published 2026-10-28: GitHub release, crates.io, the Homebrew
+tap (with a libpq caveat). The panel (four reviewers) and its re-checks
+are in `docs/backlog/archive.md`; what they left for later is in
+BACKLOG.md → From the dump/restore review.
+
+#### 1. Masked dumps and the life of a copy — phases 1, 1b, 2a in v0.4.0
+
+`docs/design/masked-dumps.md`, third draft (2026-10-28): two review
+passes (four Fable reviewers, then the same four plus a fresh one) and
+Tom's decisions. Masked by default with built-in rules (undecided columns
+NULLed, or the type's empty value, and named); encrypted from phase 2b;
+every copy tracked from dump to deletion with a reason and a journal,
+local and to CloudWatch; kept from an MCP-only agent. Thirteen decisions
+made, plus `unattended = true` (Tom: allow it, operator level only).
+
+Phase 1 built 2026-10-28, unreleased: the dump policy (`src/policy.rs`),
+the typed name and reason for protected dumps, `--schema-only`,
+`--reason`, `--ticket` (from the branch), MCP protected dumps schema
+only, the journal (`src/journal.rs`) and `pgman copies` list, show, rm,
+report (`src/copies.rs`). The design note's "Phase 1 as built" says
+where it differs.
+
+Phase 1b built 2026-10-29, unreleased: the journal to CloudWatch
+(`src/journal_send.rs`).
+
+Phase 2a built 2026-10-29 on the `masking` branch, not merged: masked
+dumps and their restore, the rules file, `masking show`/`check`, the
+protected default to masked, MCP masked dumps with confirmed rules and
+no raw protected copies, `copies rm` dropping databases, the dump
+directory and synced-folder checks, the leak test, `docs/privacy.md`.
+The design note's "Phase 2a as built" lists what differs and what is
+left (in BACKLOG.md). A four-reviewer Fable panel (leaks, archive and
+restore, policy and MCP, a hand-driven session) found three blockers
+and a dozen HIGH/MEDIUMs, fixed on the branch ("After the review
+panel" in the design note); merged and released as v0.4.0 on Tom's go
+(2026-10-29). Next: 2b (encryption).
+
+
 ### 2026-10-24 v0.2.1 window *(done, PLAN.md)*
 
 #### 1. Housekeeping · mechanical · done on `housekeeping-0.2.1`

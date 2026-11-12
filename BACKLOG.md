@@ -11,10 +11,8 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **Housekeeping:** CLAUDE.md says docs/backlog/archive.md doesn't exist
-  and main.rs is thin (3000 lines: move log rotation to logging.rs and
-  batch DSN resolution to batch.rs); PLAN.md's head is stale and "Require
-  CI checks" is in both files.
+- **main.rs isn't thin** (3000 lines, as CLAUDE.md wants it): move the
+  log-file lifecycle to logging.rs and batch DSN resolution to batch.rs.
 - **First-minute UX:** `pgman query --dsn URL 'select 1'` (SQL must come
   first); no hint for tokio-postgres's `password missing`;
   connections.toml entries absent from the TUI picker; no libpq env,
@@ -223,11 +221,6 @@ small-UX, correctness and environments findings landed on branch
 - **Tap: 64 silent connections lock a real client out for up to 30 s**
   (documented trade-off of the connection cap). A per-connection idle
   timeout shorter than 30 s, or evicting the oldest idle connection.
-- **Require CI checks on `main`.** Branch protection blocks force-push
-  and deletion but still requires no status checks (checked
-  2026-10-24), so a PR can merge red. Setting them is a permission
-  grant: Tom runs `gh api -X PUT …/branches/main/protection` with the
-  nine `ci.yml` job names.
 
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).

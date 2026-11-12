@@ -80,12 +80,9 @@ approval), you **must**:
 
 5. **Update `BACKLOG.md`** when items move pending → done or new items appear.
 
-   It holds **open items only**. Completed work belongs in
-   `docs/backlog/archive.md` — that file does not exist yet; PLAN.md
-   Phase 4 creates it. Until then, Done entries stay where they are, but
-   nothing new gets added to Open that is already done — `BACKLOG.md`
-   already carries stale Done-shaped entries in Open and that is a known
-   defect, not a pattern to repeat.
+   It holds **open items only**. Completed work moves to
+   `docs/backlog/archive.md`; nothing gets added to Open that is
+   already done.
 
    And a follow-up recorded *inside* a completed entry is invisible —
    anyone scanning for open items will miss it. If work remains, it gets
