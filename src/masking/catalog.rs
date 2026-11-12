@@ -31,7 +31,8 @@ pub struct RawColumn {
     pub type_oid: i64,
     pub typmod: i32,
     pub not_null: bool,
-    /// `s` a stored generated column, else empty.
+    /// `s` a stored generated column, `v` (PostgreSQL 18) a virtual one,
+    /// else empty.
     pub generated: String,
     /// `format_type`'s text: `character varying(255)`.
     pub display: String,
@@ -97,7 +98,8 @@ pub struct Column {
     pub num: i16,
     pub name: String,
     pub ty: ColumnType,
-    /// Stored generated: never copied, the restore computes it.
+    /// Generated, stored or virtual: never copied, the restore (or a
+    /// read) computes it; `COPY … FROM` refuses one named.
     pub generated: bool,
     /// Under a unique index (alone or with others).
     pub unique: bool,
@@ -267,7 +269,8 @@ pub fn build(
                     ty.not_null |= c.not_null;
                     ty
                 },
-                generated: c.generated == "s",
+                // Stored or (PG 18) virtual: never copied, never named.
+                generated: !c.generated.is_empty(),
                 unique: unique.contains(&c.num),
             })
             .collect();
@@ -404,6 +407,14 @@ pub(crate) mod tests {
             col(1, 2, "email", 9000, -1, false),
             col(1, 3, "tags", 1009, -1, false),
             col(1, 4, "gender", 9100, -1, true),
+            RawColumn {
+                generated: "s".into(),
+                ..col(1, 5, "stored", 25, -1, false)
+            },
+            RawColumn {
+                generated: "v".into(),
+                ..col(1, 6, "virtual", 25, -1, false)
+            },
         ];
         let keys = vec![RawKey {
             table: 1,
@@ -430,6 +441,12 @@ pub(crate) mod tests {
             "the domain as declared, not the one under it"
         );
         assert_eq!(id.ty.domain, None);
+        assert!(!id.generated);
+        assert!(t.column("stored").unwrap().generated);
+        assert!(
+            t.column("virtual").unwrap().generated,
+            "PostgreSQL 18's virtual ones too"
+        );
         assert_eq!(
             t.column("tags").unwrap().ty.array_of.as_deref(),
             Some("text")

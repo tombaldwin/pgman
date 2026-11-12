@@ -34,6 +34,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A masked dump of a PostgreSQL 18 table with a virtual generated column
+  copied the column and named it in `COPY … FROM`, which PostgreSQL
+  refuses, so the table's restore failed. Virtual generated columns are
+  left to the server, as stored ones are.
 - pgman ran `git status` and `git log` in the checkout to check a rules
   file, so a `.git/config` an agent wrote (an fsmonitor hook, a clean
   filter, a signature check's program) could run a program with the MCP
