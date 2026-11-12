@@ -455,12 +455,29 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         result["copy"],
         json!({"name": "ledger_pgman_copy_7", "dropped": false, "drop_error": "in use"})
     );
+    // SQL past what the question shows takes the name typed, even where
+    // a tick would do: nobody was shown what the tick answers for.
+    let shown = plan.patches[0].statements.clone();
+    plan.protected = false;
     plan.patches[0].statements = vec!["x".repeat(7000)];
+    let (message, cut_schema) =
+        tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);
     assert!(
-        tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply)
-            .0
-            .contains("read the files before confirming")
+        message.contains("read the files before confirming"),
+        "{message}"
     );
+    assert!(
+        message.contains("production has more SQL than this question shows: type its name"),
+        "{message}"
+    );
+    assert_eq!(cut_schema["required"], json!(["environment"]));
+    assert!(tools::confirmed(
+        &plan,
+        &json!({"action": "accept", "content": {"apply": true}})
+    )
+    .is_err());
+    plan.patches[0].statements = shown;
+    plan.protected = true;
     assert_eq!(schema["required"], json!(["environment"]));
     let ok = json!({"action": "accept", "content": {"environment": "production"}});
     assert_eq!(tools::confirmed(&plan, &ok), Ok(()));

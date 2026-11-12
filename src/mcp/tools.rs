@@ -999,7 +999,7 @@ pub fn confirm_request(
             message.push_str(&format!("\n{s};"));
         }
     }
-    let schema = if let Some(why) = plan.typed_reason() {
+    let schema = if let Some(why) = typed_reason(plan) {
         message.push_str(&format!(
             " {} {why}: type its name to confirm.",
             plan.environment
@@ -1029,6 +1029,20 @@ pub fn confirm_request(
 /// files instead.
 const CONFIRM_SQL_BUDGET: usize = 6000;
 
+/// Why confirming `plan` takes the environment's name typed: the plan's
+/// own reasons, or SQL past what the question shows — a tick for
+/// statements nobody was shown would answer for anything in them. Pure.
+fn typed_reason(plan: &crate::inventory::patching::PatchPlan) -> Option<&'static str> {
+    let sql: usize = plan
+        .patches
+        .iter()
+        .flat_map(|p| &p.statements)
+        .map(String::len)
+        .sum();
+    plan.typed_reason()
+        .or_else(|| (sql > CONFIRM_SQL_BUDGET).then_some("has more SQL than this question shows"))
+}
+
 /// Whether the operator's answer confirms `plan`. Pure.
 pub fn confirmed(
     plan: &crate::inventory::patching::PatchPlan,
@@ -1040,7 +1054,7 @@ pub fn confirmed(
         None => return Err("the answer has no action".to_string()),
     }
     let content = answer.get("content");
-    if plan.needs_typed() {
+    if typed_reason(plan).is_some() {
         let typed = content
             .and_then(|c| c.get("environment"))
             .and_then(Value::as_str)

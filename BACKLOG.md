@@ -11,9 +11,6 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **apply_patches: a tick for SQL past the 6000-character cut.** When the
-  confirmation is cut, require the environment's name typed, or list
-  per-file statement counts by guard.
 - **MCP restore: a database literally named `y`** is replaced on a tick:
   `typed` is inferred from the accept token. Carry `Prepare::Replace`.
 - **git in the agent's checkout.** `agent_rules`, `rules_commit` and the

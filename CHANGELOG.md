@@ -34,6 +34,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- MCP's `apply_patches` confirmation shows at most 6000 characters of
+  SQL; past that it was still confirmed with a tick, so a statement
+  after the cut ran unseen. A cut confirmation now takes the
+  environment's name typed.
 - The editor ran a script with writes and its own `COMMIT` (or
   `PREPARE TRANSACTION`) inside pgman's `auto_tx` transaction, so its
   writes were committed at its `COMMIT` and the rollback pgman offered
