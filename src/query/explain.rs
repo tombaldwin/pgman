@@ -300,6 +300,116 @@ fn walk_findings(n: &PlanNode, out: &mut Vec<String>) {
     }
 }
 
+/// The columns a scan's `Filter` compares to something: `status` and
+/// `customer_id` in `((status = 'open'::text) AND (customer_id = 5))`.
+/// Only plain `column op …` comparisons, the ones an index on the column
+/// serves; a function of a column, an `OR`, or anything this can't read
+/// gives nothing. Pure.
+pub fn filter_columns(filter: &str) -> Vec<String> {
+    if filter.to_ascii_uppercase().contains(" OR ") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for part in filter.split(" AND ") {
+        let part = part.trim().trim_start_matches('(');
+        let mut word = String::new();
+        let mut chars = part.chars().peekable();
+        if part.starts_with('"') {
+            chars.next();
+            for c in chars.by_ref() {
+                if c == '"' {
+                    break;
+                }
+                word.push(c);
+            }
+        } else {
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    word.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+        }
+        let rest: String = chars.collect();
+        let op = rest.trim_start();
+        let compares = ["=", "<", ">", "<=", ">=", "<>", "~~", "IS ", "= ANY"]
+            .iter()
+            .any(|o| op.starts_with(o));
+        let column = !word.is_empty() && !word.starts_with(|c: char| c.is_ascii_digit());
+        if column && compares && !out.contains(&word) {
+            out.push(word);
+        }
+    }
+    out
+}
+
+/// A relation's schema-qualified name and its index definitions
+/// (`pg_get_indexdef`), by the name a plan gives it, when the catalog
+/// has it.
+pub type IndexesFor<'a> = &'a dyn Fn(&str) -> Option<(String, Vec<String>)>;
+
+/// For each big sequential scan in `root` with a filter, the index that
+/// could serve it when no index on its table leads with the filtered
+/// columns: `CREATE INDEX CONCURRENTLY ON public.orders (status)`.
+/// `indexes_for` gives a relation's schema-qualified name and its
+/// index definitions (`pg_get_indexdef`), when the catalog has it. A
+/// suggestion to weigh, not a migration. Pure.
+pub fn index_suggestions(root: &PlanNode, indexes_for: IndexesFor) -> Vec<String> {
+    let mut out = Vec::new();
+    walk_suggestions(root, indexes_for, &mut out);
+    out
+}
+
+fn walk_suggestions(n: &PlanNode, indexes_for: IndexesFor, out: &mut Vec<String>) {
+    let removed = n
+        .extra("Rows Removed by Filter")
+        .and_then(|r| r.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let read = n
+        .actual_rows
+        .map(|r| (r + removed) * n.actual_loops.unwrap_or(1.0))
+        .or(n.plan_rows);
+    let big = read.is_some_and(|r| r >= BIG_SCAN_ROWS);
+    if let (true, "Seq Scan", Some(rel), Some(filter)) = (
+        big,
+        n.node_type.as_str(),
+        n.relation_name.as_deref(),
+        n.extra("Filter"),
+    ) {
+        let cols = filter_columns(filter);
+        if let (false, Some((table, defs))) = (cols.is_empty(), indexes_for(rel)) {
+            // An index whose leading column is one the filter compares.
+            let led = defs.iter().any(|d| {
+                d.rsplit_once(" (")
+                    .map(|(_, cols_part)| {
+                        let first = cols_part
+                            .trim_end_matches(')')
+                            .split(',')
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .trim_matches('"')
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .to_string();
+                        cols.contains(&first)
+                    })
+                    .unwrap_or(false)
+            });
+            let suggestion = format!("CREATE INDEX CONCURRENTLY ON {table} ({})", cols.join(", "));
+            if !led && !out.contains(&suggestion) {
+                out.push(suggestion);
+            }
+        }
+    }
+    for c in &n.children {
+        walk_suggestions(c, indexes_for, out);
+    }
+}
+
 /// Run `EXPLAIN (FORMAT JSON) …` against `client` and pluck the top
 /// node's `Plan Rows` estimate. The one I/O helper in this module (the
 /// parse path above is pure); it lives here, in the data layer, so the
@@ -369,6 +479,59 @@ mod tests {
             assert!(all.contains(want), "{want:?} in\n{all}");
         }
         assert_eq!(f.len(), 5, "each once: {all}");
+    }
+
+    #[test]
+    fn a_filters_plain_comparisons_name_its_columns() {
+        assert_eq!(
+            filter_columns("((status = 'open'::text) AND (customer_id = 5))"),
+            ["status", "customer_id"]
+        );
+        assert_eq!(filter_columns("(created_at > now())"), ["created_at"]);
+        assert_eq!(filter_columns("(\"Email\" ~~ 'a%'::text)"), ["Email"]);
+        assert_eq!(filter_columns("(deleted_at IS NULL)"), ["deleted_at"]);
+        // An OR, a function of a column, a constant first: nothing.
+        assert!(filter_columns("((a = 1) OR (b = 2))").is_empty());
+        assert!(filter_columns("(lower(email) = 'x'::text)").is_empty());
+        assert!(filter_columns("(5 = id)").is_empty());
+    }
+
+    #[test]
+    fn a_big_filtered_scan_with_no_leading_index_gets_one_suggested() {
+        let mut scan = node("Seq Scan", Some("orders"));
+        scan.plan_rows = Some(200.0);
+        scan.actual_rows = Some(200.0);
+        scan.actual_loops = Some(1.0);
+        scan.extras
+            .push(("Filter".into(), "(status = 'open'::text)".into()));
+        scan.extras
+            .push(("Rows Removed by Filter".into(), "49800".into()));
+        let none = |_: &str| Some(("public.orders".to_string(), vec![]));
+        assert_eq!(
+            index_suggestions(&scan, &none),
+            ["CREATE INDEX CONCURRENTLY ON public.orders (status)"]
+        );
+        // An index leading with the column: nothing to add.
+        let led = |_: &str| {
+            Some((
+                "public.orders".to_string(),
+                vec!["CREATE INDEX orders_s ON public.orders USING btree (status, id)".into()],
+            ))
+        };
+        assert!(index_suggestions(&scan, &led).is_empty());
+        // One where it isn't the leading column still leaves it unserved.
+        let second = |_: &str| {
+            Some((
+                "public.orders".to_string(),
+                vec!["CREATE INDEX orders_s ON public.orders USING btree (id, status)".into()],
+            ))
+        };
+        assert_eq!(index_suggestions(&scan, &second).len(), 1);
+        // A small scan, or a table the catalog doesn't know: nothing.
+        let mut small = scan.clone();
+        small.extras.retain(|(k, _)| k != "Rows Removed by Filter");
+        assert!(index_suggestions(&small, &none).is_empty());
+        assert!(index_suggestions(&scan, &|_| None).is_empty());
     }
 
     #[test]

@@ -136,7 +136,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "explain",
-            "description": "One statement's plan, as Postgres's EXPLAIN (FORMAT JSON) gives it, with `findings`: big sequential scans, row estimates ten times off, sorts and hashes that spilled to disk, nested loops whose inner side ran many times — what is worth an index or a rewrite. With `analyze: true` the statement really runs (EXPLAIN ANALYZE, BUFFERS) in the same read-only session `query` uses, and the plan carries actual rows and times. The statement passes the same guards as `query`: one statement, nothing a guard would ask about, so not an INSERT, UPDATE or DELETE. CAVEATS: `analyze` takes as long as the statement does, within the 30 s cap, and its timings include the server's caching at that moment. Without it the row counts are the planner's estimates. On a replica the plan is the replica's, with its statistics. A plan over 256 KiB of JSON comes back as findings only (`plan_cut`).",
+            "description": "One statement's plan, as Postgres's EXPLAIN (FORMAT JSON) gives it, with `findings`: big sequential scans, row estimates ten times off, sorts and hashes that spilled to disk, nested loops whose inner side ran many times — what is worth an index or a rewrite — and `index_suggestions`: for a big scan filtered by plain comparisons on columns no index of its table leads with, the CREATE INDEX CONCURRENTLY that could serve it. With `analyze: true` the statement really runs (EXPLAIN ANALYZE, BUFFERS) in the same read-only session `query` uses, and the plan carries actual rows and times. The statement passes the same guards as `query`: one statement, nothing a guard would ask about, so not an INSERT, UPDATE or DELETE. CAVEATS: `analyze` takes as long as the statement does, within the 30 s cap, and its timings include the server's caching at that moment. Without it the row counts are the planner's estimates. On a replica the plan is the replica's, with its statistics. A plan over 256 KiB of JSON comes back as findings only (`plan_cut`). An index suggestion is a starting point to weigh (write cost, selectivity, an existing composite index), not a migration to run as-is.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -488,9 +488,25 @@ impl Server {
             .and_then(|r| r.first())
             .and_then(|c| c.clone())
             .ok_or("EXPLAIN returned no plan")?;
+        // The plan's tables' indexes, for what could serve a big scan.
+        let cache = crate::query::schema::fetch(&client).await;
+        let indexes_for = |rel: &str| {
+            let mut hits = cache.tables.iter().filter(|t| t.name == rel);
+            let t = hits.next()?;
+            if hits.next().is_some() {
+                return None;
+            }
+            let key = (t.schema.clone(), t.name.clone());
+            let defs = cache
+                .indexes_by_table
+                .get(&key)
+                .map(|ix| ix.iter().map(|i| i.definition.clone()).collect())
+                .unwrap_or_default();
+            Some((format!("{}.{}", t.schema, t.name), defs))
+        };
         let replica = replica_state(&client, role).await;
         Ok(with_replica(
-            super::stats::render_explain(name, analyze, &plan)?,
+            super::stats::render_explain(name, analyze, &plan, &indexes_for)?,
             replica,
         ))
     }

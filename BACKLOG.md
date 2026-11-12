@@ -16,8 +16,10 @@ left.
 - **First-minute UX:** no libpq env,
   .pgpass or pg_service.conf; editor
   Ctrl-A/Ctrl-E (EXPLAIN) vs prompts' Home/End.
-- **Features, by value for effort:** index advice from the tap and
-  pg_stat_statements (M). Schema diff (and the dry run's) could compare
+- **Features, by value for effort:** index advice beyond explain's
+  (which reads one plan's filters): across pg_stat_statements' top
+  statements and the tap's hotspots, with hypopg to try an index
+  before building it (M). Schema diff (and the dry run's) could compare
   CHECKs, views' definitions and functions too; the TUI's patch view
   could show the dry run's schema changes.
 

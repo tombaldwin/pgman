@@ -101,9 +101,15 @@ pub fn explain_sql(statement: &str, analyze: bool) -> Result<String, String> {
 }
 
 /// `explain`'s result from the plan JSON Postgres returned: the plan
-/// (up to [`MAX_PLAN_BYTES`]), its findings, and with `analyze` the
-/// planning and execution times. Pure.
-pub fn render_explain(name: &str, analyzed: bool, plan_json: &str) -> Result<String, String> {
+/// (up to [`MAX_PLAN_BYTES`]), its findings and index suggestions
+/// (`indexes_for` gives each relation's existing indexes), and with
+/// `analyze` the planning and execution times. Pure.
+pub fn render_explain(
+    name: &str,
+    analyzed: bool,
+    plan_json: &str,
+    indexes_for: crate::query::explain::IndexesFor,
+) -> Result<String, String> {
     let root = crate::query::explain::parse(plan_json)?;
     let top: Value = serde_json::from_str(plan_json)
         .ok()
@@ -115,6 +121,7 @@ pub fn render_explain(name: &str, analyzed: bool, plan_json: &str) -> Result<Str
         "connection": name,
         "analyzed": analyzed,
         "findings": crate::query::explain::findings(&root),
+        "index_suggestions": crate::query::explain::index_suggestions(&root, indexes_for),
         "planning_ms": top.get("Planning Time"),
         "execution_ms": top.get("Execution Time"),
         "plan": if cut { Value::Null } else { plan },
@@ -149,7 +156,9 @@ mod tests {
             "Plan Rows": 50000, "Actual Rows": 48000, "Actual Loops": 1,
             "Total Cost": 900.5},
             "Planning Time": 0.2, "Execution Time": 41.7}]"#;
-        let v: Value = serde_json::from_str(&render_explain("app", true, plan).unwrap()).unwrap();
+        let none = |_: &str| Some(("public.orders".to_string(), Vec::new()));
+        let v: Value =
+            serde_json::from_str(&render_explain("app", true, plan, &none).unwrap()).unwrap();
         assert_eq!(v["analyzed"], true);
         assert_eq!(v["plan"]["Node Type"], "Seq Scan");
         assert_eq!(v["execution_ms"], 41.7);
@@ -161,12 +170,18 @@ mod tests {
             "{v}"
         );
         assert_eq!(v["plan_cut"], false);
-        assert!(render_explain("app", false, "not json").is_err());
+        assert_eq!(
+            v["index_suggestions"],
+            json!([]),
+            "no filter, nothing to index"
+        );
+        assert!(render_explain("app", false, "not json", &none).is_err());
         let huge = format!(
             r#"[{{"Plan": {{"Node Type": "Result", "Output": ["{}"]}}}}]"#,
             "x".repeat(MAX_PLAN_BYTES)
         );
-        let v: Value = serde_json::from_str(&render_explain("app", false, &huge).unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_str(&render_explain("app", false, &huge, &none).unwrap()).unwrap();
         assert_eq!(v["plan_cut"], true);
         assert_eq!(v["plan"], Value::Null);
     }

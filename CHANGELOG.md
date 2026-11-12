@@ -8,6 +8,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- MCP `explain` suggests an index for a big sequential scan filtered by
+  plain comparisons on columns no index of its table leads with: the
+  `CREATE INDEX CONCURRENTLY` that could serve it, to weigh rather than
+  run as-is.
 - A patch dry run (`pgman apply --dry-run`, MCP `apply_patches` with
   `mode: "dry_run"`) now says what its patches change in the schema —
   tables, columns, keys and indexes added, dropped or changed — read in

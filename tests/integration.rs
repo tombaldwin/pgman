@@ -3551,6 +3551,11 @@ fn mcp_explain_gives_a_plan_and_what_is_worth_an_index() {
             .contains(&format!("Seq Scan on {table}"))),
         "{text}"
     );
+    assert_eq!(
+        v["index_suggestions"],
+        serde_json::json!([format!("CREATE INDEX CONCURRENTLY ON public.{table} (v)")]),
+        "{text}"
+    );
     let (text, is_error) = reply(&frames, 2);
     assert!(is_error && text.contains("only reads"), "{text}");
     let (text, is_error) = reply(&frames, 3);
