@@ -21,6 +21,15 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   still asked about. The result says it ran unasked; the journal
   records it as before. Only the operator's own files can set it.
 
+### Fixed
+
+- MCP's `query` no longer lets a safety.toml guard set to `allow` reach
+  the agent: such a guard counts as `confirm` there, which nobody can
+  answer. With `ddl = "allow"` or `other = "allow"` for a database, an
+  agent could run `VACUUM FULL`, `CLUSTER`, `REINDEX`, `CHECKPOINT` or
+  `COPY … TO PROGRAM`, which Postgres runs even in a read-only session.
+  The default guards were never affected.
+
 ## [0.5.2] — 2026-11-11
 
 ### Added

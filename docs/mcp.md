@@ -28,7 +28,10 @@ typing the database's. Every `query` session opens with
 `default_transaction_read_only = on`, **whatever your `safety.toml`
 says**. Statements go through the same guards as `--batch` with no
 `--yes`: a statement a guard would ask a human to confirm is refused,
-because nobody is there to confirm it. `--allow-writes` is refused at
+because nobody is there to confirm it. A guard your file sets to
+`allow` counts as `confirm` here, since Postgres runs `VACUUM`,
+`CLUSTER`, `REINDEX`, `CHECKPOINT` and `COPY … TO PROGRAM` even in a
+read-only session. `--allow-writes` is refused at
 startup, not accepted and ignored.
 
 ## Tools
