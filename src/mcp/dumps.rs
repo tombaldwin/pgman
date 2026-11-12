@@ -38,7 +38,7 @@ pub fn tool_entries() -> Vec<Value> {
                     "skip_unreadable": {"type": "boolean", "description": "Leave out what the dump's user can't read (named in the result) instead of refusing. Ask the operator first: the copy is then incomplete."},
                     "schema_only": {"type": "boolean", "description": "The structure alone, no rows."},
                     "masked": {"type": "boolean", "description": "Every row, with what looks personal replaced (pgman's own archive, a .pgman-dump directory, which restore takes). A protected environment is dumped masked unless schema_only."},
-                    "reason": {"type": "string", "description": "A suggested reason (a ticket id), shown to the operator, who gives the one recorded."}
+                    "reason": {"type": "string", "description": "A suggested reason (a ticket id or a few words, no names), filled in as the default of the operator's reason field: the operator confirms it or edits it, and the one they send is recorded."}
                 },
                 "required": ["target"],
                 "additionalProperties": false
@@ -293,7 +293,9 @@ pub fn rules_question(
 
 /// The dump confirmation's form: a tick, or `typed` (the database's
 /// name, when a rules file is confirmed with it), and the reason when
-/// one is asked for — `offer` suggested in its description. Pure.
+/// one is asked for — `offer` suggested in its description and, when it
+/// is a reason the journal takes, filled in as the field's default, so
+/// the operator confirms it or edits it rather than typing it. Pure.
 pub fn dump_schema(reason: bool, offer: Option<&str>, typed: Option<&str>) -> Value {
     let mut v = schema(typed, "dump", "Dump it");
     if reason {
@@ -309,6 +311,9 @@ pub fn dump_schema(reason: bool, offer: Option<&str>, typed: Option<&str>) -> Va
             "description": description,
             "maxLength": crate::journal::REASON_MAX,
         });
+        if let Some(Ok(Some(o))) = offer.map(crate::journal::clean_reason) {
+            v["properties"]["reason"]["default"] = json!(o);
+        }
         v["required"] = json!([if typed.is_some() { "name" } else { "dump" }, "reason"]);
     }
     v
@@ -858,6 +863,31 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("suggested: APP-1"));
+        // Filled in, so the operator confirms it rather than retyping it.
+        assert_eq!(asked["properties"]["reason"]["default"], json!("APP-1"));
+        assert!(
+            dump_schema(true, None, None)["properties"]["reason"]
+                .get("default")
+                .is_none(),
+            "nothing suggested, nothing filled in"
+        );
+        for bad in [
+            "two\nlines".to_string(),
+            "x".repeat(crate::journal::REASON_MAX + 1),
+        ] {
+            assert!(
+                dump_schema(true, Some(&bad), None)["properties"]["reason"]
+                    .get("default")
+                    .is_none(),
+                "a reason the journal would refuse isn't filled in: {bad:?}"
+            );
+        }
+        assert!(
+            dump_schema(false, Some("APP-1"), None)["properties"]
+                .get("reason")
+                .is_none(),
+            "no reason asked, no field"
+        );
         // Confirming a rules file too: the name typed, not a tick.
         let typed = dump_schema(true, None, Some("ledger"));
         assert_eq!(typed["required"], json!(["name", "reason"]));

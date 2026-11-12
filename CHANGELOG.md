@@ -6,6 +6,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- MCP's `dump` fills in the agent's `reason` (or the branch's ticket id)
+  as the default of the operator's reason field, so the operator
+  confirms it or edits it instead of retyping it. The operator still
+  confirms every dump, and what they send is recorded. A suggestion the
+  journal wouldn't take (over-long, several lines) isn't filled in.
+
 ## [0.5.2] — 2026-11-11
 
 ### Added

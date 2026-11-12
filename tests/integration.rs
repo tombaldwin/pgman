@@ -9710,13 +9710,13 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
     next();
     // A call that asks: (reply text, isError, the question asked, the
-    // form's required fields).
+    // form).
     let mut asked = |id: u64, tool: &str, args: serde_json::Value, answer: serde_json::Value| {
         writeln!(stdin, "{}", tool_call(id, tool, args)).unwrap();
         let ask = next();
         assert_eq!(ask["method"], "elicitation/create", "{ask}");
         let message = ask["params"]["message"].as_str().unwrap().to_string();
-        let required = ask["params"]["requestedSchema"]["required"].to_string();
+        let form = ask["params"]["requestedSchema"].clone();
         writeln!(
             stdin,
             "{}",
@@ -9725,7 +9725,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         .unwrap();
         let frame = next();
         let (text, is_error) = reply(&[frame], id);
-        (text, is_error, message, required)
+        (text, is_error, message, form)
     };
 
     let (text, is_error, message, _) = asked(
@@ -9744,7 +9744,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     assert!(out.join("copy.dump").is_file());
 
     // A protected environment: schema only, and the operator's reason.
-    let (text, is_error, message, required) = asked(
+    let (text, is_error, message, form) = asked(
         3,
         "dump",
         serde_json::json!({"target": "live", "schema_only": true, "reason": "APP-5"}),
@@ -9754,7 +9754,9 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         message.starts_with("Dump the schema of live") && message.contains("It is protected ("),
         "{message}"
     );
-    assert_eq!(required, r#"["dump","reason"]"#);
+    assert_eq!(form["required"].to_string(), r#"["dump","reason"]"#);
+    // The agent's suggestion is filled in: the operator confirms it.
+    assert_eq!(form["properties"]["reason"]["default"], "APP-5", "{form}");
     assert!(is_error && text.contains("final"), "{text}");
     let (text, is_error, _, _) = asked(
         31,
