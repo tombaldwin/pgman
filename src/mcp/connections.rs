@@ -213,7 +213,7 @@ fn personal_entry(pc: &PersonalConnection) -> Entry {
     };
     let password_source = match c.password_env.as_deref().filter(|v| !v.is_empty()) {
         Some(var) if std::env::var(var).is_ok_and(|v| !v.is_empty()) => format!("env {var} (set)"),
-        Some(var) => format!("env {var} (NOT set in the server's environment)"),
+        Some(var) => format!("env {var} (NOT set in pgman's environment)"),
         None if dsn.as_ref().is_some_and(|d| d.password.is_some()) => "in the url".to_string(),
         None => "none configured".to_string(),
     };
@@ -274,7 +274,7 @@ fn discovered_entry(pick: DataSourcePick, allow_discovered: bool) -> Entry {
         ))
     } else if !pick.unresolved.is_empty() {
         Some(format!(
-            "has unresolved placeholders ({}); export them in the server's environment",
+            "has unresolved placeholders ({}); export them in pgman's environment",
             pick.unresolved.join(", ")
         ))
     } else if pick.dsn.is_none() {

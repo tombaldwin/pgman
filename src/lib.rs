@@ -15,6 +15,7 @@ pub mod crypt;
 pub mod dbunit;
 pub mod demo;
 pub mod discover;
+pub mod doctor;
 pub mod dump;
 // `font_probe` now lives in the `tb-tui-common` crate (shared with
 // ebman). Re-exported here so existing `pgman::font_probe::…` call

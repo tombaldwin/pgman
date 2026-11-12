@@ -8,6 +8,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `pgman doctor`: what pgman sees from the directory it runs in — each
+  config file and whether it loads (exit 1 when one doesn't), the
+  programs it runs and where they are, and every connection it knows,
+  usable or why not. It connects to nothing and names where a password
+  comes from, never the password.
 - The environments overview (`E`) lists the `connections.toml` entries
   no environment names, under `connections`, and connects to them with
   their tunnel, secret and `password_env`: a first connection no longer
@@ -39,6 +44,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The unknown-command message now lists `key` (and `doctor`) with the
+  other commands.
 - A DSN with no password stopped at "password missing" with no hint.
   It now says where a password can come from: the DSN, `PGPASSWORD`, or
   a connection's `password_env` or `secret`.

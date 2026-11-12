@@ -506,3 +506,47 @@ fn a_closed_pipe_ends_pgman_quietly() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn doctor_names_each_file_and_exits_1_when_one_does_not_load() {
+    let home = std::env::temp_dir().join(format!("pgman-test-doctor-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let config = home.join(".config/pgman");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("connections.toml"),
+        "[[connections]]\nname = \"local\"\nurl = \"postgres://me@localhost/app\"\npassword_env = \"PGMAN_TEST_DOCTOR_PW\"\n",
+    )
+    .unwrap();
+    let doctor = || {
+        pgman()
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .env_remove("PGMAN_TEST_DOCTOR_PW")
+            .current_dir(&home)
+            .arg("doctor")
+            .output()
+            .expect("spawn pgman")
+    };
+    let out = doctor();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    for want in [
+        "ok     connections.toml",
+        "1 connection(s)",
+        "-      environments.toml",
+        "ok     local (personal connections.toml)",
+        "PGMAN_TEST_DOCTOR_PW (NOT set",
+    ] {
+        assert!(text.contains(want), "{want:?} in\n{text}");
+    }
+    assert!(!text.contains("password = "), "never a password: {text}");
+    std::fs::write(config.join("environments.toml"), "[[environments]\n").unwrap();
+    let out = doctor();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("BROKEN environments.toml"), "{text}");
+    let _ = std::fs::remove_dir_all(&home);
+}
