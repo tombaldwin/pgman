@@ -17,29 +17,55 @@ usage: pgman query ['SQL'] [--json] [--dsn DSN] [--batch flags]
 
 Run one statement without the TUI and exit: the same as
 `pgman --batch --sql 'SQL'`, with `--json` short for `--format json`.
-With no SQL, it is read from stdin. Every --batch flag applies
+The SQL is the first argument that isn't a flag, its value or a
+postgres:// DSN, wherever it comes. With no SQL, it is read from stdin. Every --batch flag applies
 (--dsn, --format, --discovered, --yes); see `pgman --help`.
 
   pgman query 'SELECT id, email FROM users LIMIT 5' --json --dsn postgres://app@localhost/appdb";
 
 /// The `pgman` argument list `pgman query …` stands for, from the
-/// arguments after `query`: `--batch`, a leading non-flag argument as
-/// `--sql`, and `--json` as `--format json`; everything else passed
-/// through for clap to check as usual. Pure.
-pub fn query_alias_argv(rest: &[String]) -> Vec<String> {
+/// arguments after `query`: `--batch`, the SQL as `--sql`, and `--json`
+/// as `--format json`; everything else passed through for clap to check
+/// as usual. The SQL is the first bare argument wherever it is
+/// (`query --dsn URL 'SELECT 1'`), skipping a flag's value
+/// (`takes_value` says which flags take one) and a `postgres://` DSN,
+/// which clap takes as the positional DSN. Pure.
+pub fn query_alias_argv(rest: &[String], takes_value: impl Fn(&str) -> bool) -> Vec<String> {
     let mut argv = vec!["pgman".to_string(), "--batch".to_string()];
-    let mut rest = rest.iter();
-    let mut first = rest.next();
-    if let Some(sql) = first.filter(|a| !a.starts_with('-')) {
-        argv.extend(["--sql".to_string(), sql.clone()]);
-        first = None;
-    }
-    for arg in first.into_iter().chain(rest) {
-        match arg.as_str() {
-            "--json" => argv.extend(["--format".to_string(), "json".to_string()]),
-            _ => argv.push(arg.clone()),
+    let mut passed = Vec::new();
+    let mut sql = None;
+    let mut i = 0;
+    while let Some(arg) = rest.get(i) {
+        i += 1;
+        if arg == "--" {
+            passed.extend(rest[i - 1..].iter().cloned());
+            break;
+        }
+        if arg == "--json" {
+            passed.extend(["--format".to_string(), "json".to_string()]);
+            continue;
+        }
+        passed.push(arg.clone());
+        let flag = arg
+            .strip_prefix("--")
+            .filter(|l| !l.contains('='))
+            .or_else(|| arg.strip_prefix('-').filter(|s| s.chars().count() == 1));
+        match flag {
+            Some(name) if takes_value(name) => {
+                if let Some(value) = rest.get(i) {
+                    passed.push(value.clone());
+                    i += 1;
+                }
+            }
+            Some(_) => {}
+            None if arg.starts_with('-') || arg.contains("://") || sql.is_some() => {}
+            None => sql = passed.pop(),
         }
     }
+    if let Some(sql) = sql {
+        argv.extend(["--sql".to_string(), sql]);
+    }
+    argv.extend(passed);
     argv
 }
 
@@ -941,6 +967,51 @@ mod tests {
 
     fn argv(s: &[&str]) -> Vec<String> {
         s.iter().map(|a| a.to_string()).collect()
+    }
+
+    fn query_alias_argv(rest: &[String]) -> Vec<String> {
+        super::query_alias_argv(rest, |f| matches!(f, "dsn" | "format" | "theme" | "sql"))
+    }
+
+    #[test]
+    fn the_sql_is_the_first_bare_argument_wherever_it_is() {
+        let sql_of = |a: &[&str]| {
+            let v = query_alias_argv(&argv(a));
+            v.iter()
+                .position(|x| x == "--sql")
+                .map(|p| v[p + 1].clone())
+        };
+        for a in [
+            &["--dsn", "postgres://h/d", "SELECT 1"][..],
+            &["--json", "SELECT 1"],
+            &["--format", "csv", "SELECT 1", "--yes"],
+            &["postgres://h/d", "SELECT 1"],
+            &["--dsn=postgres://h/d", "SELECT 1"],
+        ] {
+            assert_eq!(sql_of(a).as_deref(), Some("SELECT 1"), "{a:?}");
+        }
+        // A flag's value is never the SQL, nor is a DSN.
+        assert_eq!(sql_of(&["--format", "csv"]), None);
+        assert_eq!(sql_of(&["--dsn", "postgres://h/d"]), None);
+        assert_eq!(sql_of(&["--", "SELECT 1"]), None, "after -- is clap's");
+        // Only the first: a second bare word is clap's to refuse.
+        assert_eq!(
+            query_alias_argv(&argv(&["SELECT 1", "SELECT 2"])),
+            argv(&["pgman", "--batch", "--sql", "SELECT 1", "SELECT 2"])
+        );
+        assert_eq!(
+            query_alias_argv(&argv(&["--dsn", "postgres://h/d", "SELECT 1", "--json"])),
+            argv(&[
+                "pgman",
+                "--batch",
+                "--sql",
+                "SELECT 1",
+                "--dsn",
+                "postgres://h/d",
+                "--format",
+                "json"
+            ])
+        );
     }
 
     #[test]

@@ -34,6 +34,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `pgman query --dsn URL 'SELECT 1'` and `pgman query --json 'SELECT 1'`
+  were refused, the SQL taken for a DSN: the SQL had to come first. It
+  is now the first argument that isn't a flag, a flag's value or a
+  `postgres://` DSN, wherever it comes.
 - Masked dumps now mask a few more personal columns by name: WhatsApp
   numbers, Instagram, Facebook, TikTok, Telegram and Snapchat handles,
   and what someone typed into a form (`custom_field_values.value`,

@@ -13,8 +13,7 @@ left.
 
 - **main.rs isn't thin** (3000 lines, as CLAUDE.md wants it): move the
   log-file lifecycle to logging.rs and batch DSN resolution to batch.rs.
-- **First-minute UX:** `pgman query --dsn URL 'select 1'` (SQL must come
-  first); no hint for tokio-postgres's `password missing`;
+- **First-minute UX:** no hint for tokio-postgres's `password missing`;
   connections.toml entries absent from the TUI picker; no libpq env,
   .pgpass or pg_service.conf; no `pgman doctor` at a terminal; editor
   Ctrl-A/Ctrl-E (EXPLAIN) vs prompts' Home/End.

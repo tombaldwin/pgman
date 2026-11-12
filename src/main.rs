@@ -431,7 +431,7 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", batch::QUERY_USAGE);
             return Ok(());
         }
-        Cli::parse_from(batch::query_alias_argv(&argv[2..]))
+        Cli::parse_from(batch::query_alias_argv(&argv[2..], cli_flag_takes_value))
     } else {
         Cli::parse()
     };
