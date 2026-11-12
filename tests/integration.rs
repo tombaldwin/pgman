@@ -3562,6 +3562,89 @@ fn mcp_explain_gives_a_plan_and_what_is_worth_an_index() {
     );
 }
 
+/// `pgman query --target`: an environment's database, with its
+/// connections.toml settings; safety.toml's `ENV/DATABASE` key applies;
+/// a replica is read-only whatever safety.toml says.
+#[test]
+fn query_takes_an_environment_target() {
+    let home = scratch_home("query-target", WRITABLE_PROFILE);
+    let config = home.join(".config/pgman");
+    let url =
+        |port: u16| format!("postgres://pgman_test@127.0.0.1:{port}/pgman_test?sslmode=disable");
+    std::fs::write(
+        config.join("connections.toml"),
+        format!(
+            "[[connections]]\nname = \"dev-db\"\nurl = \"{}\"\npassword_env = \"IT_PW\"\n\
+             [[connections]]\nname = \"dev-replica\"\nurl = \"{}\"\npassword_env = \"IT_PW\"\nrole = \"replica\"\n",
+            url(55432),
+            // A primary marked replica: only pgman's read-only stops a
+            // write, not the server's recovery.
+            url(55432)
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        config.join("environments.toml"),
+        "[[environments]]\nname = \"dev\"\nsource = { kind = \"static\", connections = [\"dev-db\"] }\n\
+         [[environments]]\nname = \"mirror\"\nsource = { kind = \"static\", connections = [\"dev-replica\"] }\n",
+    )
+    .unwrap();
+    let out = pgman_in(
+        &home,
+        &home,
+        &[
+            "query",
+            "SELECT current_database()",
+            "--target",
+            "dev/pgman_test",
+        ],
+    );
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    );
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("pgman_test"), "{stdout}");
+    assert!(
+        stderr.contains("dev/pgman_test is pgman_test on"),
+        "{stderr}"
+    );
+    // safety.toml keyed by the environment's name: read-only there only.
+    let table = format!("pgman_it_qt_{}", std::process::id());
+    std::fs::write(
+        config.join("safety.toml"),
+        "[default]\nread_only = false\n[databases.\"dev/pgman_test\"]\nread_only = true\n",
+    )
+    .unwrap();
+    let write = format!("CREATE TABLE {table} (x int)");
+    let out = pgman_in(
+        &home,
+        &home,
+        &["query", &write, "--yes", "--target", "dev/pgman_test"],
+    );
+    assert!(
+        !out.status.success(),
+        "the ENV/DATABASE key made it read-only"
+    );
+    // A replica: read-only though safety.toml lets the database write.
+    std::fs::write(config.join("safety.toml"), WRITABLE_PROFILE).unwrap();
+    let out = pgman_in(
+        &home,
+        &home,
+        &["query", &write, "--yes", "--target", "mirror"],
+    );
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(!out.status.success(), "{said}");
+    // --target and --dsn together are refused by clap.
+    let out = pgman_in(
+        &home,
+        &home,
+        &["query", "SELECT 1", "--target", "dev", "--dsn", DSN],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!table_exists(&home, &table), "nothing was created");
+}
+
 /// `slow_queries` over MCP on a server without pg_stat_statements says
 /// how to install it, and refuses an argument out of range before
 /// connecting.

@@ -18,8 +18,7 @@ left.
   Ctrl-A/Ctrl-E (EXPLAIN) vs prompts' Home/End.
 - **Features, by value for effort:**
   schema diff between environments (M), a patch dry run reporting the
-  schema diff (M), index advice from the tap and pg_stat_statements (M);
-  and `pgman query ENV/DATABASE`, below, deserves to move up.
+  schema diff (M), index advice from the tap and pg_stat_statements (M).
 
 ### Postgres-compatible databases — from a compatibility run (2026-10-29)
 
@@ -103,9 +102,6 @@ note.
   judges a pid by this machine's processes: a cache shared between
   machines could lose another machine's running restore's copy (an
   owner file in the temp would settle it).
-- **`pgman query` against an environment.** It takes `--dsn` only, so
-  checking a column's type on an environment behind a bastion and a
-  secret means the TUI. A `<target>` like dump's. Found 2026-10-30.
 
 ### Environments overview, like ebman's main screen (Tom, 2026-10-19)
 One table of every database in an environment, replicas included, each

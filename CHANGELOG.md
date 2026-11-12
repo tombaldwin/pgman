@@ -8,6 +8,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `pgman query --target ENV/DATABASE` (and `--batch --target`): run a
+  statement against an environment's database, or a connections.toml
+  name, with its secret and ssh tunnel, as `pgman dump` reaches it. Its
+  replica, read-only, unless `--primary`; safety.toml's `ENV/DATABASE`
+  keys apply.
 - MCP `explain`: one statement's plan, with findings — big sequential
   scans, row estimates ten times off, sorts and hashes spilled to disk,
   nested loops run thousands of times. `analyze: true` runs it in the

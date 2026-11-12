@@ -13,13 +13,16 @@ use tokio_postgres::types::Type;
 
 /// `pgman query --help`.
 pub const QUERY_USAGE: &str = "\
-usage: pgman query ['SQL'] [--json] [--dsn DSN] [--batch flags]
+usage: pgman query ['SQL'] [--json] [--dsn DSN | --target TARGET [--primary]] [--batch flags]
 
 Run one statement without the TUI and exit: the same as
 `pgman --batch --sql 'SQL'`, with `--json` short for `--format json`.
 The SQL is the first argument that isn't a flag, its value or a
 postgres:// DSN, wherever it comes. With no SQL, it is read from stdin. Every --batch flag applies
-(--dsn, --format, --discovered, --yes); see `pgman --help`.
+(--dsn, --format, --discovered, --yes); see `pgman --help`. --target
+takes an environment's database (ENV, ENV/DATABASE, ENV/SERVER/DATABASE)
+or a connections.toml name, as `pgman dump` does, with its secret and
+ssh tunnel: its replica, read-only, unless --primary.
 
   pgman query 'SELECT id, email FROM users LIMIT 5' --json --dsn postgres://app@localhost/appdb";
 

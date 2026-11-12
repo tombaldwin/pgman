@@ -85,6 +85,22 @@ struct Cli {
     #[arg(long, help_heading = "Batch mode")]
     discovered: bool,
 
+    /// In --batch: an environment's database (ENV, ENV/DATABASE,
+    /// ENV/SERVER/DATABASE) or a connections.toml name, as `pgman dump`
+    /// takes, with its secret and ssh tunnel. Its replica, read-only,
+    /// unless --primary.
+    #[arg(
+        long,
+        value_name = "TARGET",
+        help_heading = "Batch mode",
+        conflicts_with_all = ["dsn", "dsn_pos", "discovered"]
+    )]
+    target: Option<String>,
+
+    /// With --target: the primary, not its replica.
+    #[arg(long, help_heading = "Batch mode", requires = "target")]
+    primary: bool,
+
     /// Bind a TCP listener for the planned pgman-tap library (length-prefixed JSON events).
     #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_listen: Option<String>,
@@ -1284,6 +1300,42 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
     batch_dsn_from_picks(picks, cli.discovered)
 }
 
+/// `--target`: the database `text` names, as `pgman dump` resolves it
+/// (its replica unless `primary`), its secret read now and its tunnel
+/// left for the connect to open; the safety scope it is keyed under;
+/// whether it is a replica; and which database it chose, to say.
+async fn resolve_batch_target(
+    text: &str,
+    primary: bool,
+) -> Result<(conn::Dsn, Option<pgman::safety::Scope>, bool, String), String> {
+    use pgman::inventory::target::Want;
+    let want = if primary {
+        Want::Primary
+    } else {
+        Want::PreferReplica
+    };
+    let t = text.to_string();
+    let resolved = tokio::task::spawn_blocking(move || pgman::inventory::target::resolve(&t, want))
+        .await
+        .map_err(|e| format!("resolve task failed: {e}"))??;
+    let fetch = pgman::inventory::patching::aws_secrets();
+    let dsn = pgman::inventory::patching::spec_dsn(resolved.connect.clone(), &fetch).await?;
+    let chose = format!("{} is {}", resolved.label, resolved.describe());
+    let scope = resolved
+        .environment
+        .clone()
+        .map(|environment| pgman::safety::Scope {
+            environment,
+            server: Some(resolved.server.clone()),
+        });
+    Ok((
+        dsn,
+        scope,
+        resolved.role == pgman::mcp::connections::Role::Replica,
+        chose,
+    ))
+}
+
 /// Drop discovered picks that are the same connection as an earlier one:
 /// a Spring checkout often declares one database twice (`dataSource`
 /// and `replicaDataSource`, both on `ledger`), and counting them as two
@@ -1392,13 +1444,27 @@ fn batch_dsn_from_picks(
 }
 
 async fn run_batch(cli: &Cli) -> i32 {
-    let dsn = match resolve_batch_dsn(cli) {
-        Ok(d) => d,
-        Err(e) => {
-            // Names a discovered pick — text the checkout wrote.
-            eprintln!("{}", batch::terminal_safe(&e));
-            return 2;
-        }
+    let (dsn, scope, on_replica) = match &cli.target {
+        Some(t) => match resolve_batch_target(t, cli.primary).await {
+            Ok((dsn, scope, on_replica, chose)) => {
+                // Which database the target came to, on stderr: stdout
+                // is the result's.
+                eprintln!("pgman: {}", batch::terminal_safe(&chose));
+                (dsn, scope, on_replica)
+            }
+            Err(e) => {
+                eprintln!("pgman: {}", batch::terminal_safe(&e));
+                return 2;
+            }
+        },
+        None => match resolve_batch_dsn(cli) {
+            Ok(d) => (d, None, false),
+            Err(e) => {
+                // Names a discovered pick — text the checkout wrote.
+                eprintln!("{}", batch::terminal_safe(&e));
+                return 2;
+            }
+        },
     };
     let format = match batch::Format::parse(&cli.format) {
         Ok(f) => f,
@@ -1427,17 +1493,23 @@ async fn run_batch(cli: &Cli) -> i32 {
     // team's committed `[safety]` block still holds in CI. (Only
     // tightening survives the merge — a project can't hand a CI job a
     // relaxed guard table; see `project::merge_safety`.)
-    let safety_cfg = project::merge_safety(
+    let mut safety_cfg = project::merge_safety(
         load_safety_config(),
         std::env::current_dir()
             .ok()
             .and_then(|cwd| load_project_safety(&cwd))
             .as_ref(),
     );
+    // An environment's database is keyed `ENV/DATABASE` in safety.toml.
+    safety_cfg.scope = scope;
     // Read the profile values out before moving the config into Opts.
+    // A replica is read-only, whatever safety.toml says: as in the TUI.
     let (read_only, statement_timeout_ms) = {
         let profile = safety_cfg.profile_for(&dsn.dbname);
-        (profile.read_only, profile.statement_timeout_ms)
+        (
+            profile.read_only || on_replica,
+            profile.statement_timeout_ms,
+        )
     };
     // Kept for the connect-failure hint below — `opts.dsn` is moved
     // into `batch::run`, which only reports the failure as a String.
