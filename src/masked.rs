@@ -658,22 +658,47 @@ struct ArchiveRun<'a> {
     to: Option<&'a age::x25519::Recipient>,
 }
 
-/// pg_dump's no-rows archive, then each table's masked rows, into `dir`.
-async fn write_archive(r: ArchiveRun<'_>) -> Result<Vec<TableEntry>, String> {
-    let conninfo = pgtool::conninfo(&r.opened.dsn, r.opened.via, "pgman-dump", r.have);
+/// pg_dump's arguments for a masked archive's schema: no rows, no
+/// comments, no subscriptions (their connection strings can hold a
+/// password; pg_dump 10 on), large objects only when kept. Pure.
+fn schema_args(
+    conninfo: &str,
+    snapshot: &str,
+    have: Major,
+    large_objects: bool,
+    excludes: &[String],
+    extra: &[String],
+) -> Vec<String> {
     let mut args = vec![
         format!("--dbname={conninfo}"),
         "--format=c".to_string(),
-        format!("--snapshot={}", r.snapshot),
+        format!("--snapshot={snapshot}"),
         "--exclude-table-data=*.*".to_string(),
         "--no-comments".to_string(),
         "--no-password".to_string(),
     ];
-    if !r.plan.large_objects {
+    if Major::from_num(100_000).is_some_and(|ten| have >= ten) {
+        args.push("--no-subscriptions".to_string());
+    }
+    if !large_objects {
         args.push("--no-blobs".to_string());
     }
-    args.extend(r.excludes.iter().cloned());
-    args.extend(r.opts.extra.iter().cloned());
+    args.extend(excludes.iter().cloned());
+    args.extend(extra.iter().cloned());
+    args
+}
+
+/// pg_dump's no-rows archive, then each table's masked rows, into `dir`.
+async fn write_archive(r: ArchiveRun<'_>) -> Result<Vec<TableEntry>, String> {
+    let conninfo = pgtool::conninfo(&r.opened.dsn, r.opened.via, "pgman-dump", r.have);
+    let args = schema_args(
+        &conninfo,
+        r.snapshot,
+        r.have,
+        r.plan.large_objects,
+        r.excludes,
+        &r.opts.extra,
+    );
     let schema = private_file(&r.dir.join(archive::SCHEMA))?;
     let mut cmd = pgtool::private_command(r.tool, &args);
     // Encrypted, pg_dump's archive goes through a pipe into the file: no
@@ -1611,6 +1636,26 @@ mod tests {
         let e = checked_manifest(&dir).unwrap_err();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(e.contains("disagrees with the manifest"), "{e}");
+    }
+
+    #[test]
+    fn a_masked_schema_leaves_out_rows_comments_and_subscriptions() {
+        let v = |n| Major::from_num(n).unwrap();
+        let args = schema_args("c", "s", v(170_002), false, &[], &[]);
+        for want in [
+            "--exclude-table-data=*.*",
+            "--no-comments",
+            "--no-subscriptions",
+            "--no-blobs",
+        ] {
+            assert!(args.iter().any(|a| a == want), "{want} in {args:?}");
+        }
+        assert!(
+            !schema_args("c", "s", v(170_002), true, &[], &[]).contains(&"--no-blobs".to_string())
+        );
+        // pg_dump 9.6 has no such flag.
+        assert!(!schema_args("c", "s", v(90_624), false, &[], &[])
+            .contains(&"--no-subscriptions".to_string()));
     }
 
     /// The checkout's own config can't make pgman's git run anything: an

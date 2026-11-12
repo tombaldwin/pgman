@@ -34,6 +34,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A masked dump's schema now leaves out subscriptions
+  (`--no-subscriptions`, pg_dump 10 on): dumped as a superuser, their
+  connection strings can hold another server's password.
 - A masked dump of a PostgreSQL 18 table with a virtual generated column
   copied the column and named it in `COPY … FROM`, which PostgreSQL
   refuses, so the table's restore failed. Virtual generated columns are
