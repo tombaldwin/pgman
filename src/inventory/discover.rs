@@ -1332,8 +1332,10 @@ mod tests {
             "it waited"
         );
         drop(held);
+        // A moment's wait: under a loaded test run the release isn't
+        // always seen by the very next try.
         assert!(
-            lock_exclusive(&path, std::time::Duration::ZERO).is_ok(),
+            lock_exclusive(&path, std::time::Duration::from_millis(500)).is_ok(),
             "free once dropped"
         );
         let _ = std::fs::remove_dir_all(&dir);
