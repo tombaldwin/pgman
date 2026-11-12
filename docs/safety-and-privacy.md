@@ -253,7 +253,7 @@ typed choice and behaves as it always has.
 | `~/.config/pgman/safety.toml` | Your personal guard-rail configuration. No secrets. |
 | `~/.config/pgman/config.toml` | UI defaults (`redact_default`). No secrets; pgman never writes it. |
 | `<repo>/.pgman/pgman.toml` | Project-committed connection URLs (host/port/dbname/user) and safety overrides. **Never a resolved password** — only an optional `password_env` variable *name*. |
-| `~/.local/share/pgman/draft.sql` | The editor buffer, auto-saved on quit and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. `draft-YYYYMMDD-HHMMSS.sql` beside it is the same, from a second pgman window that would otherwise have overwritten the first one's draft. |
+| `~/.local/share/pgman/draft.sql` | The editor buffer, saved as you type (at most twice a second) and on quit, and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. `draft-YYYYMMDD-HHMMSS.sql` beside it is the same, from a second pgman window that would otherwise have overwritten the first one's draft. |
 | `~/.local/share/pgman/history.log` | Up to the last 50 statements you've run, one per line (multi-line entries escaped onto one line). Same caveat: literal values in your `WHERE`/`INSERT` bodies persist here. |
 | `~/.local/share/pgman/saved.toml` | Named queries you explicitly saved. |
 | `~/.cache/pgman/pgman.log.YYYY-MM-DD` | Application log, rotated daily. Connection strings are always logged with the password masked (see "Redaction of connection strings" below). Resolved passwords are never logged. |

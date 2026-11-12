@@ -38,7 +38,8 @@ An environment name wins over a connection of the same name.
 ## `pgman dump`
 
 ```
-pgman dump <target> [FILE] [--schema-only] [--reason TEXT] [--ticket KEY]
+pgman dump <target> [FILE] [--masked | --unmasked | --schema-only]
+                    [--masking FILE] [--reason TEXT] [--ticket KEY]
                     [--primary] [--format custom|plain|directory|tar]
                     [--skip-unreadable] [--pg-bin DIR] [--verbose] [-- PG_DUMP_OPTIONS...]
 ```
@@ -460,7 +461,7 @@ as the original allows.
 ```
 pgman copies [list] [--all]
 pgman copies show <copy>
-pgman copies rm <copy> [--yes]
+pgman copies rm <copy> [--yes] [--terminate]
 pgman copies report [--since YYYY-MM-DD] [--format text|markdown|json]
 ```
 
@@ -473,8 +474,8 @@ secrets.
 
 - `pgman copies` lists the copies still on disk — their id, age, size,
   expiry (`EXPIRED` once past it) and ticket — and the dump files in the
-  current directory the journal doesn't know (an older pgman's, or
-  pg_dump's by hand).
+  current directory and pgman's dump directory that the journal doesn't
+  know (an older pgman's, or pg_dump's by hand).
 - `pgman copies show <copy>` gives one in full, with where it was
   restored. A copy is named by the start of its id, or by its file (its
   `-latest` link too).

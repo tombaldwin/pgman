@@ -23,6 +23,11 @@ URL-embedded password.
 | `~/.cache/pgman/update_check.json` | Cached result of the crates.io version check (re-checked at most every 6 hours). |
 | `~/.cache/pgman/report-<secs>-<nanos>-<pid>.md`/`.html` | Default `\report` output path when none is given. |
 | `~/.local/share/pgman/environments-last` | The overview row used last, to start on it next time. |
+| `~/.local/share/pgman/journal.jsonl` | Every dump and restore on this machine: `pgman copies`. See [dump and restore](dump-restore.md). |
+| `~/.local/share/pgman/journal.sent` | Which journal events went to the team's CloudWatch log, when an environment sends them. |
+| `~/.local/share/pgman/masking.confirmed` | Masking rules files the operator confirmed, by sha256, with when and how. |
+| `~/.local/share/pgman/dumps/` | Where a dump goes when no FILE is given. |
+| `~/.config/pgman/keys/` | The operator's age keys (`pgman key new`), which encrypted dumps open with. |
 | `~/.cache/pgman/<table>-fixture-<ts>-<pid>.xml` | Default `\fixture` output path. |
 
 Every path above honours `XDG_CONFIG_HOME` / `XDG_DATA_HOME` /
