@@ -9832,7 +9832,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
 
     // The operator's restore_confirm = "clean_only": a new database on
     // this machine is restored unasked; the rest are still asked.
-    let copy2 = format!("{copy}2");
+    let copy2 = format!("{copy}_2");
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy2}"));
     let conns = home.join(".config/pgman/connections.toml");
     let mut text = std::fs::read_to_string(&conns).unwrap_or_default();
@@ -9875,7 +9875,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         serde_json::json!({"file": "copy.dump", "target": "scratch", "as": copy2, "clean": true}),
     );
     assert!(asked && err, "clean, asked: {t}");
-    let missing = format!("{copy}3");
+    let missing = format!("{copy}_3");
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {missing}"));
     let (t, err, asked) = call(
         13,
@@ -9884,7 +9884,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
     assert!(asked && err, "clean of nothing there, still asked: {t}");
     // What pg_restore reads is the file as it was before the question:
     // swapped while the operator reads, the swap restores nothing.
-    let copy4 = format!("{copy}4");
+    let copy4 = format!("{copy}_4");
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy4}"));
     writeln!(
         stdin,
@@ -9938,7 +9938,7 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         tool_call(
             15,
             "restore",
-            serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": format!("{copy}5"), "create": true}),
+            serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": format!("{copy}_5"), "create": true}),
         )
     )
     .unwrap();
@@ -11131,7 +11131,7 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     let (t, err, _) = call(
         91,
         "restore",
-        serde_json::json!({"file": "moved.pgman-dump", "target": "local", "as": format!("{raw_copy}m"), "create": true}),
+        serde_json::json!({"file": "moved.pgman-dump", "target": "local", "as": format!("{raw_copy}_m"), "create": true}),
         restore_yes.clone(),
     );
     assert!(!err, "{t}");
@@ -11142,7 +11142,7 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     let (t, err, _) = call(
         92,
         "restore",
-        serde_json::json!({"file": "forged.pgman-dump", "target": "local", "as": format!("{raw_copy}f"), "create": true}),
+        serde_json::json!({"file": "forged.pgman-dump", "target": "local", "as": format!("{raw_copy}_f"), "create": true}),
         None,
     );
     assert!(err && t.contains("journal knows by its content"), "{t}");
@@ -11217,8 +11217,8 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         raw_copy.clone(),
         format!("{raw_copy}x"),
         format!("{raw_copy}y"),
-        format!("{raw_copy}m"),
-        format!("{raw_copy}f"),
+        format!("{raw_copy}_m"),
+        format!("{raw_copy}_f"),
         src.clone(),
     ] {
         let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
