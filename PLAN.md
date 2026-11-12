@@ -68,12 +68,22 @@ CHANGELOG's Unreleased section lists them.
 
 ### 1. What the Fable review left (2026-11-12)
 
-In BACKLOG.md → From a Fable review: the main.rs split, first-minute
-UX (query argument order, the password hint, connections.toml in the
-picker, libpq settings, `pgman doctor`, the editor's Ctrl-A/Ctrl-E),
-and features (MCP `explain`, `describe`, `slow_queries`, schema diff,
-patch dry-run diff, index advice). Worked top-down on Tom's "work
-through the open items".
+Worked top-down on Tom's "work through the open items", all on main,
+unreleased: the TUI's set_config escape, a script's own COMMIT under
+auto_tx, apply_patches' cut-off tick, a database named `y`, git in an
+agent's checkout, the masking odds, an archive's data files checked as
+they load, the docs and test gaps, arboard, weekly fuzzing (whose first
+run found `classify("explain8")` overflowing the stack, fixed), PLAN
+and CLAUDE.md; `pgman query` argument order and `--target`, the
+password hint, connections.toml in the overview, `pgman doctor`; MCP
+`describe`, `slow_queries`, `explain` with index suggestions,
+`pgman diff` / `schema_diff`, and a dry run's schema changes.
+
+Left in BACKLOG.md, each needing Tom or a design first: the libpq
+environment and the editor's Ctrl-A/Ctrl-E (posture and keymap calls),
+the main.rs split (main() itself is the 950 lines), index advice across
+pg_stat_statements, the tap and hypopg, and schema diff of CHECKs,
+views and functions.
 
 ### 2. Waiting on Tom
 
