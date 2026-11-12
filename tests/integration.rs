@@ -3645,6 +3645,86 @@ fn query_takes_an_environment_target() {
     assert!(!table_exists(&home, &table), "nothing was created");
 }
 
+/// `pgman diff` and MCP's `schema_diff` between two real databases: what
+/// drifted is named; the same database twice matches (exit 0).
+#[test]
+fn diff_names_what_drifted_between_two_databases() {
+    let home = scratch_home("diff", WRITABLE_PROFILE);
+    let (a, b) = (it_name("diffa"), it_name("diffb"));
+    for db in [&a, &b] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+        on("pgman_test", &format!("CREATE DATABASE {db}")).unwrap();
+    }
+    for (db, sql) in [
+        (&a, "CREATE TABLE orders (id bigint PRIMARY KEY, note text)"),
+        (&a, "CREATE TABLE gone (x int)"),
+        (
+            &b,
+            "CREATE TABLE orders (id integer PRIMARY KEY, status text)",
+        ),
+        (&b, "CREATE INDEX orders_status ON orders (status)"),
+    ] {
+        on(db, sql).unwrap();
+    }
+    let url =
+        |db: &str| format!("postgres://pgman_test:pgman_test@127.0.0.1:55432/{db}?sslmode=disable");
+    let out = pgman_in(&home, &home, &["diff", &url(&a), &url(&b)]);
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{text}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for want in [
+        "public.gone",
+        "\npublic.orders\n",
+        "column only in",
+        "note text",
+        "status text",
+        "column changed: id: bigint → integer",
+        "orders_status",
+    ] {
+        assert!(text.contains(want), "{want:?} in\n{text}");
+    }
+    assert!(
+        !text.contains("pgman_test:pgman_test"),
+        "no password: {text}"
+    );
+    let out = pgman_in(&home, &home, &["diff", &url(&a), &url(&a)]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("have the same"));
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"a\"\nurl = \"{}\"\n[[connections]]\nname = \"b\"\nurl = \"{}\"\n",
+            url(&a),
+            url(&b)
+        ),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[tool_call(
+            1,
+            "schema_diff",
+            serde_json::json!({"a": "a", "b": "b"}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["same"], false);
+    assert_eq!(v["only_a"], serde_json::json!(["public.gone"]));
+    assert_eq!(v["tables"][0]["table"], "public.orders");
+    for db in [&a, &b] {
+        let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
+    }
+}
+
 /// `slow_queries` over MCP on a server without pg_stat_statements says
 /// how to install it, and refuses an argument out of range before
 /// connecting.

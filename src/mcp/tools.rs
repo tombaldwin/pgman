@@ -121,6 +121,20 @@ pub fn tool_table() -> Value {
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
         },
         {
+            "name": "schema_diff",
+            "description": "What differs between two connections' schemas: tables and views in one only (`only_a`, `only_b`), and per table in both, columns added, dropped or changed (type, NOT NULL), the primary key, indexes (by name and definition) and foreign keys. Use it to find drift between environments before writing a migration, or to check one landed the same everywhere. `same` says whether anything differs. CAVEATS: only what each connection's role can see. Partitions are compared through their parent and extensions' own tables are left out; views by name only, not their definitions; CHECK constraints, triggers, functions, grants and comments aren't compared. A report, not a migration: no DDL is suggested. Two replicas lagging differently can differ for a moment.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "string", "description": "A name from `connections`."},
+                    "b": {"type": "string", "description": "Another name from `connections`."}
+                },
+                "required": ["a", "b"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
             "name": "explain",
             "description": "One statement's plan, as Postgres's EXPLAIN (FORMAT JSON) gives it, with `findings`: big sequential scans, row estimates ten times off, sorts and hashes that spilled to disk, nested loops whose inner side ran many times — what is worth an index or a rewrite. With `analyze: true` the statement really runs (EXPLAIN ANALYZE, BUFFERS) in the same read-only session `query` uses, and the plan carries actual rows and times. The statement passes the same guards as `query`: one statement, nothing a guard would ask about, so not an INSERT, UPDATE or DELETE. CAVEATS: `analyze` takes as long as the statement does, within the 30 s cap, and its timings include the server's caching at that moment. Without it the row counts are the planner's estimates. On a replica the plan is the replica's, with its statistics. A plan over 256 KiB of JSON comes back as findings only (`plan_cut`).",
             "inputSchema": {
@@ -244,6 +258,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         "schema_lint" => 120,
         // The catalog, then one table's DDL.
         "describe" => 120,
+        // Two catalogs, one after the other.
+        "schema_diff" => 240,
         "slow_queries" | "explain" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 60,
         // A listing, then one download per log file.
         "environment_logs" => 180,
@@ -270,6 +286,7 @@ impl Server {
             "describe" => self.tool_describe(args).await,
             "slow_queries" => self.tool_slow_queries(args).await,
             "explain" => self.tool_explain(args).await,
+            "schema_diff" => self.tool_schema_diff(args).await,
             "environment_logs" => tool_environment_logs(args).await,
             "apply_patches" => self.tool_apply_patches(args).await,
             "dump" => self.tool_dump(args).await,
@@ -429,6 +446,21 @@ impl Server {
             (&schema, &table),
             ddl,
         ))
+    }
+
+    async fn tool_schema_diff(&self, args: &Value) -> Result<String, String> {
+        let (a, b) = (arg_str(args, "a")?, arg_str(args, "b")?);
+        let mut caches = Vec::new();
+        for name in [a, b] {
+            let target = self.prepare(name, "schema_diff")?;
+            tracing::info!(target: "pgman::mcp", connection = name, "schema_diff");
+            let (client, _tunnel) = connect(name, target, &self.tunnels).await?;
+            caches.push(crate::query::schema::fetch(&client).await);
+        }
+        let d = crate::schema_diff::diff(&caches[0], &caches[1]);
+        let mut v = crate::schema_diff::to_json(&d, a, b);
+        v["incomplete"] = json!([caches[0].incomplete, caches[1].incomplete]);
+        Ok(v.to_string())
     }
 
     async fn tool_explain(&self, args: &Value) -> Result<String, String> {
@@ -1901,6 +1933,7 @@ mod tests {
                 "environments",
                 "schema_lint",
                 "describe",
+                "schema_diff",
                 "explain",
                 "slow_queries",
                 "environment_logs",

@@ -17,6 +17,7 @@ pub mod demo;
 pub mod discover;
 pub mod doctor;
 pub mod dump;
+pub mod schema_diff;
 // `font_probe` now lives in the `tb-tui-common` crate (shared with
 // ebman). Re-exported here so existing `pgman::font_probe::…` call
 // sites and tests keep working untouched.

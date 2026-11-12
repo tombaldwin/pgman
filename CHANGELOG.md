@@ -8,6 +8,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `pgman diff <A> <B>` and MCP `schema_diff`: what differs between two
+  databases' schemas — tables and views in one only, and per table,
+  columns added, dropped or changed, the primary key, indexes and
+  foreign keys. For drift between environments; a report, not a
+  migration.
 - `pgman query --target ENV/DATABASE` (and `--batch --target`): run a
   statement against an environment's database, or a connections.toml
   name, with its secret and ssh tunnel, as `pgman dump` reaches it. Its
