@@ -116,6 +116,12 @@ pub struct Environment {
     /// environment's raw and masked dumps are refused until it says.
     #[serde(default)]
     pub encrypt: Option<String>,
+    /// When MCP's `restore` asks the operator: `always` (unset), or
+    /// `clean_only` — not for a new database it creates on this machine,
+    /// nothing existing touched ([`crate::restore::RestoreConfirm`]).
+    /// Only here and in connections.toml, the operator's own files.
+    #[serde(default)]
+    pub restore_confirm: Option<crate::restore::RestoreConfirm>,
 }
 
 /// `journal = { group = "/pgman/dumps", region = "eu-west-2", profile = "…" }`:
@@ -1108,6 +1114,7 @@ source = { kind = "static", connections = ["ledger-local"] }
             unattended: false,
             journal: None,
             encrypt: None,
+            restore_confirm: None,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);

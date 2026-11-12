@@ -85,6 +85,11 @@ pub struct PersonalConnection {
     pub aws_account: Option<String>,
     #[serde(default)]
     pub role: Option<Role>,
+    /// When MCP's `restore` into this connection's server asks the
+    /// operator ([`crate::restore::RestoreConfirm`]). Personal only: a
+    /// discovered or project connection can't set it.
+    #[serde(default)]
+    pub restore_confirm: Option<crate::restore::RestoreConfirm>,
 }
 
 /// Where an entry came from. Rendered into `connections` and `doctor`.
@@ -359,6 +364,7 @@ mod tests {
             aws_profile: None,
             aws_account: None,
             role: None,
+            restore_confirm: None,
         }
     }
 

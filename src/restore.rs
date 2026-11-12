@@ -220,6 +220,57 @@ pub fn refusal(target: &Resolved, database: &str, allow_remote: bool) -> Option<
     None
 }
 
+/// When MCP's `restore` asks the operator: `restore_confirm` in the
+/// operator's environments.toml or connections.toml.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreConfirm {
+    /// Every restore.
+    #[default]
+    Always,
+    /// Not a restore that creates a new database on this machine,
+    /// unprotected (`create`, no `clean`): nothing there is dropped or
+    /// written over. The rest are asked as ever.
+    CleanOnly,
+}
+
+/// The `restore_confirm` that applies to `target`: its environment's
+/// when it has one that says, else that of the personal connection it
+/// is (or a static environment's row names), else `always` — and
+/// `always`, whatever is set, for a protected target or one off this
+/// machine. Pure.
+pub fn restore_confirm_for(
+    target: &Resolved,
+    envs: &[crate::inventory::Environment],
+    personal: &[crate::mcp::connections::PersonalConnection],
+) -> RestoreConfirm {
+    if target.protected || !target.is_local() {
+        return RestoreConfirm::Always;
+    }
+    let env = target
+        .environment
+        .as_ref()
+        .and_then(|n| envs.iter().find(|e| &e.name == n))
+        .and_then(|e| e.restore_confirm);
+    let connection = || {
+        personal
+            .iter()
+            .find(|c| c.base.name == target.server)
+            .and_then(|c| c.restore_confirm)
+    };
+    env.or_else(connection).unwrap_or_default()
+}
+
+/// Whether MCP's `restore` of `plan` (for `opts`) goes ahead without
+/// asking, under `confirm`: only `clean_only`, only a database the
+/// restore creates (`create`, no `clean`, none there now). Pure.
+pub fn unprompted(confirm: RestoreConfirm, plan: &Plan, opts: &Opts) -> bool {
+    confirm == RestoreConfirm::CleanOnly
+        && plan.prepare == Prepare::Create
+        && opts.create
+        && !opts.clean
+}
+
 /// What the restore does to the database before pg_restore fills it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prepare {
@@ -632,6 +683,8 @@ pub struct Ready {
     notes: Vec<String>,
     /// A masked dump: opened, its manifest checked.
     archive: Option<crate::masked::OpenArchive>,
+    /// The target's `restore_confirm` ([`restore_confirm_for`]).
+    pub confirm: RestoreConfirm,
 }
 
 impl Ready {
@@ -643,6 +696,11 @@ impl Ready {
     /// The question for the plan, and the answer that accepts it.
     pub fn question(&self) -> (String, String) {
         question(&self.plan, &self.opts.file, &self.server)
+    }
+
+    /// Whether MCP may run it without asking ([`unprompted`]).
+    pub fn unprompted(&self) -> bool {
+        unprompted(self.confirm, &self.plan, &self.opts)
     }
 
     /// End the sessions, make or replace the database, run pg_restore.
@@ -657,6 +715,7 @@ impl Ready {
             plan,
             mut notes,
             archive,
+            confirm: _,
         } = self;
         let database = plan.database.clone();
         // Listed again: someone may have connected while the operator
@@ -894,6 +953,18 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     if let Some(why) = refusal(&resolved, &database, opts.allow_remote) {
         return Err(why);
     }
+    let confirm = {
+        let resolved = resolved.clone();
+        tokio::task::spawn_blocking(move || {
+            let envs = crate::inventory::load().environments.unwrap_or_default();
+            let personal = std::fs::read_to_string(crate::util::config_file("connections.toml"))
+                .map(|t| crate::mcp::connections::parse_personal(&t).connections)
+                .unwrap_or_default();
+            restore_confirm_for(&resolved, &envs, &personal)
+        })
+        .await
+        .map_err(|e| format!("settings task failed: {e}"))?
+    };
     let (tool, found_in) = pgtool::find_tool_from("pg_restore", opts.pg_bin.as_deref())?;
     let have = pgtool::tool_version(&tool)?;
     let masked = if crate::masked::is_archive(&opts.file) {
@@ -998,6 +1069,7 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
         server,
         plan,
         notes,
+        confirm,
         archive: masked,
     })
 }
@@ -1233,6 +1305,102 @@ mod tests {
 
     fn target(url: &str) -> Resolved {
         target::from_url(url).unwrap()
+    }
+
+    #[test]
+    fn restore_confirm_comes_from_the_operators_files_and_never_covers_protected_or_remote() {
+        let envs = crate::inventory::parse_config(
+            "[[environments]]\nname = \"dev\"\nrestore_confirm = \"clean_only\"\n\
+             source = { kind = \"static\", connections = [\"local\"] }\n\
+             [[environments]]\nname = \"strict\"\nrestore_confirm = \"always\"\n\
+             source = { kind = \"static\", connections = [\"local\"] }\n\
+             [[environments]]\nname = \"quiet\"\n\
+             source = { kind = \"static\", connections = [\"local\"] }\n",
+        )
+        .unwrap();
+        let personal = crate::mcp::connections::parse_personal(
+            "[[connections]]\nname = \"local\"\nurl = \"postgres://u@localhost/ledger\"\n\
+             restore_confirm = \"clean_only\"\n\
+             [[connections]]\nname = \"other\"\nurl = \"postgres://u@localhost/ledger\"\n",
+        );
+        assert!(personal.error.is_none(), "{:?}", personal.error);
+        let personal = personal.connections;
+        let on = |env: Option<&str>, server: &str| {
+            let mut t = target("postgres://u@localhost/ledger");
+            t.environment = env.map(str::to_string);
+            t.server = server.to_string();
+            t
+        };
+        let rc = |t: &Resolved| restore_confirm_for(t, &envs, &personal);
+        assert_eq!(rc(&on(Some("dev"), "local")), RestoreConfirm::CleanOnly);
+        assert_eq!(
+            rc(&on(Some("strict"), "local")),
+            RestoreConfirm::Always,
+            "the environment's own word wins over its connection's"
+        );
+        assert_eq!(
+            rc(&on(Some("quiet"), "local")),
+            RestoreConfirm::CleanOnly,
+            "unset on the environment: its connection's"
+        );
+        assert_eq!(rc(&on(None, "local")), RestoreConfirm::CleanOnly);
+        assert_eq!(rc(&on(None, "other")), RestoreConfirm::Always, "unset");
+        let mut protected = on(Some("dev"), "local");
+        protected.protected = true;
+        assert_eq!(rc(&protected), RestoreConfirm::Always);
+        let mut remote = target("postgres://u@10.0.1.23/ledger");
+        remote.environment = Some("dev".into());
+        assert_eq!(rc(&remote), RestoreConfirm::Always, "off this machine");
+        // A mistyped value is an error, not "always".
+        assert!(crate::inventory::parse_config(
+            "[[environments]]\nname = \"x\"\nrestore_confirm = \"never\"\n\
+             source = { kind = \"static\", connections = [\"local\"] }\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn only_a_new_database_goes_unasked() {
+        let p = |o: &[&str], exists| plan(&opts(o), "ledger", exists, Vec::new()).unwrap();
+        let go = |o: &[&str], exists, c| unprompted(c, &p(o, exists), &opts(o));
+        let clean_only = RestoreConfirm::CleanOnly;
+        assert!(go(&["x.dump", "local", "--create"], false, clean_only));
+        assert!(
+            !go(
+                &["x.dump", "local", "--create"],
+                false,
+                RestoreConfirm::Always
+            ),
+            "not without the setting"
+        );
+        assert!(
+            !go(&["x.dump", "local", "--clean"], false, clean_only),
+            "clean, even of nothing there"
+        );
+        assert!(!go(&["x.dump", "local", "--clean"], true, clean_only));
+        assert!(
+            !go(&["x.dump", "local"], true, clean_only),
+            "into an existing database"
+        );
+        assert!(!go(
+            &["x.dump", "local", "--create", "--clean"],
+            false,
+            clean_only
+        ));
+        // What the plan does, not only what was asked: a plan that would
+        // restore into or replace a database is asked about, however it
+        // came to be.
+        for prepare in [Prepare::Existing, Prepare::Replace] {
+            let plan = Plan {
+                database: "ledger".into(),
+                prepare,
+                terminate: Vec::new(),
+            };
+            assert!(
+                !unprompted(clean_only, &plan, &opts(&["x.dump", "local", "--create"])),
+                "{prepare:?}"
+            );
+        }
     }
 
     #[test]

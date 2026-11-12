@@ -483,6 +483,7 @@ pub fn propose(
             unattended: false,
             journal: None,
             encrypt: None,
+            restore_confirm: None,
             };
             Proposal {
                 covered_by: covering(&name, existing),

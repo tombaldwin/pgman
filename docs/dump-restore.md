@@ -545,8 +545,8 @@ The second command, run again tomorrow, replaces yesterday's copy.
 
 `pgman mcp serve` has `dump` and `restore` tools that do the same, each
 only after you confirm the call in your MCP client, giving the reason
-when the environment asks for one (the agent may suggest it; the one
-recorded is yours). A protected environment is dumped masked (or schema
+when the environment asks for one (the agent's suggestion is filled
+in; the one recorded is what you send). A protected environment is dumped masked (or schema
 only) over MCP, with your committed, confirmed rules: its raw copy is
 yours to take, at a terminal. And every MCP tool refuses a database
 restored from a raw dump of a protected environment; `restore` takes a
@@ -555,3 +555,20 @@ protected environment), never one from elsewhere. An agent can refresh
 its own local copy (`restore` with `as`) without ever holding the
 environment's credentials. Its files stay in the server's working
 directory, and `restore` has no `--allow-remote`. See [mcp.md](mcp.md).
+
+An agent refreshing its own copy asks you each time unless you say
+otherwise: `restore_confirm = "clean_only"` on a connection in
+`connections.toml` or an environment in `environments.toml` lets MCP's
+`restore` create a new database there without asking (`create`, no
+`clean`, nothing of that name on the server). A restore with `clean`,
+into a database that exists, or anywhere protected or off this machine
+is still asked about, whatever the setting says. The result says it ran
+unasked, and the journal records the restore as ever. Only your own
+files can set it; an environment's setting wins over its connection's.
+
+```toml
+[[connections]]
+name = "local"
+url = "postgres://me@localhost:5432/postgres"
+restore_confirm = "clean_only"   # or "always", the default
+```

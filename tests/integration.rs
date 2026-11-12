@@ -9829,6 +9829,60 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         serde_json::json!({"file": "copy.dump", "target": url(&copy), "clean": true}),
     );
     assert!(t.contains("declined a restore into"), "{t}");
+
+    // The operator's restore_confirm = "clean_only": a new database on
+    // this machine is restored unasked; the rest are still asked.
+    let copy2 = format!("{copy}2");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy2}"));
+    let conns = home.join(".config/pgman/connections.toml");
+    let mut text = std::fs::read_to_string(&conns).unwrap_or_default();
+    text.push_str(
+        "\n[[connections]]\nname = \"scratch\"\nurl = \"postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\n\
+         password_env = \"IT_PW\"\nrestore_confirm = \"clean_only\"\n",
+    );
+    std::fs::write(&conns, text).unwrap();
+    // (reply text, isError, whether it asked)
+    let mut call = |id: u64, args: serde_json::Value| {
+        writeln!(stdin, "{}", tool_call(id, "restore", args)).unwrap();
+        let mut frame = next();
+        let asked = frame["method"] == "elicitation/create";
+        if asked {
+            writeln!(
+                stdin,
+                "{}",
+                serde_json::json!({"jsonrpc": "2.0", "id": frame["id"], "result": {"action": "decline"}})
+            )
+            .unwrap();
+            frame = next();
+        }
+        let (text, is_error) = reply(&[frame], id);
+        (text, is_error, asked)
+    };
+    let (t, err, asked) = call(
+        10,
+        serde_json::json!({"file": "copy.dump", "target": "scratch", "as": copy2, "create": true}),
+    );
+    assert!(!err && !asked, "{t}");
+    assert!(t.contains("restored without asking"), "{t}");
+    assert_eq!(count_in(&copy2, "accounts"), Ok(7));
+    let (t, err, asked) = call(
+        11,
+        serde_json::json!({"file": "copy.dump", "target": "scratch", "as": src}),
+    );
+    assert!(asked && err, "into an existing database, asked: {t}");
+    let (t, err, asked) = call(
+        12,
+        serde_json::json!({"file": "copy.dump", "target": "scratch", "as": copy2, "clean": true}),
+    );
+    assert!(asked && err, "clean, asked: {t}");
+    let missing = format!("{copy}3");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {missing}"));
+    let (t, err, asked) = call(
+        13,
+        serde_json::json!({"file": "copy.dump", "target": "scratch", "as": missing, "clean": true}),
+    );
+    assert!(asked && err, "clean of nothing there, still asked: {t}");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy2}"));
     drop(stdin);
     assert!(child.wait().unwrap().success());
     assert!(!home.join("escape.dump").exists());

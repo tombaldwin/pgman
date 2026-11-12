@@ -270,6 +270,7 @@ mod tests {
             unattended: false,
             journal: None,
             encrypt: None,
+            restore_confirm: None,
         }
     }
 

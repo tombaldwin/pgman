@@ -740,6 +740,7 @@ mod tests {
             aws_account: None,
             aws_profile: None,
             role: None,
+            restore_confirm: None,
         };
         let entries = crate::mcp::connections::build(
             &[

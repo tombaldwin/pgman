@@ -13,6 +13,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   confirms it or edits it instead of retyping it. The operator still
   confirms every dump, and what they send is recorded. A suggestion the
   journal wouldn't take (over-long, several lines) isn't filled in.
+- `restore_confirm = "clean_only"`, on a connection in connections.toml
+  or an environment in environments.toml, lets MCP's `restore` create a
+  new database on this machine without asking the operator (`create`,
+  no `clean`, nothing of that name there). A `clean`, a restore into an
+  existing database, and anything protected or off this machine are
+  still asked about. The result says it ran unasked; the journal
+  records it as before. Only the operator's own files can set it.
 
 ## [0.5.2] — 2026-11-11
 
