@@ -619,7 +619,7 @@ pub async fn fetch_bounded(client: &Arc<tokio_postgres::Client>) -> Option<Schem
 /// Run the cache-building query on `client` and assemble a `SchemaCache`.
 /// Returns an empty cache (and logs a warning) if the query fails — the
 /// rest of pgman keeps working without completion.
-pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
+pub async fn fetch(client: &tokio_postgres::Client) -> SchemaCache {
     // Issue the four independent catalog queries concurrently — tokio_postgres
     // pipelines them on the single connection, collapsing four serial round
     // trips into roughly one. Each stays best-effort: a permission gap on one

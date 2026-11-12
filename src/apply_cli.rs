@@ -159,6 +159,15 @@ pub fn render_report(report: &patching::ApplyReport) -> String {
             Err(e) => out.push_str(&format!("\n  {} — FAILED: {e}", r.file)),
         }
     }
+    // A dry run says what its patches would change, before the rollback.
+    if let Some(d) = &report.schema_changes {
+        let changes = crate::schema_diff::render_changes(d);
+        if changes.is_empty() {
+            out.push_str("\nschema changes: none");
+        } else {
+            out.push_str(&format!("\nschema changes:\n{}", changes.trim_end()));
+        }
+    }
     out
 }
 

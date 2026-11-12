@@ -5375,6 +5375,42 @@ fn a_dry_run_runs_every_patch_then_rolls_it_all_back() {
         assert!(r
             .summary()
             .starts_with("dry run: ran 2, then 004-bad.sql failed"));
+        assert_eq!(r.schema_changes, None, "a failed run has no schema to read");
+
+        // All of them through: what they change in the schema, read in
+        // the transaction before it's rolled back.
+        write(
+            "004-bad.sql",
+            format!("{}CREATE INDEX {tbl}_id ON {tbl} (id);\n", row(4)),
+        );
+        let p = plan(&env, &target, &writable, &no_secrets, false, None)
+            .await
+            .unwrap();
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            RunMode::DryRun,
+            &Default::default(),
+        )
+        .await;
+        assert_eq!(r.failed(), None, "{r:?}");
+        let changes = pgman::schema_diff::render_changes(r.schema_changes.as_ref().unwrap());
+        assert!(
+            changes.contains(&format!("+ column public.{tbl}.c integer")),
+            "{changes}"
+        );
+        assert!(
+            changes.contains(&format!("+ index CREATE INDEX {tbl}_id")),
+            "{changes}"
+        );
+        assert!(
+            pgman::apply_cli::render_report(&r).contains("schema changes:\n"),
+            "the command line says so"
+        );
+        assert_eq!(columns().await, 1, "and still rolled back");
 
         // A patch with no transaction ends the dry run before it starts.
         write("004-bad.sql", format!("{}VACUUM {tbl};\n", row(4)));

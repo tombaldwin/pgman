@@ -354,7 +354,10 @@ before you confirm:
 - **for real** (the default), as above;
 - **dry run**: every patch in *one* transaction, rolled back at the end,
   so nothing is kept — not the changes, not the version rows. A later
-  patch sees what an earlier one did, as in the real run. It takes the
+  patch sees what an earlier one did, as in the real run. When every
+  patch goes through, the result says what they change in the schema —
+  tables, columns, keys, indexes added, dropped or changed — read in the
+  transaction before the rollback. It takes the
   same locks and does the same work as the real thing, on the same
   server, and holds every lock until the last patch is done, so on a
   busy database it costs what the real run costs. It's confirmed like

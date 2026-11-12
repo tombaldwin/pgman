@@ -318,6 +318,9 @@ pub struct ApplyReport {
     pub mode: RunMode,
     /// Set once a [`RunMode::Copy`] run has made its copy.
     pub copy: Option<CopyNote>,
+    /// A dry run's: what its patches changed in the schema, read in its
+    /// transaction before and after them, before the rollback.
+    pub schema_changes: Option<crate::schema_diff::Diff>,
 }
 
 impl ApplyReport {
@@ -924,12 +927,14 @@ impl Run<'_> {
     async fn on(&self, client: &tokio_postgres::Client, dry: bool, report: &mut ApplyReport) {
         let (plan, cancel) = (self.plan, self.cancel);
         cancel.set(canceller(client));
+        let mut before = None;
         if dry {
             if let Err(e) = crate::query::apply::begin(client).await {
                 cancel.clear();
                 report.error = Some(e);
                 return;
             }
+            before = crate::query::apply::schema_in_tx(client).await;
         }
         for (i, p) in plan.patches.iter().enumerate() {
             if cancel.requested() {
@@ -950,6 +955,12 @@ impl Run<'_> {
             }
         }
         if dry {
+            // What the patches did to the schema, seen before it's undone.
+            // After a failed patch the transaction is aborted, the
+            // savepoint can't be taken, and nothing is read.
+            if let (Some(b), Some(a)) = (&before, crate::query::apply::schema_in_tx(client).await) {
+                report.schema_changes = Some(crate::schema_diff::diff(b, &a));
+            }
             // Failing, the connection closing undoes it all the same.
             if let Err(e) = crate::query::apply::rollback(client).await {
                 tracing::warn!(target: "pgman::patching", error = %e, "dry run's rollback failed");
@@ -1414,6 +1425,7 @@ mod tests {
     #[test]
     fn the_summary_names_the_failure() {
         let r = ApplyReport {
+            schema_changes: None,
             results: vec![
                 PatchResult {
                     file: "2-x.sql".into(),

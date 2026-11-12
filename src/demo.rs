@@ -73,6 +73,7 @@ pub fn app(theme: Theme) -> App {
                 .or(p.applied_max);
             Box::pin(std::future::ready(
                 crate::inventory::patching::ApplyReport {
+                    schema_changes: None,
                     results: p
                         .patches
                         .iter()

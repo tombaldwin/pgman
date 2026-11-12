@@ -16,10 +16,10 @@ left.
 - **First-minute UX:** no libpq env,
   .pgpass or pg_service.conf; editor
   Ctrl-A/Ctrl-E (EXPLAIN) vs prompts' Home/End.
-- **Features, by value for effort:** a patch dry run reporting the
-  schema diff it makes (M, on schema_diff), index advice from the tap
-  and pg_stat_statements (M). Schema diff could compare CHECKs, views'
-  definitions and functions too.
+- **Features, by value for effort:** index advice from the tap and
+  pg_stat_statements (M). Schema diff (and the dry run's) could compare
+  CHECKs, views' definitions and functions too; the TUI's patch view
+  could show the dry run's schema changes.
 
 ### Postgres-compatible databases — from a compatibility run (2026-10-29)
 

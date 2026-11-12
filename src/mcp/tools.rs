@@ -1267,6 +1267,10 @@ pub fn render_apply(
         "error": report.and_then(|r| r.error.clone()),
         "recorded_after": report.and_then(|r| r.recorded_after),
         "mode": report.map(|r| r.mode.name()),
+        // A dry run's: what its patches change in the schema.
+        "schema_changes": report
+            .and_then(|r| r.schema_changes.as_ref())
+            .map(|d| crate::schema_diff::to_json(d, "before", "after")),
         "copy": report.and_then(|r| r.copy.as_ref()).map(|c| json!({
             "name": c.name,
             "dropped": c.dropped.is_ok(),

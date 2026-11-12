@@ -312,6 +312,57 @@ pub fn render_text(d: &Diff, la: &str, lb: &str) -> String {
     out
 }
 
+/// `d`, from before to after a change (a dry run's patches), as lines of
+/// `+` added, `-` dropped, `~` changed. Empty when nothing changed. Pure.
+pub fn render_changes(d: &Diff) -> String {
+    let mut out = String::new();
+    let mut line = |mark: char, what: String| out.push_str(&format!("  {mark} {what}\n"));
+    for t in &d.only_b {
+        line('+', format!("table {t}"));
+    }
+    for t in &d.only_a {
+        line('-', format!("table {t}"));
+    }
+    for t in &d.tables {
+        let on = &t.table;
+        for c in &t.columns_only_b {
+            line('+', format!("column {on}.{c}"));
+        }
+        for c in &t.columns_only_a {
+            line('-', format!("column {on}.{c}"));
+        }
+        for c in &t.columns_changed {
+            line('~', format!("column {on}.{c}"));
+        }
+        if let Some((a, b)) = &t.primary_key {
+            line(
+                '~',
+                format!(
+                    "primary key of {on}: ({}) → ({})",
+                    a.join(", "),
+                    b.join(", ")
+                ),
+            );
+        }
+        for i in &t.indexes_only_b {
+            line('+', format!("index {i}"));
+        }
+        for i in &t.indexes_only_a {
+            line('-', format!("index {i}"));
+        }
+        for i in &t.indexes_changed {
+            line('~', format!("index {i}"));
+        }
+        for f in &t.foreign_keys_only_b {
+            line('+', format!("foreign key {on}.{f}"));
+        }
+        for f in &t.foreign_keys_only_a {
+            line('-', format!("foreign key {on}.{f}"));
+        }
+    }
+    out
+}
+
 /// The diff as MCP's `schema_diff` returns it. Pure.
 pub fn to_json(d: &Diff, la: &str, lb: &str) -> Value {
     let tables: Vec<Value> = d
@@ -482,6 +533,36 @@ mod tests {
         let v = to_json(&d, "staging", "production");
         assert_eq!(v["same"], false);
         assert_eq!(v["tables"][0]["primary_key"]["a"], json!(["id"]));
+    }
+
+    #[test]
+    fn changes_read_as_added_dropped_and_changed() {
+        let before = base();
+        let mut after = base();
+        after.tables.push(TableMeta {
+            schema: "public".into(),
+            name: "refunds".into(),
+        });
+        after.columns_meta_by_table.insert(
+            key("orders"),
+            vec![
+                col("id", "bigint", true),
+                col("total", "numeric(12,2)", false),
+                col("note", "text", false),
+                col("status", "text", false),
+            ],
+        );
+        after.indexes_by_table.insert(key("orders"), vec![]);
+        let text = render_changes(&diff(&before, &after));
+        for want in [
+            "  + table public.refunds\n",
+            "  + column public.orders.status text\n",
+            "  ~ column public.orders.total: numeric(10,2) → numeric(12,2)\n",
+            "  - index CREATE INDEX orders_total",
+        ] {
+            assert!(text.contains(want), "{want:?} in\n{text}");
+        }
+        assert_eq!(render_changes(&diff(&before, &before)), "");
     }
 
     #[test]
