@@ -85,7 +85,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   restore it at a terminal or dump it again. pg_restore also reads a
   private copy taken and checked before the operator is asked, so a
   file changed while they read the question changes nothing; an
-  archive's schema is always restored from such a copy.
+  archive's schema is always restored from such a copy, and each of its
+  data files is checked against the manifest as it is loaded.
 - MCP's `query` no longer lets a safety.toml guard set to `allow` reach
   the agent: such a guard counts as `confirm` there, which nobody can
   answer. With `ddl = "allow"` or `other = "allow"` for a database, an

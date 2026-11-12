@@ -904,7 +904,13 @@ pub async fn load(
     for t in &m.tables {
         let path = dir.join("data").join(&t.file);
         let f = std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let r = crate::crypt::source(f, m.key.as_ref())
+        // Checked as it is read: the file the manifest vouched for when
+        // the restore was planned, not one put in its place since.
+        let mut hashing = Hashing {
+            inner: f,
+            ctx: ring::digest::Context::new(&ring::digest::SHA256),
+        };
+        let r = crate::crypt::source(&mut hashing, m.key.as_ref())
             .map_err(|e| format!("{}: {e}", path.display()))?;
         let mut gz = flate2::read::GzDecoder::new(r);
         // Read as COPY takes them, a chunk at a time: a table's rows are
@@ -936,6 +942,10 @@ pub async fn load(
         let rows = crate::query::masking::copy_in(client, &sql, chunks)
             .await
             .map_err(|e| format!("{}: {}", t.table, crate::restore::redact(&e)))?;
+        drop(gz);
+        hashing
+            .finish_against(&t.sha256)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         if rows != t.rows {
             notes.push(format!(
                 "{}: {rows} rows loaded, {} dumped",
@@ -1412,6 +1422,26 @@ impl<R: std::io::Read> std::io::Read for Hashing<R> {
         let n = self.inner.read(buf)?;
         self.ctx.update(&buf[..n]);
         Ok(n)
+    }
+}
+
+impl<R: std::io::Read> Hashing<R> {
+    /// Read what is left, then refuse unless every byte had the sha256
+    /// `want`. Reads.
+    fn finish_against(mut self, want: &str) -> Result<(), String> {
+        std::io::copy(&mut self, &mut std::io::sink()).map_err(|e| e.to_string())?;
+        let got: String = self
+            .ctx
+            .finish()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if got == want {
+            Ok(())
+        } else {
+            Err("changed since the restore checked it (its checksum differs)".to_string())
+        }
     }
 }
 

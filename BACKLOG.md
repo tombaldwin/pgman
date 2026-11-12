@@ -11,9 +11,6 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **MCP restore: a masked archive's data files** are read from the
-  archive while loading, not from a checked copy. Rows only (the staged
-  schema is what checks them); hash them as they stream to close it.
 - **Housekeeping:** CLAUDE.md says docs/backlog/archive.md doesn't exist
   and main.rs is thin (3000 lines: move log rotation to logging.rs and
   batch DSN resolution to batch.rs); PLAN.md's head is stale and "Require

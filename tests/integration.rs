@@ -11111,7 +11111,7 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     // whose manifest isn't the one pgman wrote (an agent's own archive,
     // or an edited one) is refused before anything is asked.
     let made = std::fs::canonicalize(out.join(v["file"].as_str().unwrap())).unwrap();
-    for name in ["moved.pgman-dump", "forged.pgman-dump"] {
+    for name in ["moved.pgman-dump", "forged.pgman-dump", "moved2.pgman-dump"] {
         assert!(std::process::Command::new("cp")
             .arg("-R")
             .arg(&made)
@@ -11146,6 +11146,41 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         None,
     );
     assert!(err && t.contains("journal knows by its content"), "{t}");
+    // A data file replaced while the operator reads, with one as good
+    // (encrypted to the same key, a valid gzip, no rows): the restore
+    // says so instead of loading it.
+    {
+        let dir = out.join("moved2.pgman-dump");
+        let sealed = std::fs::read_to_string(dir.join("header.json"))
+            .unwrap()
+            .contains("\"seal\"");
+        let data = dir.join("data/0001.copy.gz");
+        let key = key.clone();
+        *before_answer.borrow_mut() = Some(Box::new(move || {
+            use std::io::Write;
+            let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            let empty = gz.finish().unwrap();
+            let f = std::fs::File::create(&data).unwrap();
+            if sealed {
+                let to: age::x25519::Recipient = key.strip_prefix("age:").unwrap().parse().unwrap();
+                let mut s = pgman::crypt::Sink::new(f, Some(&to)).unwrap();
+                s.write_all(&empty).unwrap();
+                s.finish().unwrap();
+            } else {
+                (&f).write_all(&empty).unwrap();
+            }
+        }));
+    }
+    let (t, err, _) = call(
+        93,
+        "restore",
+        serde_json::json!({"file": "moved2.pgman-dump", "target": "local", "as": format!("{raw_copy}_d"), "create": true}),
+        restore_yes.clone(),
+    );
+    assert!(
+        err && t.contains("changed since the restore checked it"),
+        "{t}"
+    );
     let pg_dump = pgman::pgtool::find_tool("pg_dump", None).unwrap();
     assert!(std::process::Command::new(&pg_dump)
         .env("PGPASSWORD", "pgman_test")
@@ -11219,6 +11254,7 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         format!("{raw_copy}y"),
         format!("{raw_copy}_m"),
         format!("{raw_copy}_f"),
+        format!("{raw_copy}_d"),
         src.clone(),
     ] {
         let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
