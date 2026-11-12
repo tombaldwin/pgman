@@ -37,7 +37,7 @@ Postgres logs, `.pgman/pgman.toml`). `.github/workflows/fuzz.yml` runs
 each for two minutes weekly and on demand; locally:
 
 ```bash
-cargo install cargo-fuzz
+cargo +stable install cargo-fuzz --locked
 cargo +nightly fuzz run safety_classify -- -max_total_time=60
 ```
 
