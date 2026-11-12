@@ -34,6 +34,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- pgman ran `git status` and `git log` in the checkout to check a rules
+  file, so a `.git/config` an agent wrote (an fsmonitor hook, a clean
+  filter, a signature check's program) could run a program with the MCP
+  server's environment. Every git pgman runs now turns those off, and
+  "committed as it is" compares the file with its blob in HEAD instead
+  of asking `git status`.
 - MCP's `restore` with `clean` into a database named `y` was confirmed
   with a tick instead of the typed name: the name to type was inferred
   from the answer that accepts the question. It now comes from the plan.

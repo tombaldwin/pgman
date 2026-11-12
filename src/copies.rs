@@ -411,10 +411,9 @@ pub fn read_reason(
 /// one — a new repository's first branch, with no commit yet, too. Runs
 /// git.
 pub fn git_branch(cwd: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
+    let out = crate::util::git()
         .args(["symbolic-ref", "--short", "-q", "HEAD"])
         .current_dir(cwd)
-        .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;

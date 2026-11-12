@@ -11,10 +11,6 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **git in the agent's checkout.** `agent_rules`, `rules_commit` and the
-  branch read run git with the checkout's config, so a planted
-  `core.fsmonitor` runs in the MCP server. Pass `-c core.fsmonitor=false
-  -c core.hooksPath=/dev/null`, or read .git without git.
 - **Masking odds:** Flyway's `installed_by` and Liquibase's `author` are
   kept by the migration presets (people's names); PG18 virtual
   generated columns (`attgenerated = 'v'`) are copied and break the

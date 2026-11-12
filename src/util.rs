@@ -35,6 +35,27 @@ fn xdg_dir(xdg_var: &str, home_suffix: &str) -> PathBuf {
     PathBuf::from(".")
 }
 
+/// `git`, with what a repository's own config could make it run turned
+/// off: an fsmonitor hook, hooks, a signature check's gpg. The checkout
+/// may be an agent's, and its `.git/config` the agent's to write; pgman
+/// runs git there with the MCP server's environment. Callers also avoid
+/// commands that run filters (`status`; `hash-object` without
+/// `--no-filters`).
+pub fn git() -> std::process::Command {
+    let mut c = std::process::Command::new("git");
+    c.args([
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "log.showSignature=false",
+    ])
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .stdin(std::process::Stdio::null());
+    c
+}
+
 pub fn config_dir() -> PathBuf {
     xdg_dir("XDG_CONFIG_HOME", ".config/pgman")
 }

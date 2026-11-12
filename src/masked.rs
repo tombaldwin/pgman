@@ -998,19 +998,26 @@ pub enum AgentRules {
 /// Reads git and the data directory.
 pub fn agent_rules(file: &Path, digest: &str) -> AgentRules {
     let dir = file.parent().unwrap_or(Path::new("."));
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     let git = |args: &[&str]| {
-        std::process::Command::new("git")
+        crate::util::git()
             .args(args)
-            .arg(file)
             .current_dir(dir)
-            .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
     };
-    let tracked = git(&["ls-files", "--error-unmatch", "--"]).is_ok_and(|o| o.status.success());
-    let clean = git(&["status", "--porcelain", "--"])
-        .is_ok_and(|o| o.status.success() && o.stdout.is_empty());
-    if !tracked || !clean {
+    // Committed as it is: the file's blob in HEAD is the file's bytes.
+    // Not `git status`, which runs the checkout's filters and fsmonitor.
+    let committed = git(&["rev-parse", "--verify", "-q", &format!("HEAD:./{name}")]);
+    let here = git(&["hash-object", "--no-filters", "--", &name]);
+    if committed.is_none() || committed != here {
         return AgentRules::Refused(format!(
             "{} isn't committed as it is: an agent's dump uses committed rules only. Commit it; \
              the next dump asks the operator to confirm it",
@@ -1027,11 +1034,10 @@ pub fn agent_rules(file: &Path, digest: &str) -> AgentRules {
 /// The commit that last changed `file`, abbreviated, if git says.
 /// Reads git.
 pub fn rules_commit(file: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["log", "-1", "--format=%h", "--"])
+    let out = crate::util::git()
+        .args(["log", "-1", "--no-show-signature", "--format=%h", "--"])
         .arg(file)
         .current_dir(file.parent().unwrap_or(Path::new(".")))
-        .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
@@ -1605,6 +1611,71 @@ mod tests {
         let e = checked_manifest(&dir).unwrap_err();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(e.contains("disagrees with the manifest"), "{e}");
+    }
+
+    /// The checkout's own config can't make pgman's git run anything: an
+    /// agent can write `.git/config`.
+    #[cfg(unix)]
+    #[test]
+    fn a_checkouts_git_config_runs_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("pgman-git-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".pgman/masking")).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+        // No git on this machine: nothing to run.
+        if !git(&["init", "-q"]) {
+            return;
+        }
+        let rules = dir.join(".pgman/masking/ledger.toml");
+        std::fs::write(&rules, "version = 1\n").unwrap();
+        std::fs::write(dir.join(".gitattributes"), "*.toml filter=planted\n").unwrap();
+        assert!(git(&["add", "-A"]) && git(&["commit", "-q", "--no-gpg-sign", "-m", "rules"]));
+        let marker = dir.join("ran");
+        let script = dir.join("planted.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let s = script.display().to_string();
+        for (k, v) in [
+            ("core.fsmonitor", s.as_str()),
+            ("filter.planted.clean", s.as_str()),
+            ("log.showSignature", "true"),
+            ("gpg.program", s.as_str()),
+        ] {
+            assert!(git(&["config", k, v]), "{k}");
+        }
+        // Stat info changed, so a status would look at the content.
+        std::fs::write(&rules, "version = 1\n").unwrap();
+        let digest = archive::sha256_file(&rules).unwrap();
+        assert!(matches!(
+            agent_rules(&rules, &digest),
+            AgentRules::Unconfirmed
+        ));
+        assert!(rules_commit(&rules).is_some());
+        assert!(!marker.exists(), "the checkout's config ran a program");
+        // And the check still sees an edit.
+        std::fs::write(&rules, "version = 1\n[tables.t]\nc = \"keep\"\n").unwrap();
+        assert!(matches!(
+            agent_rules(&rules, &digest),
+            AgentRules::Refused(w) if w.contains("isn't committed as it is")
+        ));
+        assert!(!marker.exists(), "the checkout's config ran a program");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
