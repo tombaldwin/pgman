@@ -75,6 +75,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The sessions panel (`S`) stays open when it can't read
+  `pg_stat_activity` and says why, as the slow-query panel does. It
+  used to close at once, so the `q` pressed to close it quit pgman.
 - A statement starting `explain8` (EXPLAIN's letters, then more) sent
   the safety classifier into endless recursion and crashed pgman with a
   stack overflow; a long run of `EXPLAIN EXPLAIN …` recursed as deep.

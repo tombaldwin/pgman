@@ -3264,7 +3264,13 @@ fn sessions_load_failure_keeps_the_server_message_and_detail_for_f2() {
             }),
         }),
     });
-    assert_eq!(a.mode, Mode::Normal);
+    // The panel stays open to say why; `q` then closes it, not pgman.
+    // (It used to close at once, and the `q` meant for it quit.)
+    assert_eq!(a.mode, Mode::Sessions);
+    assert_eq!(
+        a.sessions.error.as_deref(),
+        Some("permission denied for view pg_stat_activity")
+    );
     assert_eq!(
         a.last_error.as_deref(),
         Some("sessions load failed: permission denied for view pg_stat_activity")
@@ -3273,6 +3279,9 @@ fn sessions_load_failure_keeps_the_server_message_and_detail_for_f2() {
         a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
         Some("42501")
     );
+    a.on_key(KeyEvent::from(KeyCode::Char('q')));
+    assert_eq!(a.mode, Mode::Normal);
+    assert!(!a.should_quit, "the q was for the panel");
 }
 
 fn app_with_schemas() -> App {

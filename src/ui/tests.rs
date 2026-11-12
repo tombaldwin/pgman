@@ -2998,3 +2998,17 @@ fn the_lost_card_keeps_the_servers_hint_and_its_keys_at_80_columns() {
     assert!(screen.contains("r retry"), "{screen}");
     assert!(screen.contains("logs"), "{screen}");
 }
+
+/// A failed sessions load leaves the panel open saying why, rather
+/// than an empty panel (or none, which left the next `q` quitting).
+#[test]
+fn a_failed_sessions_load_says_why_in_the_panel() {
+    let mut a = settled_app(false, false);
+    a.mode = Mode::Sessions;
+    a.sessions.error = Some("permission denied for view pg_stat_activity".into());
+    let s = screen_text(&mut a, 100, 30);
+    assert!(
+        s.contains("couldn't read pg_stat_activity: permission denied"),
+        "sessions:\n{s}"
+    );
+}

@@ -1060,6 +1060,10 @@ pub struct SessionsUi {
     /// `Mode::Sessions` is active.
     pub rows: Vec<crate::query::sessions::SessionRow>,
     pub cursor: usize,
+    /// Why the last load failed. The panel stays open to say it, as the
+    /// slow-query panel does: closing it left the next `q` (meant for
+    /// the panel) quitting pgman.
+    pub error: Option<String>,
 }
 
 impl ListCursorNav for SessionsUi {

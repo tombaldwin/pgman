@@ -5883,6 +5883,7 @@ impl App {
             return;
         };
         self.sessions.cursor = 0;
+        self.sessions.error = None;
         self.mode = Mode::Sessions;
         self.last_status = Some("loading pg_stat_activity…".into());
         self.spawn_sessions_load(db);

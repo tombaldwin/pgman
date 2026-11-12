@@ -2574,6 +2574,15 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
+    if let Some(e) = &app.sessions.error {
+        f.render_widget(
+            Paragraph::new(Text::from(format!("couldn't read pg_stat_activity: {e}")))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(theme.health_red)),
+            inner,
+        );
+        return;
+    }
     if app.sessions.rows.is_empty() {
         // Either still loading, or the server is quiet: the panel SQL
         // leaves pgman's own backend out, so an empty list on a live

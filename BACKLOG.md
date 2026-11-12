@@ -38,10 +38,7 @@ masked), MCP, and the TUI's panels.
   product page leaves TimescaleDB unnamed until then.
 - **CockroachDB: only queries work.** pg_dump, snapshot export,
   `pg_blocking_pids`, `EXPLAIN (FORMAT JSON)` and
-  `pg_postmaster_start_time` are all refused. Not a target; but when the
-  sessions panel fails to open there, the next `q` quits pgman, because
-  nothing opened for `q` to close. That part is a bug anywhere a panel
-  fails to open.
+  `pg_postmaster_start_time` are all refused. Not a target.
 
 ### Masked dumps — left from phase 2a (2026-10-29)
 What the design note's section 2–9 asks for that 2a didn't build; the

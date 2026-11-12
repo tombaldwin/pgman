@@ -811,6 +811,7 @@ impl App {
                 self.last_error_detail = None;
                 let blocked = rows.iter().filter(|r| r.is_blocked()).count();
                 self.sessions.rows = rows;
+                self.sessions.error = None;
                 // Preserve selection across auto-refresh (R) — clamp, don't
                 // zero (see SlowQueriesLoaded). Fresh opens reset in
                 // start_sessions.
@@ -826,9 +827,14 @@ impl App {
                     "sessions load failed: {}",
                     e.msg
                 );
+                // The panel stays open and says why it's empty: closing
+                // it left the next `q`, pressed for the panel, quitting
+                // pgman.
+                self.last_status = None;
+                self.sessions.rows.clear();
+                self.sessions.error = Some(e.msg.clone());
                 self.last_error = Some(format!("sessions load failed: {}", e.msg));
                 self.last_error_detail = e.detail;
-                self.mode = Mode::Normal;
             }
         }
     }
