@@ -5,6 +5,61 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### From a Fable review (2026-11-12)
+
+Five reviewers (MCP writes, masking, statement safety, code health,
+product). The four fixed at once are in the 0.5.3 changelog; these are
+left.
+
+- **TUI: `set_config` with a column for the name lifts read-only.**
+  `set_config_names_read_only_guc` (safety.rs) treats a bare word first
+  argument as safe; `SELECT set_config(n, 'off', false) FROM (SELECT
+  'default_transaction_read_only' AS n) s` passes, and the next run
+  writes. Treat anything but a literal not naming a read-only GUC as an
+  escape. `SET default_transaction_read_only = 'on'` is also refused
+  (a false positive).
+- **TUI: a script with its own COMMIT under auto_tx.** `request_run_batch`
+  wraps it in BEGIN and then offers a rollback that rolls back nothing.
+  Refuse, or run it unwrapped with no TxDecision and say so.
+- **apply_patches: a tick for SQL past the 6000-character cut.** When the
+  confirmation is cut, require the environment's name typed, or list
+  per-file statement counts by guard.
+- **MCP restore: a database literally named `y`** is replaced on a tick:
+  `typed` is inferred from the accept token. Carry `Prepare::Replace`.
+- **git in the agent's checkout.** `agent_rules`, `rules_commit` and the
+  branch read run git with the checkout's config, so a planted
+  `core.fsmonitor` runs in the MCP server. Pass `-c core.fsmonitor=false
+  -c core.hooksPath=/dev/null`, or read .git without git.
+- **Masking odds:** Flyway's `installed_by` and Liquibase's `author` are
+  kept by the migration presets (people's names); PG18 virtual
+  generated columns (`attgenerated = 'v'`) are copied and break the
+  restore; masked dumps should pass `--no-subscriptions` (a
+  subscription's conninfo can hold a password). Vocabulary gaps worth a
+  look: whatsapp/telegram, social handles, `*_answers.answer`,
+  `custom_field_values.value`, `vat`.
+- **MCP restore: a masked archive's data files** are read from the
+  archive while loading, not from a checked copy. Rows only (the staged
+  schema is what checks them); hash them as they stream to close it.
+- **Housekeeping:** CLAUDE.md says docs/backlog/archive.md doesn't exist
+  and main.rs is thin (3000 lines: move log rotation to logging.rs and
+  batch DSN resolution to batch.rs); PLAN.md's head is stale and "Require
+  CI checks" is in both files; safety-and-privacy.md says draft.sql is
+  saved on quit (it is saved as you type); commands.md says `--log -`
+  stdin is exempt from 64 MB (it isn't); dump-restore.md's usage lacks
+  `--masked/--unmasked/--masking` and configuration.md the data-dir
+  files; no test of `restore::check_name`'s refusals; fuzz targets never
+  run in CI; `arboard` default features pull ~25 image crates.
+- **First-minute UX:** `pgman query --dsn URL 'select 1'` (SQL must come
+  first); no hint for tokio-postgres's `password missing`;
+  connections.toml entries absent from the TUI picker; no libpq env,
+  .pgpass or pg_service.conf; no `pgman doctor` at a terminal; editor
+  Ctrl-A/Ctrl-E (EXPLAIN) vs prompts' Home/End.
+- **Features, by value for effort:** MCP `explain` (S–M, explain.rs
+  parses plans), MCP `describe`/`tables` (S), MCP `slow_queries` (S),
+  schema diff between environments (M), a patch dry run reporting the
+  schema diff (M), index advice from the tap and pg_stat_statements (M);
+  and `pgman query ENV/DATABASE`, below, deserves to move up.
+
 ### Postgres-compatible databases — from a compatibility run (2026-10-29)
 
 Each tried in docker against 0.4.0: CLI dump/restore (plain and
