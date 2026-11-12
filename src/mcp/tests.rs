@@ -210,7 +210,7 @@ async fn serve_answers_each_request_and_exits_when_input_closes() {
     assert_eq!(frames[1]["error"]["code"], -32700);
     assert_eq!(frames[2]["error"]["code"], -32600);
     assert_eq!(frames[3]["id"], 2);
-    assert_eq!(frames[3]["result"]["tools"].as_array().unwrap().len(), 14);
+    assert_eq!(frames[3]["result"]["tools"].as_array().unwrap().len(), 15);
 }
 
 /// A question to the operator goes out as `elicitation/create`, and the

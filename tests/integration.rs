@@ -3493,6 +3493,45 @@ fn mcp_describe_lists_tables_and_gives_one_in_full() {
     assert!(is_error && text.contains("describe without"), "{text}");
 }
 
+/// `slow_queries` over MCP on a server without pg_stat_statements says
+/// how to install it, and refuses an argument out of range before
+/// connecting.
+#[test]
+fn mcp_slow_queries_says_how_to_get_pg_stat_statements() {
+    let home = scratch_home("mcp-slow", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[
+            tool_call(
+                1,
+                "slow_queries",
+                serde_json::json!({"connection": "local"}),
+            ),
+            tool_call(
+                2,
+                "slow_queries",
+                serde_json::json!({"connection": "local", "limit": 500}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    // The test server has the extension available, never created.
+    assert!(
+        is_error && text.contains("CREATE EXTENSION pg_stat_statements"),
+        "{text}"
+    );
+    let (text, is_error) = reply(&frames, 2);
+    assert!(is_error && text.contains("limit must be 1 to 50"), "{text}");
+}
+
 /// With no version table configured, a probe recognises the migration
 /// tool from its own table: one database per tool, real table shapes.
 #[test]

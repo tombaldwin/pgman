@@ -8,6 +8,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- MCP `slow_queries`: the statements `pg_stat_statements` says cost the
+  most, by total or mean time, as the TUI's slow-query panel reads them,
+  for an agent to find the code that sends them.
 - MCP `describe`: the tables a connection can see (kind, column count,
   size), or one table in full — columns, primary key, foreign keys both
   ways, indexes, size, partitions and its `CREATE` statement — from the

@@ -23,6 +23,7 @@
 pub mod connections;
 pub mod describe;
 pub mod dumps;
+pub mod stats;
 pub mod tools;
 
 use serde_json::{json, Value};

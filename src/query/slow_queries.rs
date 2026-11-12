@@ -48,6 +48,17 @@ WHERE s.query NOT LIKE '/* pgman:%') t \
 ORDER BY 3 DESC NULLS LAST \
 LIMIT 50";
 
+/// [`PANEL_SQL`] ranked by mean time instead of total when `by_mean`,
+/// and cut at `limit` rows: what MCP's `slow_queries` runs. Pure.
+pub fn ranked_sql(by_mean: bool, limit: u32) -> String {
+    let sql = PANEL_SQL.replace("LIMIT 50", &format!("LIMIT {limit}"));
+    if by_mean {
+        sql.replace("ORDER BY 3 DESC", "ORDER BY 4 DESC")
+    } else {
+        sql
+    }
+}
+
 /// Parse the result Grid into typed rows. Column order matches
 /// [`PANEL_SQL`]; mis-ordering would silently mangle the panel, so
 /// we look the columns up by name rather than positional index.
@@ -108,6 +119,17 @@ mod tests {
                 .collect(),
             truncated: false,
         }
+    }
+
+    #[test]
+    fn ranked_sql_is_the_panels_query_reordered_and_cut() {
+        assert_eq!(ranked_sql(false, 50), PANEL_SQL);
+        let mean = ranked_sql(true, 7);
+        assert!(
+            mean.contains("ORDER BY 4 DESC") && mean.ends_with("LIMIT 7"),
+            "{mean}"
+        );
+        assert!(!mean.contains("ORDER BY 3"), "{mean}");
     }
 
     #[test]
