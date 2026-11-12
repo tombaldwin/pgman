@@ -1187,6 +1187,11 @@ fn cargo_package_ships_only_the_allowlist() {
     {
         Ok(o) => o,
         Err(e) => {
+            // CI always has cargo: there, a skip would hide the guard.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "cargo not available in CI ({e}): the package guard would be skipped"
+            );
             eprintln!(
                 "cargo not available ({e}) — skipping \
                  cargo_package_ships_only_the_allowlist"

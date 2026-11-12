@@ -1904,6 +1904,21 @@ mod tests {
     }
 
     #[test]
+    fn a_server_control_call_and_a_missing_argument_say_so() {
+        let cfg = read_only_safety(SafetyConfig::default());
+        let e = single_checked_statement(&cfg, "db", "SELECT pg_promote()").unwrap_err();
+        assert!(e.contains("server-control function"), "{e}");
+        assert!(
+            !e.contains("safety.toml"),
+            "no setting here lets it run: {e}"
+        );
+        assert_eq!(
+            arg_str(&json!({}), "connection").unwrap_err(),
+            "missing required argument 'connection'"
+        );
+    }
+
+    #[test]
     fn an_allow_guard_is_not_the_agents() {
         // Postgres runs these inside a read-only transaction, so only
         // the guard stands between them and the agent.

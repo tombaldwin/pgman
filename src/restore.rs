@@ -1568,6 +1568,17 @@ mod tests {
     }
 
     #[test]
+    fn a_database_name_is_one_to_63_bytes_without_nul() {
+        for ok in ["ledger", "y", &"a".repeat(63), "with space", "Ünïcode"] {
+            assert_eq!(check_name(ok), Ok(()), "{ok:?}");
+        }
+        for bad in ["", &"a".repeat(64), "nul\0inside", &"é".repeat(32)] {
+            let e = check_name(bad).unwrap_err();
+            assert!(e.contains("1 to 63 bytes"), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
     fn replacing_asks_for_the_name_and_the_rest_for_yes() {
         let p = plan(&opts(&["f", "t", "--clean"]), "ledger", true, Vec::new()).unwrap();
         let (q, typed) = question(&p, Path::new("x.dump"), "localhost:5432");

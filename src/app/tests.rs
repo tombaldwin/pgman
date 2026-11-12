@@ -688,14 +688,11 @@ fn dot_after_lcp_expansion_narrows_via_refresh_not_auto_trigger() {
     a.editor_complete();
     assert_eq!(a.editor.buffer, "SELECT * FROM t_user_");
     assert!(a.completion.as_ref().unwrap().selected.is_none());
-    let cycle_id_before = a.completion.as_ref().unwrap() as *const _;
     // Now type `l` — narrowing key, cycle survives via refresh.
     type_key(&mut a, KeyCode::Char('l'));
     assert!(a.completion.is_some(), "cycle should still be alive");
     let cycle = a.completion.as_ref().unwrap();
-    // The cycle was rebuilt (new pointer), but selected is still
-    // None (refresh keeps pre-selection state).
-    let _ = cycle_id_before; // (we don't actually compare pointers; reassuring no panic)
+    // Refreshed, with nothing selected yet: refresh keeps that.
     assert!(cycle.selected.is_none());
     assert!(cycle.candidates.iter().any(|c| c.display == "t_user_logs"));
 }
