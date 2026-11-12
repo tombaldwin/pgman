@@ -9882,6 +9882,71 @@ fn mcp_dump_and_restore_run_only_once_the_operator_confirms() {
         serde_json::json!({"file": "copy.dump", "target": "scratch", "as": missing, "clean": true}),
     );
     assert!(asked && err, "clean of nothing there, still asked: {t}");
+    // What pg_restore reads is the file as it was before the question:
+    // swapped while the operator reads, the swap restores nothing.
+    let copy4 = format!("{copy}4");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy4}"));
+    writeln!(
+        stdin,
+        "{}",
+        tool_call(
+            14,
+            "restore",
+            serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": copy4, "create": true}),
+        )
+    )
+    .unwrap();
+    let ask = next();
+    assert_eq!(ask["method"], "elicitation/create", "{ask}");
+    std::fs::write(
+        out.join("copy.dump"),
+        b"PGDMP but not the dump that was asked about",
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": {"action": "accept", "content": {"restore": true}}})
+    )
+    .unwrap();
+    let (t, err) = reply(&[next()], 14);
+    assert!(!err, "{t}");
+    assert_eq!(count_in(&copy4, "accounts"), Ok(7));
+    // A journaled file overwritten in place by another dump is known by
+    // its content, not its path: refused.
+    let pg_dump = pgman::pgtool::find_tool("pg_dump", None).unwrap();
+    assert!(std::process::Command::new(&pg_dump)
+        .env("PGPASSWORD", "pgman_test")
+        .args([
+            "-h",
+            "127.0.0.1",
+            "-p",
+            "55432",
+            "-U",
+            "pgman_test",
+            "-Fc",
+            "-f"
+        ])
+        .arg(out.join("copy.dump"))
+        .arg(&src)
+        .status()
+        .unwrap()
+        .success());
+    writeln!(
+        stdin,
+        "{}",
+        tool_call(
+            15,
+            "restore",
+            serde_json::json!({"file": "copy.dump", "target": url("pgman_test"), "as": format!("{copy}5"), "create": true}),
+        )
+    )
+    .unwrap();
+    let frame = next();
+    assert_eq!(frame["id"], 15, "refused, not asked: {frame}");
+    let (t, err) = reply(&[frame], 15);
+    assert!(err && t.contains("journal knows by its content"), "{t}");
+    let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy4}"));
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {copy2}"));
     drop(stdin);
     assert!(child.wait().unwrap().success());
@@ -11042,6 +11107,45 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         (Some("masked"), Some(true)),
         "{last}"
     );
+    // A masked archive moved or copied is still the dump it was; one
+    // whose manifest isn't the one pgman wrote (an agent's own archive,
+    // or an edited one) is refused before anything is asked.
+    let made = std::fs::canonicalize(out.join(v["file"].as_str().unwrap())).unwrap();
+    for name in ["moved.pgman-dump", "forged.pgman-dump"] {
+        assert!(std::process::Command::new("cp")
+            .arg("-R")
+            .arg(&made)
+            .arg(out.join(name))
+            .status()
+            .unwrap()
+            .success());
+    }
+    // Its schema swapped while the operator reads: what pg_restore runs
+    // is the copy checked before the question.
+    {
+        let schema = out.join("moved.pgman-dump/schema.dump");
+        *before_answer.borrow_mut() = Some(Box::new(move || {
+            std::fs::write(&schema, b"PGDMP but not the schema that was checked").unwrap();
+        }));
+    }
+    let (t, err, _) = call(
+        91,
+        "restore",
+        serde_json::json!({"file": "moved.pgman-dump", "target": "local", "as": format!("{raw_copy}m"), "create": true}),
+        restore_yes.clone(),
+    );
+    assert!(!err, "{t}");
+    let manifest = out.join("forged.pgman-dump/manifest.json");
+    let mut m = std::fs::read(&manifest).unwrap();
+    m.push(b'\n');
+    std::fs::write(&manifest, m).unwrap();
+    let (t, err, _) = call(
+        92,
+        "restore",
+        serde_json::json!({"file": "forged.pgman-dump", "target": "local", "as": format!("{raw_copy}f"), "create": true}),
+        None,
+    );
+    assert!(err && t.contains("journal knows by its content"), "{t}");
     let pg_dump = pgman::pgtool::find_tool("pg_dump", None).unwrap();
     assert!(std::process::Command::new(&pg_dump)
         .env("PGPASSWORD", "pgman_test")
@@ -11066,7 +11170,7 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         serde_json::json!({"file": "theirs.dump", "target": "local", "as": format!("{raw_copy}y"), "create": true}),
         restore_yes.clone(),
     );
-    assert!(err && t.contains("journal doesn't know"), "{t}");
+    assert!(err && t.contains("journal knows by its content"), "{t}");
     // A file edited while the question is open: the confirmation is for
     // what was shown, and the dump refuses the edit rather than use it.
     std::fs::write(
@@ -11113,6 +11217,8 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         raw_copy.clone(),
         format!("{raw_copy}x"),
         format!("{raw_copy}y"),
+        format!("{raw_copy}m"),
+        format!("{raw_copy}f"),
         src.clone(),
     ] {
         let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));

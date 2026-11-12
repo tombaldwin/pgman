@@ -1040,6 +1040,12 @@ pub fn journal_dump(
             });
             e.bytes = Some(done.bytes);
             e.print = crate::copies::fingerprint(&file);
+            // A single file in full, for an agent's restore to check;
+            // an archive is known by its manifest, which has every sha256.
+            e.sha256 = file
+                .is_file()
+                .then(|| crate::masking::archive::sha256_file(&file).ok())
+                .flatten();
             e.encrypted = crate::masked::read_header(&file)
                 .ok()
                 .and_then(|h| h.seal)

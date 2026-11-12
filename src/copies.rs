@@ -70,6 +70,8 @@ pub struct Copy {
     pub bytes: u64,
     /// Its fingerprint, when the dump recorded one.
     pub print: Option<String>,
+    /// A single-file dump's sha256, when the dump recorded one.
+    pub sha256: Option<String>,
     pub expires: Option<u64>,
     /// What it is encrypted to: `kms:<key>`, `age:<public key>`.
     pub encrypted: Option<String>,
@@ -120,6 +122,7 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
                     latest: e.latest.as_ref().map(PathBuf::from),
                     bytes: e.bytes.unwrap_or(0),
                     print: e.print.clone(),
+                    sha256: e.sha256.clone(),
                     expires: e.expires,
                     encrypted: e.encrypted.clone(),
                     deleted: None,
@@ -198,6 +201,51 @@ pub fn fingerprint(path: &Path) -> Option<String> {
             .map(|b| format!("{b:02x}"))
             .collect(),
     )
+}
+
+/// [`fingerprint`] of a file whose bytes are `bytes`, all of them in
+/// hand: the same value, without reading the file again. Pure.
+pub fn print_of(bytes: &[u8]) -> String {
+    let size = bytes.len() as u64;
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    ctx.update(&size.to_le_bytes());
+    ctx.update(&bytes[..size.min(PRINT_SPAN) as usize]);
+    if size > PRINT_SPAN {
+        let from = size.saturating_sub(PRINT_SPAN).max(PRINT_SPAN) as usize;
+        ctx.update(&bytes[from..]);
+    }
+    ctx.finish()
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The copy whose content is what an agent's restore was handed: a
+/// masked or encrypted archive by its id and its manifest's
+/// fingerprint (the manifest holds every file's sha256), a single-file
+/// dump by its whole sha256. Never by path alone: a file an agent can
+/// write is known by what is in it. Deleted copies don't count. Pure.
+pub fn by_content<'a>(copies: &'a [Copy], content: &Content) -> Option<&'a Copy> {
+    copies.iter().rev().find(|c| {
+        c.deleted.is_none()
+            && match content {
+                Content::Archive { copy, print } => {
+                    &c.id == copy && c.print.as_deref() == Some(print.as_str())
+                }
+                Content::File { sha256 } => c.sha256.as_deref() == Some(sha256.as_str()),
+            }
+    })
+}
+
+/// What a restore checked a dump to be ([`by_content`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Content {
+    /// A pgman archive: the id its header names, its manifest's
+    /// fingerprint.
+    Archive { copy: String, print: String },
+    /// A single-file dump's sha256.
+    File { sha256: String },
 }
 
 /// The copy `file` is: by its recorded path, or — copied, moved, or a
@@ -1381,6 +1429,58 @@ mod tests {
             "only its last byte differs"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn print_of_is_the_files_fingerprint() {
+        let dir = std::env::temp_dir().join(format!("pgman-print-of-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let span = PRINT_SPAN as usize;
+        for size in [0, 10, span, span + 1, 2 * span, 3 * span + 5] {
+            let bytes: Vec<u8> = (0..size).map(|i| (i * 7 % 251) as u8).collect();
+            let f = dir.join(format!("{size}"));
+            std::fs::write(&f, &bytes).unwrap();
+            assert_eq!(Some(print_of(&bytes)), fingerprint(&f), "{size} bytes");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_agents_restore_knows_a_dump_by_its_content_alone() {
+        let mut raw = dump_event("aaaa1111", 1, "dev/ledger", "/w/a.dump");
+        raw.sha256 = Some("s1".into());
+        let mut masked = dump_event("bbbb2222", 2, "production/ledger", "/w/m.pgman-dump");
+        masked.mode = Some("masked".into());
+        masked.print = Some("p1".into());
+        let mut copies = registry(&[raw.clone(), masked.clone()]);
+        let file = |s: &str| Content::File { sha256: s.into() };
+        let archive = |c: &str, p: &str| Content::Archive {
+            copy: c.into(),
+            print: p.into(),
+        };
+        assert_eq!(by_content(&copies, &file("s1")).unwrap().id, "aaaa1111");
+        assert!(by_content(&copies, &file("s2")).is_none(), "another file");
+        assert_eq!(
+            by_content(&copies, &archive("bbbb2222", "p1")).unwrap().id,
+            "bbbb2222"
+        );
+        assert!(
+            by_content(&copies, &archive("bbbb2222", "p2")).is_none(),
+            "its id, another manifest"
+        );
+        assert!(
+            by_content(&copies, &archive("aaaa1111", "p1")).is_none(),
+            "another dump's manifest"
+        );
+        // A dump recorded before pgman kept the sha256 is known by no file.
+        copies[0].sha256 = None;
+        assert!(by_content(&copies, &file("s1")).is_none());
+        // Nor is a deleted one.
+        let mut gone = Event::new(Kind::Delete, 3, "m");
+        gone.copy = Some("aaaa1111".into());
+        let copies = registry(&[raw, masked, gone]);
+        assert!(by_content(&copies, &file("s1")).is_none(), "deleted");
     }
 
     #[test]

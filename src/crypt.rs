@@ -400,10 +400,10 @@ impl Write for Sink {
 }
 
 /// Read `file`, decrypted with `key` when given.
-pub fn source(
-    file: std::fs::File,
+pub fn source<'a, R: Read + Send + 'a>(
+    file: R,
     key: Option<&age::x25519::Identity>,
-) -> std::io::Result<Box<dyn Read + Send>> {
+) -> std::io::Result<Box<dyn Read + Send + 'a>> {
     let r = std::io::BufReader::new(file);
     let Some(key) = key else {
         return Ok(Box::new(r));

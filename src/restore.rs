@@ -77,6 +77,11 @@ pub struct Opts {
     /// Ctrl-C stops loading a masked dump's rows: the command line's, not
     /// the MCP server's, where listening would take Ctrl-C from it.
     pub interruptible: bool,
+    /// Restore a single-file dump from a private copy taken (and hashed)
+    /// before the question: an agent's restore, whose file the agent can
+    /// change while the operator reads. An archive's schema is always
+    /// restored from a checked copy.
+    pub stage: bool,
 }
 
 /// pg_restore's short options that take a value.
@@ -683,6 +688,8 @@ pub struct Ready {
     notes: Vec<String>,
     /// A masked dump: opened, its manifest checked.
     archive: Option<crate::masked::OpenArchive>,
+    /// A single-file dump's private copy, when [`Opts::stage`].
+    staged: Option<crate::masked::StagedDump>,
     /// The target's `restore_confirm` ([`restore_confirm_for`]).
     pub confirm: RestoreConfirm,
 }
@@ -703,6 +710,22 @@ impl Ready {
         unprompted(self.confirm, &self.plan, &self.opts)
     }
 
+    /// What the restore checked the dump to be, from the bytes it will
+    /// restore: an archive's id and manifest fingerprint, or a staged
+    /// file's sha256. None for an unstaged single file.
+    pub fn content(&self) -> Option<crate::copies::Content> {
+        match (&self.archive, &self.staged) {
+            (Some(a), _) => Some(crate::copies::Content::Archive {
+                copy: a.header.copy.clone(),
+                print: a.print.clone(),
+            }),
+            (None, Some(s)) => Some(crate::copies::Content::File {
+                sha256: s.sha256.clone(),
+            }),
+            (None, None) => None,
+        }
+    }
+
     /// End the sessions, make or replace the database, run pg_restore.
     pub async fn execute(self) -> Result<Done, String> {
         let Ready {
@@ -715,6 +738,7 @@ impl Ready {
             plan,
             mut notes,
             archive,
+            staged,
             confirm: _,
         } = self;
         let database = plan.database.clone();
@@ -797,11 +821,16 @@ impl Ready {
             run_pg_restore(&tool, args, opened.password(), opts.verbose, &database)
         };
         // An encrypted raw dump is restored as any other, from its
-        // decrypted copy.
-        let decrypted_raw = archive.as_ref().filter(|a| a.is_raw()).map(|a| Opts {
-            file: a.schema.clone(),
-            ..opts.clone()
-        });
+        // decrypted copy; a staged one from its private copy.
+        let decrypted_raw = archive
+            .as_ref()
+            .filter(|a| a.is_raw())
+            .map(|a| a.schema.clone())
+            .or_else(|| staged.as_ref().map(|s| s.file.clone()))
+            .map(|file| Opts {
+                file,
+                ..opts.clone()
+            });
         let sectioned = archive.as_ref().filter(|a| !a.is_raw());
         let (errors, errors_text) = match sectioned {
             None => {
@@ -984,9 +1013,22 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
     } else {
         None
     };
-    let listed = match &masked {
-        Some(a) => a.schema.clone(),
-        None => opts.file.clone(),
+    let staged = if masked.is_none() && opts.stage {
+        let file = opts.file.clone();
+        Some(
+            tokio::task::spawn_blocking(move || {
+                crate::masked::stage_dump(&file, &crate::util::cache_dir())
+            })
+            .await
+            .map_err(|e| format!("copy task failed: {e}"))??,
+        )
+    } else {
+        None
+    };
+    let listed = match (&masked, &staged) {
+        (Some(a), _) => a.schema.clone(),
+        (None, Some(s)) => s.file.clone(),
+        (None, None) => opts.file.clone(),
     };
     let listing = tokio::process::Command::new(&tool)
         .arg("--list")
@@ -1071,6 +1113,7 @@ pub async fn prepare(opts: &Opts, say: &(dyn Fn(String) + Send + Sync)) -> Resul
         notes,
         confirm,
         archive: masked,
+        staged,
     })
 }
 

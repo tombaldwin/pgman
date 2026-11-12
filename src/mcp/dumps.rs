@@ -81,10 +81,11 @@ pub fn agent_restore_problem(
 ) -> Option<String> {
     match known {
         None => Some(format!(
-            "{rel} is a dump this machine's journal doesn't know (from elsewhere, or not taken \
-             with pgman), so it could be a raw copy of anything: an agent restores masked dumps \
-             and dumps pgman took here. The operator can restore it at a terminal: pgman restore \
-             {rel} {target}"
+            "{rel} isn't a dump this machine's journal knows by its content (taken elsewhere, \
+             changed since it was taken, not taken with pgman, or taken before pgman recorded a \
+             dump's checksum), so it could be anything, and restoring a dump runs its schema: an \
+             agent restores only dumps pgman took here, as they were taken. The operator can \
+             restore it at a terminal: pgman restore {rel} {target}"
         )),
         Some((true, mode)) if mode == "raw" => Some(format!(
             "{rel} is a raw copy of a protected environment: its rows are real people's, and an \
@@ -582,23 +583,6 @@ impl Server {
         let rel = arg_string(args, "file")?.ok_or("file is required")?;
         let target = arg_string(args, "target")?.ok_or("target is required")?;
         let file = inside(&self.cwd, &rel, true)?;
-        // A masked archive is what an agent restores; an encrypted raw one
-        // is a raw copy, judged as any other by the journal.
-        let masked_archive = crate::masked::is_archive(&file)
-            && crate::masked::read_header(&file).is_ok_and(|h| h.masked);
-        if !masked_archive {
-            let f = file.clone();
-            let known = tokio::task::spawn_blocking(move || {
-                let (events, _) = crate::journal::read_in(&crate::journal::dir());
-                let copies = crate::copies::registry(&events);
-                crate::copies::of_file(&copies, &f).map(|c| (c.protected, c.mode.clone()))
-            })
-            .await
-            .map_err(|e| format!("journal task failed: {e}"))?;
-            if let Some(why) = agent_restore_problem(&rel, &target, known) {
-                return Err(why);
-            }
-        }
         let as_name = arg_string(args, "as")?;
         if let Some(n) = &as_name {
             crate::restore::check_name(n)?;
@@ -610,6 +594,9 @@ impl Server {
             create: arg_bool(args, "create"),
             clean: arg_bool(args, "clean"),
             terminate: arg_bool(args, "terminate"),
+            // What pg_restore reads is a copy taken now: the agent can
+            // change the file while the operator reads the question.
+            stage: true,
             ..Default::default()
         };
         let ready = match crate::restore::prepare(
@@ -621,6 +608,23 @@ impl Server {
             Ok(r) => r,
             Err(e) => return Err(self.explain_unresolved(e, &target).await),
         };
+        // A dump pgman took here, as it was taken: known by the content
+        // just checked and copied, never by its path or its header alone
+        // (an agent can write both). A raw copy of a protected one is
+        // refused as before.
+        let content = ready.content();
+        let known = tokio::task::spawn_blocking(move || {
+            let (events, _) = crate::journal::read_in(&crate::journal::dir());
+            let copies = crate::copies::registry(&events);
+            content
+                .and_then(|c| crate::copies::by_content(&copies, &c).cloned())
+                .map(|c| (c.protected, c.mode))
+        })
+        .await
+        .map_err(|e| format!("journal task failed: {e}"))?;
+        if let Some(why) = agent_restore_problem(&rel, &target, known) {
+            return Err(why);
+        }
         let database = ready.plan.database.clone();
         if self.declined("restore", ready.server(), &database) {
             return Err(format!(

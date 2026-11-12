@@ -160,7 +160,9 @@ pgman restore <FILE> <target> [--as NAME] [--create] [--clean] [--terminate]
 - **A dump is code.** pg_restore runs the schema in the dump as it is:
   restore only what you or pgman took, or someone you'd let run SQL as
   you. A masked archive's checksums catch damage, not someone who
-  rewrote it and its manifest.
+  rewrote it and its manifest. An agent's restore (MCP) goes further:
+  it takes only a dump this machine's pgman took, as it was taken, and
+  restores from a private copy checked before you're asked.
 - **Recorded, even half done.** A restore of a dump the journal knows —
   by its path, or by its fingerprint when it was copied or moved — is
   recorded against that copy, and the database's comment names it from
@@ -553,9 +555,17 @@ when the environment asks for one (the agent's suggestion is filled
 in; the one recorded is what you send). A protected environment is dumped masked (or schema
 only) over MCP, with your committed, confirmed rules: its raw copy is
 yours to take, at a terminal. And every MCP tool refuses a database
-restored from a raw dump of a protected environment; `restore` takes a
-masked dump, or a dump this machine's pgman took (not a raw copy of a
-protected environment), never one from elsewhere. An agent can refresh
+restored from a raw dump of a protected environment. `restore` takes
+only a dump this machine's pgman took, masked or not (never a raw copy
+of a protected environment), known by its content: a single-file dump
+by the sha256 the journal recorded, a masked or encrypted archive by
+its id and its manifest, which holds every file's sha256. A dump from
+elsewhere, one changed since it was taken (in place, or an archive
+whose manifest was rewritten), and one taken before pgman 0.5.3
+recorded a dump's sha256 are refused: restore those at a terminal.
+What pg_restore runs is a private copy in pgman's cache, taken and
+checked before you're asked and removed afterwards, so a file the
+agent changes while you read the question changes nothing. An agent can refresh
 its own local copy (`restore` with `as`) without ever holding the
 environment's credentials. Its files stay in the server's working
 directory, and `restore` has no `--allow-remote`. See [mcp.md](mcp.md).

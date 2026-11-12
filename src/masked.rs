@@ -1154,13 +1154,18 @@ pub fn is_archive(path: &Path) -> bool {
 }
 
 /// An archive checked and opened for a restore: its manifest, the key
-/// its files open with, and its schema as pg_restore reads it — the
-/// archive's own, or, encrypted, a private copy in pgman's cache removed
-/// when this is dropped.
+/// its files open with, and its schema as pg_restore reads it — a
+/// private copy in pgman's cache, checked as it was copied (decrypted,
+/// when the archive is encrypted), removed when this is dropped. So
+/// what pg_restore runs is what was checked, whatever happens to the
+/// archive meanwhile.
 pub struct OpenArchive {
     pub manifest: Manifest,
     pub key: Option<age::x25519::Identity>,
     pub schema: PathBuf,
+    /// The manifest's fingerprint, from the bytes that were checked:
+    /// what the journal recorded for the dump ([`crate::copies::print_of`]).
+    pub print: String,
     temp: Option<PathBuf>,
 }
 
@@ -1238,7 +1243,7 @@ pub fn sweep_restores(cache: &Path) {
 impl OpenArchive {
     /// Whether its schema was decrypted to a private temp file.
     pub fn decrypted(&self) -> bool {
-        self.temp.is_some()
+        self.key.is_some()
     }
 
     /// An encrypted raw dump: [`OpenArchive::schema`] is its whole
@@ -1329,67 +1334,184 @@ fn open_archive_with(
     key: Option<age::x25519::Identity>,
     cache: &Path,
 ) -> Result<OpenArchive, String> {
-    let manifest = checked_manifest_with(dir, header, key.as_ref())?;
+    let (manifest, print) = checked_manifest_with(dir, header, key.as_ref())?;
     // What pg_restore reads: the schema, or a raw dump's whole archive.
-    let inner = if manifest.raw.is_some() {
-        archive::RAW
-    } else {
-        archive::SCHEMA
+    let (inner, want) = match &manifest.raw {
+        Some(sha) => (archive::RAW, sha.clone()),
+        None => (archive::SCHEMA, manifest.schema_sha256.clone()),
     };
-    let (schema, temp) = match &key {
-        None => (dir.join(inner), None),
-        Some(k) => {
-            sweep_restores(cache);
-            // Named by nothing from the archive.
-            let tag: String = crate::journal::new_id()
-                .chars()
-                .filter(char::is_ascii_hexdigit)
-                .take(12)
-                .collect();
-            let temp = cache.join(format!("restore-{}-{tag}", std::process::id()));
-            crate::util::ensure_private_dir(&temp)
-                .map_err(|e| format!("{}: {e}", temp.display()))?;
-            let out = temp.join(inner);
-            let copied = (|| -> Result<(), String> {
-                let from =
-                    std::fs::File::open(dir.join(inner)).map_err(|e| format!("{inner}: {e}"))?;
-                let mut r =
-                    crate::crypt::source(from, Some(k)).map_err(|e| format!("{inner}: {e}"))?;
-                let mut w = private_file(&out)?;
-                std::io::copy(&mut r, &mut w).map_err(|e| format!("decrypting {inner}: {e}"))?;
-                Ok(())
-            })();
-            if let Err(e) = copied {
-                let _ = std::fs::remove_dir_all(&temp);
-                return Err(e);
-            }
-            (out, Some(temp))
-        }
-    };
+    let temp = restore_dir(cache)?;
+    let out = temp.join(inner);
+    let copied = copy_checked(&dir.join(inner), &out, key.as_ref(), &want);
+    if let Err(e) = copied {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(e);
+    }
     Ok(OpenArchive {
         manifest,
         key,
-        schema,
-        temp,
+        schema: out,
+        print,
+        temp: Some(temp),
     })
+}
+
+/// A new private directory in `cache` for one restore, named by nothing
+/// from the archive: what [`restore_temp`] recognises. Makes it.
+fn restore_dir(cache: &Path) -> Result<PathBuf, String> {
+    sweep_restores(cache);
+    let tag: String = crate::journal::new_id()
+        .chars()
+        .filter(char::is_ascii_hexdigit)
+        .take(12)
+        .collect();
+    let temp = cache.join(format!("restore-{}-{tag}", std::process::id()));
+    crate::util::ensure_private_dir(&temp).map_err(|e| format!("{}: {e}", temp.display()))?;
+    Ok(temp)
+}
+
+/// Reads through to `inner`, hashing every byte it reads.
+struct Hashing<R> {
+    inner: R,
+    ctx: ring::digest::Context,
+}
+
+impl<R: std::io::Read> std::io::Read for Hashing<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.ctx.update(&buf[..n]);
+        Ok(n)
+    }
+}
+
+/// Copy `from` to a new private file `to`, decrypted with `key` when
+/// given, and refuse unless the bytes read from `from` — all of them —
+/// have the sha256 `want`. Returns nothing more: the copy is what was
+/// checked. Reads and writes.
+fn copy_checked(
+    from: &Path,
+    to: &Path,
+    key: Option<&age::x25519::Identity>,
+    want: &str,
+) -> Result<(), String> {
+    let name = from
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let file = std::fs::File::open(from).map_err(|e| format!("{name}: {e}"))?;
+    let mut hashing = Hashing {
+        inner: file,
+        ctx: ring::digest::Context::new(&ring::digest::SHA256),
+    };
+    {
+        let mut r = crate::crypt::source(&mut hashing, key).map_err(|e| format!("{name}: {e}"))?;
+        let mut w = private_file(to)?;
+        std::io::copy(&mut r, &mut w).map_err(|e| format!("copying {name}: {e}"))?;
+    }
+    // What decryption left unread isn't hashed, so the sha256 differs:
+    // refused, as a changed file is.
+    let got = hashing.ctx.finish();
+    let got: String = got.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    if got != want {
+        return Err(format!(
+            "{} isn't what was dumped (its checksum differs): the archive is damaged or was \
+             changed; nothing restored",
+            from.display()
+        ));
+    }
+    Ok(())
+}
+
+/// A single-file dump copied, as it is, to a private file in pgman's
+/// cache: what pg_restore reads, so a change to the dump after it was
+/// looked at reaches nothing. Removed when dropped.
+pub struct StagedDump {
+    pub file: PathBuf,
+    /// The sha256 of every byte copied: what the journal recorded.
+    pub sha256: String,
+    temp: PathBuf,
+}
+
+impl Drop for StagedDump {
+    fn drop(&mut self) {
+        if restore_temp(&self.temp) {
+            let _ = std::fs::remove_dir_all(&self.temp);
+        }
+    }
+}
+
+/// Stage the dump at `file` in `cache` ([`StagedDump`]). Reads and
+/// writes.
+pub fn stage_dump(file: &Path, cache: &Path) -> Result<StagedDump, String> {
+    use std::io::{Read, Write};
+    if !file.is_file() {
+        return Err(format!(
+            "{}: not a single-file dump; restore it at a terminal",
+            file.display()
+        ));
+    }
+    let temp = restore_dir(cache)?;
+    let out = temp.join("dump");
+    let staged = (|| -> Result<String, String> {
+        let mut r = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let mut w = private_file(&out)?;
+        let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            let n = r
+                .read(&mut buf)
+                .map_err(|e| format!("{}: {e}", file.display()))?;
+            if n == 0 {
+                break;
+            }
+            ctx.update(&buf[..n]);
+            w.write_all(&buf[..n])
+                .map_err(|e| format!("{}: {e}", out.display()))?;
+        }
+        Ok(ctx
+            .finish()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect())
+    })();
+    match staged {
+        Ok(sha256) => Ok(StagedDump {
+            file: out,
+            sha256,
+            temp,
+        }),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&temp);
+            Err(e)
+        }
+    }
 }
 
 /// The manifest of the plain archive at `dir`, checked: this pgman's
 /// format, generated file names, and every file's checksum. Reads it all.
 pub fn checked_manifest(dir: &Path) -> Result<Manifest, String> {
     let header = read_header(dir)?;
-    checked_manifest_with(dir, &header, None)
+    checked_manifest_with(dir, &header, None).map(|(m, _)| m)
 }
 
 /// [`checked_manifest`], the manifest decrypted with `key` when the
-/// archive is encrypted. Its checksums are of the files as they are on
-/// disk, so they are checked before anything is decrypted.
+/// archive is encrypted, and its fingerprint from the same bytes. Its
+/// checksums are of the files as they are on disk, so they are checked
+/// before anything is decrypted.
 fn checked_manifest_with(
     dir: &Path,
     header: &Header,
     key: Option<&age::x25519::Identity>,
-) -> Result<Manifest, String> {
-    let bytes = crate::crypt::read_all(&dir.join(archive::MANIFEST), key)?;
+) -> Result<(Manifest, String), String> {
+    use std::io::Read;
+    let path = dir.join(archive::MANIFEST);
+    let on_disk = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let print = crate::copies::print_of(&on_disk);
+    let mut bytes = Vec::new();
+    crate::crypt::source(on_disk.as_slice(), key)
+        .and_then(|mut r| r.read_to_end(&mut bytes))
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     let m: Manifest = serde_json::from_slice(&bytes)
         .map_err(|e| format!("{}: not a pgman manifest ({e})", dir.display()))?;
     if let Some(why) = archive::manifest_problem(&m) {
@@ -1419,13 +1541,13 @@ fn checked_manifest_with(
     };
     if let Some(sha) = &m.raw {
         check(dir.join(archive::RAW), sha)?;
-        return Ok(m);
+        return Ok((m, print));
     }
     check(dir.join(archive::SCHEMA), &m.schema_sha256)?;
     for t in &m.tables {
         check(dir.join("data").join(&t.file), &t.sha256)?;
     }
-    Ok(m)
+    Ok((m, print))
 }
 
 #[cfg(test)]
@@ -1483,6 +1605,70 @@ mod tests {
         let e = checked_manifest(&dir).unwrap_err();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(e.contains("disagrees with the manifest"), "{e}");
+    }
+
+    #[test]
+    fn a_restore_copy_is_checked_as_it_is_copied() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("pgman-copy-checked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = dir.join("schema.dump");
+        std::fs::write(&plain, b"schema bytes").unwrap();
+        let want = archive::sha256_file(&plain).unwrap();
+        copy_checked(&plain, &dir.join("a"), None, &want).unwrap();
+        assert_eq!(std::fs::read(dir.join("a")).unwrap(), b"schema bytes");
+        let e = copy_checked(&plain, &dir.join("b"), None, &"0".repeat(64)).unwrap_err();
+        assert!(e.contains("checksum differs"), "{e}");
+        // Encrypted: decrypted into the copy, checked against what is on
+        // disk, every byte of it.
+        let key = age::x25519::Identity::generate();
+        let sealed = dir.join("sealed");
+        let mut s = crate::crypt::Sink::new(
+            std::fs::File::create(&sealed).unwrap(),
+            Some(&key.to_public()),
+        )
+        .unwrap();
+        s.write_all(b"secret schema").unwrap();
+        s.finish().unwrap();
+        let want = archive::sha256_file(&sealed).unwrap();
+        copy_checked(&sealed, &dir.join("c"), Some(&key), &want).unwrap();
+        assert_eq!(std::fs::read(dir.join("c")).unwrap(), b"secret schema");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&sealed)
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        assert!(copy_checked(&sealed, &dir.join("d"), Some(&key), &want).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_staged_dump_is_a_private_copy_that_goes_away() {
+        let dir = std::env::temp_dir().join(format!("pgman-staged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("x.dump");
+        std::fs::write(&file, b"PGDMP as it was").unwrap();
+        let s = stage_dump(&file, &dir).unwrap();
+        assert_eq!(s.sha256, archive::sha256_file(&file).unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&s.file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // What the agent does to its file afterwards reaches nothing.
+        std::fs::write(&file, b"PGDMP changed").unwrap();
+        assert_eq!(std::fs::read(&s.file).unwrap(), b"PGDMP as it was");
+        let temp = s.file.parent().unwrap().to_path_buf();
+        assert!(restore_temp(&temp));
+        drop(s);
+        assert!(!temp.exists(), "removed when dropped");
+        let e = stage_dump(&dir, &dir).err().unwrap();
+        assert!(e.contains("not a single-file dump"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An encrypted archive as a dump writes one: every file but the

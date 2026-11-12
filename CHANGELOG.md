@@ -34,6 +34,19 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- MCP's `restore` took any masked archive in the working directory
+  without asking the journal, so an agent could build an archive of its
+  own, whose schema pg_restore would run, and have it restored (without
+  a question, under `restore_confirm = "clean_only"`). A raw `.dump` was
+  known by its path, so one overwritten in place passed too. `restore`
+  now takes only a dump this machine's pgman took, known by its
+  content: an archive by its id and manifest fingerprint, a `.dump` by
+  the sha256 the journal now records for each single-file dump. A dump
+  taken before this release has no sha256 and is refused over MCP;
+  restore it at a terminal or dump it again. pg_restore also reads a
+  private copy taken and checked before the operator is asked, so a
+  file changed while they read the question changes nothing; an
+  archive's schema is always restored from such a copy.
 - MCP's `query` no longer lets a safety.toml guard set to `allow` reach
   the agent: such a guard counts as `confirm` there, which nobody can
   answer. With `ddl = "allow"` or `other = "allow"` for a database, an

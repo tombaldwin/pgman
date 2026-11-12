@@ -73,6 +73,10 @@ pub struct Event {
     /// it again copied or moved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub print: Option<String>,
+    /// A single-file dump's sha256, every byte: what an agent's restore
+    /// checks the file it is given against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     /// When the copy expires, unix seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires: Option<u64>,
