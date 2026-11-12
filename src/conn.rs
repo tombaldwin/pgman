@@ -2527,9 +2527,17 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
                 .to_string()
         });
     }
-    if lower.contains("no password was provided") || lower.contains("requires password") {
+    // The server's wording, or the client's own ("password missing"),
+    // before it even asked: the first thing a psql user without a
+    // .pgpass meets.
+    if lower.contains("no password was provided")
+        || lower.contains("requires password")
+        || lower.contains("password missing")
+    {
         return Some(
-            "server demands a password. set PGPASSWORD before launching pgman, or pass it in --dsn"
+            "server demands a password: pass it in the DSN (user:pass@host), set PGPASSWORD \
+             before launching pgman, or give the connection a password_env or secret in \
+             connections.toml"
                 .to_string(),
         );
     }
@@ -3850,6 +3858,21 @@ mod tests {
         assert!(h.contains("supplied one"), "got: {h}");
         assert!(!h.contains("pass user:pass"), "got: {h}");
         assert!(!h.contains("hunter2"), "the value must never surface: {h}");
+    }
+
+    #[test]
+    fn connect_hint_names_where_a_missing_password_comes_from() {
+        let d = Dsn::parse("postgres://alice@db/app").unwrap();
+        for err in [
+            "invalid configuration: password missing",
+            "fe_sendauth: no password was provided",
+        ] {
+            let h = connect_hint(err, &d).unwrap();
+            assert!(
+                h.contains("PGPASSWORD") && h.contains("password_env"),
+                "{err}: {h}"
+            );
+        }
     }
 
     #[test]

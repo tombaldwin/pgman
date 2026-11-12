@@ -34,6 +34,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A DSN with no password stopped at "password missing" with no hint.
+  It now says where a password can come from: the DSN, `PGPASSWORD`, or
+  a connection's `password_env` or `secret`.
 - `pgman query --dsn URL 'SELECT 1'` and `pgman query --json 'SELECT 1'`
   were refused, the SQL taken for a DSN: the SQL had to come first. It
   is now the first argument that isn't a flag, a flag's value or a
