@@ -85,6 +85,9 @@ pub struct ColumnType {
     pub array_of: Option<String>,
     /// The most characters it takes (`varchar(n)`, `char(n)`).
     pub max_len: Option<usize>,
+    /// Declared as a domain, its name: `email_address`. Teams name a
+    /// domain for what it holds.
+    pub domain: Option<String>,
     /// NULL can't be stored: the column's NOT NULL or a domain's.
     pub not_null: bool,
 }
@@ -188,10 +191,12 @@ fn resolve(
     let mut oid = type_oid;
     let mut typmod = typmod;
     let mut not_null = false;
+    let mut domain = None;
     // A domain over a domain over a base: follow it, a few deep at most.
     for _ in 0..16 {
         match types.get(&oid) {
             Some(t) if t.kind == "d" => {
+                domain.get_or_insert_with(|| t.name.clone());
                 not_null |= t.not_null;
                 if t.typmod >= 0 {
                     typmod = t.typmod;
@@ -219,6 +224,7 @@ fn resolve(
         array_of,
         base,
         not_null,
+        domain,
     }
 }
 
@@ -418,6 +424,12 @@ pub(crate) mod tests {
         assert_eq!(email.ty.base, "varchar");
         assert_eq!(email.ty.max_len, Some(50), "the inner domain's length");
         assert!(email.ty.not_null, "the outer domain's NOT NULL");
+        assert_eq!(
+            email.ty.domain.as_deref(),
+            Some("email_address"),
+            "the domain as declared, not the one under it"
+        );
+        assert_eq!(id.ty.domain, None);
         assert_eq!(
             t.column("tags").unwrap().ty.array_of.as_deref(),
             Some("text")

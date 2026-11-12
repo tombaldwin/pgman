@@ -1045,7 +1045,24 @@ pub fn default_rule(
     extra_personal: &[String],
     extra_plain: &[String],
 ) -> (Rule, Origin) {
-    let (rule, origin) = by_name_and_type(table_name, col, extra_personal, extra_plain);
+    let (mut rule, mut origin) = by_name_and_type(table_name, col, extra_personal, extra_plain);
+    // A column its name says nothing about is judged by its domain's
+    // name too: `contact email_address`.
+    if let (Rule::Keep, Origin::Plain, Some(domain)) = (&rule, &origin, &col.ty.domain) {
+        let mut by_type = Column {
+            name: domain.clone(),
+            ..col.clone()
+        };
+        by_type.ty.domain = None;
+        if let (r, Origin::Default(w)) =
+            by_name_and_type(table_name, &by_type, extra_personal, extra_plain)
+        {
+            if r != Rule::Keep {
+                rule = r;
+                origin = Origin::Default(format!("{w}: its type's name"));
+            }
+        }
+    }
     // A transformer makes one value, not an array of them.
     if col.ty.array_of.is_some() && !matches!(rule, Rule::Keep | Rule::Null) {
         let why = match origin {
@@ -2052,6 +2069,7 @@ mod tests {
             array_of: None,
             max_len,
             not_null,
+            domain: None,
         }
     }
 
@@ -2091,6 +2109,26 @@ mod tests {
         assert_eq!(words("cancellation"), ["cancellation"]);
         assert_eq!(words("warehouse"), ["warehouse"]);
         assert_eq!(words("company"), ["company"]);
+    }
+
+    #[test]
+    fn a_domain_is_judged_by_its_name_when_the_column_says_nothing() {
+        let mut col = c("contact", "varchar", Some(255));
+        col.ty.domain = Some("email_address".into());
+        let (r, why) = default_rule("customers", &col, &[], &[]);
+        assert_eq!(r, Rule::Email);
+        assert!(matches!(why, Origin::Default(w) if w.contains("type's name")));
+        // The column's own name wins when it says something.
+        let mut col = c("first_name", "varchar", Some(255));
+        col.ty.domain = Some("email_address".into());
+        assert_eq!(
+            default_rule("customers", &col, &[], &[]).0,
+            Rule::Name(NamePart::First)
+        );
+        // A domain named for nothing personal changes nothing.
+        let mut col = c("amount", "numeric", None);
+        col.ty.domain = Some("money_amount".into());
+        assert_eq!(default_rule("orders", &col, &[], &[]).0, Rule::Keep);
     }
 
     #[test]

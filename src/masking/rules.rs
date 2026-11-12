@@ -503,6 +503,7 @@ mod tests {
                         array_of: None,
                         max_len: None,
                         not_null: false,
+                        domain: None,
                     },
                     generated: false,
                     unique: false,

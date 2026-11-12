@@ -29,6 +29,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   agent could run `VACUUM FULL`, `CLUSTER`, `REINDEX`, `CHECKPOINT` or
   `COPY … TO PROGRAM`, which Postgres runs even in a read-only session.
   The default guards were never affected.
+- Masked dumps judge a column whose name says nothing by its domain's
+  name too, so `contact email_address` is masked as an email instead of
+  kept. Masked copies of a database with such columns should be taken
+  again.
 
 ## [0.5.2] — 2026-11-11
 
