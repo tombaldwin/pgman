@@ -31,6 +31,16 @@ check (`ci/candor-check.sh`) enforcing that direct database access stays in
 `src/conn.rs` and `src/query/`. See `CONTRIBUTING.md` for the full pre-PR
 checklist and `CLAUDE.md` for the AI-assisted-contributor rules.
 
+`fuzz/` holds cargo-fuzz targets for the parsers that read input pgman
+doesn't control (DSNs, the safety classifier and lexer, Hibernate and
+Postgres logs, `.pgman/pgman.toml`). `.github/workflows/fuzz.yml` runs
+each for two minutes weekly and on demand; locally:
+
+```bash
+cargo install cargo-fuzz
+cargo +nightly fuzz run safety_classify -- -max_total_time=60
+```
+
 ## Distribution
 
 - **Cargo**: `cargo install pgman --locked` from crates.io, or

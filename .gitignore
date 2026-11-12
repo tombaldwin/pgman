@@ -18,3 +18,10 @@
 
 # insta writes these for a failed snapshot; never commit one
 *.snap.new
+
+# cargo-fuzz's build, corpus and crashes (fuzz/ is its own workspace)
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/fuzz/coverage
+/fuzz/Cargo.lock
