@@ -34,6 +34,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- MCP's `restore` with `clean` into a database named `y` was confirmed
+  with a tick instead of the typed name: the name to type was inferred
+  from the answer that accepts the question. It now comes from the plan.
 - MCP's `apply_patches` confirmation shows at most 6000 characters of
   SQL; past that it was still confirmed with a tick, so a statement
   after the cut ran unseen. A cut confirmation now takes the

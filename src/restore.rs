@@ -377,10 +377,11 @@ pub fn sessions_to_end(
     ))
 }
 
-/// The confirmation question for `plan` on `server`, and the answer that
-/// accepts it: the database's name when it would be dropped, `y`
-/// otherwise. Pure.
-pub fn question(plan: &Plan, file: &Path, server: &str) -> (String, String) {
+/// The confirmation question for `plan` on `server`, and the name to type
+/// when the database would be dropped (`None`: a yes will do). The name
+/// is the plan's, never inferred from the answer: a database called `y`
+/// is typed too. Pure.
+pub fn question(plan: &Plan, file: &Path, server: &str) -> (String, Option<String>) {
     let what = match plan.prepare {
         Prepare::Existing => format!("into the existing database {}", plan.database),
         Prepare::Create => format!("into a new database {}", plan.database),
@@ -401,9 +402,9 @@ pub fn question(plan: &Plan, file: &Path, server: &str) -> (String, String) {
     match plan.prepare {
         Prepare::Replace => (
             format!("{text}\ntype {} to go on: ", plan.database),
-            plan.database.clone(),
+            Some(plan.database.clone()),
         ),
-        _ => (format!("{text}\ngo on? [y/N] "), "y".to_string()),
+        _ => (format!("{text}\ngo on? [y/N] "), None),
     }
 }
 
@@ -615,7 +616,8 @@ pub async fn run_cli(opts: &Opts) -> Result<Done, String> {
     };
     let ready = prepare(opts, &|line| eprintln!("pgman restore: {line}")).await?;
     if !opts.yes {
-        let (prompt, accept) = ready.question();
+        let (prompt, typed) = ready.question();
+        let accept = typed.unwrap_or_else(|| "y".to_string());
         let ok = tokio::task::spawn_blocking(move || pgtool::confirm_cli(&prompt, &accept))
             .await
             .map_err(|e| format!("prompt task failed: {e}"))??;
@@ -700,8 +702,8 @@ impl Ready {
         &self.server
     }
 
-    /// The question for the plan, and the answer that accepts it.
-    pub fn question(&self) -> (String, String) {
+    /// The question for the plan, and the name to type, if one is.
+    pub fn question(&self) -> (String, Option<String>) {
         question(&self.plan, &self.opts.file, &self.server)
     }
 
@@ -1568,16 +1570,24 @@ mod tests {
     #[test]
     fn replacing_asks_for_the_name_and_the_rest_for_yes() {
         let p = plan(&opts(&["f", "t", "--clean"]), "ledger", true, Vec::new()).unwrap();
-        let (q, accept) = question(&p, Path::new("x.dump"), "localhost:5432");
+        let (q, typed) = question(&p, Path::new("x.dump"), "localhost:5432");
         assert!(q.contains("DROPPED") && q.contains("type ledger"), "{q}");
-        assert_eq!(accept, "ledger");
+        assert_eq!(typed.as_deref(), Some("ledger"));
         let p = plan(&opts(&["f", "t", "--create"]), "ledger", false, Vec::new()).unwrap();
-        let (q, accept) = question(&p, Path::new("x.dump"), "localhost:5432");
+        let (q, typed) = question(&p, Path::new("x.dump"), "localhost:5432");
         assert!(
             q.contains("into a new database ledger") && q.ends_with("[y/N] "),
             "{q}"
         );
-        assert_eq!(accept, "y");
+        assert_eq!(typed, None);
+        // A database called y is typed like any other.
+        let p = plan(&opts(&["f", "t", "--clean"]), "y", true, Vec::new()).unwrap();
+        assert_eq!(
+            question(&p, Path::new("x.dump"), "localhost:5432")
+                .1
+                .as_deref(),
+            Some("y")
+        );
     }
 
     #[test]

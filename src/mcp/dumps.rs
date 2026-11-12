@@ -637,13 +637,12 @@ impl Server {
         if unprompted {
             tracing::info!(target: "pgman::mcp", database = %database, "restore unprompted (restore_confirm = clean_only)");
         } else {
-            let (question, accept) = ready.question();
+            let (question, typed) = ready.question();
             // The terminal's last line is its prompt; elicitation asks its own way.
             let message = question
                 .rsplit_once('\n')
                 .map(|(q, _)| q.to_string())
                 .unwrap_or(question);
-            let typed = (accept != "y").then_some(accept);
             let message = match &typed {
                 Some(name) => format!("{message}\nType {name} to confirm."),
                 None => message,

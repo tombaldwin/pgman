@@ -11,8 +11,6 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **MCP restore: a database literally named `y`** is replaced on a tick:
-  `typed` is inferred from the accept token. Carry `Prepare::Replace`.
 - **git in the agent's checkout.** `agent_rules`, `rules_commit` and the
   branch read run git with the checkout's config, so a planted
   `core.fsmonitor` runs in the MCP server. Pass `-c core.fsmonitor=false
