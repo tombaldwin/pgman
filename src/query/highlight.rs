@@ -750,6 +750,7 @@ mod tests {
             name: "users".into(),
             alias: Some("u".into()),
             virtual_columns: None,
+            derived: false,
         }];
         let buf = "u";
         let spans = tokenize(buf);

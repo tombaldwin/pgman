@@ -381,6 +381,7 @@ pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Can
             name: t.name.clone(),
             alias: None,
             virtual_columns: None,
+            derived: false,
         });
         // `EXCLUDED` is the Postgres virtual reference inside an
         // `ON CONFLICT DO UPDATE SET col = EXCLUDED.col` clause — it
@@ -393,6 +394,7 @@ pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Can
                 name: "EXCLUDED".into(),
                 alias: Some("EXCLUDED".into()),
                 virtual_columns: Some(cols),
+                derived: false,
             });
         }
     }

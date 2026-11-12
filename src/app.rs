@@ -913,8 +913,16 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
         return None;
     }
     let t = &refs[0];
-    // CTE / subquery aliases have an empty schema field too —
-    // but only catalog-rooted refs are useful for INSERT INTO.
+    // A subquery's alias, a function or a CTE names no table: `FROM
+    // (SELECT …) sub` was taken for `public.sub`, which doesn't exist.
+    if t.derived
+        || t.schema.is_none()
+            && crate::query::clause::extract_ctes(sql)
+                .iter()
+                .any(|c| c.name.eq_ignore_ascii_case(&t.name))
+    {
+        return None;
+    }
     // A bare table name with no resolved schema falls through;
     // we use "public" as the default (matching what Postgres does
     // when there's no search_path override).

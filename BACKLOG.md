@@ -196,9 +196,6 @@ small-UX, correctness and environments findings landed on branch
   reconstructs as `'1' + '2'` (operator is not unique). JDBC binds are
   typed; leaving numeric-looking values bare would fix that case and
   break a text column holding `007`. Needs a rule.
-- **`I` and `:fixture` treat a subquery alias as a table**:
-  `SELECT * FROM (SELECT …) sub` infers `public.sub`, a table that
-  doesn't exist. Refuse instead.
 - **An unqualified FROM is assumed to be in `public`** for the INSERT
   yank and `:fixture`, ignoring `search_path`; `:fixture` also drops a
   given schema.

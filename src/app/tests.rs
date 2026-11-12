@@ -2547,6 +2547,32 @@ fn infer_single_source_table_returns_none_for_joins() {
     assert!(infer_single_source_table("SELECT * FROM users u JOIN orders o ON true").is_none());
 }
 
+/// A subquery's alias, a function and a CTE name no table to insert
+/// into: `FROM (SELECT …) sub` was taken for `public.sub`.
+#[test]
+fn infer_single_source_table_returns_none_for_a_derived_source() {
+    for sql in [
+        "SELECT * FROM (SELECT * FROM users) sub",
+        "SELECT * FROM (SELECT * FROM users) AS sub WHERE id = 1",
+        "SELECT * FROM generate_series(1, 3) g",
+        "SELECT * FROM unnest(ARRAY[1, 2])",
+        "WITH recent AS (SELECT 1 AS id) SELECT * FROM recent",
+        "WITH Recent AS (SELECT 1 AS id) SELECT * FROM recent",
+    ] {
+        assert_eq!(infer_single_source_table(sql), None, "{sql}");
+    }
+    // A CTE that isn't the FROM leaves the table alone, and a qualified
+    // name is a table even when a CTE shares its bare name.
+    assert_eq!(
+        infer_single_source_table("WITH x AS (SELECT 1) SELECT * FROM users"),
+        Some(("public".into(), "users".into()))
+    );
+    assert_eq!(
+        infer_single_source_table("WITH users AS (SELECT 1) SELECT * FROM audit.users"),
+        Some(("audit".into(), "users".into()))
+    );
+}
+
 #[test]
 fn infer_single_source_table_returns_none_for_no_from() {
     assert!(infer_single_source_table("SELECT 1").is_none());

@@ -25,6 +25,10 @@ pub struct TableRefInQuery {
     /// inferred from the subquery's SELECT list. `None` for catalog
     /// tables (look those up in the schema cache).
     pub virtual_columns: Option<Vec<String>>,
+    /// True for a FROM item that is no relation of the catalog: a
+    /// subquery (`(SELECT …) sub`) or a function (`generate_series(1,
+    /// 3) g`). Its name can't be inserted into or updated.
+    pub derived: bool,
 }
 
 impl TableRefInQuery {
@@ -180,6 +184,7 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                             // qualified-lookup paths of completion.
                             alias: Some(name),
                             virtual_columns,
+                            derived: true,
                         });
                         i = alias_idx + 1;
                     } else {
@@ -192,6 +197,8 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                         break;
                     };
                     i = j;
+                    // A name followed by `(` is a function call.
+                    let derived = tokens.get(i).is_some_and(|t| !t.quoted && t.text == "(");
                     let (alias, j) = take_alias(&tokens, i);
                     i = j;
                     out.push(TableRefInQuery {
@@ -199,6 +206,7 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                         name: table.name,
                         alias,
                         virtual_columns: None,
+                        derived,
                     });
                 }
                 // After a comma, another table ref. Anything else ends
@@ -508,6 +516,7 @@ mod tests {
                 name: "users".into(),
                 alias: None,
                 virtual_columns: None,
+                derived: false,
             }]
         );
     }
@@ -717,6 +726,7 @@ mod tests {
             name: "Users".into(),
             alias: Some("u".into()),
             virtual_columns: None,
+            derived: false,
         };
         assert_eq!(r.match_key(), "u");
         let r2 = TableRefInQuery {
@@ -724,6 +734,7 @@ mod tests {
             name: "Users".into(),
             alias: None,
             virtual_columns: None,
+            derived: false,
         };
         assert_eq!(r2.match_key(), "users");
     }
