@@ -897,8 +897,20 @@ pub fn load() -> Loaded {
 
 /// Load everything and gather. Blocking: the aws CLI runs here.
 pub fn load_and_gather() -> Result<Vec<EnvReport>, String> {
+    load_and_gather_listing(false)
+}
+
+/// [`load_and_gather`], with the personal connections no environment
+/// names as one more ([`unlisted_connections`]): the TUI's overview,
+/// where a first-time user's connections.toml is otherwise nowhere.
+/// Blocking.
+pub fn load_and_gather_with_connections() -> Result<Vec<EnvReport>, String> {
+    load_and_gather_listing(true)
+}
+
+fn load_and_gather_listing(unlisted: bool) -> Result<Vec<EnvReport>, String> {
     let loaded = load();
-    let envs = loaded.environments?;
+    let mut envs = loaded.environments?;
     let personal = {
         let path = crate::util::config_file("connections.toml");
         match std::fs::read_to_string(&path) {
@@ -906,12 +918,93 @@ pub fn load_and_gather() -> Result<Vec<EnvReport>, String> {
             Err(_) => crate::mcp::connections::Personal::default(),
         }
     };
+    if unlisted {
+        envs.extend(unlisted_connections(&envs, &personal.connections));
+    }
     let entries = crate::mcp::connections::build(&personal.connections, Vec::new(), false);
     Ok(gather(&envs, &entries, fetch_rds, docker::fetch))
 }
 
+/// What [`unlisted_connections`] calls the environment it makes.
+pub const UNLISTED: &str = "connections";
+
+/// The personal connections no `static` environment names, as a static
+/// environment of their own called [`UNLISTED`]: connectable from the
+/// overview with their secrets, tunnels and password_env, as any
+/// environment's are. Not for MCP's `environments`, which lists
+/// environments.toml as written. None when there are none, or the name
+/// is taken. Pure.
+pub fn unlisted_connections(
+    envs: &[Environment],
+    personal: &[crate::mcp::connections::PersonalConnection],
+) -> Option<Environment> {
+    let named: std::collections::HashSet<&str> = envs
+        .iter()
+        .filter_map(|e| match &e.source {
+            Source::Static { connections } => Some(connections.iter().map(String::as_str)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let left: Vec<String> = personal
+        .iter()
+        .map(|c| c.base.name.clone())
+        .filter(|n| !named.contains(n.as_str()))
+        .collect();
+    if left.is_empty() || envs.iter().any(|e| e.name == UNLISTED) {
+        return None;
+    }
+    let list: Vec<String> = left
+        .into_iter()
+        .map(|n| toml::Value::String(n).to_string())
+        .collect();
+    parse_config(&format!(
+        "[[environments]]\nname = {}\nsource = {{ kind = \"static\", connections = [{}] }}\n",
+        toml::Value::String(UNLISTED.to_string()),
+        list.join(", ")
+    ))
+    .ok()?
+    .pop()
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn connections_no_environment_names_are_listed_as_their_own() {
+        let personal = crate::mcp::connections::parse_personal(
+            "[[connections]]\nname = \"local\"\nurl = \"postgres://me@localhost/app\"\n\
+             [[connections]]\nname = \"demo\"\nurl = \"postgres://me@demo.example/app\"\n\
+             [[connections]]\nname = \"odd \\\"one\\\"\"\nurl = \"postgres://me@x/app\"\n",
+        )
+        .connections;
+        assert_eq!(personal.len(), 3);
+        let envs = super::parse_config(
+            "[[environments]]\nname = \"staging\"\nsource = { kind = \"static\", connections = [\"demo\"] }\n",
+        )
+        .unwrap();
+        let e = super::unlisted_connections(&envs, &personal).unwrap();
+        assert_eq!(e.name, super::UNLISTED);
+        assert_eq!(
+            e.source,
+            super::Source::Static {
+                connections: vec!["local".into(), "odd \"one\"".into()]
+            },
+            "not demo, which staging lists; a quote in a name survives"
+        );
+        // Every one named, none at all, or the name taken: nothing added.
+        let all = super::parse_config(
+            "[[environments]]\nname = \"all\"\nsource = { kind = \"static\", connections = [\"demo\", \"local\", \"odd \\\"one\\\"\"] }\n",
+        )
+        .unwrap();
+        assert!(super::unlisted_connections(&all, &personal).is_none());
+        assert!(super::unlisted_connections(&envs, &[]).is_none());
+        let taken = super::parse_config(
+            "[[environments]]\nname = \"connections\"\nsource = { kind = \"docker\" }\n",
+        )
+        .unwrap();
+        assert!(super::unlisted_connections(&taken, &personal).is_none());
+    }
 
     /// Aurora instances carry no DBName: an environment over them used to
     /// say "matched nothing" although two instances matched.

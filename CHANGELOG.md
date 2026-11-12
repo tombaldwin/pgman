@@ -8,6 +8,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- The environments overview (`E`) lists the `connections.toml` entries
+  no environment names, under `connections`, and connects to them with
+  their tunnel, secret and `password_env`: a first connection no longer
+  needs an `environments.toml` too. The empty picker and the start card
+  point at it.
 - MCP's `dump` fills in the agent's `reason` (or the branch's ticket id)
   as the default of the operator's reason field, so the operator
   confirms it or edits it instead of retyping it. The operator still

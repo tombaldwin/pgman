@@ -164,9 +164,9 @@ pub fn running_status(kind: RunKind) -> String {
 /// Pure.
 pub fn no_picks_hint(have_dsn: bool) -> &'static str {
     if have_dsn {
-        "only the --dsn connection here · :connect postgres://… opens another; [[connections]] in pgman.toml lists more for c"
+        "only the --dsn connection here · :connect postgres://… opens another; E lists your connections.toml and environments"
     } else {
-        "no data sources to pick — pass --dsn, :connect postgres://…, or add `[[connections]]` to pgman.toml"
+        "no data sources to pick — E lists your connections.toml and environments · or pass --dsn, or :connect postgres://…"
     }
 }
 

@@ -13403,10 +13403,13 @@ fn c_with_only_a_dsn_points_at_connect_not_at_dsn() {
     press(&mut a, KeyCode::Char('c'));
     let s = a.last_status.clone().unwrap_or_default();
     assert!(s.contains(":connect") && !s.contains("pass --dsn"), "{s}");
+    assert!(s.contains("E lists your connections.toml"), "{s}");
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Normal;
     press(&mut a, KeyCode::Char('c'));
-    assert!(a.last_status.as_deref().unwrap().contains("pass --dsn"));
+    let s = a.last_status.clone().unwrap_or_default();
+    assert!(s.contains("pass --dsn"), "{s}");
+    assert!(s.contains("E lists your connections.toml"), "{s}");
 }
 
 #[test]

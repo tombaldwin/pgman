@@ -470,7 +470,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                         "pgman also auto-discovers application*.yml, .idea/dataSources.xml and .pgman/pgman.toml when run inside a project",
                     ));
                     lines.push(Line::from(
-                        "or :connect postgres://… here · E environments · pgman --demo to try it with no database",
+                        "or :connect postgres://… here · E your connections.toml and environments · pgman --demo to try it with no database",
                     ));
                 } else {
                     // Discovered connections exist but the picker isn't

@@ -118,6 +118,11 @@ source = { kind = "static", connections = ["ledger-local", "ledgerlog-local"] }
   `~/.pgpass` nor `PGPASSWORD` for environment databases.
 - A `static` environment's row connects with its `connections.toml`
   entry: that entry's tunnel, secret and role.
+- **Your other connections**: the `connections.toml` entries no
+  environment names are listed too, under `connections`, and connect
+  the same way. So `E` reaches them before you have written an
+  `environments.toml` at all. (MCP's `environments` tool lists your
+  environments.toml as written; its `connections` tool lists these.)
 
 An `rds` environment's connection settings sit beside its source:
 

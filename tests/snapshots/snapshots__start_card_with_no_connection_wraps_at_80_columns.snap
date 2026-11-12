@@ -15,8 +15,8 @@ expression: dump(&buf)
 │no connection — start pgman with --dsn postgres://…                           │
 │pgman also auto-discovers application*.yml, .idea/dataSources.xml and         │
 │.pgman/pgman.toml when run inside a project                                   │
-│or :connect postgres://… here · E environments · pgman --demo to try it with  │
-│no database                                                                   │
+│or :connect postgres://… here · E your connections.toml and environments ·    │
+│pgman --demo to try it with no database                                       │
 │                                                                              │
 │                                                                              │
 │                                                                              │

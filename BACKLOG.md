@@ -13,7 +13,7 @@ left.
 
 - **main.rs isn't thin** (3000 lines, as CLAUDE.md wants it): move the
   log-file lifecycle to logging.rs and batch DSN resolution to batch.rs.
-- **First-minute UX:** connections.toml entries absent from the TUI picker; no libpq env,
+- **First-minute UX:** no libpq env,
   .pgpass or pg_service.conf; no `pgman doctor` at a terminal; editor
   Ctrl-A/Ctrl-E (EXPLAIN) vs prompts' Home/End.
 - **Features, by value for effort:** MCP `explain` (S–M, explain.rs

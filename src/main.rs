@@ -641,7 +641,7 @@ async fn main() -> anyhow::Result<()> {
     let safety_config = project::merge_safety(load_safety_config(), project_safety.as_ref());
     let mut application = app::App::new(theme, dsn, data_source_picks, safety_config);
     application.environments_loader = Some(app::EnvironmentsLoader::Blocking(std::sync::Arc::new(
-        pgman::inventory::load_and_gather,
+        pgman::inventory::load_and_gather_with_connections,
     )));
     application.secret_fetcher = Some(std::sync::Arc::new(pgman::creds::aws_secrets::fetch));
     application.env_prober = Some(app::EnvProber::Async(std::sync::Arc::new(|report| {
