@@ -11,13 +11,6 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **Masking odds:** Flyway's `installed_by` and Liquibase's `author` are
-  kept by the migration presets (people's names); PG18 virtual
-  generated columns (`attgenerated = 'v'`) are copied and break the
-  restore; masked dumps should pass `--no-subscriptions` (a
-  subscription's conninfo can hold a password). Vocabulary gaps worth a
-  look: whatsapp/telegram, social handles, `*_answers.answer`,
-  `custom_field_values.value`, `vat`.
 - **MCP restore: a masked archive's data files** are read from the
   archive while loading, not from a checked copy. Rows only (the staged
   schema is what checks them); hash them as they stream to close it.
