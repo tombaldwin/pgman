@@ -4504,6 +4504,24 @@ impl App {
                 (Guard::Confirm, _) | (_, Guard::Confirm) => Guard::Confirm,
                 _ => Guard::Allow,
             });
+        // pgman wraps the writes in a transaction to offer a rollback; a
+        // COMMIT (or PREPARE TRANSACTION) in the script would end it
+        // early, and the rollback offered after would undo nothing.
+        let control = |s: &str| safety::is_transaction_control(s);
+        if statements
+            .iter()
+            .zip(&decisions)
+            .any(|(s, d)| d.wrap_in_tx && !control(s))
+            && statements.iter().any(|s| control(s))
+        {
+            self.last_error = Some(
+                "this script manages its own transaction (BEGIN, COMMIT, ROLLBACK…), and pgman \
+                 runs writes in one to offer a rollback after: take those statements out, or \
+                 set auto_tx = false for this database in safety.toml"
+                    .to_string(),
+            );
+            return;
+        }
         let kinds: Vec<safety::StatementKind> = decisions.iter().map(|d| d.kind).collect();
         let summary = batch_summary(&kinds);
         let synthesized = Decision {

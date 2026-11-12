@@ -8394,6 +8394,66 @@ fn demo_batch_hiding_a_drop_behind_a_quoted_identifier_is_refused() {
 }
 
 #[test]
+fn a_batch_with_its_own_commit_is_refused_while_pgman_wraps_writes() {
+    // Its COMMIT would end pgman's transaction, and the rollback
+    // offered after would undo nothing.
+    for script in [
+        "UPDATE users SET active = false WHERE id = 1; COMMIT; UPDATE users SET active = true WHERE id = 2",
+        "BEGIN; DELETE FROM users WHERE id = 1; COMMIT",
+        "UPDATE users SET active = false WHERE id = 1; PREPARE TRANSACTION 'x'",
+    ] {
+        let mut a = crate::demo::app(Theme::default());
+        run_in_demo(&mut a, script);
+        let err = a.last_error.as_deref().unwrap_or("");
+        assert!(err.contains("its own transaction"), "{script}: {err:?}");
+        assert_ne!(a.mode, Mode::Confirm, "{script}: refused, not asked");
+    }
+    // Reads around a COMMIT wrap nothing, and writes without one are
+    // pgman's to wrap: neither is refused for it.
+    for script in [
+        "SELECT 1; COMMIT",
+        "UPDATE users SET active = false WHERE id = 1; UPDATE users SET active = true WHERE id = 2",
+    ] {
+        let mut a = crate::demo::app(Theme::default());
+        run_in_demo(&mut a, script);
+        assert!(
+            !a.last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("its own transaction"),
+            "{script}: {:?}",
+            a.last_error
+        );
+    }
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "SELECT 1");
+    assert!(
+        !a.last_error
+            .as_deref()
+            .unwrap_or("")
+            .contains("its own transaction"),
+        "{:?}",
+        a.last_error
+    );
+    // Without auto_tx, nothing is wrapped: asked as any write.
+    let mut a = crate::demo::app(Theme::default());
+    a.safety_config.default.auto_tx = false;
+    a.safety_config.databases.clear();
+    run_in_demo(
+        &mut a,
+        "UPDATE users SET active = false WHERE id = 1; COMMIT",
+    );
+    assert!(
+        !a.last_error
+            .as_deref()
+            .unwrap_or("")
+            .contains("its own transaction"),
+        "{:?}",
+        a.last_error
+    );
+}
+
+#[test]
 fn demo_batch_the_splitter_cannot_verify_is_refused() {
     // Fail closed. An unterminated literal means the statement boundaries
     // are a guess, and a guard computed from a guess is not a guard.

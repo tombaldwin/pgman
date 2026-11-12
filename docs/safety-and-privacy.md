@@ -125,7 +125,10 @@
   statement runs, but nothing is durable until you decide. pgman then
   shows a commit/rollback prompt: `y`/`Y` commits, `n`/`N`/`Esc` rolls
   back. On a statement error, the transaction is rolled back
-  immediately so the session doesn't sit aborted. `EXPLAIN ANALYZE`
+  immediately so the session doesn't sit aborted. A script with writes
+  and its own `BEGIN`, `COMMIT` or `PREPARE TRANSACTION` is refused
+  while `auto_tx` is on: its `COMMIT` would end pgman's transaction, and
+  the rollback offered after would undo nothing. `EXPLAIN ANALYZE`
   on DML is a special
   case: the inner statement genuinely executes, so it's always wrapped
   in a transaction that is unconditionally rolled back regardless of

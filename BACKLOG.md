@@ -11,9 +11,6 @@ Five reviewers (MCP writes, masking, statement safety, code health,
 product). The four fixed at once are in the 0.5.3 changelog; these are
 left.
 
-- **TUI: a script with its own COMMIT under auto_tx.** `request_run_batch`
-  wraps it in BEGIN and then offers a rollback that rolls back nothing.
-  Refuse, or run it unwrapped with no TxDecision and say so.
 - **apply_patches: a tick for SQL past the 6000-character cut.** When the
   confirmation is cut, require the environment's name typed, or list
   per-file statement counts by guard.

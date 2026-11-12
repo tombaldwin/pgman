@@ -34,6 +34,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The editor ran a script with writes and its own `COMMIT` (or
+  `PREPARE TRANSACTION`) inside pgman's `auto_tx` transaction, so its
+  writes were committed at its `COMMIT` and the rollback pgman offered
+  after undid nothing. Such a script is now refused while `auto_tx` is
+  on, saying why.
 - A read-only session could be made writable by `set_config` with a
   column for the setting's name
   (`SELECT set_config(n, 'off', false) FROM (SELECT
