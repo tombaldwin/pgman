@@ -34,6 +34,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Masked dumps kept Flyway's `installed_by` and Liquibase's `author`
+  as they were (people's names, in every row), since a migration tool's
+  table is kept whole. Who ran a migration is now `pgman`.
 - A masked dump's schema now leaves out subscriptions
   (`--no-subscriptions`, pg_dump 10 on): dumped as a superuser, their
   connection strings can hold another server's password.

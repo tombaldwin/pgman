@@ -1338,6 +1338,15 @@ fn by_name_and_type(
     (Rule::Keep, Origin::Plain)
 }
 
+/// A column of a kept framework table naming who did it, by name:
+/// `installed_by`, `author`, an Envers revision's `username`. Pure.
+fn preset_actor(c: &Column) -> bool {
+    let w = words(&c.name);
+    let last = w.last().map(String::as_str).unwrap_or("");
+    text_like(&c.ty.base)
+        && (ACTOR_LAST.contains(&last) || any(&w, ACTOR) || matches!(last, "username" | "user"))
+}
+
 /// A framework table's preset, if `table` is one: (kept whole, or rows
 /// dropped, and the framework). Pure.
 fn preset(name: &str) -> Option<(bool, &'static str)> {
@@ -1496,6 +1505,12 @@ pub fn plan(catalog: &Catalog, rules: &RuleSet) -> Plan {
                 // employee_spouses.spouse_id is someone's, not a lookup's.
                 && !t.foreign_keys.iter().any(|fk| fk.columns.contains(&c.name));
             let mut d = match preset {
+                // Who ran a migration is a person, by name, in every row:
+                // flyway_schema_history.installed_by, databasechangelog.author.
+                Some((true, what)) if preset_actor(c) => (
+                    Rule::Fixed("pgman".into()),
+                    Origin::Preset(format!("{what}: who, as pgman")),
+                ),
                 Some((true, what)) => (Rule::Keep, Origin::Preset(what.to_string())),
                 _ if lookup_key => (Rule::Keep, Origin::Default("a lookup's own key".into())),
                 _ => {
@@ -2962,8 +2977,12 @@ mod tests {
             tables: vec![
                 table(
                     "flyway_schema_history",
-                    vec![c("installed_by", "varchar", Some(100))],
+                    vec![
+                        c("installed_by", "varchar", Some(100)),
+                        c("script", "varchar", Some(1000)),
+                    ],
                 ),
+                table("databasechangelog", vec![c("author", "varchar", Some(255))]),
                 table(
                     "spring_session",
                     vec![c("principal_name", "varchar", Some(100))],
@@ -2986,8 +3005,12 @@ mod tests {
         };
         let p = plan(&cat, &RuleSet::default());
         let fly = p.table("public.flyway_schema_history").unwrap();
-        assert_eq!(fly.columns[0].rule, Rule::Keep);
-        assert!(matches!(fly.columns[0].origin, Origin::Preset(_)));
+        // Kept whole, but for who ran it.
+        assert_eq!(fly.columns[0].rule, Rule::Fixed("pgman".into()));
+        assert_eq!(fly.columns[1].rule, Rule::Keep);
+        assert!(matches!(fly.columns[1].origin, Origin::Preset(_)));
+        let lb = p.table("public.databasechangelog").unwrap();
+        assert_eq!(lb.columns[0].rule, Rule::Fixed("pgman".into()));
         assert!(p.table("public.spring_session").unwrap().drop_rows);
         let aud = p.table("public.customers_aud").unwrap();
         assert_eq!(
