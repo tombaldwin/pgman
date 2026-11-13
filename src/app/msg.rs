@@ -103,6 +103,14 @@ pub enum AppMsg {
         value: crate::grid::Cell,
         tx: crate::conn::EditTx,
     },
+    /// A cell edit's UPDATE failed: the server refused it, or the
+    /// one-row guard rolled it back. `pending` carries what was typed,
+    /// so the editor can open again with it.
+    CellUpdateFailed {
+        generation: u64,
+        pending: crate::app::PendingCellEdit,
+        error: crate::conn::QueryErr,
+    },
     /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
     /// `error` keeps the server's fields, so a `FATAL` in place of the
     /// answer reaches the connection-lost card (`App::session_ended_with`).
@@ -298,6 +306,7 @@ impl AppMsg {
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. }
             | AppMsg::CellUpdated { generation, .. }
+            | AppMsg::CellUpdateFailed { generation, .. }
             | AppMsg::Notice { generation, .. }
             | AppMsg::Notification { generation, .. }
             | AppMsg::SlowQueriesLoaded { generation, .. }

@@ -387,6 +387,9 @@ impl App {
             AppMsg::CellUpdated {
                 pending, value, tx, ..
             } => self.on_cell_updated(pending, value, tx),
+            AppMsg::CellUpdateFailed { pending, error, .. } => {
+                self.on_cell_update_failed(pending, error)
+            }
             AppMsg::TxClosed {
                 committed, error, ..
             } => {

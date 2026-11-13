@@ -293,9 +293,6 @@ batch.
   yet; once we do, apply per-line.
 
 ### Result grid
-- **A failed cell save loses what was typed.** An UPDATE the server
-  rejects (an invalid numeric) closes the editor; it should reopen
-  with the value.
 - **Cells holding a line break or control character can't be edited
   inline** (refused with a reason); a multi-line editor would.
 - **`--demo` can't edit cells**: its grids carry no column origins.

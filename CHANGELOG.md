@@ -78,6 +78,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A cell edit the server refuses (an invalid number, a constraint)
+  opens the editor again holding what was typed, with the error below.
+  It closed, and the value had to be typed again.
 - MCP `query` and `explain` say why when the read-only session refuses
   a statement that writes (a function's INSERT, `nextval`): MCP runs
   every query read-only, and schema changes go through

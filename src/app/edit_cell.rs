@@ -305,11 +305,10 @@ impl App {
                     value: done.value,
                     tx: done.tx,
                 },
-                Err(e) => AppMsg::QueryFailed {
+                Err(error) => AppMsg::CellUpdateFailed {
                     generation,
-                    error: e.msg,
-                    position: None,
-                    detail: e.detail,
+                    pending,
+                    error,
                 },
             };
             let _ = tx.send(msg);
@@ -360,6 +359,36 @@ impl App {
             " · the grid changed meanwhile, re-run to see it"
         };
         self.last_status = Some(format!("updated {target} · {state}{moved}"));
+    }
+
+    /// The UPDATE failed, and nothing changed. The failure is shown as
+    /// any query's is; then the editor opens again with what was typed,
+    /// which closing it used to lose (an invalid numeric, a too-long
+    /// value, a constraint). Not when the session ended, or the
+    /// operator has moved on from where the edit began.
+    pub(super) fn on_cell_update_failed(
+        &mut self,
+        pending: PendingCellEdit,
+        error: conn::QueryErr,
+    ) {
+        let ended = error.detail.as_ref().is_some_and(|d| d.ends_session());
+        self.on_msg(AppMsg::QueryFailed {
+            generation: self.generation,
+            error: error.msg,
+            position: None,
+            detail: error.detail,
+        });
+        if ended || self.mode != pending.return_to || self.cell_edit.is_some() {
+            return;
+        }
+        self.cell_edit = Some(CellEditUi {
+            null: pending.new.is_none(),
+            input: TextInput::with_text(pending.new.clone().unwrap_or_default()),
+            edit: pending.edit,
+            row_cells: pending.row_cells,
+            return_to: pending.return_to,
+        });
+        self.mode = Mode::CellEdit;
     }
 
     /// An `auto_tx` edit was rolled back: the grid shows the old value
@@ -644,6 +673,78 @@ mod tests {
         assert!(a.edit_awaiting_tx.is_none());
     }
 
+    /// A save the server refuses opens the editor again with what was
+    /// typed, the error in the footer; closing it lost the value.
+    #[test]
+    fn a_refused_save_opens_the_editor_again_with_what_was_typed() {
+        let mut a = editing(Some("bo"));
+        a.cell_edit.as_mut().unwrap().return_to = Mode::RowDetail;
+        let p = pending(&a, Some("not a number"));
+        a.cell_edit = None;
+        a.mode = Mode::RowDetail;
+        a.query_running = true;
+        a.on_msg(AppMsg::CellUpdateFailed {
+            generation: a.generation,
+            pending: p.clone(),
+            error: conn::QueryErr::msg("invalid input syntax for type integer"),
+        });
+        assert!(!a.query_running);
+        assert_eq!(a.mode, Mode::CellEdit);
+        assert_eq!(value(&a), Some("not a number".into()));
+        assert_eq!(a.cell_edit.as_ref().unwrap().return_to, Mode::RowDetail);
+        assert!(a
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("invalid input syntax")));
+        assert_eq!(a.grid.rows[1][1].as_deref(), Some("bo"), "nothing changed");
+        // Esc still goes back where the edit began.
+        a.on_key(key(KeyCode::Esc));
+        assert_eq!(a.mode, Mode::RowDetail);
+
+        // A NULL that was refused comes back as NULL.
+        let mut a = editing(Some("bo"));
+        let p = pending(&a, None);
+        a.cell_edit = None;
+        a.mode = Mode::Normal;
+        a.on_msg(AppMsg::CellUpdateFailed {
+            generation: a.generation,
+            pending: p.clone(),
+            error: conn::QueryErr::msg("null value violates not-null constraint"),
+        });
+        assert_eq!(a.mode, Mode::CellEdit);
+        assert_eq!(value(&a), None);
+
+        // Not once the operator has moved on, nor when the session ended.
+        let mut a = editing(Some("bo"));
+        a.cell_edit = None;
+        a.mode = Mode::Sessions;
+        a.on_msg(AppMsg::CellUpdateFailed {
+            generation: a.generation,
+            pending: p.clone(),
+            error: conn::QueryErr::msg("refused"),
+        });
+        assert_eq!(a.mode, Mode::Sessions);
+        assert!(a.cell_edit.is_none());
+        let mut a = editing(Some("bo"));
+        a.cell_edit = None;
+        a.mode = Mode::Normal;
+        a.on_msg(AppMsg::CellUpdateFailed {
+            generation: a.generation,
+            pending: p,
+            error: conn::QueryErr {
+                msg: "terminating connection due to administrator command".into(),
+                position: None,
+                detail: Some(conn::QueryErrDetail {
+                    severity: Some("FATAL".into()),
+                    code: Some("57P01".into()),
+                    ..Default::default()
+                }),
+            },
+        });
+        assert!(a.cell_edit.is_none());
+        assert_ne!(a.mode, Mode::CellEdit);
+    }
+
     /// `:` over an edit's confirm cancels it back to the grid, like `n`.
     #[test]
     fn the_command_bar_over_an_edits_confirm_goes_back_to_the_grid() {
@@ -865,6 +966,39 @@ mod live {
         assert_eq!(a.grid.row_count(), 1000);
         assert!(paging.is_none(), "{paging:?}");
         assert_eq!(more, crate::grid::More::Unpaged);
+    }
+
+    /// A value the server refuses (not a number) leaves the row as it
+    /// was and opens the editor again holding what was typed.
+    #[tokio::test]
+    async fn a_refused_save_keeps_what_was_typed() {
+        let client = client().await;
+        let t = name("live_refused");
+        client
+            .batch_execute(&format!(
+                "CREATE TABLE {t} (id int PRIMARY KEY, price numeric(8,2)); \
+                 INSERT INTO {t} VALUES (1, 1)"
+            ))
+            .await
+            .expect("create");
+        let mut a = app(&client).await;
+        run(&mut a, &format!("SELECT * FROM {t}")).await;
+        u_at(&mut a, 0, 1);
+        type_and_save(&mut a, "1,5");
+        a.on_key(key(KeyCode::Char('y')));
+        pump(&mut a).await;
+        let stored = scalar(&client, &format!("SELECT price FROM {t}")).await;
+        let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+        assert_eq!(stored.as_deref(), Some("1.00"));
+        assert_eq!(a.mode, Mode::CellEdit, "{:?}", a.last_error);
+        assert_eq!(a.cell_edit.as_ref().unwrap().value(), Some("1,5".into()));
+        assert!(
+            a.last_error
+                .as_deref()
+                .is_some_and(|e| e.contains("invalid input syntax")),
+            "{:?}",
+            a.last_error
+        );
     }
 
     #[tokio::test]
