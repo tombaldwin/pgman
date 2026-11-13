@@ -64,6 +64,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- A cell edit whose UPDATE matched no row now says a row-level
+  security policy may be why (one can show a row and not let it be
+  updated), as well as the row being deleted or its key changed.
 - A rules file's confirmation lists every rule it sets, not only `keep`,
   `null`, `fixed` and `hash`. A `postcode`, `year` or `date.shift` is
   listed with what it keeps, because on a column the defaults mask whole

@@ -8575,7 +8575,7 @@ async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
     assert_eq!(after_two.as_deref(), Some("c,gone,p"));
     assert_eq!(
         none,
-        Err("the UPDATE matched no row (deleted, or its key changed, since the query ran) · rolled back, nothing changed".into())
+        Err("the UPDATE matched no row (deleted or its key changed since the query ran, or a row-level security policy lets you see it but not update it) · rolled back, nothing changed".into())
     );
     // The rollback ended the edit's own transaction: a new statement is
     // its own transaction again.

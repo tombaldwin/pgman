@@ -402,7 +402,7 @@ pub fn key_summary(edit: &CellEdit) -> String {
 pub fn check_one_row(rows: u64) -> Result<(), String> {
     match rows {
         1 => Ok(()),
-        0 => Err("the UPDATE matched no row (deleted, or its key changed, since the query ran) · rolled back, nothing changed".into()),
+        0 => Err("the UPDATE matched no row (deleted or its key changed since the query ran, or a row-level security policy lets you see it but not update it) · rolled back, nothing changed".into()),
         n => Err(format!(
             "the UPDATE matched {n} rows, not 1 · rolled back, nothing changed"
         )),
@@ -823,7 +823,10 @@ mod tests {
     #[test]
     fn only_exactly_one_row_passes_the_guard() {
         assert_eq!(check_one_row(1), Ok(()));
-        assert!(check_one_row(0).unwrap_err().contains("matched no row"));
+        let none = check_one_row(0).unwrap_err();
+        assert!(none.contains("matched no row"), "{none}");
+        // A policy that shows a row but won't update it looks the same.
+        assert!(none.contains("row-level security"), "{none}");
         assert!(check_one_row(2)
             .unwrap_err()
             .contains("matched 2 rows, not 1 · rolled back"));
