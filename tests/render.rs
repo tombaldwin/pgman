@@ -1576,12 +1576,14 @@ fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
             .iter()
             .position(|l| l.contains("logs"))
             .unwrap_or_else(|| panic!("no logs row at {width}:\n{text}"));
-        let logs_rows: String = lines[at..]
+        let logs: Vec<&str> = lines[at..]
             .iter()
             .enumerate()
             .take_while(|(i, l)| *i == 0 || l.chars().skip(1).take(10).all(|c| c == ' '))
             .map(|(_, l)| l.trim_matches(|c| c == '│' || c == ' '))
+            .take_while(|l| !l.is_empty())
             .collect();
+        let logs_rows: String = logs.concat();
         assert!(
             logs_rows.contains("pgman.log."),
             "the dated file name must be under the logs label at {width}: {logs_rows:?}\n{text}"
@@ -1590,10 +1592,21 @@ fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
             !text.contains("pgman.log\n") && !text.contains("pgman.log "),
             "the undated name must not appear at {width}:\n{text}"
         );
+        // The card keeps its actions row while the log path fits in two
+        // rows. A longer cache path (a long HOME) fills the card, and its
+        // actions row is what is cut: the footer still has the keys.
+        let in_card = text
+            .lines()
+            .any(|l| l.starts_with('│') && l.contains("r retry") && l.contains("q quit"));
+        assert!(
+            in_card || logs.len() > 2,
+            "the card's actions row was cut off at {width}x24:\n{text}"
+        );
         assert!(
             text.lines()
-                .any(|l| l.starts_with('│') && l.contains("r retry") && l.contains("q quit")),
-            "the card's actions row was cut off at {width}x24:\n{text}"
+                .last()
+                .is_some_and(|l| l.contains("r retry") && l.contains("q quit")),
+            "the footer's keys at {width}x24:\n{text}"
         );
     }
     // Narrow: the path is wrapped whole — no `…` — onto continuation
@@ -1626,7 +1639,13 @@ fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
         let rows: Vec<String> = lines[at + 1..]
             .iter()
             .map(|l| l.chars().skip(1).collect::<String>())
-            .take_while(|body| !body.trim_end_matches('│').trim().is_empty())
+            // To a blank row, or the next heading (two spaces, then the
+            // word): a card filled by a long log path has no blank row
+            // between the error and the hint.
+            .take_while(|body| {
+                !body.trim_end_matches('│').trim().is_empty()
+                    && (!body.starts_with("  ") || body[2..].starts_with(' '))
+            })
             .collect();
         assert!(rows.len() > 1, "{heading} should wrap at 30:\n{text}");
         for body in &rows {

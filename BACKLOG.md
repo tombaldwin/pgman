@@ -315,12 +315,6 @@ batch.
   bare names only: a connections.toml entry or a URL isn't placed in an
   environment. Matching a connection to an environment's server by
   host would let `[databases."ENV/DATABASE"]` apply there too.
-- **A render test that depends on HOME's length.**
-  `tests/render.rs` `connection_failure_card_names_the_dated_log_and_wraps_it_whole`
-  fails under a long scratch HOME (found 2026-11-11): at 30x40 the
-  wrapped log path pushes the error section up against the hint, and
-  the error rows' check reads on into the hint heading. It passes with
-  a short HOME and in CI. Pin the cache dir, or bound the rows read.
 
 ### From a client's first MCP dump and restore (2026-11-02)
 
