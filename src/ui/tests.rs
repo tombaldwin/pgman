@@ -166,6 +166,11 @@ fn diff_cell_says_null_and_empty_string_apart() {
     assert_eq!(diff_cell(&None), "NULL");
     assert_eq!(diff_cell(&Some(String::new())), "''");
     assert_eq!(diff_cell(&Some("x".into())), "x");
+    // Text that reads as a marker is quoted: the string 'NULL' and SQL
+    // NULL drew the same.
+    assert_eq!(diff_cell(&Some("NULL".into())), "'NULL'");
+    assert_eq!(diff_cell(&Some("''".into())), "''''''");
+    assert_eq!(diff_cell(&Some("null".into())), "null");
 }
 
 #[test]

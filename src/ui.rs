@@ -2241,12 +2241,17 @@ pub(crate) fn build_field_layout(
 
 /// A cell as the result diff's one-line rows show it: NULL as `NULL`
 /// and the empty string as `''`, so a NULL → `''` change reads as one
-/// (it drew as `col:  → ` before). Pure / testable.
-pub(crate) fn diff_cell(cell: &grid::Cell) -> &str {
+/// (it drew as `col:  → ` before). Text that reads as one of those
+/// markers is quoted, `'NULL'`, so the string and SQL NULL differ too.
+/// Pure / testable.
+pub(crate) fn diff_cell(cell: &grid::Cell) -> std::borrow::Cow<'_, str> {
     match cell.as_deref() {
-        None => grid::NULL_MARKER,
-        Some("") => "''",
-        Some(text) => text,
+        None => grid::NULL_MARKER.into(),
+        Some("") => "''".into(),
+        Some(text) if text == grid::NULL_MARKER || text == "''" => {
+            format!("'{}'", text.replace('\'', "''")).into()
+        }
+        Some(text) => text.into(),
     }
 }
 
