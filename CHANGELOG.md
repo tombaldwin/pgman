@@ -78,6 +78,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The result diff (`D`) says when a side held only the rows fetched so
+  far (a capped or paged result), and that a row past its end reads as
+  added or removed. A pinned side forgot it was partial.
 - The result diff (`D`) no longer keys rows on a column holding a NULL
   (one NULL on each side paired two unrelated rows), and a change line
   shows text reading `NULL` as `'NULL'`, apart from SQL NULL.

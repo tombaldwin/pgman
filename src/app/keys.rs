@@ -1334,6 +1334,7 @@ impl App {
                         label: d.b_label.clone(),
                         source: d.b_source.clone(),
                         origins: d.b_origins.clone(),
+                        truncated: d.b_truncated,
                     });
                     self.mode = Mode::Normal;
                     self.result_diff.active = None;

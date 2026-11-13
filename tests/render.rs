@@ -358,6 +358,7 @@ fn result_diff_view_renders_added_removed_changed() {
         label: "A-query".into(),
         source: None,
         origins: Vec::new(),
+        truncated: false,
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
@@ -366,6 +367,7 @@ fn result_diff_view_renders_added_removed_changed() {
         b_label: "B-query".into(),
         b_source: None,
         b_origins: Vec::new(),
+        b_truncated: false,
         key,
         key_is_pk: false,
         diff,
@@ -408,6 +410,7 @@ fn result_diff_shows_a_null_to_empty_string_change() {
         label: "A-query".into(),
         source: None,
         origins: Vec::new(),
+        truncated: false,
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
@@ -416,6 +419,7 @@ fn result_diff_shows_a_null_to_empty_string_change() {
         b_label: "B-query".into(),
         b_source: None,
         b_origins: Vec::new(),
+        b_truncated: false,
         key,
         key_is_pk: false,
         diff,
@@ -424,6 +428,40 @@ fn result_diff_shows_a_null_to_empty_string_change() {
     a.mode = Mode::ResultDiff;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(rendered.contains("note: NULL → ''"), "\n{rendered}");
+}
+
+/// A side that held only the rows fetched so far is named as partial.
+#[test]
+fn result_diff_says_a_side_is_partial() {
+    let mut a = settle_app();
+    let cols = vec!["id".to_string()];
+    let rows = vec![vec![Some("1".to_string())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![0]);
+    let diff = pgman::query::row_diff::diff_rows(&rows, &rows, &key);
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: rows.clone(),
+        label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
+        truncated: true,
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned.clone(),
+        b_columns: cols,
+        b_rows: rows,
+        b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
+        b_truncated: false,
+        key,
+        key_is_pk: false,
+        diff,
+    });
+    a.result_diff.pinned = Some(pinned);
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(rendered.contains("A is partial"), "\n{rendered}");
 }
 
 /// A diff keyed on the source table's primary key says so in its title.
@@ -440,6 +478,7 @@ fn result_diff_title_names_a_primary_key() {
         label: "A-query".into(),
         source: None,
         origins: Vec::new(),
+        truncated: false,
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
@@ -448,6 +487,7 @@ fn result_diff_title_names_a_primary_key() {
         b_label: "B-query".into(),
         b_source: None,
         b_origins: Vec::new(),
+        b_truncated: false,
         key,
         key_is_pk: true,
         diff,
@@ -473,6 +513,7 @@ fn result_diff_title_keeps_the_key_at_80_columns() {
         label: "SELECT name, id FROM ledger.accounts ORDER BY id".into(),
         source: None,
         origins: Vec::new(),
+        truncated: false,
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned,
@@ -481,6 +522,7 @@ fn result_diff_title_keeps_the_key_at_80_columns() {
         b_label: "SELECT name, id FROM ledger.accounts WHERE active".into(),
         b_source: None,
         b_origins: Vec::new(),
+        b_truncated: false,
         key,
         key_is_pk: true,
         diff,
@@ -520,12 +562,14 @@ fn a_result_diff_of_different_columns_says_so() {
                 label: "q1".into(),
                 source: None,
                 origins: Vec::new(),
+                truncated: false,
             },
             b_columns: b_cols,
             b_rows,
             b_label: "q2".into(),
             b_source: None,
             b_origins: Vec::new(),
+            b_truncated: false,
             key,
             key_is_pk: false,
             diff,

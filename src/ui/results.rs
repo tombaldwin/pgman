@@ -597,6 +597,22 @@ pub(crate) fn columns_differ_note(a: &[String], b: &[String]) -> Option<String> 
     ))
 }
 
+/// The result diff's note when a side held only the rows fetched so far
+/// (a capped or paged result): a row past its end isn't compared, and
+/// the other side's copy of it reads as removed or added. `None` when
+/// both are whole. Pure.
+pub(crate) fn partial_sides_note(a: bool, b: bool) -> Option<String> {
+    let (who, reads) = match (a, b) {
+        (false, false) => return None,
+        (true, false) => ("A is", "added"),
+        (false, true) => ("B is", "removed"),
+        (true, true) => ("A and B are", "removed or added"),
+    };
+    Some(format!(
+        "{who} partial (the rows fetched so far) · a row past the end reads as {reads}"
+    ))
+}
+
 /// Result-diff overlay (`Mode::ResultDiff`). Renders A-vs-B as a
 /// grouped list: removed rows, then changed rows (with per-cell
 /// old→new deltas), then added rows. Unchanged rows are only
@@ -669,6 +685,12 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
         ),
     ]));
     if let Some(note) = columns_note {
+        lines.push(Line::from(Span::styled(
+            grid::truncate_cell(&note, inner.width as usize),
+            Style::default().fg(theme.health_yellow),
+        )));
+    }
+    if let Some(note) = partial_sides_note(state.a.truncated, state.b_truncated) {
         lines.push(Line::from(Span::styled(
             grid::truncate_cell(&note, inner.width as usize),
             Style::default().fg(theme.health_yellow),

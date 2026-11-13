@@ -1495,6 +1495,29 @@ fn grid_of(columns: &[&str], rows: &[&[&str]]) -> Grid {
     }
 }
 
+/// A partial grid (the rows fetched so far) stays partial as a diff
+/// side, pinned or re-pinned with `r`: the view says so.
+#[test]
+fn result_diff_sides_keep_whether_they_were_partial() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"], &["2"]]);
+    a.grid.truncated = true;
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('D')));
+    assert!(a.result_diff.pinned.as_ref().unwrap().truncated);
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.on_key(KeyEvent::from(KeyCode::Char('D')));
+    let d = a.result_diff.active.as_ref().expect("a diff");
+    assert!(d.a.truncated && !d.b_truncated);
+    // B, partial, re-pinned as A, is still partial.
+    a.grid.truncated = true;
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('D')));
+    assert!(a.result_diff.active.as_ref().unwrap().b_truncated);
+    a.on_key(KeyEvent::from(KeyCode::Char('r')));
+    assert!(a.result_diff.pinned.as_ref().unwrap().truncated);
+}
+
 #[test]
 fn result_diff_d_with_empty_grid_is_a_status_not_an_error() {
     // pgman's own "nothing to do" notice is not a failure: as an error
@@ -15071,6 +15094,7 @@ fn pin(
             .iter()
             .map(|o| o.map(|(table_oid, attnum)| crate::grid::ColumnOrigin { table_oid, attnum }))
             .collect(),
+        truncated: false,
     }
 }
 

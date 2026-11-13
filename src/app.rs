@@ -4829,6 +4829,7 @@ impl App {
                     b_label: b.label,
                     b_source: b.source,
                     b_origins: b.origins,
+                    b_truncated: b.truncated,
                     key,
                     key_is_pk,
                     diff,
@@ -4850,6 +4851,7 @@ impl App {
             label: self.current_result_label(),
             source: self.grid_view.source.clone(),
             origins: self.grid_view.origins.clone(),
+            truncated: self.grid.truncated,
         }
     }
 

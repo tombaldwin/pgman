@@ -551,6 +551,9 @@ pub struct PinnedResult {
     /// table's real primary key.
     pub source: Option<(String, String)>,
     pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
+    /// The grid held only the rows fetched so far (`Grid::truncated`):
+    /// a row past its end isn't in the diff.
+    pub truncated: bool,
 }
 
 /// Frozen state behind `Mode::ResultDiff`: the baseline (A), a
@@ -565,6 +568,8 @@ pub struct ResultDiffState {
     pub b_label: String,
     pub b_source: Option<(String, String)>,
     pub b_origins: Vec<Option<crate::grid::ColumnOrigin>>,
+    /// B held only the rows fetched so far, as `PinnedResult::truncated`.
+    pub b_truncated: bool,
     pub key: crate::query::row_diff::RowKey,
     /// `key` is the source table's primary key, not an inferred unique
     /// column.

@@ -2959,6 +2959,24 @@ fn grid_header_text_cuts_the_name_and_keeps_the_sort_marker() {
 }
 
 #[test]
+fn partial_sides_note_says_which_side_and_what_it_does() {
+    use super::results::partial_sides_note;
+    assert_eq!(partial_sides_note(false, false), None);
+    let a = partial_sides_note(true, false).unwrap();
+    assert!(
+        a.starts_with("A is partial") && a.ends_with("reads as added"),
+        "{a}"
+    );
+    let b = partial_sides_note(false, true).unwrap();
+    assert!(
+        b.starts_with("B is partial") && b.ends_with("reads as removed"),
+        "{b}"
+    );
+    let both = partial_sides_note(true, true).unwrap();
+    assert!(both.starts_with("A and B are partial"), "{both}");
+}
+
+#[test]
 fn columns_differ_note_names_the_shape_or_nothing() {
     use super::results::columns_differ_note;
     let cols = |c: &[&str]| c.iter().map(|s| s.to_string()).collect::<Vec<_>>();
