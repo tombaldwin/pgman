@@ -20,6 +20,7 @@ Historical record. Newest at the top within each section.
 - Result diff: no NULL key; `'NULL'` text quoted; a partial side says
   so; `D` pins afresh over another table's A; the same columns in
   another order line up.
+- Filtering after scrolling down shows the matches from the top.
 - Killed by evidence: "a static environment's primary row is never
   probed" (v0.2.0 panel). 130c4c3, the day before, links a static
   replica to its primary and reads the primary through it, as

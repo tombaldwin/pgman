@@ -4689,8 +4689,16 @@ impl App {
     /// visible set is just `0..rows.len()` (kept materialised so the
     /// render path has one code path).
     fn rebuild_visible_rows(&mut self) {
+        let before = self.grid_view.visible_rows.len();
         self.grid_view.visible_rows =
             compute_visible_rows(&self.grid.rows, self.grid_view.filter.as_deref());
+        // A new set of rows scrolls from the top. The old offset, far
+        // down a long result, left the few matches drawn from the
+        // selected (last) one, blank below; the table scrolls on from
+        // 0 to keep the selection in view.
+        if self.grid_view.visible_rows.len() != before {
+            *self.grid_state.offset_mut() = 0;
+        }
         // Keep the selection in range.
         let visible = self.grid_view.visible_rows.len();
         if visible == 0 {

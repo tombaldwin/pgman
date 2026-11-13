@@ -3035,3 +3035,38 @@ fn a_failed_sessions_load_says_why_in_the_panel() {
         "sessions:\n{s}"
     );
 }
+
+/// Filtering after scrolling down: the matches fill the grid from the
+/// top. The scroll offset was kept, so only the selected (last) match
+/// showed, with blank rows under it.
+#[test]
+fn a_filter_after_scrolling_down_shows_the_matches_from_the_top() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    let mut a = settled_app(false, false);
+    a.grid = crate::grid::Grid {
+        columns: vec!["id".into(), "tag".into()],
+        rows: (0..900)
+            .map(|i| {
+                let tag = if i % 100 == 7 { "pick" } else { "skip" };
+                vec![Some(i.to_string()), Some(tag.to_string())]
+            })
+            .collect(),
+        truncated: false,
+    };
+    a.reset_grid_view();
+    a.conn_state = crate::app::ConnState::Connected {
+        server_version: "16".into(),
+    };
+    a.mode = Mode::Normal;
+    a.grid_state.select(Some(850));
+    let first = screen_text(&mut a, 80, 30);
+    assert!(a.grid_state.offset() > 800, "scrolled down first:\n{first}");
+    a.on_key(KeyEvent::from(KeyCode::Char('/')));
+    for c in "pick".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    let s = screen_text(&mut a, 80, 30);
+    let shown = s.lines().filter(|l| l.contains("pick")).count();
+    assert_eq!(shown, 9, "all nine matches, from the top:\n{s}");
+}

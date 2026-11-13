@@ -388,9 +388,6 @@ batch.
   Esc and `M` arrived together (read as Alt-M), a later `M` said the
   cursor had closed while the server still showed `idle in
   transaction`. Not reproduced in four tries; look with the log on.
-- **Filtering after scrolling down leaves the grid scrolled** so only
-  the selected row shows, blank below (reproduces unpaged at 900 rows;
-  paging hits it more, since a fetch jumps the selection to row 1001).
 - **Paging's 60 s idle / 10 min open limits are constants**; they could
   be `pgman.toml` settings.
 - **The advisor and the live lint run on the editor's session**, so

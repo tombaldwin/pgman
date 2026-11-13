@@ -81,6 +81,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Filtering the grid after scrolling down a long result shows the
+  matches from the top. Only the last match showed, with blank rows
+  under it.
 - The result diff (`D`) matches B's columns to A's by name when a query
   lists the same columns in another order, so it keys on the primary
   key and compares column by column. Every row read as removed and
