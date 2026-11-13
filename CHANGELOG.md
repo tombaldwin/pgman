@@ -81,6 +81,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The schema wizard (`W`) says on its bottom border how many lines of
+  the focused finding a short terminal cuts. The detail strip just
+  stopped.
 - Filtering the grid after scrolling down a long result shows the
   matches from the top. Only the last match showed, with blank rows
   under it.

@@ -1,6 +1,6 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
+assertion_line: 255
 expression: dump(&buf)
 ---
  pgman X.X.X │ ledger  connected · pg 16.4
@@ -15,7 +15,7 @@ expression: dump(&buf)
 │I│  ADV002 · queries spill to temp files (187 GB so    │  │
 │I│  far)                                               │  │
 │I│  setting:  work_mem 4MB (this session) → 8MB (no    │  │
-│I╰─────────────────────────────────────────────────────╯  │
+│I╰─ ↓ 35 more line(s) · a taller terminal shows them ──╯  │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   tip · ? full keys

@@ -360,8 +360,6 @@ batch.
   connections turn up.
 
 ### From the v0.2.1 polish (2026-10-24)
-- **The schema wizard's detail strip at 60x16** is clipped by height
-  with no "more" marker.
 - **`--demo`'s no-log decision is pinned only as a pure function**:
   nothing fails if `main()` calls `init_logging()` unconditionally
   again. A pty-driven subprocess test would pin the call site.

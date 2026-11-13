@@ -623,7 +623,32 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     }
     f.render_widget(Paragraph::new(Text::from(lines)), top);
 
+    let cut = detail_lines.len().saturating_sub(detail.height as usize);
     f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
+    // A short terminal cuts the strip: the panel's bottom border says
+    // how much more there is, leaving the strip's rows to the finding
+    // (an advisor's setting comes first).
+    if let Some(note) = detail_cut_note(cut) {
+        let row = Rect {
+            x: popup.x + 2,
+            y: popup.y + popup.height.saturating_sub(1),
+            width: popup.width.saturating_sub(4),
+            height: 1.min(popup.height),
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                crate::grid::truncate_cell(&note, row.width as usize),
+                Style::default().fg(theme.muted),
+            ))),
+            row,
+        );
+    }
+}
+
+/// What the wizard's bottom border says when the detail strip is `cut`
+/// lines short. `None` when nothing is. Pure.
+pub(crate) fn detail_cut_note(cut: usize) -> Option<String> {
+    (cut > 0).then(|| format!(" ↓ {cut} more line(s) · a taller terminal shows them "))
 }
 
 /// The wizard list's `object` and `title` widths for a row `width`

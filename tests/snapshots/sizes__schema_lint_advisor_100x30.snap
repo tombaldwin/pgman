@@ -1,6 +1,6 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
+assertion_line: 255
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X · released YYYY-MM-DD ───────────────────────────╮╭──────────────────────────────────╮
@@ -28,7 +28,7 @@ expression: dump(&buf)
 │   │    created_at                                                                            │   │
 │   │  because:  the worst statement spills 41 MB a call, more than 4× work_mem: twice helps   │   │
 │   │            the smaller spills, but no safe work_mem covers that one — look at the        │   │
-│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
+│   ╰─ ↓ 9 more line(s) · a taller terminal shows them ────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

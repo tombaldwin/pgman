@@ -1,6 +1,6 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
+assertion_line: 255
 expression: dump(&buf)
 ---
  pgman X.X.X │ ledger  connected · pg 16.4
@@ -15,7 +15,7 @@ expression: dump(&buf)
 │I│  LINT101 · FK column not the leading column of any  │  │
 │I│  index                                              │  │
 │I│  object: public.accounts.accounts_customer_id_fkey  │  │
-│I╰─────────────────────────────────────────────────────╯  │
+│I╰─ ↓ 7 more line(s) · a taller terminal shows them ───╯  │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   tip · ? full keys

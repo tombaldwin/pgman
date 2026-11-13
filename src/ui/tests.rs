@@ -3070,3 +3070,40 @@ fn a_filter_after_scrolling_down_shows_the_matches_from_the_top() {
     let shown = s.lines().filter(|l| l.contains("pick")).count();
     assert_eq!(shown, 9, "all nine matches, from the top:\n{s}");
 }
+
+/// The wizard's detail strip, cut by a short terminal, says how much
+/// more there is rather than stopping mid-text (60x16).
+#[test]
+fn the_wizard_detail_strip_says_when_it_is_cut() {
+    use crate::app::Mode;
+    let mut a = settled_app(false, false);
+    a.schema_lint.findings = vec![crate::query::lint::Finding {
+        severity: crate::query::lint::Severity::Low,
+        code: "LINT105",
+        title: "t".into(),
+        object: "public.tbl".into(),
+        detail: "word ".repeat(80),
+        suggestion: Some("ALTER TABLE public.tbl ADD PRIMARY KEY (id)".into()),
+        advice: None,
+    }];
+    a.mode = Mode::SchemaLint;
+    let s = screen_text(&mut a, 60, 16);
+    assert!(s.contains("more line(s)"), "wizard:\n{s}");
+    // On the border, so the strip keeps its rows for the finding.
+    assert!(
+        s.lines()
+            .any(|l| l.contains("more line(s)") && l.contains('╰')),
+        "wizard:\n{s}"
+    );
+    // Room enough: no marker.
+    let s = screen_text(&mut a, 120, 60);
+    assert!(!s.contains("more line(s)"), "wizard:\n{s}");
+    assert!(s.contains("suggest:"), "wizard:\n{s}");
+}
+
+#[test]
+fn detail_cut_note_counts_the_lines_cut() {
+    assert_eq!(super::schema::detail_cut_note(0), None);
+    let note = super::schema::detail_cut_note(7).unwrap();
+    assert!(note.contains("7 more line(s)"), "{note}");
+}
