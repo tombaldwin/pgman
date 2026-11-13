@@ -81,6 +81,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The result diff (`D`) matches B's columns to A's by name when a query
+  lists the same columns in another order, so it keys on the primary
+  key and compares column by column. Every row read as removed and
+  added.
 - The result diff (`D`) says when a side held only the rows fetched so
   far (a capped or paged result), and that a row past its end reads as
   added or removed. A pinned side forgot it was partial.

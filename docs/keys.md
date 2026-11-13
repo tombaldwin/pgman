@@ -309,6 +309,7 @@ into the history.
 
 ### Result diff (`D` twice)
 
+B's columns in another order (the same names) are put in A's first.
 When A and B are the same columns read from the same table, and its
 primary key is in both, rows are matched on the primary key (the title
 says `key: id (primary key)`); otherwise on the leftmost column unique

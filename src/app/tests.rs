@@ -1524,6 +1524,41 @@ fn d_against_another_tables_pin_pins_afresh() {
     assert_eq!(a.mode, Mode::ResultDiff);
 }
 
+/// B's columns in another order are put in A's: names, rows and
+/// origins together. Different or repeated names leave B alone.
+#[test]
+fn align_diff_columns_reorders_b_to_a() {
+    let o = |attnum: i16| {
+        Some(crate::grid::ColumnOrigin {
+            table_oid: 9,
+            attnum,
+        })
+    };
+    let cols = |c: &[&str]| c.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+    let mut b = PinnedResult {
+        columns: cols(&["n", "t", "id"]),
+        rows: vec![vec![Some("5".into()), None, Some("1".into())]],
+        label: "q".into(),
+        source: None,
+        origins: vec![o(3), o(2), o(1)],
+        truncated: false,
+    };
+    assert!(align_diff_columns(&cols(&["id", "t", "n"]), &mut b));
+    assert_eq!(b.columns, cols(&["id", "t", "n"]));
+    assert_eq!(b.rows, vec![vec![Some("1".into()), None, Some("5".into())]]);
+    assert_eq!(b.origins, vec![o(1), o(2), o(3)]);
+    let before = b.clone();
+    for a in [
+        cols(&["id", "t", "n"]),
+        cols(&["id", "t"]),
+        cols(&["id", "t", "x"]),
+        cols(&["id", "id", "t"]),
+    ] {
+        assert!(!align_diff_columns(&a, &mut b), "{a:?}");
+        assert_eq!(b, before, "{a:?}");
+    }
+}
+
 #[test]
 fn stale_pin_wants_another_table_or_no_shared_column() {
     let pin = |source: Option<(&str, &str)>, cols: &[&str]| PinnedResult {

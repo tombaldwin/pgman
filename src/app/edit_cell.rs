@@ -1058,19 +1058,29 @@ mod live {
             .expect("rename");
         run(&mut a, &select).await;
         a.on_key(key(KeyCode::Char('D')));
-        let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
         assert_eq!(a.mode, Mode::ResultDiff);
-        let d = a.result_diff.active.as_ref().expect("a diff");
-        assert_eq!(d.key, crate::query::row_diff::RowKey::Columns(vec![1]));
-        assert!(d.key_is_pk);
-        assert_eq!(
-            (
-                d.diff.changed.len(),
-                d.diff.added.len(),
-                d.diff.removed.len()
-            ),
-            (1, 0, 0)
-        );
+        let d = a.result_diff.active.clone().expect("a diff");
+        // The same columns in another order key on the primary key too.
+        a.on_key(key(KeyCode::Esc));
+        run(&mut a, &format!("SELECT id, name FROM {t} ORDER BY id")).await;
+        a.on_key(key(KeyCode::Char('D')));
+        let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+        for d in [d, a.result_diff.active.clone().expect("a reordered diff")] {
+            assert_eq!(d.key, crate::query::row_diff::RowKey::Columns(vec![1]));
+            assert!(d.key_is_pk);
+            assert_eq!(
+                (
+                    d.diff.changed.len(),
+                    d.diff.added.len(),
+                    d.diff.removed.len()
+                ),
+                (1, 0, 0)
+            );
+        }
+        assert!(a
+            .last_status
+            .as_deref()
+            .is_some_and(|s| s.contains("B's columns put in A's order")));
     }
 
     /// A database whose guard allows an UPDATE runs the edit at Enter,

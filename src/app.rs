@@ -903,6 +903,43 @@ pub fn choose_diff_key(
     }
 }
 
+/// Put `b`'s columns in `a`'s order when they're the same names in
+/// another order (`SELECT id, t, n` then `SELECT n, t, id`), so the
+/// diff keys and compares column by column rather than whole rows that
+/// never match. Rows, origins and names move together. `false`, and
+/// `b` untouched, when the names differ or repeat. Pure.
+pub fn align_diff_columns(a: &[String], b: &mut PinnedResult) -> bool {
+    if a == b.columns.as_slice() || a.len() != b.columns.len() {
+        return false;
+    }
+    let unique = |cols: &[String]| {
+        let set: std::collections::HashSet<&String> = cols.iter().collect();
+        set.len() == cols.len()
+    };
+    if !unique(a) || !unique(&b.columns) {
+        return false;
+    }
+    let Some(order) = a
+        .iter()
+        .map(|name| b.columns.iter().position(|c| c == name))
+        .collect::<Option<Vec<usize>>>()
+    else {
+        return false;
+    };
+    let pick = |row: &[crate::grid::Cell]| {
+        order
+            .iter()
+            .map(|&i| row.get(i).cloned().flatten())
+            .collect()
+    };
+    b.rows = b.rows.iter().map(|r| pick(r)).collect();
+    if b.origins.len() == b.columns.len() {
+        b.origins = order.iter().map(|&i| b.origins[i]).collect();
+    }
+    b.columns = a.to_vec();
+    true
+}
+
 /// Why a pinned diff side `a` is no baseline for the current result:
 /// both read single tables and they're different ones, or they share
 /// no column at all. `None` when it is one: the same table, or columns
@@ -4847,15 +4884,21 @@ impl App {
             Some(a) => {
                 // Baseline present — current grid is B. Put A back
                 // (it persists across diffs for iterative work).
-                let b = self.current_result_pin();
+                let mut b = self.current_result_pin();
+                let aligned = align_diff_columns(&a.columns, &mut b);
                 let (key, key_is_pk) = choose_diff_key(&self.schema_cache, &a, &b);
                 let diff = crate::query::row_diff::diff_rows(&a.rows, &b.rows, &key);
                 let summary = format!(
-                    "diff · +{} -{} ~{} ={}",
+                    "diff · +{} -{} ~{} ={}{}",
                     diff.added.len(),
                     diff.removed.len(),
                     diff.changed.len(),
-                    diff.unchanged
+                    diff.unchanged,
+                    if aligned {
+                        " · B's columns put in A's order"
+                    } else {
+                        ""
+                    }
                 );
                 self.result_diff.active = Some(ResultDiffState {
                     a: a.clone(),

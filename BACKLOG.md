@@ -252,9 +252,6 @@ buckets were folded in once their initial passes shipped).
   the `Failed` refusals in `db` / `spawn_run` / `spawn_page_request`.
 - **`a_cell_edit_that_is_not_one_row_changes_nothing` flaked once** in a
   full integration run with other worktrees sharing the database.
-- **The PK-keyed diff needs identical column order**: `SELECT id,t,n` vs
-  `SELECT n,t,id` falls back to a full-row key (every row removed+added).
-  Match key columns by origin and compare the rest by name.
 - **Cell edit compares the FROM table by name only**: a same-named view in
   an earlier search_path schema over the base table is bypassed (same
   row, but INSTEAD OF triggers / CHECK OPTION skipped).
