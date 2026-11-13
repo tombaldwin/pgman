@@ -323,67 +323,7 @@ impl App {
                 position,
                 detail,
                 ..
-            } => {
-                self.query_running = false;
-                self.query_started = None;
-                // The run failed — it didn't change the schema, so drop the
-                // pending refresh flag.
-                self.schema_dirty_after_run = false;
-                self.last_status = None;
-                // The cancel Ctrl-C asked for comes back as an error;
-                // shown as one, it read as the server failing the query.
-                // A statement timeout is the same SQLSTATE without the
-                // request, and stays an error.
-                let asked = std::mem::take(&mut self.cancel_requested);
-                if self.session_ended_with(&error, detail.as_ref()) {
-                    return;
-                }
-                if asked && detail.as_ref().and_then(|d| d.code.as_deref()) == Some("57014") {
-                    self.last_error = None;
-                    self.last_error_detail = None;
-                    self.last_status = Some("cancelled".into());
-                    return;
-                }
-                // A read-only refusal says why this session is
-                // read-only; the server's message doesn't.
-                let (error, detail) =
-                    conn::explain_read_only_refusal(error, detail, &self.read_only_cause());
-                self.last_error = Some(error);
-                self.last_error_detail = detail;
-                // Postgres flagged a syntax error at a specific
-                // character — move the editor cursor there so the
-                // operator sees the offending token. The position is
-                // 1-indexed CHARS into the SQL we submitted; convert
-                // to a 0-indexed BYTE offset into `editor.buffer`.
-                // Out-of-range positions are ignored (could happen
-                // for batches where we sent a transformed string).
-                if let Some(p) = position {
-                    // Postgres reports a 1-indexed CHAR position into
-                    // the string WE submitted. `request_run` trims
-                    // leading whitespace before submitting, so we
-                    // skip past the same trimmed prefix in the
-                    // editor buffer before counting chars. Without
-                    // this, `\n\nSELECT FROM x` with an error at
-                    // submitted position 8 lands the cursor 2 chars
-                    // off because the leading `\n\n` is in the
-                    // buffer but not in the submitted SQL.
-                    let trimmed_prefix_bytes =
-                        self.editor.buffer.len() - self.editor.buffer.trim_start().len();
-                    let target_chars = (p.saturating_sub(1)) as usize;
-                    let after_trim = &self.editor.buffer[trimmed_prefix_bytes..];
-                    let inner_byte = after_trim
-                        .char_indices()
-                        .nth(target_chars)
-                        .map(|(b, _)| b)
-                        .unwrap_or(after_trim.len());
-                    let byte_offset = trimmed_prefix_bytes + inner_byte;
-                    self.editor.cursor = byte_offset.min(self.editor.buffer.len());
-                    self.editor.preferred_col = None;
-                    if self.mode == Mode::Normal {
-                        self.mode = Mode::Editor;
-                    }
-                }
-            }
+            } => self.on_query_failed(error, position, detail),
             AppMsg::CellUpdated {
                 pending, value, tx, ..
             } => self.on_cell_updated(pending, value, tx),
@@ -675,6 +615,75 @@ impl App {
             AppMsg::UpdateCheck(latest) => {
                 self.update_check_done = true;
                 self.update_available = latest;
+            }
+        }
+    }
+    /// A run failed: say why (a cancel as cancelled, a read-only refusal
+    /// with its cause), and put the editor's cursor at the server's
+    /// error position.
+    pub(super) fn on_query_failed(
+        &mut self,
+        error: String,
+        position: Option<u32>,
+        detail: Option<conn::QueryErrDetail>,
+    ) {
+        self.query_running = false;
+        self.query_started = None;
+        // The run failed — it didn't change the schema, so drop the
+        // pending refresh flag.
+        self.schema_dirty_after_run = false;
+        self.last_status = None;
+        // The cancel Ctrl-C asked for comes back as an error;
+        // shown as one, it read as the server failing the query.
+        // A statement timeout is the same SQLSTATE without the
+        // request, and stays an error.
+        let asked = std::mem::take(&mut self.cancel_requested);
+        if self.session_ended_with(&error, detail.as_ref()) {
+            return;
+        }
+        if asked && detail.as_ref().and_then(|d| d.code.as_deref()) == Some("57014") {
+            self.last_error = None;
+            self.last_error_detail = None;
+            self.last_status = Some("cancelled".into());
+            return;
+        }
+        // A read-only refusal says why this session is
+        // read-only; the server's message doesn't.
+        let (error, detail) =
+            conn::explain_read_only_refusal(error, detail, &self.read_only_cause());
+        self.last_error = Some(error);
+        self.last_error_detail = detail;
+        // Postgres flagged a syntax error at a specific
+        // character — move the editor cursor there so the
+        // operator sees the offending token. The position is
+        // 1-indexed CHARS into the SQL we submitted; convert
+        // to a 0-indexed BYTE offset into `editor.buffer`.
+        // Out-of-range positions are ignored (could happen
+        // for batches where we sent a transformed string).
+        if let Some(p) = position {
+            // Postgres reports a 1-indexed CHAR position into
+            // the string WE submitted. `request_run` trims
+            // leading whitespace before submitting, so we
+            // skip past the same trimmed prefix in the
+            // editor buffer before counting chars. Without
+            // this, `\n\nSELECT FROM x` with an error at
+            // submitted position 8 lands the cursor 2 chars
+            // off because the leading `\n\n` is in the
+            // buffer but not in the submitted SQL.
+            let trimmed_prefix_bytes =
+                self.editor.buffer.len() - self.editor.buffer.trim_start().len();
+            let target_chars = (p.saturating_sub(1)) as usize;
+            let after_trim = &self.editor.buffer[trimmed_prefix_bytes..];
+            let inner_byte = after_trim
+                .char_indices()
+                .nth(target_chars)
+                .map(|(b, _)| b)
+                .unwrap_or(after_trim.len());
+            let byte_offset = trimmed_prefix_bytes + inner_byte;
+            self.editor.cursor = byte_offset.min(self.editor.buffer.len());
+            self.editor.preferred_col = None;
+            if self.mode == Mode::Normal {
+                self.mode = Mode::Editor;
             }
         }
     }

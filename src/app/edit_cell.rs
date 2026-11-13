@@ -372,12 +372,7 @@ impl App {
         error: conn::QueryErr,
     ) {
         let ended = error.detail.as_ref().is_some_and(|d| d.ends_session());
-        self.on_msg(AppMsg::QueryFailed {
-            generation: self.generation,
-            error: error.msg,
-            position: None,
-            detail: error.detail,
-        });
+        self.on_query_failed(error.msg, None, error.detail);
         if ended || self.mode != pending.return_to || self.cell_edit.is_some() {
             return;
         }
