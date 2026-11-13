@@ -75,6 +75,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- MCP `query` and `explain` say why when the read-only session refuses
+  a statement that writes (a function's INSERT, `nextval`): MCP runs
+  every query read-only, and schema changes go through
+  `apply_patches`. They gave the server's message alone.
 - The row-as-INSERT yank (`I`), `:fixture` and cell editing no longer
   take a subquery's alias, a function or a CTE for a table:
   `SELECT * FROM (SELECT …) sub` was read as `public.sub`, which

@@ -239,8 +239,6 @@ buckets were folded in once their initial passes shipped).
 - **A standby pin outlives a promotion** across a same-DSN reconnect, as
   an environment's replica pin does. Re-ask `pg_is_in_recovery()` and
   unpin when it says no.
-- **MCP read-only refusals carry no hint** since the 25006 hint moved out
-  of `QueryErr::from`; give MCP its own (it forces read-only itself).
 - **The 25006 hint footer at 80 columns** (panel's 3c) didn't reproduce
   for the fix agent at heights 16–30 in editor, grid and row detail. Get
   the panel's exact steps and size before closing it.

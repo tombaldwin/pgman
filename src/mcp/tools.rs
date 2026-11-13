@@ -481,7 +481,7 @@ impl Server {
         let (client, _tunnel) = connect(name, target, &self.tunnels).await?;
         let grid = conn::run_query(&client, &wrapped)
             .await
-            .map_err(|e| e.msg)?;
+            .map_err(statement_error)?;
         let plan = grid
             .rows
             .first()
@@ -643,7 +643,7 @@ impl Server {
         let (typed, truncated) =
             conn::run_statement_typed_capped(&client, &statement, Some(max_rows))
                 .await
-                .map_err(|e| e.msg)?;
+                .map_err(statement_error)?;
         let replica = replica_state(&client, role).await;
         Ok(with_replica(
             render_query(name, &typed, truncated, max_rows),
@@ -1729,6 +1729,24 @@ pub fn read_only_safety(mut cfg: crate::safety::SafetyConfig) -> crate::safety::
     cfg
 }
 
+/// What the agent is told when a statement fails: the server's message,
+/// and for a read-only refusal (SQLSTATE 25006) why. MCP opens every
+/// session read-only, so a statement that passed the guards wrote all
+/// the same (a function's INSERT, `nextval`); nothing the agent can set
+/// lifts that. The TUI's hint names safety.toml, which doesn't apply.
+pub fn statement_error(e: conn::QueryErr) -> String {
+    let read_only = e.detail.as_ref().and_then(|d| d.code.as_deref()) == Some("25006")
+        || e.msg.to_ascii_lowercase().contains("read-only transaction");
+    if read_only {
+        format!("{} · hint: {MCP_READ_ONLY_HINT}", e.msg)
+    } else {
+        e.msg
+    }
+}
+
+/// The hint on a read-only refusal over MCP.
+pub const MCP_READ_ONLY_HINT: &str = "pgman's MCP server runs every query read-only, and this statement writes (a function it calls, or nextval); schema changes go through apply_patches, and anything else is for the operator to run";
+
 /// Run `sql` through batch's guard rails with no `--yes`, and insist on
 /// exactly one statement. Returns the verified statement text, which is
 /// what must be sent — not the client's original string.
@@ -1904,6 +1922,37 @@ mod tests {
     use super::*;
     use crate::safety::{SafetyConfig, READ_ONLY_ESCAPE_REFUSAL};
     use tokio_postgres::types::Type;
+
+    /// A read-only refusal says why over MCP, by its SQLSTATE or (when
+    /// the server sent none) its message; any other error is the
+    /// server's message alone.
+    #[test]
+    fn a_read_only_refusal_says_why_over_mcp() {
+        let err = |msg: &str, code: Option<&str>| conn::QueryErr {
+            msg: msg.into(),
+            position: None,
+            detail: code.map(|c| conn::QueryErrDetail {
+                code: Some(c.into()),
+                ..Default::default()
+            }),
+        };
+        let coded = statement_error(err(
+            "cannot execute nextval() in a read-only transaction",
+            Some("25006"),
+        ));
+        assert!(coded.ends_with(MCP_READ_ONLY_HINT), "{coded}");
+        assert!(coded.starts_with("cannot execute nextval()"), "{coded}");
+        assert!(statement_error(err(
+            "cannot execute INSERT in a read-only transaction",
+            None
+        ))
+        .contains("apply_patches"));
+        assert!(statement_error(err("refused", Some("25006"))).contains("hint:"));
+        assert_eq!(
+            statement_error(err("relation \"nope\" does not exist", Some("42P01"))),
+            "relation \"nope\" does not exist"
+        );
+    }
 
     #[test]
     fn a_server_control_refusal_points_at_no_setting_mcp_ignores() {

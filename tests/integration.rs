@@ -1778,6 +1778,11 @@ fn mcp_query_is_read_only_even_under_a_writable_profile() {
     let (text, is_error) = reply(&frames, 1);
     assert!(is_error, "nextval ran: {text}");
     assert!(text.contains("read-only"), "{text}");
+    // It says why, and where a write goes instead.
+    assert!(
+        text.contains("hint:") && text.contains("apply_patches"),
+        "{text}"
+    );
     let (text, is_error) = reply(&frames, 2);
     assert!(is_error, "CREATE ran: {text}");
     assert!(!table_exists(&home, "pgman_mcp_should_not_exist"));
@@ -3501,6 +3506,7 @@ fn mcp_explain_gives_a_plan_and_what_is_worth_an_index() {
     let table = format!("pgman_it_expl_{}", std::process::id());
     let sql = format!(
         "CREATE TABLE {table} (id int, v int); \
+         CREATE SEQUENCE {table}_seq; \
          INSERT INTO {table} SELECT g, g % 100 FROM generate_series(1, 20000) g; \
          ANALYZE {table}"
     );
@@ -3536,6 +3542,13 @@ fn mcp_explain_gives_a_plan_and_what_is_worth_an_index() {
                 "explain",
                 serde_json::json!({"connection": "local", "sql": format!("EXPLAIN SELECT * FROM {table}")}),
             ),
+            // Analyzed, a statement that passes the guards but writes is
+            // refused by the read-only session, and says why.
+            tool_call(
+                4,
+                "explain",
+                serde_json::json!({"connection": "local", "sql": format!("SELECT nextval('{table}_seq')"), "analyze": true}),
+            ),
         ],
     );
     let (text, is_error) = reply(&frames, 1);
@@ -3560,6 +3573,11 @@ fn mcp_explain_gives_a_plan_and_what_is_worth_an_index() {
     assert!(is_error && text.contains("only reads"), "{text}");
     let (text, is_error) = reply(&frames, 3);
     assert!(is_error && text.contains("without EXPLAIN"), "{text}");
+    let (text, is_error) = reply(&frames, 4);
+    assert!(
+        is_error && text.contains("read-only") && text.contains("apply_patches"),
+        "{text}"
+    );
     let rows = batch_with_home(&home, &["--sql", &format!("SELECT count(*) FROM {table}")]);
     assert!(
         String::from_utf8_lossy(&rows.stdout).contains("20000"),
