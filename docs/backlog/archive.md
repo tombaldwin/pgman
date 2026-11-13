@@ -7,6 +7,25 @@ open items. Newest at the top within each section.
 
 Historical record. Newest at the top within each section.
 
+### 2026-11-13 backlog pass *(see CHANGELOG → Unreleased)*
+
+- The sessions panel stays open on a failed load (CockroachDB's `q`
+  quitting pgman).
+- `I`, `:fixture` and cell edit refuse a subquery, function or CTE as
+  their table.
+- MCP's read-only refusal says why (`query`, `explain`).
+- A refused cell save opens the editor again with the value; a
+  no-row-matched edit names row-level security.
+- The connection card's render test under a long HOME.
+- Result diff: no NULL key; `'NULL'` text quoted; a partial side says
+  so; `D` pins afresh over another table's A; the same columns in
+  another order line up.
+- Killed by evidence: "a static environment's primary row is never
+  probed" (v0.2.0 panel). 130c4c3, the day before, links a static
+  replica to its primary and reads the primary through it, as
+  docs/environments.md says: the primary's row says `via replica`, and
+  isn't connected to by design.
+
 ### Release plan history (from PLAN.md, 2026-11-12)
 
 PLAN.md's windows from v0.2.1 to v0.5.2, as they stood.

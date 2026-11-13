@@ -255,8 +255,6 @@ buckets were folded in once their initial passes shipped).
 - **Cell edit compares the FROM table by name only**: a same-named view in
   an earlier search_path schema over the base table is bypassed (same
   row, but INSTEAD OF triggers / CHECK OPTION skipped).
-- **A static environment's primary row is never probed** in the overview
-  (STATUS/SCHEMA/… stay `—`) while its replica row is; same in v0.1.0.
 - **Advisor**: ADV003's `ALTER TABLE … SET (autovacuum…)` queues behind a
   long query or an open pgman cursor; in the "autovacuum is behind" case a
   lower scale factor doesn't help the overdue vacuum.
