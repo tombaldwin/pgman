@@ -312,7 +312,13 @@ into the history.
 When A and B are the same columns read from the same table, and its
 primary key is in both, rows are matched on the primary key (the title
 says `key: id (primary key)`); otherwise on the leftmost column unique
-in both, then on the whole row.
+in both (never one holding a NULL), then on the whole row. A side
+that held only the rows fetched so far is named as partial.
+
+A stays pinned after the diff closes, so the next `D` diffs against
+it. If A came from another table, or shares no column with the
+current result, `D` pins the current result as the new A instead, and
+says so.
 
 | Key | Action |
 |---|---|

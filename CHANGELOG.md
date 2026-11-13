@@ -64,6 +64,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- `D` with a pinned A from another table (or sharing no column with the
+  current result) pins the current result as the new A, and says so.
+  It diffed them, every row removed and added.
 - A cell edit whose UPDATE matched no row now says a row-level
   security policy may be why (one can show a row and not let it be
   updated), as well as the row being deleted or its key changed.

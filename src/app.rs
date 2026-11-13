@@ -903,6 +903,27 @@ pub fn choose_diff_key(
     }
 }
 
+/// Why a pinned diff side `a` is no baseline for the current result:
+/// both read single tables and they're different ones, or they share
+/// no column at all. `None` when it is one: the same table, or columns
+/// in common (a changed query over the same rows). Pure.
+pub fn stale_pin(
+    a: &PinnedResult,
+    source: Option<&(String, String)>,
+    columns: &[String],
+) -> Option<String> {
+    if let (Some((sa, ta)), Some((sb, tb))) = (a.source.as_ref(), source) {
+        if (sa, ta) != (sb, tb) {
+            return Some(format!("which was {sa}.{ta}'s"));
+        }
+        return None;
+    }
+    if !a.columns.iter().any(|c| columns.contains(c)) {
+        return Some("which had none of these columns".into());
+    }
+    None
+}
+
 /// Inspect `sql` for its FROM clause and return the single source
 /// table when there's exactly one. Joins / subqueries / no-FROM
 /// statements all return `None` — the row-as-INSERT yank only
@@ -4801,12 +4822,26 @@ impl App {
             self.last_status = Some("no result to diff — run a query first".into());
             return;
         }
+        // A left pinned from another table's result (a diff closed, a
+        // new query run) is no baseline for this one: diffing them showed
+        // every row removed and added, and only the title said why.
+        let stale = self
+            .result_diff
+            .pinned
+            .as_ref()
+            .and_then(|a| stale_pin(a, self.grid_view.source.as_ref(), &self.grid.columns));
+        if stale.is_some() {
+            self.result_diff.pinned = None;
+        }
         match self.result_diff.pinned.take() {
             None => {
                 let n = self.grid.rows.len();
                 self.result_diff.pinned = Some(self.current_result_pin());
+                let replaced = stale
+                    .map(|why| format!(" · it replaces the old A, {why}"))
+                    .unwrap_or_default();
                 self.last_status = Some(format!(
-                    "pinned result A · {n} row(s) · run another query, then D to diff"
+                    "pinned result A · {n} row(s) · run another query, then D to diff{replaced}"
                 ));
             }
             Some(a) => {

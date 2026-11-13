@@ -1495,6 +1495,63 @@ fn grid_of(columns: &[&str], rows: &[&[&str]]) -> Grid {
     }
 }
 
+/// A pinned A from another table, or with none of the current columns,
+/// is no baseline: `D` pins the current result in its place and says
+/// so. The same table, or shared columns, still diff.
+#[test]
+fn d_against_another_tables_pin_pins_afresh() {
+    let src = |t: &str| Some(("public".to_string(), t.to_string()));
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = grid_of(&["id"], &[&["1"]]);
+    a.grid_view.source = src("orders");
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('D')));
+    a.grid = grid_of(&["id"], &[&["7"]]);
+    a.grid_view.source = src("users");
+    a.on_key(KeyEvent::from(KeyCode::Char('D')));
+    assert_eq!(a.mode, Mode::Normal);
+    assert!(a.result_diff.active.is_none());
+    let pinned = a.result_diff.pinned.as_ref().unwrap();
+    assert_eq!(pinned.source, src("users"));
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.contains("pinned result A") && status.contains("public.orders's"),
+        "{status}"
+    );
+    // Now the same table: a diff.
+    a.grid = grid_of(&["id"], &[&["8"]]);
+    a.on_key(KeyEvent::from(KeyCode::Char('D')));
+    assert_eq!(a.mode, Mode::ResultDiff);
+}
+
+#[test]
+fn stale_pin_wants_another_table_or_no_shared_column() {
+    let pin = |source: Option<(&str, &str)>, cols: &[&str]| PinnedResult {
+        columns: cols.iter().map(|c| c.to_string()).collect(),
+        rows: Vec::new(),
+        label: "q".into(),
+        source: source.map(|(s, t)| (s.to_string(), t.to_string())),
+        origins: Vec::new(),
+        truncated: false,
+    };
+    let cols = |c: &[&str]| c.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+    let users = ("public".to_string(), "users".to_string());
+    let a = pin(Some(("public", "users")), &["id"]);
+    assert_eq!(stale_pin(&a, Some(&users), &cols(&["name"])), None);
+    let a = pin(Some(("audit", "users")), &["id"]);
+    assert_eq!(
+        stale_pin(&a, Some(&users), &cols(&["id"])).as_deref(),
+        Some("which was audit.users's")
+    );
+    // Unknown sources (a join, an expression): judged by columns.
+    let a = pin(None, &["id", "n"]);
+    assert_eq!(stale_pin(&a, Some(&users), &cols(&["n"])), None);
+    assert!(stale_pin(&a, None, &cols(&["x"])).is_some());
+    let a = pin(Some(("public", "users")), &["id"]);
+    assert!(stale_pin(&a, None, &cols(&["x"])).is_some());
+    assert_eq!(stale_pin(&a, None, &cols(&["id"])), None);
+}
+
 /// A partial grid (the rows fetched so far) stays partial as a diff
 /// side, pinned or re-pinned with `r`: the view says so.
 #[test]
