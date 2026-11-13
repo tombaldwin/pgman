@@ -258,8 +258,6 @@ buckets were folded in once their initial passes shipped).
 - **The PK-keyed diff needs identical column order**: `SELECT id,t,n` vs
   `SELECT n,t,id` falls back to a full-row key (every row removed+added).
   Match key columns by origin and compare the rest by name.
-- **An inferred diff key accepts a NULL key value**, and a change line
-  renders SQL NULL and the string `'NULL'` the same.
 - **A pinned diff side drops `truncated`**, so the title never says a side
   is a partial paged result.
 - **Cell edit compares the FROM table by name only**: a same-named view in

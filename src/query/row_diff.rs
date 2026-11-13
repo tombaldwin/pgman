@@ -210,15 +210,17 @@ pub fn infer_key_column(
     (0..n_cols).find(|&col| col_is_unique(rows_a, col) && col_is_unique(rows_b, col))
 }
 
-/// Whether column `col` holds distinct values across every row.
-/// A row too short to have the column contributes a NULL, and two
-/// NULLs collide (so a ragged or NULL-holding column reads as
-/// non-unique, which is the safe call).
+/// Whether column `col` holds distinct values across every row, none
+/// of them NULL. A NULL is no key: one NULL on each side would pair
+/// two rows that have nothing in common. A row too short to have the
+/// column is a NULL too (a ragged column reads as non-unique, the safe
+/// call).
 fn col_is_unique(rows: &[Vec<Cell>], col: usize) -> bool {
     let mut seen = std::collections::HashSet::with_capacity(rows.len());
     rows.iter().all(|row| {
-        let v = row.get(col).and_then(Option::as_deref);
-        seen.insert(v)
+        row.get(col)
+            .and_then(Option::as_deref)
+            .is_some_and(|v| seen.insert(v))
     })
 }
 
@@ -308,6 +310,26 @@ mod tests {
             vec![None, Some("y".into())],
         ];
         assert_eq!(infer_key_column(&a, &a, 2), Some(1));
+    }
+
+    /// One NULL is no key either: a row with no id on each side would be
+    /// paired as one row, changed.
+    #[test]
+    fn infer_key_skips_a_column_with_a_null() {
+        let a = vec![
+            vec![Some("1".to_string()), Some("x".to_string())],
+            vec![None, Some("x".into())],
+        ];
+        let b = vec![
+            vec![Some("1".to_string()), Some("x".to_string())],
+            vec![None, Some("y".into())],
+        ];
+        assert_eq!(infer_key_column(&a, &b, 2), None);
+        let keyed = vec![
+            vec![Some("1".to_string()), Some("x".to_string())],
+            vec![Some("2".to_string()), Some("x".into())],
+        ];
+        assert_eq!(infer_key_column(&keyed, &keyed, 2), Some(0));
     }
 
     #[test]

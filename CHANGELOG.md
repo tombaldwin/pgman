@@ -78,6 +78,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The result diff (`D`) no longer keys rows on a column holding a NULL
+  (one NULL on each side paired two unrelated rows), and a change line
+  shows text reading `NULL` as `'NULL'`, apart from SQL NULL.
 - A cell edit the server refuses (an invalid number, a constraint)
   opens the editor again holding what was typed, with the error below.
   It closed, and the value had to be typed again.
