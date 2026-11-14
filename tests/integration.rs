@@ -3775,6 +3775,19 @@ fn diff_without_a_password_says_where_one_comes_from() {
     assert!(err.contains("doesn't read PGPASSWORD here"), "{err}");
 }
 
+/// `pgman query --target` a URL without a password says the same, not
+/// the batch hint to set PGPASSWORD, which a target doesn't read.
+#[test]
+fn query_target_without_a_password_says_where_one_comes_from() {
+    let home = scratch_home("querynopw", WRITABLE_PROFILE);
+    let url = "postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable";
+    let out = pgman_in(&home, &home, &["query", "SELECT 1", "--target", url]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("doesn't read PGPASSWORD here"), "{err}");
+    assert!(!err.contains("set PGPASSWORD"), "{err}");
+}
+
 /// `pgman diff` and MCP's `schema_diff` between two real databases: what
 /// drifted is named; the same database twice matches (exit 0).
 #[test]

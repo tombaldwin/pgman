@@ -1366,6 +1366,7 @@ async fn resolve_batch_target(
         Option<pgman::safety::Scope>,
         Option<String>,
         String,
+        pgman::inventory::target::Resolved,
     ),
     String,
 > {
@@ -1396,7 +1397,7 @@ async fn resolve_batch_target(
         resolved.role == pgman::mcp::connections::Role::Replica,
         why.as_deref(),
     );
-    Ok((dsn, scope, pin, chose))
+    Ok((dsn, scope, pin, chose, resolved))
 }
 
 /// Drop discovered picks that are the same connection as an earlier one:
@@ -1507,16 +1508,16 @@ fn batch_dsn_from_picks(
 }
 
 async fn run_batch(cli: &Cli) -> i32 {
-    let (dsn, scope, pin) = match &cli.target {
+    let (dsn, scope, pin, target) = match &cli.target {
         Some(t) => match resolve_batch_target(t, cli.primary).await {
-            Ok((dsn, scope, pin, chose)) => {
+            Ok((dsn, scope, pin, chose, resolved)) => {
                 // Which database the target came to, on stderr: stdout
                 // is the result's.
                 eprintln!("pgman: {}", batch::terminal_safe(&chose));
                 if let Some(why) = &pin {
                     eprintln!("pgman: {}", batch::terminal_safe(why));
                 }
-                (dsn, scope, pin)
+                (dsn, scope, pin, Some(resolved))
             }
             Err(e) => {
                 eprintln!("pgman: {}", batch::terminal_safe(&e));
@@ -1524,7 +1525,7 @@ async fn run_batch(cli: &Cli) -> i32 {
             }
         },
         None => match resolve_batch_dsn(cli) {
-            Ok(d) => (d, None, None),
+            Ok(d) => (d, None, None, None),
             Err(e) => {
                 // Names a discovered pick — text the checkout wrote.
                 eprintln!("{}", batch::terminal_safe(&e));
@@ -1597,10 +1598,15 @@ async fn run_batch(cli: &Cli) -> i32 {
         Err(e) => {
             // The server's own words, straight to the terminal: filtered
             // like every other server-supplied line batch prints.
-            eprintln!(
-                "{}",
-                batch::terminal_safe(&format_connect_failure(&e, &dsn_for_hint))
-            );
+            // A target says where its password comes from, as dump
+            // does: PGPASSWORD, which the generic hint names, isn't read.
+            let text = match &target {
+                Some(t) if e.contains("password missing") => {
+                    format!("connect failed: {}", pgman::pgtool::explain_connect(e, t))
+                }
+                _ => format_connect_failure(&e, &dsn_for_hint),
+            };
+            eprintln!("{}", batch::terminal_safe(&text));
             2
         }
     }
