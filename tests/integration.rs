@@ -3196,6 +3196,28 @@ async fn a_multi_column_foreign_key_is_read_with_its_name_and_order() {
     );
 }
 
+/// The schema read takes the session's search path, existing schemas
+/// only, so an unqualified name resolves as the server's would.
+#[tokio::test]
+async fn the_schema_read_takes_the_sessions_search_path() {
+    let (client, _t) = writable_client().await;
+    let s = it_name("pathschema");
+    client
+        .batch_execute(&format!(
+            "CREATE SCHEMA {s}; CREATE TABLE {s}.orders (id int); \
+             SET search_path = {s}, no_such_schema, public"
+        ))
+        .await
+        .unwrap();
+    let cache = pgman::query::schema::fetch(&client).await;
+    client
+        .batch_execute(&format!("DROP SCHEMA {s} CASCADE"))
+        .await
+        .unwrap();
+    assert_eq!(cache.search_path, vec![s.clone(), "public".to_string()]);
+    assert_eq!(cache.schema_of("orders"), Some(s));
+}
+
 /// A lock on one of a table's indexes (here `ALTER INDEX … SET
 /// TABLESPACE`, which locks the index alone) keeps the table's size and
 /// that index out too; the cache files the skip under the table, which

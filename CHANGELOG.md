@@ -116,6 +116,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The INSERT yank (`I`), `:fixture` and cell editing resolve an
+  unqualified table along the session's `search_path`, as the server
+  does; it was always taken for `public`. `:fixture` keeps a schema
+  other than `public` in its element name (`audit.events`), which the
+  apply reads back; it dropped it.
 - `JOIN … ON` completion offers a multi-column foreign key as one
   predicate (`i.order_no = o.no AND i.order_region = o.region`), its
   pairs in the key's order. It offered each pair alone, and one pair

@@ -966,6 +966,31 @@ pub fn stale_pin(
 /// statements all return `None` — the row-as-INSERT yank only
 /// makes sense for a single-table read.
 pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
+    let (schema, name) = source_table_parts(sql)?;
+    // A bare table name with no resolved schema falls through;
+    // we use "public" as the default (matching what Postgres does
+    // when there's no search_path override).
+    Some((schema.unwrap_or_else(|| "public".to_string()), name))
+}
+
+/// [`infer_single_source_table`] for a session whose catalog pgman has:
+/// an unqualified name is the one its search path finds
+/// ([`SchemaCache::schema_of`]), `public` only when nothing on the path
+/// has it. An unqualified FROM was always taken for `public`, so the
+/// INSERT yank wrote `INSERT INTO public.t` for a `t` the path found in
+/// another schema. Pure.
+pub fn infer_source_table_in(sql: &str, cache: &SchemaCache) -> Option<(String, String)> {
+    let (schema, name) = source_table_parts(sql)?;
+    let schema = schema
+        .or_else(|| cache.schema_of(&name))
+        .unwrap_or_else(|| "public".to_string());
+    Some((schema, name))
+}
+
+/// The single table `sql` reads: its schema when the FROM gives one,
+/// and its name. `None` for no FROM, a join, or a FROM item that names
+/// no table. Pure.
+fn source_table_parts(sql: &str) -> Option<(Option<String>, String)> {
     let refs = crate::query::from_parse::parse_from_tables(sql);
     if refs.len() != 1 {
         return None;
@@ -981,11 +1006,7 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
     {
         return None;
     }
-    // A bare table name with no resolved schema falls through;
-    // we use "public" as the default (matching what Postgres does
-    // when there's no search_path override).
-    let schema = t.schema.clone().unwrap_or_else(|| "public".to_string());
-    Some((schema, t.name.clone()))
+    Some((t.schema.clone(), t.name.clone()))
 }
 
 /// Render a grid cell as a SQL literal: SQL NULL → `NULL`, and every

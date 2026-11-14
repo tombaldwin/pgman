@@ -803,7 +803,7 @@ impl App {
             self.last_status = Some("no result to capture — run a query first".into());
             return;
         }
-        let Some((_schema, table)) = self.grid_view.source.clone() else {
+        let Some((schema, table)) = self.grid_view.source.clone() else {
             self.last_error = Some(
                 "fixture capture needs a single-table result (no source table inferred)".into(),
             );
@@ -827,13 +827,14 @@ impl App {
             self.last_status = Some("no rows match the filter — nothing to capture".into());
             return;
         }
-        let fixture = match crate::dbunit::fixture_from_rows(&table, &self.grid.columns, &rows) {
-            Ok(f) => f,
-            Err(e) => {
-                self.last_error = Some(format!("fixture capture refused — {e}"));
-                return;
-            }
-        };
+        let fixture =
+            match crate::dbunit::fixture_from_rows_in(&schema, &table, &self.grid.columns, &rows) {
+                Ok(f) => f,
+                Err(e) => {
+                    self.last_error = Some(format!("fixture capture refused — {e}"));
+                    return;
+                }
+            };
         let xml = crate::dbunit::generate_flat_xml(&fixture);
         let path = match export_target(target, self.demo) {
             ExportTarget::Typed(p) => p,

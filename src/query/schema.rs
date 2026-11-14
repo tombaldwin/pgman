@@ -159,6 +159,10 @@ pub struct SchemaCache {
     /// gap). One line for the status bar; `None` when the fetch was
     /// whole.
     pub incomplete: Option<String>,
+    /// The session's `search_path` as the read saw it
+    /// (`current_schemas(false)`): where an unqualified name resolves.
+    /// Empty when it couldn't be read.
+    pub search_path: Vec<String>,
     /// The tables whose size and indexes another session's `ACCESS
     /// EXCLUSIVE` lock kept out — on the table or on one of its indexes —
     /// keyed `(schema, table)`. The schema browser says "not fetched"
@@ -401,6 +405,21 @@ impl SchemaCache {
         seen.into_iter().collect()
     }
 
+    /// The schema an unqualified table name `name` resolves to: the first
+    /// on the session's search path with a relation of that name (the
+    /// name as the server folded it). `None` when none has, or the path
+    /// wasn't read.
+    pub fn schema_of(&self, name: &str) -> Option<String> {
+        self.search_path
+            .iter()
+            .find(|s| {
+                self.tables
+                    .iter()
+                    .any(|t| &t.schema == *s && t.name == name)
+            })
+            .cloned()
+    }
+
     /// Look up the column list for a (schema, table) pair. The schema can
     /// be `None` — in that case the first table matching `name` (across
     /// any schema) is returned, which matches how Postgres resolves
@@ -433,6 +452,9 @@ impl SchemaCache {
         None
     }
 }
+
+/// The session's effective `search_path`, schemas that exist only.
+pub const SEARCH_PATH_SQL: &str = "SELECT pg_catalog.current_schemas(false)::text[]";
 
 /// Query that powers `fetch`. Public so a future "show me the cache" UI
 /// can quote it / re-run it. Excludes system schemas; includes regular
@@ -631,15 +653,23 @@ pub async fn fetch(client: &tokio_postgres::Client) -> SchemaCache {
     // pipelines them on the single connection, collapsing four serial round
     // trips into roughly one. Each stays best-effort: a permission gap on one
     // (e.g. pg_constraint) degrades that feature without killing the cache.
-    let (schema_res, constraint_res, size_res, fk_res, part_res, index_res, pk_res, locked_res) = tokio::join!(
-        client.query(SCHEMA_SQL, &[]),
-        client.query(CONSTRAINTS_SQL, &[]),
-        client.query(TABLE_SIZES_SQL, &[]),
-        client.query(FK_EDGES_SQL, &[]),
-        client.query(PARTITIONS_SQL, &[]),
-        client.query(TABLE_INDEXES_SQL, &[]),
-        client.query(PRIMARY_KEYS_SQL, &[]),
-        client.query(LOCKED_RELATIONS_SQL, &[]),
+    let (
+        (schema_res, constraint_res, size_res, fk_res, part_res, index_res, pk_res, locked_res),
+        path_res,
+    ) = tokio::join!(
+        async {
+            tokio::join!(
+                client.query(SCHEMA_SQL, &[]),
+                client.query(CONSTRAINTS_SQL, &[]),
+                client.query(TABLE_SIZES_SQL, &[]),
+                client.query(FK_EDGES_SQL, &[]),
+                client.query(PARTITIONS_SQL, &[]),
+                client.query(TABLE_INDEXES_SQL, &[]),
+                client.query(PRIMARY_KEYS_SQL, &[]),
+                client.query(LOCKED_RELATIONS_SQL, &[]),
+            )
+        },
+        client.query_one(SEARCH_PATH_SQL, &[]),
     );
     // What a lock kept out: the relations the sizes and indexes skipped,
     // and every read that failed.
@@ -705,6 +735,10 @@ pub async fn fetch(client: &tokio_postgres::Client) -> SchemaCache {
     let mut cache = SchemaCache {
         incomplete,
         skipped: locked.iter().map(|l| l.table.clone()).collect(),
+        search_path: path_res
+            .ok()
+            .and_then(|row| row.try_get::<_, Vec<String>>(0).ok())
+            .unwrap_or_default(),
         ..SchemaCache::default()
     };
     let mut last_relation: Option<(String, String)> = None;
@@ -918,6 +952,26 @@ pub async fn fetch(client: &tokio_postgres::Client) -> SchemaCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An unqualified name resolves to the first schema on the search
+    /// path that has it, as the server's would.
+    #[test]
+    fn schema_of_follows_the_search_path() {
+        let mut c = SchemaCache::default();
+        for (s, t) in [("app", "orders"), ("public", "orders"), ("public", "users")] {
+            c.tables.push(TableMeta {
+                schema: s.into(),
+                name: t.into(),
+            });
+        }
+        assert_eq!(c.schema_of("orders"), None, "no path read");
+        c.search_path = vec!["app".into(), "public".into()];
+        assert_eq!(c.schema_of("orders").as_deref(), Some("app"));
+        assert_eq!(c.schema_of("users").as_deref(), Some("public"));
+        assert_eq!(c.schema_of("Orders"), None, "the name as folded");
+        c.search_path = vec!["public".into(), "app".into()];
+        assert_eq!(c.schema_of("orders").as_deref(), Some("public"));
+    }
 
     fn locked(name: &str, pid: i32, granted: bool) -> LockedRelation {
         LockedRelation {

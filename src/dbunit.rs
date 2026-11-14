@@ -181,6 +181,32 @@ pub fn generate_flat_xml(fixture: &Fixture) -> String {
     out
 }
 
+/// [`fixture_from_rows`] for `table` in `schema`: the element is
+/// `schema.table` (DBUnit's qualified table names, which the apply
+/// reads back as such) unless the schema is `public`, which an
+/// unqualified name finds. `:fixture` dropped the schema, so a fixture
+/// of `audit.events` applied to `public.events`, or to nothing.
+pub fn fixture_from_rows_in(
+    schema: &str,
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<crate::grid::Cell>],
+) -> Result<Fixture, String> {
+    let mut f = fixture_from_rows(table, columns, rows)?;
+    if schema != "public" {
+        if let Some(why) = fixture_name_problem(schema, true) {
+            return Err(format!(
+                "schema {schema:?} can't be part of a fixture element: {why}"
+            ));
+        }
+        let name = format!("{schema}.{table}");
+        for r in &mut f.rows {
+            r.table = name.clone();
+        }
+    }
+    Ok(f)
+}
+
 /// Build a single-table [`Fixture`] from a result grid — the
 /// "capture current state" path. `columns` align with each row's
 /// cells by position, and any cells beyond `columns` are ignored. A
@@ -403,6 +429,22 @@ fn row_columns(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A table outside `public` is captured as `schema.table`, and the
+    /// apply script writes it so; `public`'s stays bare.
+    #[test]
+    fn a_fixture_keeps_a_schema_other_than_public() {
+        let cols = vec!["id".to_string()];
+        let rows = vec![vec![Some("1".to_string())]];
+        let f = fixture_from_rows_in("audit", "events", &cols, &rows).unwrap();
+        assert_eq!(f.rows[0].table, "audit.events");
+        let back = parse_flat_xml(&generate_flat_xml(&f)).unwrap();
+        let script = generate_apply_script(&back, CleanMode::DeleteFrom);
+        assert!(script.contains("INSERT INTO audit.events"), "{script}");
+        let f = fixture_from_rows_in("public", "events", &cols, &rows).unwrap();
+        assert_eq!(f.rows[0].table, "events");
+        assert!(fixture_from_rows_in("Audit", "events", &cols, &rows).is_err());
+    }
 
     fn sample() -> &'static str {
         r#"<?xml version="1.0" encoding="UTF-8"?>

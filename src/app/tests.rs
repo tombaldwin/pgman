@@ -2688,6 +2688,73 @@ fn infer_single_source_table_returns_none_for_a_derived_source() {
     );
 }
 
+/// An unqualified FROM is the table the session's search path finds,
+/// `public` only when nothing on it has one; a given schema is kept.
+#[test]
+fn infer_source_table_in_follows_the_search_path() {
+    let mut cache = crate::query::schema::SchemaCache::default();
+    for (s, t) in [("app", "orders"), ("public", "orders"), ("audit", "events")] {
+        cache.tables.push(crate::query::schema::TableMeta {
+            schema: s.into(),
+            name: t.into(),
+        });
+    }
+    cache.search_path = vec!["app".into(), "audit".into(), "public".into()];
+    let infer = |sql: &str| infer_source_table_in(sql, &cache);
+    assert_eq!(
+        infer("SELECT * FROM orders"),
+        Some(("app".into(), "orders".into()))
+    );
+    assert_eq!(
+        infer("SELECT * FROM events"),
+        Some(("audit".into(), "events".into()))
+    );
+    assert_eq!(
+        infer("SELECT * FROM public.orders"),
+        Some(("public".into(), "orders".into()))
+    );
+    assert_eq!(
+        infer("SELECT * FROM nowhere"),
+        Some(("public".into(), "nowhere".into()))
+    );
+    assert_eq!(infer("SELECT * FROM (SELECT 1) s"), None);
+    // The path unread: as before.
+    cache.search_path.clear();
+    assert_eq!(
+        infer_source_table_in("SELECT * FROM events", &cache),
+        Some(("public".into(), "events".into()))
+    );
+}
+
+/// A result's source table is found along the session's search path:
+/// the INSERT yank and `:fixture` name `app.orders`, not `public.orders`.
+#[test]
+fn a_results_source_follows_the_search_path() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache.tables.push(crate::query::schema::TableMeta {
+        schema: "app".into(),
+        name: "orders".into(),
+    });
+    a.schema_cache.search_path = vec!["app".into(), "public".into()];
+    a.last_run_sql = Some("SELECT * FROM orders".into());
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: vec![vec![Some("1".into())]],
+            truncated: false,
+        },
+        origins: Vec::new(),
+        kind_label: "SELECT".into(),
+        tx_open_after: false,
+        paging: None,
+    });
+    assert_eq!(
+        a.grid_view.source,
+        Some(("app".to_string(), "orders".to_string()))
+    );
+}
+
 #[test]
 fn infer_single_source_table_returns_none_for_no_from() {
     assert!(infer_single_source_table("SELECT 1").is_none());

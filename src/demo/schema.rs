@@ -871,6 +871,7 @@ pub(super) fn schema_cache() -> SchemaCache {
         relations_by_oid: HashMap::new(),
         incomplete: None,
         skipped: Default::default(),
+        search_path: vec!["public".into()],
     }
 }
 

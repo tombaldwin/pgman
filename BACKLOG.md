@@ -183,9 +183,6 @@ small-UX, correctness and environments findings landed on branch
   reconstructs as `'1' + '2'` (operator is not unique). JDBC binds are
   typed; leaving numeric-looking values bare would fix that case and
   break a text column holding `007`. Needs a rule.
-- **An unqualified FROM is assumed to be in `public`** for the INSERT
-  yank and `:fixture`, ignoring `search_path`; `:fixture` also drops a
-  given schema.
 - **Tests under `tests/` build the library without `cfg(test)`**, so a
   yank reached from a journey or render test would hit the real
   clipboard. None does today; a runtime seam would make it impossible.
