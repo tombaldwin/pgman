@@ -2421,9 +2421,10 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         } else {
             (
                 format!(
-                    "no environments configured — d discovers them from AWS, or add {} \
-                     (see docs/environments.md)",
-                    crate::util::config_file("environments.toml").display()
+                    "no environments or connections configured — d discovers them from AWS, \
+                     or add {} (see docs/environments.md), or a connection to {}",
+                    crate::util::config_file("environments.toml").display(),
+                    crate::util::config_file("connections.toml").display()
                 ),
                 theme.muted,
             )

@@ -2926,6 +2926,17 @@ fn completion_popup_with_one_candidate_says_one_match() {
     assert!(screen.contains(" 1 match · Tab to cycle "), "{screen}");
 }
 
+/// The empty environments picker points at connections.toml as well
+/// as environments.toml: a first connection needs only the former.
+#[test]
+fn the_empty_environment_picker_names_connections_toml() {
+    let mut a = settle_app();
+    a.mode = Mode::Environments;
+    let screen = dump(&render(&mut a, 200, 30)).replace(['\n', '│'], "");
+    let flat: String = screen.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("connections.toml"), "{flat}");
+}
+
 /// After Tab has inserted one candidate, every row still reads as its
 /// own name: the head is what was typed, not the inserted pick
 /// (`customerstotals` for `customer_totals`).
