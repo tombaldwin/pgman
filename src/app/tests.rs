@@ -4633,6 +4633,8 @@ fn fk_navigate_opens_new_tab_with_parent_select() {
         parent_schema: "public".into(),
         parent_table: "users".into(),
         parent_column: "id".into(),
+        constraint: String::new(),
+        ord: 1,
     });
     a.navigate_fk_from_focused_cell();
     // New tab opened.
@@ -4672,6 +4674,8 @@ fn fk_navigate_on_a_null_says_it_references_nothing() {
         parent_schema: "public".into(),
         parent_table: "users".into(),
         parent_column: "id".into(),
+        constraint: String::new(),
+        ord: 1,
     });
     a.navigate_fk_from_focused_cell();
     assert_eq!(a.tabs.len(), 1, "no tab for a NULL");

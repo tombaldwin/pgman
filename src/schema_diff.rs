@@ -660,6 +660,8 @@ mod tests {
             parent_schema: "public".into(),
             parent_table: "customers".into(),
             parent_column: "id".into(),
+            constraint: String::new(),
+            ord: 1,
         });
         c
     }

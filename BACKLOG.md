@@ -158,9 +158,6 @@ small-UX, correctness and environments findings landed on branch
   `describe-db-clusters`, tested against fixtures only. Whether a
   reader answers the lag probe's `pg_last_wal_receive_lsn` /
   `pg_stat_wal_receiver` usefully is unverified.
-- **JOIN … ON with a multi-column foreign key** offers one predicate
-  per column pair: the cached `FkEdge` carries no constraint name, so
-  the pairs can't be grouped into one `a = b AND c = d` candidate.
 - **MCP, informational**: on a read-only session `pg_advisory_lock`,
   `pg_notify`, `pg_logical_emit_message` and `txid_current` still run
   (no data changes; transient). Left off the denylist deliberately.

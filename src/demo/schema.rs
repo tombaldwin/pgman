@@ -829,6 +829,8 @@ pub(super) fn schema_cache() -> SchemaCache {
             parent_schema: "public".into(),
             parent_table: parent.to_string(),
             parent_column: "id".into(),
+            constraint: String::new(),
+            ord: 1,
         })
         .collect();
     let sequences = RELATIONS

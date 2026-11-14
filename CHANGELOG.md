@@ -116,6 +116,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `JOIN … ON` completion offers a multi-column foreign key as one
+  predicate (`i.order_no = o.no AND i.order_region = o.region`), its
+  pairs in the key's order. It offered each pair alone, and one pair
+  joins the wrong rows.
 - The schema wizard (`W`) no longer runs its live checks and the
   config advisor inside a transaction you opened: they read its
   statistics as of its start, and one that failed (a timeout, a view

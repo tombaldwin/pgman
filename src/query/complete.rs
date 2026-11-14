@@ -507,9 +507,10 @@ fn ends_with_word(text: &str, word: &str) -> bool {
 /// last table in `refs` (the one just joined) and each one before it,
 /// in either direction: `o.user_id = u.id` for `users u JOIN orders o
 /// ON`. Each side is written the way the query names it — the alias
-/// when there is one. A multi-column key gives one predicate per
-/// column pair. Only predicates starting with `prefix` (so typing the
-/// alias narrows them). Pure.
+/// when there is one. A multi-column key is one predicate, its pairs
+/// joined by `AND` in the key's order: one pair alone joins the wrong
+/// rows. Only predicates starting with `prefix` (so typing the alias
+/// narrows them). Pure.
 pub fn join_on_fk_candidates(
     refs: &[TableRefInQuery],
     prefix: &str,
@@ -531,7 +532,11 @@ pub fn join_on_fk_candidates(
     let shown = |t: &TableRefInQuery| t.alias.clone().unwrap_or_else(|| t.name.clone());
     let mut out: Vec<Candidate> = Vec::new();
     for other in earlier.iter().rev() {
-        for e in &schema.fk_edges {
+        // One entry per foreign key (an edge with no name is a key of its
+        // own), in the order first met, holding its pairs by their place
+        // in the key. A key's edges all match the same way round.
+        let mut keys: Vec<(String, Vec<(i32, String)>)> = Vec::new();
+        for (i, e) in schema.fk_edges.iter().enumerate() {
             let pair = if names(joined, &e.child_schema, &e.child_table)
                 && names(other, &e.parent_schema, &e.parent_table)
             {
@@ -551,6 +556,27 @@ pub fn join_on_fk_candidates(
                 shown(joined),
                 shown(other_ref)
             );
+            let name = if e.constraint.is_empty() {
+                format!("#{i}")
+            } else {
+                e.constraint.clone()
+            };
+            let key = format!(
+                "{}.{} {name} {}.{}",
+                e.child_schema, e.child_table, e.parent_schema, e.parent_table
+            );
+            match keys.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, pairs)) => pairs.push((e.ord, text)),
+                None => keys.push((key, vec![(e.ord, text)])),
+            }
+        }
+        for (_, mut pairs) in keys {
+            pairs.sort_by_key(|(ord, _)| *ord);
+            let text = pairs
+                .into_iter()
+                .map(|(_, t)| t)
+                .collect::<Vec<_>>()
+                .join(" AND ");
             if starts_with_ci(&text, prefix) && !out.iter().any(|c| c.insert == text) {
                 out.push(Candidate {
                     display: text.clone(),
@@ -3167,6 +3193,8 @@ mod tests {
             parent_schema: "public".into(),
             parent_table: pt.into(),
             parent_column: "id".into(),
+            constraint: String::new(),
+            ord: 1,
         };
         c.fk_edges = vec![
             edge("orders", "user_id", "users"),
@@ -3182,6 +3210,52 @@ mod tests {
             .filter(|c| c.kind == CandidateKind::Join)
             .map(|c| c.insert)
             .collect()
+    }
+
+    /// A two-column key is one predicate, its pairs in the key's order
+    /// whatever order the edges come in; a single-column key beside it
+    /// stays its own.
+    #[test]
+    fn join_on_offers_a_multi_column_key_as_one_predicate() {
+        let mut c = fk_cache();
+        let pair = |col: &str, pcol: &str, ord: i32| crate::query::schema::FkEdge {
+            child_schema: "public".into(),
+            child_table: "order_items".into(),
+            child_column: col.into(),
+            parent_schema: "public".into(),
+            parent_table: "orders".into(),
+            parent_column: pcol.into(),
+            constraint: "order_items_order_fk".into(),
+            ord,
+        };
+        // Out of order, as the catalog read sorts them by column name.
+        c.fk_edges = vec![pair("order_region", "region", 2), pair("order_no", "no", 1)];
+        let joins = |sql: &str, c: &SchemaCache| -> Vec<String> {
+            candidates_for(sql, sql.len(), c)
+                .into_iter()
+                .filter(|c| c.kind == CandidateKind::Join)
+                .map(|c| c.insert)
+                .collect()
+        };
+        assert_eq!(
+            joins("SELECT * FROM orders o JOIN order_items i ON ", &c),
+            vec!["i.order_no = o.no AND i.order_region = o.region"]
+        );
+        assert_eq!(
+            joins("SELECT * FROM order_items i JOIN orders o ON ", &c),
+            vec!["o.no = i.order_no AND o.region = i.order_region"]
+        );
+        // Two keys between the same tables stay two predicates.
+        let mut other = pair("billed_no", "no", 1);
+        other.constraint = "order_items_billed_fk".into();
+        c.fk_edges.push(other);
+        assert_eq!(
+            joins("SELECT * FROM orders o JOIN order_items i ON ", &c),
+            vec![
+                "i.order_no = o.no AND i.order_region = o.region",
+                "i.billed_no = o.no",
+            ]
+        );
     }
 
     #[test]

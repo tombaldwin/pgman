@@ -36,6 +36,11 @@ pub struct FkEdge {
     pub parent_schema: String,
     pub parent_table: String,
     pub parent_column: String,
+    /// The foreign key's name: the edges of one multi-column key share
+    /// it. Empty when unknown.
+    pub constraint: String,
+    /// This pair's place in the key, from 1.
+    pub ord: i32,
 }
 
 /// Size info for one table, in bytes. `table_bytes` is just
@@ -471,7 +476,9 @@ SELECT \
     ca.attname AS child_column, \
     fnsp.nspname AS parent_schema, \
     frel.relname AS parent_table, \
-    pa.attname AS parent_column \
+    pa.attname AS parent_column, \
+    c.conname, \
+    ck.ord::int4 \
 FROM pg_constraint c \
 JOIN pg_class rel ON rel.oid = c.conrelid \
 JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace \
@@ -887,6 +894,8 @@ pub async fn fetch(client: &tokio_postgres::Client) -> SchemaCache {
                         parent_schema: ps,
                         parent_table: pt,
                         parent_column: pc,
+                        constraint: row.try_get(6).unwrap_or_default(),
+                        ord: row.try_get(7).unwrap_or(1),
                     });
                 }
             }
@@ -1093,6 +1102,8 @@ mod tests {
             parent_schema: "public".into(),
             parent_table: "users".into(),
             parent_column: "id".into(),
+            constraint: String::new(),
+            ord: 1,
         });
         // Case-insensitive on all three coords.
         let hit = c
@@ -1119,6 +1130,8 @@ mod tests {
                 parent_schema: "public".into(),
                 parent_table: parent.into(),
                 parent_column: "id".into(),
+                constraint: String::new(),
+                ord: 1,
             });
         }
         let hit = c.fk_edge_for_child("public", "PgRevMixed", "pid").unwrap();

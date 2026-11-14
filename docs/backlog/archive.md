@@ -39,6 +39,7 @@ Historical record. Newest at the top within each section.
 - Log4j's bracketed logger (`DEBUG [org.hibernate.SQL] select …`) is read.
 - The wizard's live checks and advisor wait for an open transaction to
   end.
+- `JOIN … ON` offers a multi-column foreign key as one predicate.
 - ADV003, autovacuum behind: `VACUUM (VERBOSE)`, not a lower scale
   factor. Killed by evidence, its other half: the `ALTER TABLE … SET
   (autovacuum…)` doesn't queue behind a reader (SHARE UPDATE EXCLUSIVE;

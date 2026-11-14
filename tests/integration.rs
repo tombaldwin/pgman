@@ -3152,6 +3152,50 @@ fn a_connect_behind_an_access_exclusive_lock_returns_and_says_why() {
     });
 }
 
+/// A two-column foreign key read from a real catalog: each pair carries
+/// the key's name and its place in it, so completion offers the key as
+/// one predicate.
+#[tokio::test]
+async fn a_multi_column_foreign_key_is_read_with_its_name_and_order() {
+    let (holder, _t1) = writable_client().await;
+    let (client, _t2) = lib_client().await;
+    let (p, c) = (it_name("fkparent"), it_name("fkchild"));
+    holder
+        .batch_execute(&format!(
+            "CREATE TABLE {p} (region text, no int, PRIMARY KEY (region, no)); \
+             CREATE TABLE {c} (id int, order_no int, order_region text, \
+               CONSTRAINT {c}_fk FOREIGN KEY (order_region, order_no) REFERENCES {p} (region, no))"
+        ))
+        .await
+        .unwrap();
+    let cache = pgman::query::schema::fetch(&client).await;
+    holder
+        .batch_execute(&format!("DROP TABLE {c}; DROP TABLE {p}"))
+        .await
+        .unwrap();
+    let mut edges: Vec<(String, String, String, i32)> = cache
+        .fk_edges
+        .iter()
+        .filter(|e| e.child_table == c)
+        .map(|e| {
+            (
+                e.child_column.clone(),
+                e.parent_column.clone(),
+                e.constraint.clone(),
+                e.ord,
+            )
+        })
+        .collect();
+    edges.sort_by_key(|e| e.3);
+    assert_eq!(
+        edges,
+        vec![
+            ("order_region".into(), "region".into(), format!("{c}_fk"), 1),
+            ("order_no".into(), "no".into(), format!("{c}_fk"), 2),
+        ]
+    );
+}
+
 /// A lock on one of a table's indexes (here `ALTER INDEX … SET
 /// TABLESPACE`, which locks the index alone) keeps the table's size and
 /// that index out too; the cache files the skip under the table, which
