@@ -8,6 +8,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- Hibernate logs in Log4j's `%p [%c] %m` pattern (`DEBUG
+  [org.hibernate.SQL] select …`) are read, their binds paired with the
+  statement on its thread.
 - `\report` follows the findings table with each advisor finding's
   evidence: the window, the numbers, the setting it would change, the
   suggestion and the statement that read them.

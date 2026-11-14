@@ -192,8 +192,7 @@ small-UX, correctness and environments findings landed on branch
 - **Tests under `tests/` build the library without `cfg(test)`**, so a
   yank reached from a journey or render test would hit the real
   clipboard. None does today; a runtime seam would make it impossible.
-- **Log formats not yet read**: Log4j's bracketed logger (`DEBUG
-  [org.hibernate.SQL] select …`); p6spy's multi-line Spring Boot
+- **Log formats not yet read**: p6spy's multi-line Spring Boot
   starter format; Hibernate 5 ARRAY binds (only Hibernate 6's form is
   converted). datasource-proxy values containing `,` are ambiguous in
   its default format and split there (documented).

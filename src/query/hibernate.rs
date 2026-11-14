@@ -176,10 +176,13 @@ fn extract_thread(prefix: &str) -> String {
         rest = &rest[start + 1 + len + 1..];
     }
     const LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR"];
+    // Log4j's `[%c]` brackets the logger too (`[org.hibernate.type…
+    // BasicBinder] binding parameter`): it isn't the thread.
+    let logger = |g: &str| g.starts_with("org.hibernate") || g.starts_with("o.h.");
     groups
         .into_iter()
         .rev()
-        .find(|g| !LEVELS.iter().any(|l| g.eq_ignore_ascii_case(l)))
+        .find(|g| !LEVELS.iter().any(|l| g.eq_ignore_ascii_case(l)) && !logger(g))
         .unwrap_or_default()
         .to_string()
 }
@@ -216,6 +219,9 @@ fn sql_message(line: &str) -> Option<(usize, &str)> {
 /// `'10:00:00'`). `None` when the logger name runs straight into other
 /// text (`org.hibernate.SQL=DEBUG` in a config dump) — not a message.
 fn message_after_logger(after: &str) -> Option<&str> {
+    // Log4j's `[%c] %m`: the bracket closing the logger's name, then
+    // the message.
+    let after = after.strip_prefix(']').unwrap_or(after);
     let trimmed = after.trim_start();
     if let Some(msg) = trimmed.strip_prefix([':', '-']) {
         return Some(msg.trim());
@@ -616,6 +622,36 @@ binding parameter [1] as [BIGINT] - [7]
                 r#"insert into probe_h (id,name,tags) values (42,'O''Brien, Jane [junior]',E'{"a","b c",NULL,"it''s \\"q\\" \\\\x","{x}"}')"#,
                 "update probe_h set tags='{}' where id=42",
             ]
+        );
+    }
+
+    /// Log4j's `%d %p [%c] %m`, with and without a thread: the logger in
+    /// brackets, the statement after it, and binds (their logger
+    /// bracketed too) paired with it on its thread.
+    #[test]
+    fn log4j_bracketed_loggers_are_read() {
+        let log = "\
+2024-01-15 10:00:00,123 DEBUG [org.hibernate.SQL] select c.id from customer c where c.name=?
+2024-01-15 10:00:00,124 TRACE [org.hibernate.type.descriptor.sql.BasicBinder] binding parameter [1] as [VARCHAR] - [Ann]
+";
+        let q = parse(log);
+        assert_eq!(q.len(), 1, "{q:?}");
+        assert_eq!(
+            q[0].runnable_sql,
+            "select c.id from customer c where c.name='Ann'"
+        );
+        let log = "\
+[exec-1] DEBUG [org.hibernate.SQL] select * from a where id=?
+[exec-2] DEBUG [org.hibernate.SQL] select * from b where id=?
+[exec-1] TRACE [org.hibernate.type.descriptor.sql.BasicBinder] binding parameter [1] as [BIGINT] - [1]
+[exec-2] TRACE [org.hibernate.type.descriptor.sql.BasicBinder] binding parameter [1] as [BIGINT] - [2]
+";
+        let q = parse(log);
+        let sql: Vec<_> = q.iter().map(|q| q.runnable_sql.as_str()).collect();
+        assert_eq!(
+            sql,
+            ["select * from a where id=1", "select * from b where id=2"],
+            "each bind on its own thread"
         );
     }
 
