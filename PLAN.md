@@ -1,4 +1,4 @@
-# Plan — after v0.5.2
+# Plan — after v0.5.3
 
 The rolling window of active work, in the shape ebman uses. `BACKLOG.md`
 is the reservoir; this file is only *what to do next*. An item lives in
@@ -49,20 +49,19 @@ minute and never reaches it.
 
 ## Where we are (2026-11-14)
 
-**v0.5.2 is released** (2026-11-11): GitHub release, crates.io, the MCP
-Registry and the Homebrew tap. The release flow is the one in
+**v0.5.3 is released** (2026-11-14): GitHub release, crates.io, the MCP
+Registry and the Homebrew tap: the Fable review's and the backlog
+pass's fixes, the release panel's and the closing review's (1–1c
+below). The release flow is the one in
 `docs/development.md`: one bump commit (Cargo.toml, Cargo.lock,
 server.json, CHANGELOG heading and links), tag on a green SHA, draft
 from `release.yml`, publish on Tom's go, then the formula and the
 site's changelog entry. Earlier windows, v0.2.1 to v0.5.2, are in
 `docs/backlog/archive.md` → Release plan history.
 
-On main, unreleased (0.5.3): the agent's reason filled in for a dump,
-`restore_confirm = "clean_only"`, and the fixes from a five-reviewer
-Fable review (MCP restore known by content, masking leaks, the rules
-confirmation listing every rule, MCP's `allow` guards, `set_config`,
-an editor COMMIT under `auto_tx`, git in an agent's checkout, …). The
-CHANGELOG's Unreleased section lists them.
+In 0.5.3 also: the agent's reason filled in for a dump and
+`restore_confirm = "clean_only"`. CHANGELOG's 0.5.3 section lists it
+all. Nothing on main is unreleased.
 
 ## Window — after v0.5.2
 
@@ -131,7 +130,6 @@ LOWs (fixed); the rest joined the same BACKLOG section.
 
 ### 2. Waiting on Tom
 
-- **Release 0.5.3**: on Tom's go.
 - **pgman-tap JAR**: go or not yet; `io.poly` groupId; loopback-only
   default with `pgman.tap.allow-remote`. Wire-compatible with 0.2.x (78
   tests, 9/9 golden events) but no publishing setup (Central account,
