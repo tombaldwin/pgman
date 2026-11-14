@@ -22,6 +22,7 @@ Historical record. Newest at the top within each section.
   another order line up.
 - Filtering after scrolling down shows the matches from the top.
 - The schema wizard's cut detail strip says how many lines are cut.
+- `pgman copies prune`.
 - Killed by evidence: "a static environment's primary row is never
   probed" (v0.2.0 panel). 130c4c3, the day before, links a static
   replica to its primary and reads the primary through it, as

@@ -54,8 +54,6 @@ note.
   the terminal's summary says after.
 - **A rules file's changes since last confirmed**: show the diff of
   what loosened, and journal a `rules_confirmed` event.
-- **`pgman copies prune`**: everything past its expiry, confirming each
-  database.
 - **The TUI's expired-copies flag** in the header.
 - **The rules digest in the dump's journal event** (and whether it was
   confirmed), so the account says which rules masked a copy. From the

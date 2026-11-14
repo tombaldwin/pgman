@@ -8,6 +8,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `pgman copies prune`: deletes every copy past its expiry, with the
+  databases restored from it, as `copies rm` does, asking about each in
+  turn unless `--yes`. A copy kept (not confirmed, sessions open)
+  doesn't stop the rest. `pgman copies` points at it under the list.
 - MCP `explain` suggests an index for a big sequential scan filtered by
   plain comparisons on columns no index of its table leads with: the
   `CREATE INDEX CONCURRENTLY` that could serve it, to weigh rather than

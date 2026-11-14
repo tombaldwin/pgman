@@ -16,6 +16,7 @@ pub const USAGE: &str = "\
 usage: pgman copies [list] [--all]
        pgman copies show <copy>
        pgman copies rm <copy> [--yes] [--terminate]
+       pgman copies prune [--yes] [--terminate]
        pgman copies report [--since YYYY-MM-DD] [--format text|markdown|json]
 
 Every dump pgman has taken on this machine, from its journal
@@ -33,6 +34,8 @@ shows it), or the dump's file (its -latest link too).
            copy left, when there is one), and every database pgman restored
            from it — only a local, unprotected database whose comment names
            this copy (--terminate ends sessions on it first); asks first
+           unless --yes
+  prune    rm every copy past its expiry, each asked about in turn
            unless --yes
   report   the whole account, oldest first, for a ticket or a reviewer
 
@@ -93,6 +96,20 @@ impl Copy {
 
 /// Why `pgman copies rm` deleted something, as the journal says it.
 const RM: &str = "with pgman copies rm";
+
+/// Why `pgman copies prune` did.
+const PRUNE: &str = "with pgman copies prune, past its expiry";
+
+/// The copies `pgman copies prune` removes: past their expiry and not
+/// deleted, with a file still there (`present`) or a database restored
+/// from them not yet dropped. Oldest first. Pure but for `present`.
+pub fn prune_candidates(copies: &[Copy], now: u64, present: impl Fn(&Path) -> bool) -> Vec<&Copy> {
+    copies
+        .iter()
+        .filter(|c| c.deleted.is_none() && c.expired(now))
+        .filter(|c| present(&c.file) || c.restores.iter().any(|r| r.dropped.is_none()))
+        .collect()
+}
 
 /// Every successful dump in `events`, oldest first, with what happened
 /// to it since. Pure.
@@ -570,7 +587,7 @@ pub fn render_list(
             .count();
         if expired > 0 {
             out.push_str(&format!(
-                "{expired} past {} expiry: pgman copies rm <id> when you're done with {}\n",
+                "{expired} past {} expiry: pgman copies prune, or rm <id>, when you're done with {}\n",
                 if expired == 1 { "its" } else { "their" },
                 if expired == 1 { "it" } else { "them" }
             ));
@@ -793,6 +810,10 @@ pub enum Cmd {
         yes: bool,
         terminate: bool,
     },
+    Prune {
+        yes: bool,
+        terminate: bool,
+    },
     Report {
         since: u64,
         format: Format,
@@ -835,6 +856,18 @@ pub fn parse_cli(args: &[String]) -> Result<Cmd, String> {
                 yes,
                 terminate,
             })
+        }
+        Some("prune") => {
+            let mut yes = false;
+            let mut terminate = false;
+            for a in &rest {
+                match *a {
+                    "--yes" => yes = true,
+                    "--terminate" => terminate = true,
+                    other => return Err(format!("unexpected {other:?}\n\n{USAGE}")),
+                }
+            }
+            Ok(Cmd::Prune { yes, terminate })
         }
         Some("report") => {
             let mut since = 0;
@@ -1175,85 +1208,8 @@ pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
                 }
                 Target::Untracked(p) => (p.clone(), None),
             };
-            let databases: Vec<Restored> = known
-                .as_ref()
-                .map(|c| {
-                    c.restores
-                        .iter()
-                        .filter(|r| r.dropped.is_none())
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default();
-            let on_disk = present(&file);
-            if !on_disk && known.is_none() {
-                return Err(format!("{} isn't there", file.display()));
-            }
-            if !yes {
-                let mut what = Vec::new();
-                if on_disk {
-                    what.push(format!(
-                        "{} ({})",
-                        file.display(),
-                        crate::pgtool::size_of(crate::pgtool::path_size(&file))
-                    ));
-                }
-                for r in &databases {
-                    what.push(format!("the database {} on {}", r.database, r.server));
-                }
-                let prompt = format!("delete {}? [y/N] ", what.join(", and "));
-                if !crate::pgtool::confirm_cli(&prompt, "y")? {
-                    return Err("not confirmed; nothing deleted".to_string());
-                }
-            }
-            let mut warn = None;
-            if on_disk {
-                delete_dump(&file)?;
-                println!("deleted {}", file.display());
-            } else {
-                println!("{} was already gone", file.display());
-            }
-            let mut e = Event::new(Kind::Delete, now, &journal::machine_id());
-            e.copy = known.as_ref().map(|c| c.id.clone());
-            e.file = Some(file.display().to_string());
-            e.why = Some(
-                if on_disk {
-                    RM
-                } else {
-                    "already gone from disk"
-                }
-                .into(),
-            );
-            warn = warn.or(journal::append(&e));
-            if let Some(c) = &known {
-                if on_disk {
-                    if let Some(l) = fix_latest(&copies, c) {
-                        println!("{l}");
-                    }
-                }
-                for r in &databases {
-                    let Some(target) = &r.target else {
-                        println!(
-                            "{} on {}: restored by an older pgman, which didn't record how to reach it; drop it yourself",
-                            r.database, r.server
-                        );
-                        continue;
-                    };
-                    match drop_restored(&c.id, target, &r.database, *terminate).await {
-                        Ok(said) => {
-                            println!("{said}");
-                            let mut e =
-                                Event::new(Kind::Delete, journal::now(), &journal::machine_id());
-                            e.copy = Some(c.id.clone());
-                            e.into_server = Some(r.server.clone());
-                            e.into_database = Some(r.database.clone());
-                            e.why = Some(RM.into());
-                            warn = warn.or(journal::append(&e));
-                        }
-                        Err(why) => println!("{}", kept(&r.database, &r.server, &why)),
-                    }
-                }
-            }
+            let warn =
+                remove_copy_cli(&copies, &file, known.as_ref(), *yes, *terminate, RM).await?;
             if let Some(w) = warn {
                 eprintln!("pgman copies: {w}");
             }
@@ -1261,8 +1217,119 @@ pub async fn run_cli(cmd: &Cmd) -> Result<(), String> {
                 eprintln!("pgman copies: {n}");
             }
         }
+        Cmd::Prune { yes, terminate } => {
+            let due = prune_candidates(&copies, now, present);
+            if due.is_empty() {
+                println!("nothing past its expiry");
+            }
+            for c in due {
+                println!("copy {} ({}), expired:", c.short(), c.label);
+                match remove_copy_cli(&copies, &c.file, Some(c), *yes, *terminate, PRUNE).await {
+                    Ok(Some(w)) => eprintln!("pgman copies: {w}"),
+                    Ok(None) => {}
+                    // One copy kept (not confirmed, a session open) doesn't
+                    // stop the rest.
+                    Err(why) => println!("kept copy {}: {why}", c.short()),
+                }
+            }
+            if let Some(n) = crate::journal_send::flush().note() {
+                eprintln!("pgman copies: {n}");
+            }
+        }
     }
     Ok(())
+}
+
+/// Delete one copy's file and every database pgman restored from it,
+/// asking first unless `yes`, and journal each deletion with `why`.
+/// Prints as it goes; the journal's write warning, if any.
+async fn remove_copy_cli(
+    copies: &[Copy],
+    file: &Path,
+    known: Option<&Copy>,
+    yes: bool,
+    terminate: bool,
+    why: &str,
+) -> Result<Option<String>, String> {
+    let now = journal::now();
+    let databases: Vec<Restored> = known
+        .map(|c| {
+            c.restores
+                .iter()
+                .filter(|r| r.dropped.is_none())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let on_disk = present(file);
+    if !on_disk && known.is_none() {
+        return Err(format!("{} isn't there", file.display()));
+    }
+    if !yes {
+        let mut what = Vec::new();
+        if on_disk {
+            what.push(format!(
+                "{} ({})",
+                file.display(),
+                crate::pgtool::size_of(crate::pgtool::path_size(file))
+            ));
+        }
+        for r in &databases {
+            what.push(format!("the database {} on {}", r.database, r.server));
+        }
+        let prompt = format!("delete {}? [y/N] ", what.join(", and "));
+        if !crate::pgtool::confirm_cli(&prompt, "y")? {
+            return Err("not confirmed; nothing deleted".to_string());
+        }
+    }
+    let mut warn = None;
+    if on_disk {
+        delete_dump(file)?;
+        println!("deleted {}", file.display());
+    } else {
+        println!("{} was already gone", file.display());
+    }
+    let mut e = Event::new(Kind::Delete, now, &journal::machine_id());
+    e.copy = known.map(|c| c.id.clone());
+    e.file = Some(file.display().to_string());
+    e.why = Some(
+        if on_disk {
+            why
+        } else {
+            "already gone from disk"
+        }
+        .into(),
+    );
+    warn = warn.or(journal::append(&e));
+    if let Some(c) = known {
+        if on_disk {
+            if let Some(l) = fix_latest(copies, c) {
+                println!("{l}");
+            }
+        }
+        for r in &databases {
+            let Some(target) = &r.target else {
+                println!(
+                    "{} on {}: restored by an older pgman, which didn't record how to reach it; drop it yourself",
+                    r.database, r.server
+                );
+                continue;
+            };
+            match drop_restored(&c.id, target, &r.database, terminate).await {
+                Ok(said) => {
+                    println!("{said}");
+                    let mut e = Event::new(Kind::Delete, journal::now(), &journal::machine_id());
+                    e.copy = Some(c.id.clone());
+                    e.into_server = Some(r.server.clone());
+                    e.into_database = Some(r.database.clone());
+                    e.why = Some(why.into());
+                    warn = warn.or(journal::append(&e));
+                }
+                Err(reason) => println!("{}", kept(&r.database, &r.server, &reason)),
+            }
+        }
+    }
+    Ok(warn)
 }
 
 #[cfg(test)]
@@ -1646,6 +1713,55 @@ mod tests {
         assert!(text.contains("old-20250101T000000Z.dump"), "{text}");
         let gone = render_list(&copies, &[], &|_| false, false, now);
         assert!(gone.contains("missing"), "{gone}");
+    }
+
+    /// Prune takes a copy past its expiry, not deleted, with a file on
+    /// disk or a restored database left; nothing else.
+    #[test]
+    fn prune_takes_the_expired_copies_with_something_left() {
+        let a = dump_event("aaaa1111ffff", 100, "production/ledger", "/d/a.dump");
+        let b = dump_event("bbbb2222ffff", 200_000, "staging/ledger", "/d/b.dump");
+        let now = 150_000;
+        let ids = |copies: &[Copy], present: &dyn Fn(&Path) -> bool| {
+            prune_candidates(copies, now, present)
+                .iter()
+                .map(|c| c.id.clone())
+                .collect::<Vec<_>>()
+        };
+        let copies = registry(&[a.clone(), b.clone()]);
+        assert_eq!(ids(&copies, &|_| true), ["aaaa1111ffff"]);
+        assert!(ids(&copies, &|_| false).is_empty(), "nothing left of it");
+        // Its file gone, but a database restored from it remains.
+        let mut r = Event::new(Kind::Restore, 1_000, "m");
+        r.copy = Some("aaaa1111ffff".into());
+        r.into_server = Some("127.0.0.1:55432".into());
+        r.into_database = Some("ledger_copy".into());
+        let copies = registry(&[a.clone(), b.clone(), r.clone()]);
+        assert_eq!(ids(&copies, &|_| false), ["aaaa1111ffff"]);
+        // Deleted already: not again.
+        let mut d = Event::new(Kind::Delete, 2_000, "m");
+        d.copy = Some("aaaa1111ffff".into());
+        let copies = registry(&[a, b, r, d]);
+        assert!(ids(&copies, &|_| true).is_empty());
+    }
+
+    #[test]
+    fn prune_takes_yes_and_terminate_only() {
+        assert_eq!(
+            parse_cli(&args(&["prune", "--terminate", "--yes"])).unwrap(),
+            Cmd::Prune {
+                yes: true,
+                terminate: true
+            }
+        );
+        assert_eq!(
+            parse_cli(&args(&["prune"])).unwrap(),
+            Cmd::Prune {
+                yes: false,
+                terminate: false
+            }
+        );
+        assert!(parse_cli(&args(&["prune", "3f9a"])).is_err());
     }
 
     #[test]

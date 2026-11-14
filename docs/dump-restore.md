@@ -462,6 +462,7 @@ as the original allows.
 pgman copies [list] [--all]
 pgman copies show <copy>
 pgman copies rm <copy> [--yes] [--terminate]
+pgman copies prune [--yes] [--terminate]
 pgman copies report [--since YYYY-MM-DD] [--format text|markdown|json]
 ```
 
@@ -490,6 +491,10 @@ secrets.
   URL with a password in it is kept, and said so: pgman keeps no
   passwords, so restore through a `connections.toml` entry with
   `password_env` for `copies rm` to reach it again.
+- `pgman copies prune` does `rm` for every copy past its expiry that
+  still has a file or a restored database, oldest first, asking about
+  each in turn (unless `--yes`). A copy you say no to, or one whose
+  database has sessions, is kept and the rest go on.
 - `pgman copies report` is the whole account, oldest first: what was
   taken, why, where it was restored, and when it was deleted. `--format
   markdown` pastes into a ticket; `--format json` is for a script.

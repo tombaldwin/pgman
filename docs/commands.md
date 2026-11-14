@@ -123,8 +123,8 @@ terminal. For pipes and scripts use --batch (see pgman --help).` (exit code
 `2`) rather than the raw crossterm error a bare terminal probe used to
 surface.
 
-Sub-commands, which need no terminal (`restore`, `run`, `apply` and
-`copies rm` ask on one when it is there; `--yes` answers instead, except
+Sub-commands, which need no terminal (`restore`, `run`, `apply`,
+`copies rm` and `copies prune` ask on one when it is there; `--yes` answers instead, except
 where a protected target's name must be typed; `dump` asks a protected
 target's reason, and its name for a raw dump, which only a terminal
 answers):
@@ -139,7 +139,7 @@ answers):
 | `pgman doctor` | What pgman sees from this directory: each config file and whether it loads (exit `1` when one doesn't), the programs it runs (pg_dump, pg_restore, aws, ssh, git, docker) and where they are, and every connection it knows, usable or why not. Connects to nothing; names where a password comes from, never the password. |
 | `pgman key new\|list` | The operator's age keys, which an environment's `encrypt = "age:<public key>"` encrypts dumps to: `new [NAME]` makes one (in pgman's config dir, `keys/`, 0600) and prints its public key; `list` names each ([encrypted dumps](dump-restore.md)). |
 | `pgman masking show\|check <target>` | What a masked dump does to each column, from the catalog; `check` fails a plan that can't go ([masked dumps](dump-restore.md#masked-dumps)). |
-| `pgman copies [show\|rm\|report]` | The dumps taken on this machine, from the journal: list, one in full, delete one, the whole account ([copies](dump-restore.md#pgman-copies)). |
+| `pgman copies [show\|rm\|prune\|report]` | The dumps taken on this machine, from the journal: list, one in full, delete one, delete the expired, the whole account ([copies](dump-restore.md#pgman-copies)). |
 | `pgman run <target> <FILE>` | A script that runs its own transactions, `\c` between databases ([run](run.md)). |
 | `pgman apply <target>` | An environment's pending patches, as the environments view's `P` ([environments](environments.md#from-the-command-line-pgman-apply)). |
 | `pgman mcp serve` | The MCP server for coding agents ([mcp](mcp.md)). |
