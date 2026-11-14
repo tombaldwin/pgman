@@ -90,12 +90,18 @@ pub struct Copy {
 impl Copy {
     /// The id as `list` shows it.
     pub fn short(&self) -> &str {
-        &self.id[..self.id.len().min(8)]
+        prefix(&self.id, 8)
     }
 
     pub fn expired(&self, now: u64) -> bool {
         self.expires.is_some_and(|e| e <= now)
     }
+}
+
+/// The first `n` characters of `s`: a hand-edited journal's id may not
+/// be ASCII. Pure.
+fn prefix(s: &str, n: usize) -> &str {
+    s.char_indices().nth(n).map_or(s, |(i, _)| &s[..i])
 }
 
 /// Why `pgman copies rm` deleted something, as the journal says it.
@@ -629,7 +635,7 @@ fn rules_line(rules: &str, confirmed: Option<bool>) -> String {
     if rules == "defaults" {
         return "masked by the defaults (no rules file)".to_string();
     }
-    let short = &rules[..rules.len().min(12)];
+    let short = prefix(rules, 12);
     format!(
         "masked by the defaults and a rules file, sha256 {short}… ({})",
         match confirmed {
@@ -1769,6 +1775,20 @@ mod tests {
         assert!(text.contains("old-20250101T000000Z.dump"), "{text}");
         let gone = render_list(&copies, &[], &|_| false, false, now);
         assert!(gone.contains("missing"), "{gone}");
+    }
+
+    /// A hand-edited journal's id or digest needn't be ASCII; cutting it
+    /// short mustn't panic.
+    #[test]
+    fn a_non_ascii_id_or_digest_is_cut_by_character() {
+        let mut e = dump_event("€€€€€€€€€", 100, "staging/ledger", "/d/a.dump");
+        e.rules = Some("a€€€€€€€€€€€€".into());
+        e.mode = Some("masked".into());
+        let copies = registry(&[e]);
+        assert_eq!(copies[0].short(), "€€€€€€€€");
+        let shown = render_show(&copies[0], true, 200, None);
+        assert!(shown.contains("sha256 a€€€€€€€€€€€…"), "{shown}");
+        assert_eq!(prefix("abc", 8), "abc");
     }
 
     /// Prune takes a copy past its expiry, not deleted, with a file on
