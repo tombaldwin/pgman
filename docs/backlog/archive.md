@@ -39,6 +39,10 @@ Historical record. Newest at the top within each section.
 - Log4j's bracketed logger (`DEBUG [org.hibernate.SQL] select …`) is read.
 - The wizard's live checks and advisor wait for an open transaction to
   end.
+- ADV003, autovacuum behind: `VACUUM (VERBOSE)`, not a lower scale
+  factor. Killed by evidence, its other half: the `ALTER TABLE … SET
+  (autovacuum…)` doesn't queue behind a reader (SHARE UPDATE EXCLUSIVE;
+  it ran at once beside an open SELECT on the test server).
 - Killed by evidence: "a static environment's primary row is never
   probed" (v0.2.0 panel). 130c4c3, the day before, links a static
   replica to its primary and reads the primary through it, as

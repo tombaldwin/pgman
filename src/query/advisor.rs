@@ -900,12 +900,14 @@ pub fn dead_tuple_finding(
                 rds: rds::describe(auto, ctx.kind == ServerKind::Aurora),
             }),
         ),
+        // A lower scale factor would only start a vacuum that is already
+        // due: the vacuum itself, by hand, says what holds it back.
         VacuumCause::Behind => (
             format!(
-                "that is past the point autovacuum should have run ({} dead), so it is behind: a long transaction holding back the xmin horizon (the sessions panel, `L`) or workers busy elsewhere",
+                "that is past the point autovacuum should have run ({} dead), so it is behind: a long transaction holding back the xmin horizon (the sessions panel, `L`) or workers busy elsewhere. A lower scale factor wouldn't help a vacuum already due; VACUUM (VERBOSE) reports dead rows it can't remove yet and the oldest xmin holding them",
                 trigger as i64
             ),
-            lower_scale.then(|| set_scale.clone()),
+            Some(format!("VACUUM (VERBOSE) {};", t.quoted)),
             None,
         ),
         VacuumCause::ScaleAllows => (
@@ -918,7 +920,7 @@ pub fn dead_tuple_finding(
         ),
     };
     let change = change.or_else(|| {
-        lower_scale.then(|| SettingChange {
+        (lower_scale && cause != VacuumCause::Behind).then(|| SettingChange {
             name: sf.name,
             current: scale.to_string(),
             suggested: target.to_string(),
@@ -944,8 +946,16 @@ pub fn dead_tuple_finding(
         title: format!("dead tuples {:.0}% of live; {}", ratio * 100.0, cause_label(cause)),
         object: format!("{}.{}", t.schema, t.table),
         detail: format!(
-            "`{}.{}` has {} dead tuples against {} live — {why}. LINT104's VACUUM reclaims them now; this keeps them from coming back",
-            t.schema, t.table, t.dead, t.live
+            "`{}.{}` has {} dead tuples against {} live — {why}{}",
+            t.schema,
+            t.table,
+            t.dead,
+            t.live,
+            if cause == VacuumCause::Behind {
+                ""
+            } else {
+                ". LINT104's VACUUM reclaims them now; this keeps them from coming back"
+            }
         ),
         suggestion,
         advice: Some(Box::new(Advice {

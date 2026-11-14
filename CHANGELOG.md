@@ -91,6 +91,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- The advisor's dead-tuple finding (ADV003), when autovacuum is behind,
+  suggests `VACUUM (VERBOSE)` on the table, which reports the dead rows
+  it can't remove yet and the oldest xmin holding them. It suggested a
+  lower scale factor, which only starts a vacuum already due.
 - A cell edit's confirmation names the column both ways when the
   result shows it under another name than the schema pgman read: an
   alias, or a column renamed since (`S`, then `r`, reloads it). The

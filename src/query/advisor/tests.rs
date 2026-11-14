@@ -648,6 +648,19 @@ fn dead_tuples_past_the_trigger_say_autovacuum_is_behind() {
     let f = dead_tuple_finding(&c, &table(100_000, 20_051, &[]), DEFAULTS, &th).unwrap();
     assert!(f.title.contains("autovacuum is behind"), "{}", f.title);
     assert!(f.detail.contains("long transaction"), "{}", f.detail);
+    // A lower scale factor wouldn't help a vacuum already due: the
+    // vacuum by hand, whose VERBOSE output names what holds it back.
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("VACUUM (VERBOSE) public.orders;")
+    );
+    assert!(advice(&f).change.is_none());
+    assert!(f.detail.contains("oldest xmin"), "{}", f.detail);
+    assert!(
+        !f.detail.contains("keeps them from coming back"),
+        "{}",
+        f.detail
+    );
     let at = dead_tuple_finding(&c, &table(100_000, 20_050, &[]), DEFAULTS, &th).unwrap();
     assert!(at.title.contains("scale factor allows"), "{}", at.title);
 }
@@ -699,7 +712,10 @@ fn dead_tuples_already_at_a_low_scale_factor_get_no_scale_suggestion() {
     )
     .unwrap();
     assert!(f.title.contains("behind"), "{}", f.title);
-    assert!(f.suggestion.is_none());
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("VACUUM (VERBOSE) public.orders;")
+    );
     assert!(advice(&f).change.is_none());
 }
 
