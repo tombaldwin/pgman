@@ -364,6 +364,11 @@ impl App {
             set_edited_cell(raw, hint, &pending.row_cells, col, value.clone());
         }
         let target = edit_target(&pending.edit);
+        let mut edited = pending.row_cells.clone();
+        if let Some(cell) = edited.get_mut(col) {
+            cell.clone_from(&value);
+        }
+        let hidden = shown && !self.regrid_after_edit(&edited);
         // What the row holds now, should a rollback have to undo it.
         pending.new = value;
         let state = match tx {
@@ -376,10 +381,12 @@ impl App {
             }
             conn::EditTx::InOperatorTx => "inside your open transaction · COMMIT to keep it",
         };
-        let moved = if shown {
-            ""
-        } else {
+        let moved = if !shown {
             " · the grid changed meanwhile, re-run to see it"
+        } else if hidden {
+            " · the filter hides it now"
+        } else {
+            ""
         };
         self.last_status = Some(format!("updated {target} · {state}{moved}"));
     }
@@ -427,6 +434,27 @@ impl App {
         );
         if let Some(raw) = self.grid_view.raw_rows.as_mut() {
             set_edited_cell(raw, pending.edit.row, &after, col, old);
+        }
+        self.regrid_after_edit(&pending.row_cells);
+    }
+
+    /// After an edit lands (or is undone), the grid's sort and filter
+    /// hold for the new value: the row moves where the sort puts it, or
+    /// out of view if the filter no longer matches, and the selection
+    /// follows it. They held for the old value. `false` when the filter
+    /// hides `row` now.
+    fn regrid_after_edit(&mut self, row: &[Cell]) -> bool {
+        if let Some((col, asc)) = self.grid_view.sort {
+            crate::grid::sort_rows(&mut self.grid.rows, col, asc);
+        }
+        self.rebuild_visible_rows();
+        let at = self.grid.rows.iter().position(|r| r.as_slice() == row);
+        match at.and_then(|i| self.grid_view.visible_rows.iter().position(|&v| v == i)) {
+            Some(v) => {
+                self.grid_state.select(Some(v));
+                true
+            }
+            None => at.is_none(),
         }
     }
 }
@@ -628,6 +656,68 @@ mod tests {
             a.last_status.as_deref(),
             Some("updated public.users.name where id = 2 · committed")
         );
+    }
+
+    /// The sort and filter hold for the edited value: the row moves where
+    /// the sort puts it with the selection on it, and a value the filter
+    /// no longer matches is hidden, the status saying so.
+    #[test]
+    fn an_edit_is_sorted_and_filtered_by_its_new_value() {
+        let mut a = editing(Some("bo"));
+        a.grid_view.sort = Some((1, true));
+        let p = pending(&a, Some("zed"));
+        a.on_msg(AppMsg::CellUpdated {
+            generation: a.generation,
+            pending: p,
+            value: Some("zed".into()),
+            tx: conn::EditTx::Committed,
+        });
+        let names: Vec<_> = a.grid.rows.iter().map(|r| r[1].clone()).collect();
+        assert_eq!(names, cells(&[Some("ann"), Some("cy"), Some("zed")]));
+        assert_eq!(a.selected_grid_row_idx(), Some(2));
+        assert!(a
+            .last_status
+            .as_deref()
+            .is_some_and(|s| s.ends_with("· committed")));
+
+        let mut a = editing(Some("bo"));
+        a.grid_view.filter = Some("o".into());
+        a.rebuild_visible_rows();
+        let p = pending(&a, Some("zed"));
+        a.on_msg(AppMsg::CellUpdated {
+            generation: a.generation,
+            pending: p,
+            value: Some("zed".into()),
+            tx: conn::EditTx::Committed,
+        });
+        assert!(a.grid_view.visible_rows.is_empty());
+        assert!(
+            a.last_status
+                .as_deref()
+                .is_some_and(|s| s.ends_with("· the filter hides it now")),
+            "{:?}",
+            a.last_status
+        );
+
+        // Rolled back: the old value sorts back where it was.
+        let mut a = editing(Some("bo"));
+        a.grid_view.sort = Some((1, true));
+        let p = pending(&a, Some("zed"));
+        a.on_msg(AppMsg::CellUpdated {
+            generation: a.generation,
+            pending: p,
+            value: Some("zed".into()),
+            tx: conn::EditTx::LeftOpen,
+        });
+        assert_eq!(a.grid.rows[2][1].as_deref(), Some("zed"));
+        a.on_msg(AppMsg::TxClosed {
+            generation: a.generation,
+            committed: false,
+            error: None,
+        });
+        let names: Vec<_> = a.grid.rows.iter().map(|r| r[1].clone()).collect();
+        assert_eq!(names, cells(&[Some("ann"), Some("bo"), Some("cy")]));
+        assert_eq!(a.selected_grid_row_idx(), Some(1));
     }
 
     #[test]

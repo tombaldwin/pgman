@@ -116,6 +116,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- An edited cell is sorted and filtered by its new value: the row moves
+  where the grid's sort puts it, with the selection on it, or is hidden
+  when the filter no longer matches (the status says so). A rollback
+  puts it back. They held for the old value.
 - `Ctrl-C` in row detail cancels a cell edit saved there that is
   waiting (a row lock), as it does from the grid. It armed quit.
 - The INSERT yank (`I`), `:fixture` and cell editing resolve an

@@ -45,6 +45,7 @@ Historical record. Newest at the top within each section.
   panel). The server names the view, not the table under it, as the
   columns' origin, so the edit is refused as a view;
   `u_refuses_a_view_that_shadows_its_table` pins it on a real server.
+- An edited cell is sorted and filtered by its new value.
 - `Ctrl-C` cancels an edit waiting from row detail too (the grid's
   already did).
 - An unqualified FROM resolves along the session's search path (the
