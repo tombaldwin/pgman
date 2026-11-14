@@ -429,6 +429,54 @@ fn temp_spill_names_the_statements_and_their_role() {
     );
 }
 
+/// The role raised is the one whose spills a work_mem raise covers: a
+/// worse statement past 4x work_mem, from another role, is named as
+/// beyond any setting rather than chosen.
+#[test]
+fn temp_spill_raises_work_mem_for_the_role_it_can_help() {
+    let th = Thresholds::default();
+    let c = ctx(ServerKind::SelfHosted);
+    let spillers = Spillers::Known(vec![
+        Spiller {
+            query: "SELECT * FROM orders ORDER BY placed_at".into(),
+            calls: 4,
+            temp_bytes: 40 * MIB,
+            role: "shop_app".into(),
+        },
+        Spiller {
+            query: "SELECT * FROM ledger ORDER BY 1".into(),
+            calls: 1,
+            temp_bytes: 900 * MIB,
+            role: "reporting".into(),
+        },
+    ]);
+    let wm = mem("4096", "kB", "user");
+    let f = temp_spill_finding(&c, &db(1, 0, GIB, DAY), Some(&wm), &spillers, &th).unwrap();
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER ROLE shop_app SET work_mem = '16MB';")
+    );
+    let why = &advice(&f).change.as_ref().unwrap().reasoning;
+    assert!(
+        why.contains("reporting spills 900 MB a call, more than 4× work_mem"),
+        "{why}"
+    );
+    // Only the unfixable one: it stays the role named, at twice.
+    let alone = Spillers::Known(vec![Spiller {
+        query: "SELECT * FROM ledger ORDER BY 1".into(),
+        calls: 1,
+        temp_bytes: 900 * MIB,
+        role: "reporting".into(),
+    }]);
+    let f = temp_spill_finding(&c, &db(1, 0, GIB, DAY), Some(&wm), &alone, &th).unwrap();
+    assert_eq!(
+        f.suggestion.as_deref(),
+        Some("ALTER ROLE reporting SET work_mem = '8MB';")
+    );
+    let why = &advice(&f).change.as_ref().unwrap().reasoning;
+    assert!(!why.contains("isn't the role raised"), "{why}");
+}
+
 /// Without pg_read_all_stats, pg_stat_statements shows another role's
 /// statement as `<insufficient privilege>`: the evidence says why and
 /// how to see it, as ADV004 does.

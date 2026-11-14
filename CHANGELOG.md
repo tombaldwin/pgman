@@ -105,6 +105,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The advisor's temp-file finding (ADV002) suggests `work_mem` for the
+  role whose spills a raise can cover. It named the worst spiller's
+  role even when that statement spilled more than 4× `work_mem`, past
+  any safe setting; that one is now named apart, to look at its
+  statement.
 - The schema wizard (`W`) says on its bottom border how many lines of
   the focused finding a short terminal cuts. The detail strip just
   stopped.

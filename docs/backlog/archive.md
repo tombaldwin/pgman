@@ -31,6 +31,7 @@ Historical record. Newest at the top within each section.
   longer keeps; a confirmation is journalled (`rules`).
 - MCP `schema_lint` runs the advisor, with its evidence; `\report`
   carries the evidence too.
+- ADV002 raises `work_mem` for the role it can help.
 - Killed by evidence: "a static environment's primary row is never
   probed" (v0.2.0 panel). 130c4c3, the day before, links a static
   replica to its primary and reads the primary through it, as

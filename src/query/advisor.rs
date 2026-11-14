@@ -643,6 +643,10 @@ pub fn temp_spill_finding(
     };
     let p = mapping("work_mem");
     let current = work_mem.and_then(Setting::bytes).unwrap_or(4 * MIB);
+    // What twice to four times work_mem can cover: a statement spilling
+    // more is past any safe setting.
+    let coverable = current.saturating_mul(4);
+    let mut beyond = None;
     let mut evidence = vec![format!(
         "temp_files {} · temp_bytes {} ({} written, {} an hour)",
         s.temp_files,
@@ -665,10 +669,27 @@ pub fn temp_spill_finding(
                     "{INSUFFICIENT_PRIVILEGE}: pg_stat_statements shows other roles' statements only to pg_read_all_stats: GRANT pg_monitor TO <your role>"
                 ));
             }
+            // The role to raise it for is the one whose spills it can
+            // cover: the worst statement over 4x work_mem, from another
+            // role, named the role no setting would help.
             let worst = list.iter().max_by_key(|sp| sp.per_call());
+            let fixable = list
+                .iter()
+                .filter(|sp| sp.per_call() < coverable)
+                .max_by_key(|sp| sp.per_call());
+            let chosen = fixable.or(worst);
+            if let (Some(w), Some(c)) = (worst, chosen) {
+                if w.per_call() >= coverable && w.role != c.role {
+                    beyond = Some(format!(
+                        "; {} spills {} a call, more than 4× work_mem: no safe work_mem covers it, so it isn't the role raised — look at its statement (an index, or less data per sort)",
+                        if w.role.is_empty() { "another role" } else { &w.role },
+                        human_size(w.per_call())
+                    ));
+                }
+            }
             (
-                worst.map(Spiller::per_call),
-                worst.map(|sp| sp.role.clone()).filter(|r| !r.is_empty()),
+                chosen.map(Spiller::per_call),
+                chosen.map(|sp| sp.role.clone()).filter(|r| !r.is_empty()),
             )
         }
         Spillers::Unavailable(why) => {
@@ -676,7 +697,10 @@ pub fn temp_spill_finding(
             (None, None)
         }
     };
-    let (next, reasoning) = suggest_work_mem(current, worst);
+    let (next, mut reasoning) = suggest_work_mem(current, worst);
+    if let Some(b) = beyond {
+        reasoning.push_str(&b);
+    }
     let role = role.unwrap_or_else(|| "<app_role>".to_string());
     let suggestion = format!("ALTER ROLE {role} SET work_mem = '{}';", pg_size(next));
     Some(Finding {

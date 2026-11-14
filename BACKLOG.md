@@ -382,9 +382,6 @@ batch.
 - **The advisor and the live lint run on the editor's session**, so
   inside an open user transaction `pg_stat_*` reads are the
   transaction's cached snapshot and a refresh can be stale.
-- **ADV002's suggested role** is the worst spiller's, even when that
-  spill is past 4x `work_mem` and the setting can't fix it; pick per
-  role instead.
 
 ### Code-review follow-ups (from the open-source-prep review)
 - The older single-line inputs (`SaveQueryPrompt` name,
