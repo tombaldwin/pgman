@@ -25,3 +25,4 @@
 /fuzz/artifacts
 /fuzz/coverage
 /fuzz/Cargo.lock
+__pycache__/

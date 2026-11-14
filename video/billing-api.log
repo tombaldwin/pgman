@@ -1,0 +1,10 @@
+2024-01-15 10:00:00.094  INFO 1 --- [nio-8080-exec-3] c.e.billing.web.InvoiceController        : GET /invoices?status=open
+2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL                        : select i.id, i.number, i.total from invoices i where i.status=?
+2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [open]
+2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL                        : select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?
+2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [48202]
+2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL                        : select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?
+2024-01-15 10:00:00.121 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [48207]
+2024-01-15 10:00:00.130 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL                        : select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?
+2024-01-15 10:00:00.131 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [48209]
+2024-01-15 10:00:00.142  INFO 1 --- [nio-8080-exec-3] c.e.billing.web.InvoiceController        : 200 OK in 48 ms

@@ -62,3 +62,7 @@ cargo +nightly fuzz run safety_classify -- -max_total_time=60
   [`tombaldwin/homebrew-tap`](https://github.com/tombaldwin/homebrew-tap).
   Per-release, the formula there is bumped by `scripts/update-formula.sh`
   (added separately from this workflow) rather than by hand.
+- **Videos**: the site's overview and feature loops are recorded from
+  `pgman --demo` by `video/render.sh` (see `video/README.md`). Re-render
+  after a release that changes a screen they show, and watch the result
+  before it goes on the site.
