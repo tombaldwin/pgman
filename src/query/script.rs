@@ -200,8 +200,8 @@ pub fn plan(
         if safety.profile_for(db).read_only {
             return Err(read_only_refusal(safety, db));
         }
-        let statements =
-            crate::batch::check_statements(safety, db, &seg.sql, true).map_err(|r| match r {
+        let statements = crate::batch::check_statements(safety, db, &seg.sql, true, false)
+            .map_err(|r| match r {
                 crate::batch::Refusal::Block { kind, stmt, .. }
                 | crate::batch::Refusal::Confirm { kind, stmt, .. } => {
                     format!("blocked by safety on {db}: {kind} (statement: {stmt})")

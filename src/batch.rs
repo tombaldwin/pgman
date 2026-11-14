@@ -197,18 +197,23 @@ pub enum Refusal {
 /// the classifier never saw. A script `safety::split_verified` cannot account
 /// for is refused outright: guards computed from the wrong statement
 /// boundaries approve the wrong statements.
+///
+/// `session_read_only` is a session read-only by more than its profile
+/// (`--target`'s pin): its floor holds against the script as a read-only
+/// profile's does.
 pub fn check_statements(
     config: &crate::safety::SafetyConfig,
     db: &str,
     sql: &str,
     assume_yes: bool,
+    session_read_only: bool,
 ) -> Result<Vec<String>, Refusal> {
     use crate::safety::Guard;
     let statements = crate::safety::split_verified(sql).map_err(|e| {
         tracing::warn!("batch: {e:?}");
         Refusal::Split
     })?;
-    let read_only = config.profile_for(db).read_only;
+    let read_only = config.profile_for(db).read_only || session_read_only;
     for stmt in &statements {
         // The script runs inside one explicit transaction
         // (`conn::run_batch_in_tx`). Under a read-only profile a
@@ -221,7 +226,7 @@ pub fn check_statements(
         if read_only && crate::safety::is_transaction_control(stmt) {
             return Err(Refusal::ReadOnlyEscape);
         }
-        let decision = crate::safety::evaluate(config, db, stmt);
+        let decision = crate::safety::evaluate_in_session(config, db, stmt, session_read_only);
         match decision.guard {
             Guard::Allow => {}
             Guard::Confirm if assume_yes => {}
@@ -249,14 +254,31 @@ pub fn check_statements(
     Ok(statements)
 }
 
-/// [`check_statements`] with the refusal worded for `--batch`.
+/// [`check_statements`] with the refusal worded for `--batch`. `pin` is
+/// why `--target` made the session read-only: the floor holds against
+/// the script, and a refusal names the pin, not safety.toml.
 pub fn check_batch_safety(
     config: &crate::safety::SafetyConfig,
     db: &str,
     sql: &str,
     assume_yes: bool,
+    pin: Option<&str>,
 ) -> Result<Vec<String>, String> {
-    check_statements(config, db, sql, assume_yes).map_err(|r| match r {
+    let by_pin = pin.filter(|_| !config.profile_for(db).read_only);
+    check_statements(config, db, sql, assume_yes, pin.is_some()).map_err(|r| {
+        if let (Refusal::ReadOnlyEscape | Refusal::ServerControl, Some(why)) = (&r, by_pin) {
+            return format!(
+                "this session is read-only by --target ({why}); the setting cannot be \
+                 changed from inside it"
+            );
+        }
+        refusal_text(r)
+    })
+}
+
+/// A [`Refusal`] worded for `--batch`.
+fn refusal_text(r: Refusal) -> String {
+    match r {
         Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
         Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
         Refusal::ServerControl => crate::safety::SERVER_CONTROL_REFUSAL.to_string(),
@@ -276,7 +298,7 @@ pub fn check_batch_safety(
             "blocked by safety: {kind} on '{db}' is set to block \
              — change this guard to \"confirm\" in safety.toml to permit it (statement: {stmt})"
         ),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -286,8 +308,8 @@ mod read_only_batch_tests {
 
     #[test]
     fn a_typo_is_refused_as_unrecognised_not_as_a_guarded_write() {
-        let err =
-            check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", false).unwrap_err();
+        let err = check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", false, None)
+            .unwrap_err();
         assert!(
             err.starts_with(
                 "blocked by safety: `selec` isn't a statement pgman recognises (typo?)"
@@ -296,13 +318,14 @@ mod read_only_batch_tests {
         );
         assert!(err.contains("re-run with --yes to send it anyway"), "{err}");
         // Still guarded: --yes is what lets it through, as before.
-        assert!(check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", true).is_ok());
+        assert!(check_batch_safety(&SafetyConfig::default(), "db", "selec 1;", true, None).is_ok());
         // A known write keeps the guarded-write wording.
         let write = check_batch_safety(
             &SafetyConfig::default(),
             "db",
             "merge into t using s on true when matched then delete",
             false,
+            None,
         )
         .unwrap_err();
         assert!(write.contains("would need confirmation"), "{write}");
@@ -313,7 +336,13 @@ mod read_only_batch_tests {
         let cfg = SafetyConfig::default();
         for yes in [false, true] {
             assert_eq!(
-                check_batch_safety(&cfg, "db", "SELECT 1; SELECT pg_wal_replay_pause()", yes),
+                check_batch_safety(
+                    &cfg,
+                    "db",
+                    "SELECT 1; SELECT pg_wal_replay_pause()",
+                    yes,
+                    None
+                ),
                 Err(crate::safety::SERVER_CONTROL_REFUSAL.to_string())
             );
         }
@@ -336,7 +365,7 @@ mod read_only_batch_tests {
             "COMMIT",
         ] {
             assert_eq!(
-                check_batch_safety(&cfg, "db", sql, true),
+                check_batch_safety(&cfg, "db", sql, true, None),
                 Err(READ_ONLY_ESCAPE_REFUSAL.to_string()),
                 "{sql}"
             );
@@ -347,8 +376,39 @@ mod read_only_batch_tests {
     fn transaction_control_is_a_plain_confirm_under_a_writable_profile() {
         let mut cfg = SafetyConfig::default();
         cfg.default.read_only = false;
-        assert!(check_batch_safety(&cfg, "db", "BEGIN; SELECT 1; COMMIT", true).is_ok());
-        assert!(check_batch_safety(&cfg, "db", "BEGIN; SELECT 1; COMMIT", false).is_err());
+        assert!(check_batch_safety(&cfg, "db", "BEGIN; SELECT 1; COMMIT", true, None).is_ok());
+        assert!(check_batch_safety(&cfg, "db", "BEGIN; SELECT 1; COMMIT", false, None).is_err());
+    }
+
+    /// `--target`'s pin holds against the script as a read-only profile
+    /// does: a writable profile's database pinned read-only wrote through
+    /// each of these with `--yes`.
+    #[test]
+    fn a_target_pin_refuses_every_lift_of_the_floor_even_with_yes() {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let pin = "live/ledger is protected (protected = true): read-only here";
+        for sql in [
+            "SET TRANSACTION READ WRITE; CREATE TABLE t (x int)",
+            "SET transaction_read_only = off; CREATE TABLE t (x int)",
+            "SET LOCAL transaction_read_only = off; CREATE TABLE t (x int)",
+            "SET default_transaction_read_only = off; COMMIT; BEGIN; CREATE TABLE t (x int)",
+            "RESET ALL; COMMIT; CREATE TABLE t (x int)",
+            "BEGIN; SET TRANSACTION READ WRITE; CREATE TABLE t (x int); COMMIT;",
+            "SELECT pg_wal_replay_pause()",
+            "SELECT 1; COMMIT; SELECT 2",
+        ] {
+            let err = check_batch_safety(&cfg, "db", sql, true, Some(pin)).unwrap_err();
+            assert!(
+                err.starts_with("this session is read-only by --target (live/ledger is"),
+                "{sql}: {err}"
+            );
+        }
+        // Unpinned, the same profile lets --yes answer them.
+        assert!(check_batch_safety(&cfg, "db", "BEGIN; SELECT 1; COMMIT", true, None).is_ok());
+        // A plain read under the pin is fine; a plain write is the
+        // server's to refuse.
+        assert!(check_batch_safety(&cfg, "db", "SELECT 1", false, Some(pin)).is_ok());
     }
 
     #[test]
@@ -363,7 +423,7 @@ mod read_only_batch_tests {
              COMMIT; INSERT INTO t VALUES (1)",
         ] {
             assert_eq!(
-                check_batch_safety(&cfg, "db", sql, true),
+                check_batch_safety(&cfg, "db", sql, true, None),
                 Err(READ_ONLY_ESCAPE_REFUSAL.to_string()),
                 "{sql}"
             );
@@ -383,7 +443,13 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     // `checked` is what actually gets sent: the verified statements, re-joined.
     // Running `opts.sql` instead would let anything the splitter treated as one
     // statement — but the server treats as several — through unclassified.
-    let checked = match check_batch_safety(&opts.safety, &opts.db, &opts.sql, opts.assume_yes) {
+    let checked = match check_batch_safety(
+        &opts.safety,
+        &opts.db,
+        &opts.sql,
+        opts.assume_yes,
+        opts.pin.as_deref(),
+    ) {
         Ok(statements) => statements,
         Err(msg) => {
             eprintln!("error: {}", terminal_safe(&msg));
@@ -1361,16 +1427,16 @@ mod tests {
     #[test]
     fn batch_safety_allows_selects() {
         let cfg = crate::safety::SafetyConfig::default();
-        assert!(check_batch_safety(&cfg, "db", "SELECT * FROM t", false).is_ok());
+        assert!(check_batch_safety(&cfg, "db", "SELECT * FROM t", false, None).is_ok());
         // Multi-statement all-SELECT batch is fine too.
-        assert!(check_batch_safety(&cfg, "db", "SELECT 1; SELECT 2", false).is_ok());
+        assert!(check_batch_safety(&cfg, "db", "SELECT 1; SELECT 2", false, None).is_ok());
     }
 
     #[test]
     fn batch_safety_blocks_drop_even_with_yes() {
         // DROP defaults to Guard::Block — --yes must NOT override a block.
         let cfg = crate::safety::SafetyConfig::default();
-        let err = check_batch_safety(&cfg, "db", "DROP TABLE legacy", true).unwrap_err();
+        let err = check_batch_safety(&cfg, "db", "DROP TABLE legacy", true, None).unwrap_err();
         assert!(err.contains("block"), "got: {err}");
         assert!(err.contains("DROP"), "got: {err}");
     }
@@ -1379,16 +1445,17 @@ mod tests {
     fn batch_safety_confirm_requires_yes() {
         // INSERT defaults to Guard::Confirm: refused without --yes, allowed with.
         let cfg = crate::safety::SafetyConfig::default();
-        let err = check_batch_safety(&cfg, "db", "INSERT INTO t VALUES (1)", false).unwrap_err();
+        let err =
+            check_batch_safety(&cfg, "db", "INSERT INTO t VALUES (1)", false, None).unwrap_err();
         assert!(err.contains("--yes"), "got: {err}");
-        assert!(check_batch_safety(&cfg, "db", "INSERT INTO t VALUES (1)", true).is_ok());
+        assert!(check_batch_safety(&cfg, "db", "INSERT INTO t VALUES (1)", true, None).is_ok());
     }
 
     #[test]
     fn batch_safety_blocks_when_any_statement_is_blocked() {
         // A safe leading SELECT does not excuse a later DROP.
         let cfg = crate::safety::SafetyConfig::default();
-        let err = check_batch_safety(&cfg, "db", "SELECT 1; DROP TABLE t", true).unwrap_err();
+        let err = check_batch_safety(&cfg, "db", "SELECT 1; DROP TABLE t", true, None).unwrap_err();
         assert!(err.contains("DROP"), "got: {err}");
     }
 
@@ -1401,9 +1468,9 @@ mod tests {
         let sql =
             "CREATE FUNCTION f() RETURNS void AS $$ BEGIN DELETE FROM t; END; $$ LANGUAGE plpgsql";
         // Default ddl guard is Confirm → needs --yes, but is NOT a hard block.
-        let err = check_batch_safety(&cfg, "db", sql, false).unwrap_err();
+        let err = check_batch_safety(&cfg, "db", sql, false, None).unwrap_err();
         assert!(err.contains("--yes"), "got: {err}");
-        assert!(check_batch_safety(&cfg, "db", sql, true).is_ok());
+        assert!(check_batch_safety(&cfg, "db", sql, true, None).is_ok());
     }
 
     #[test]
@@ -1417,6 +1484,7 @@ mod tests {
             "db",
             "SELECT 1; SELECT 1 AS a$b$c; DROP TABLE users",
             true,
+            None,
         )
         .unwrap_err();
         assert!(err.contains("DROP"), "got: {err}");
@@ -1430,6 +1498,7 @@ mod tests {
             "db",
             r#"SELECT 1; SELECT * FROM "a--b"; DROP TABLE users"#,
             true,
+            None,
         )
         .unwrap_err();
         assert!(err.contains("DROP"), "got: {err}");
@@ -1441,8 +1510,8 @@ mod tests {
         // guess, so there is nothing to vouch for. --yes does not help.
         let cfg = crate::safety::SafetyConfig::default();
         for assume_yes in [false, true] {
-            let err =
-                check_batch_safety(&cfg, "db", "SELECT 1; SELECT 'oops", assume_yes).unwrap_err();
+            let err = check_batch_safety(&cfg, "db", "SELECT 1; SELECT 'oops", assume_yes, None)
+                .unwrap_err();
             assert_eq!(err, crate::safety::SPLIT_REFUSAL);
         }
     }
@@ -1455,7 +1524,7 @@ mod tests {
         // planner hint is input to the server, not decoration.
         let cfg = crate::safety::SafetyConfig::default();
         let checked =
-            check_batch_safety(&cfg, "db", "SELECT 1; -- note\nSELECT 2;", false).unwrap();
+            check_batch_safety(&cfg, "db", "SELECT 1; -- note\nSELECT 2;", false, None).unwrap();
         assert_eq!(
             checked,
             vec!["SELECT 1".to_string(), "-- note\nSELECT 2".to_string()]

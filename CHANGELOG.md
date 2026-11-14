@@ -55,7 +55,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   Read-only unless `--primary` names the primary (its replica, or its
   primary when it has none); a protected environment is read-only even
   then, since `--yes` can't answer its typed name (`pgman run` asks for
-  it). safety.toml's `ENV/DATABASE` keys apply.
+  it). A script can't lift it (`SET TRANSACTION READ WRITE`, a
+  `COMMIT` and a fresh transaction, …), as under a read-only
+  safety.toml profile. safety.toml's `ENV/DATABASE` keys apply.
 - MCP `explain`: one statement's plan, with findings — big sequential
   scans, row estimates ten times off, sorts and hashes spilled to disk,
   nested loops run thousands of times. `analyze: true` runs it in the

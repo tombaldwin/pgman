@@ -1806,7 +1806,7 @@ pub fn single_checked_statement(
         return Err("sql is empty".to_string());
     }
     let mut statements =
-        crate::batch::check_statements(cfg, db, sql, false).map_err(mcp_refusal)?;
+        crate::batch::check_statements(cfg, db, sql, false, false).map_err(mcp_refusal)?;
     match statements.len() {
         1 => Ok(statements.remove(0)),
         0 => Err("sql has no statement".to_string()),

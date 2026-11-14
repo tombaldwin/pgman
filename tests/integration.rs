@@ -3743,6 +3743,16 @@ fn query_takes_an_environment_target() {
     );
     let said = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(!out.status.success(), "{said}");
+    // Nor can the script lift the pin: it wrote through this once.
+    let escape = format!("SET TRANSACTION READ WRITE; {write}");
+    let out = pgman_in(
+        &home,
+        &home,
+        &["query", &escape, "--yes", "--target", "mirror"],
+    );
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("read-only by --target"), "{said}");
     // --target and --dsn together are refused by clap.
     let out = pgman_in(
         &home,
