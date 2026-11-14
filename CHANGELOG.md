@@ -118,6 +118,17 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `pgman copies rm` leaves a file a later dump wrote over: deleting an
+  older copy whose path a newer dump reused deleted the newer dump.
+  `copies` no longer panics on a hand-edited journal with a non-ASCII
+  copy id.
+- The editor's completion popup keeps each row's name after Tab picks
+  one. Every row read as the pick plus its own ending
+  (`customerstotals` for `customer_totals`).
+- Editing a temporary table's cell works. Every edit was rolled back
+  as "the table changed since pgman read it", which a schema reload
+  couldn't help: the catalog calls the session's temporary schema
+  `pg_temp_4`, the server's identity check `pg_temp`.
 - Masking keeps a flag named for pay or an identifier
   (`pay_invoices_online`): a boolean holds neither.
 - Masking keeps a number that measures beside a location or photo word
