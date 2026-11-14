@@ -410,6 +410,11 @@ fn server_keys(host: &str, port: u16) -> Vec<String> {
 /// for every protected connection and every target.
 const RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How long a name that timed out is taken as unresolvable before it is
+/// asked again: an MCP server runs for hours, and a protected server
+/// matched by its name alone isn't matched by its address.
+const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// `host:port`'s addresses, each name resolved once per run and for no
 /// longer than [`RESOLVE_TIMEOUT`]. Blocking.
 fn resolved_addrs(host: &str, port: u16) -> Vec<std::net::IpAddr> {
@@ -420,6 +425,7 @@ fn resolved_addrs(host: &str, port: u16) -> Vec<std::net::IpAddr> {
         host,
         port,
         RESOLVE_TIMEOUT,
+        RETRY_AFTER,
         |name, port| {
             (name.as_str(), port)
                 .to_socket_addrs()
@@ -429,37 +435,60 @@ fn resolved_addrs(host: &str, port: u16) -> Vec<std::net::IpAddr> {
     )
 }
 
-/// Names already resolved this run, and what to.
-type ResolveCache =
-    std::sync::Mutex<std::collections::HashMap<(String, u16), Vec<std::net::IpAddr>>>;
+/// What a name came to this run.
+#[derive(Debug, Clone)]
+enum Answer {
+    Addrs(Vec<std::net::IpAddr>),
+    /// The lookup outran the limit, at this instant.
+    TimedOut(std::time::Instant),
+}
 
-/// `host:port` from `cache`, or `lookup` (bounded by `limit`) the first
-/// time, its answer kept — an empty one too, so a name that timed out
-/// isn't waited on again.
+/// Names already resolved this run, and what to.
+type ResolveCache = std::sync::Mutex<std::collections::HashMap<(String, u16), Answer>>;
+
+/// `host:port` from `cache`, or `lookup` (bounded by `limit`). Its
+/// answer is kept, a late one too: the lookup thread fills the cache
+/// when it finishes. A timeout is kept for `retry_after`, so a dead
+/// resolver isn't waited on for every name check, then asked again.
 fn cached_lookup(
-    cache: &ResolveCache,
+    cache: &'static ResolveCache,
     host: &str,
     port: u16,
     limit: std::time::Duration,
+    retry_after: std::time::Duration,
     lookup: impl FnOnce(String, u16) -> Vec<std::net::IpAddr> + Send + 'static,
 ) -> Vec<std::net::IpAddr> {
+    let lock = || cache.lock().unwrap_or_else(|e| e.into_inner());
     let key = (host.to_string(), port);
-    if let Some(hit) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-        return hit.clone();
+    match lock().get(&key) {
+        Some(Answer::Addrs(a)) => return a.clone(),
+        Some(Answer::TimedOut(at)) if at.elapsed() < retry_after => return Vec::new(),
+        _ => {}
     }
-    let name = host.to_string();
-    let addrs = bounded(limit, move || lookup(name, port)).unwrap_or_else(|| {
+    let (name, late) = (host.to_string(), key.clone());
+    let addrs = bounded(limit, move || {
+        let a = lookup(name, port);
+        cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(late, Answer::Addrs(a.clone()));
+        a
+    });
+    addrs.unwrap_or_else(|| {
         tracing::warn!(
             host,
             "name didn't resolve within {limit:?}: matched by its name"
         );
-        Vec::new()
-    });
-    cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(key, addrs.clone());
-    addrs
+        // Unless the answer landed since.
+        let mut c = lock();
+        match c.get(&key) {
+            Some(Answer::Addrs(a)) => a.clone(),
+            _ => {
+                c.insert(key, Answer::TimedOut(std::time::Instant::now()));
+                Vec::new()
+            }
+        }
+    })
 }
 
 /// `f`'s answer, run on its own thread, if it comes within `limit`;
@@ -609,36 +638,67 @@ mod tests {
         assert_eq!(bounded(ms(1_000), || 7), Some(7));
     }
 
-    /// Each name is looked up once per run, a timed-out one too: the
-    /// second ask is the cache's.
+    /// Each name is looked up once per run; a timed-out one isn't asked
+    /// again until `retry_after`, and an answer that lands late is kept.
     #[test]
     fn a_name_is_resolved_once_per_run() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
         let ms = std::time::Duration::from_millis;
-        let cache = ResolveCache::default();
+        let cache: &'static ResolveCache = Box::leak(Box::default());
         let calls = Arc::new(AtomicUsize::new(0));
         let ip: std::net::IpAddr = "10.0.1.23".parse().unwrap();
         for _ in 0..3 {
             let c = calls.clone();
-            let got = cached_lookup(&cache, "db.example", 5432, ms(1_000), move |_, _| {
-                c.fetch_add(1, Ordering::SeqCst);
-                vec![ip]
-            });
+            let got = cached_lookup(
+                cache,
+                "db.example",
+                5432,
+                ms(1_000),
+                ms(60_000),
+                move |_, _| {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    vec![ip]
+                },
+            );
             assert_eq!(got, vec![ip]);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        // Timed out: no addresses, and not asked again.
+        // Timed out: no addresses, and not asked again within retry_after.
         for _ in 0..2 {
             let c = calls.clone();
-            let got = cached_lookup(&cache, "slow.example", 5432, ms(20), move |_, _| {
+            let got = cached_lookup(
+                cache,
+                "slow.example",
+                5432,
+                ms(20),
+                ms(60_000),
+                move |_, _| {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(ms(300));
+                    vec![ip]
+                },
+            );
+            assert!(got.is_empty());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        // The late answer lands in the cache.
+        std::thread::sleep(ms(600));
+        let got = cached_lookup(cache, "slow.example", 5432, ms(20), ms(60_000), |_, _| {
+            unreachable!("answered from the cache")
+        });
+        assert_eq!(got, vec![ip]);
+        // A timeout past retry_after is asked again.
+        for _ in 0..2 {
+            let c = calls.clone();
+            let got = cached_lookup(cache, "dead.example", 5432, ms(20), ms(0), move |_, _| {
                 c.fetch_add(1, Ordering::SeqCst);
-                std::thread::sleep(ms(500));
+                std::thread::sleep(ms(5_000));
                 vec![ip]
             });
             assert!(got.is_empty());
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
         assert!(server_keys("localhost", 54_321).contains(&"localhost".to_string()));
     }
 
