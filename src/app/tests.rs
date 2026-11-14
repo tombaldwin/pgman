@@ -1515,7 +1515,7 @@ fn d_against_another_tables_pin_pins_afresh() {
     assert_eq!(pinned.source, src("users"));
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
-        status.contains("pinned result A") && status.contains("public.orders's"),
+        status.starts_with("pinned result A afresh (the old A, which was public.orders's,"),
         "{status}"
     );
     // Now the same table: a diff.

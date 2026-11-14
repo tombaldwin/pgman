@@ -4937,11 +4937,12 @@ impl App {
             None => {
                 let n = self.grid.rows.len();
                 self.result_diff.pinned = Some(self.current_result_pin());
+                // The replacement first: a narrow footer cuts from the right.
                 let replaced = stale
-                    .map(|why| format!(" · it replaces the old A, {why}"))
+                    .map(|why| format!(" afresh (the old A, {why}, is dropped)"))
                     .unwrap_or_default();
                 self.last_status = Some(format!(
-                    "pinned result A · {n} row(s) · run another query, then D to diff{replaced}"
+                    "pinned result A{replaced} · {n} row(s) · run another query, then D to diff"
                 ));
             }
             Some(a) => {
