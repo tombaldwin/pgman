@@ -759,6 +759,18 @@ pub(crate) fn footer_badges_with(
         ));
         out.push(Span::raw(" "));
     }
+    // Copies past their expiry: nothing else in the TUI says a dump
+    // left behind wants deleting (`pgman copies prune`).
+    if app.expired_copies > 0 {
+        out.push(Span::styled(
+            format!(" EXPIRED ×{} ", app.expired_copies),
+            Style::default()
+                .bg(theme.health_yellow)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
     // JDBC tap connection badge — flashed whenever the tap
     // listener has seen at least one event this session. F4
     // hint piggybacks on the badge so the operator knows where

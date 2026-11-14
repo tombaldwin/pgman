@@ -1576,6 +1576,9 @@ pub struct App {
     /// Redaction mode (`--redact`, `:redact`, `redact_default`): every
     /// frame goes through `redact::apply` before it is drawn.
     pub redact: bool,
+    /// Copies past their expiry with something left to delete, read
+    /// from the journal at launch: the footer's `EXPIRED` badge.
+    pub expired_copies: usize,
     /// `redact::env_names()`, read once at startup: redaction's names
     /// from the process environment (`AWS_PROFILE`, the login name).
     pub redact_env_names: Vec<String>,
@@ -1996,6 +1999,7 @@ impl App {
             mode_seen: std::collections::HashSet::new(),
             timing_on: false,
             redact: false,
+            expired_copies: 0,
             redact_env_names: Vec::new(),
             environments_config_broken: false,
             expanded_on: false,

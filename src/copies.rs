@@ -100,6 +100,13 @@ const RM: &str = "with pgman copies rm";
 /// Why `pgman copies prune` did.
 const PRUNE: &str = "with pgman copies prune, past its expiry";
 
+/// How many copies `pgman copies prune` would remove now. Reads the
+/// journal and the filesystem.
+pub fn expired_here() -> usize {
+    let (events, _) = journal::read_in(&journal::dir());
+    prune_candidates(&registry(&events), journal::now(), present).len()
+}
+
 /// The copies `pgman copies prune` removes: past their expiry and not
 /// deleted, with a file still there (`present`) or a database restored
 /// from them not yet dropped. Oldest first. Pure but for `present`.

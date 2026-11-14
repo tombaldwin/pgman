@@ -491,6 +491,8 @@ secrets.
   URL with a password in it is kept, and said so: pgman keeps no
   passwords, so restore through a `connections.toml` entry with
   `password_env` for `copies rm` to reach it again.
+- The TUI's footer shows `EXPIRED ×N` while N copies are past their
+  expiry with a file or a restored database left (counted at launch).
 - `pgman copies prune` does `rm` for every copy past its expiry that
   still has a file or a restored database, oldest first, asking about
   each in turn (unless `--yes`). A copy you say no to, or one whose

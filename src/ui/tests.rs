@@ -286,6 +286,17 @@ fn footer_badges_show_only_active_ones() {
     assert_eq!(spans[0].content, " TX ");
 }
 
+/// Copies past their expiry show as a badge with their count.
+#[test]
+fn footer_badges_count_the_expired_copies() {
+    let mut a = settled_app(false, false);
+    a.expired_copies = 3;
+    let spans = footer_badges_with(&a, &a.theme, 0);
+    assert_eq!(spans[0].content, " EXPIRED ×3 ");
+    a.expired_copies = 0;
+    assert!(footer_badges_with(&a, &a.theme, 0).is_empty());
+}
+
 #[test]
 fn footer_badges_drop_counter_surfaces_amber_badge() {
     let a = settled_app(false, false);

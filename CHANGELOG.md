@@ -8,6 +8,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- The TUI's footer shows `EXPIRED ×N` while N dump copies are past
+  their expiry with something left to delete (`pgman copies prune`).
 - `pgman copies prune`: deletes every copy past its expiry, with the
   databases restored from it, as `copies rm` does, asking about each in
   turn unless `--yes`. A copy kept (not confirmed, sessions open)

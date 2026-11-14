@@ -743,6 +743,7 @@ async fn main() -> anyhow::Result<()> {
         immediate: false,
     });
     application.dsn_origin = dsn_origin;
+    application.expired_copies = pgman::copies::expired_here();
     let (redact_default, redact_warn) = pgman::redact::config_default();
     application.redact = cli.redact || redact_default;
     application.redact_env_names = pgman::redact::env_names();
