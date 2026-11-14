@@ -954,8 +954,14 @@ async fn main() -> anyhow::Result<()> {
                 // — the hop that used to be unbounded queued a burst
                 // here without limit and without counting it. Replay
                 // waits too, keeping its delivery guarantee.
-                let app_send = app_tx.send(event.clone()).await;
-                if let Some(f) = record_file.as_mut() {
+                //
+                // The capture's line is made first, and only while
+                // recording, so the event goes to the App as it is: it
+                // was cloned for every event, recording or not.
+                let ts = event.ts_unix_micros;
+                let line = record_file.is_some().then(|| tap::record_line(&event));
+                let app_send = app_tx.send(event).await;
+                if let (Some(f), Some(line)) = (record_file.as_mut(), line) {
                     // Drop-marker: when the listener has
                     // dropped events since the last write, write
                     // a synthetic heartbeat that carries the
@@ -973,7 +979,7 @@ async fn main() -> anyhow::Result<()> {
                         let marker = tap::TapEvent {
                             v: 1,
                             kind: tap::TapKind::Heartbeat,
-                            ts_unix_micros: event.ts_unix_micros,
+                            ts_unix_micros: ts,
                             received_at_unix_micros: 0,
                             app: None,
                             pool: None,
@@ -995,7 +1001,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         last_drop_seen = cur_drops;
                     }
-                    match tap::record_line(&event) {
+                    match line {
                         Ok(line) => {
                             bytes.extend(line.into_bytes());
                             bytes.push(b'\n');

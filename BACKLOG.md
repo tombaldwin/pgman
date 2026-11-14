@@ -170,8 +170,7 @@ small-UX, correctness and environments findings landed on branch
   (`TAP_CHANNEL_CAPACITY` = 4096). The 0.1.1 run loop keeps up with
   every burst measured, but if the app truly stalls, 4096 × ~200 KiB
   events could still queue (~800 MiB). A byte budget would make the
-  worst case honest. The adapter in `main.rs` also clones every event
-  for `--tap-record` even when nothing is recorded.
+  worst case honest.
 - **ebman parity, deferred**: a `--read-write` opt-in flag mirroring
   ebman's `--read-only`; the `D` key means describe in ebman and diff
   here; a Ctrl-K command palette on top of the `:` bar.
