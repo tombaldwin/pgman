@@ -848,6 +848,7 @@ mod tests {
             dsn: None,
             refusal: None,
             password_source: String::new(),
+            password_unset: None,
             secret: None,
             role: Default::default(),
         };

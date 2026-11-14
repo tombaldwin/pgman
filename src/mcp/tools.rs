@@ -2336,6 +2336,7 @@ mod tests {
             dsn: Some(conn::Dsn::parse(url).unwrap()),
             refusal: refusal.map(str::to_string),
             password_source: "in the url".to_string(),
+            password_unset: None,
             secret: None,
             role: connections::Role::Direct,
         }

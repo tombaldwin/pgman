@@ -537,8 +537,9 @@ fn doctor_names_each_file_and_exits_1_when_one_does_not_load() {
         "ok     connections.toml",
         "1 connection(s)",
         "-      environments.toml",
-        "ok     local (personal connections.toml)",
-        "PGMAN_TEST_DOCTOR_PW (NOT set",
+        // Its password_env isn't set: the connect would carry none.
+        "no     local (personal connections.toml)",
+        "password_env names $PGMAN_TEST_DOCTOR_PW, which is not set",
     ] {
         assert!(text.contains(want), "{want:?} in\n{text}");
     }

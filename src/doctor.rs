@@ -181,15 +181,7 @@ pub fn gather(cwd: &Path) -> Report {
         .map(|e| Conn {
             name: e.name.clone(),
             source: e.source.label(),
-            usable: match (&e.refusal, &e.dsn) {
-                (Some(why), _) => Err(why.clone()),
-                (None, Some(dsn)) => Ok(format!(
-                    "{} · password {}",
-                    dsn.redacted(),
-                    e.password_source
-                )),
-                (None, None) => Err("no connection settings".to_string()),
-            },
+            usable: usable(e),
         })
         .collect();
 
@@ -264,9 +256,54 @@ pub fn render(r: &Report) -> String {
     out
 }
 
+/// Whether `e` can connect as configured, and how, or why not: a
+/// `password_env` that isn't set leaves the connect with no password.
+/// Pure.
+fn usable(e: &crate::mcp::connections::Entry) -> Result<String, String> {
+    match (&e.refusal, &e.dsn) {
+        (Some(why), _) => Err(why.clone()),
+        (None, Some(dsn)) => match &e.password_unset {
+            Some(var) => Err(format!(
+                "{} · password_env names ${var}, which is not set in pgman's environment",
+                dsn.redacted()
+            )),
+            None => Ok(format!(
+                "{} · password {}",
+                dsn.redacted(),
+                e.password_source
+            )),
+        },
+        (None, None) => Err("no connection settings".to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A connection whose password_env isn't set is not usable: the
+    /// connect would carry no password.
+    #[test]
+    fn an_unset_password_env_is_not_usable() {
+        let mut e = crate::mcp::connections::Entry {
+            name: "trial".into(),
+            source: crate::mcp::connections::Source::Personal,
+            dsn: crate::conn::Dsn::parse("postgres://app@127.0.0.1:55432/ledger").ok(),
+            refusal: None,
+            password_source: "env TRIAL_PW (NOT set in pgman's environment)".into(),
+            password_unset: Some("TRIAL_PW".into()),
+            secret: None,
+            role: Default::default(),
+        };
+        let why = usable(&e).unwrap_err();
+        assert!(
+            why.contains("password_env names $TRIAL_PW, which is not set"),
+            "{why}"
+        );
+        e.password_unset = None;
+        e.password_source = "env TRIAL_PW (set)".into();
+        assert!(usable(&e).is_ok());
+    }
 
     fn report() -> Report {
         Report {

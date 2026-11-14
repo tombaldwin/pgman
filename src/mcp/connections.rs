@@ -122,6 +122,9 @@ pub struct Entry {
     pub refusal: Option<String>,
     /// Where the password comes from, never the password itself.
     pub password_source: String,
+    /// The `password_env` variable it names, when that isn't set in
+    /// pgman's environment: the connect will have no password.
+    pub password_unset: Option<String>,
     /// Set when the password is read from AWS Secrets Manager at connect.
     pub secret: Option<SecretRef>,
     pub role: Role,
@@ -247,6 +250,10 @@ fn personal_entry(pc: &PersonalConnection) -> Entry {
         dsn: if refusal.is_none() { dsn } else { None },
         refusal,
         password_source,
+        password_unset: c
+            .password_env
+            .clone()
+            .filter(|v| !v.is_empty() && std::env::var(v).map_or(true, |x| x.is_empty())),
         secret,
         role: pc.role.unwrap_or_default(),
     }
@@ -290,6 +297,7 @@ fn discovered_entry(pick: DataSourcePick, allow_discovered: bool) -> Entry {
         dsn: if refusal.is_none() { pick.dsn } else { None },
         refusal,
         password_source,
+        password_unset: None,
         secret: None,
         role: Role::Direct,
     }
@@ -501,6 +509,20 @@ mod tests {
         );
         assert_eq!(same_target(&entries[0], &entries), ["replicaDataSource"]);
         assert!(same_target(&entries[2], &entries).is_empty());
+    }
+
+    /// A password_env no process sets is named as unset; none named,
+    /// nothing is.
+    #[test]
+    fn an_unset_password_env_is_named() {
+        let mut c = conn("trial", "postgres://u@localhost/db");
+        c.base.password_env = Some("PGMAN_TEST_NEVER_SET_ANYWHERE".into());
+        assert_eq!(
+            personal_entry(&c).password_unset.as_deref(),
+            Some("PGMAN_TEST_NEVER_SET_ANYWHERE")
+        );
+        c.base.password_env = None;
+        assert_eq!(personal_entry(&c).password_unset, None);
     }
 
     #[test]
