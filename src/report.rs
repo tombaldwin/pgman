@@ -202,6 +202,32 @@ pub fn render_markdown(snapshot: &ReportSnapshot) -> String {
             ));
         }
         out.push('\n');
+        for f in &snapshot.lint_findings {
+            let Some(a) = &f.advice else { continue };
+            out.push_str(&format!(
+                "### {} · {}\n\n",
+                md_escape(f.code),
+                md_escape(&f.title)
+            ));
+            out.push_str(&format!("_{}_\n\n", md_escape(&a.window)));
+            for e in &a.evidence {
+                out.push_str(&format!("- {}\n", md_escape(e)));
+            }
+            if let Some(c) = &a.change {
+                out.push_str(&format!(
+                    "- **setting:** `{}` {} → {}{}\n",
+                    md_escape(c.name),
+                    md_escape(&c.current),
+                    md_escape(&c.suggested),
+                    if c.restart { " (needs a restart)" } else { "" }
+                ));
+            }
+            if let Some(s) = &f.suggestion {
+                out.push_str(&format!("- **suggest:** {}\n", md_escape(s)));
+            }
+            // pgman's own statement, runnable as it is.
+            out.push_str(&format!("\n````sql\n{}\n````\n\n", a.evidence_sql));
+        }
     }
 
     // Tap hotspots.
@@ -427,6 +453,31 @@ pub fn render_html(snapshot: &ReportSnapshot) -> String {
             ));
         }
         out.push_str("</table>");
+        for f in &snapshot.lint_findings {
+            let Some(a) = &f.advice else { continue };
+            out.push_str(&format!(
+                "<h3>{} · {}</h3><p class=\"muted\">{}</p><ul>",
+                html_escape(f.code),
+                html_escape(&f.title),
+                html_escape(&a.window)
+            ));
+            for e in &a.evidence {
+                out.push_str(&format!("<li>{}</li>", html_escape(e)));
+            }
+            if let Some(c) = &a.change {
+                out.push_str(&format!(
+                    "<li><b>setting:</b> <code>{}</code> {} → {}{}</li>",
+                    html_escape(c.name),
+                    html_escape(&c.current),
+                    html_escape(&c.suggested),
+                    if c.restart { " (needs a restart)" } else { "" }
+                ));
+            }
+            if let Some(s) = &f.suggestion {
+                out.push_str(&format!("<li><b>suggest:</b> {}</li>", html_escape(s)));
+            }
+            out.push_str(&format!("</ul><pre>{}</pre>", html_escape(&a.evidence_sql)));
+        }
     }
 
     // Tap hotspots.
@@ -758,6 +809,58 @@ mod tests {
         });
         let md = render_markdown(&s);
         assert!(md.contains("| High | LINT001 | public.orders | missing primary key |"));
+    }
+
+    /// An advisor finding's evidence follows the table, in both formats:
+    /// the window, the numbers, the setting, the suggestion and the
+    /// statement; a server's values escaped.
+    #[test]
+    fn the_report_carries_an_advisor_findings_evidence() {
+        let mut s = empty_snapshot();
+        s.lint_findings.push(LintFinding {
+            severity: Severity::Medium,
+            code: "ADV002",
+            title: "queries spill to temp files".into(),
+            object: "ledger".into(),
+            detail: String::new(),
+            suggestion: Some("ALTER ROLE app SET work_mem = '8MB'".into()),
+            advice: Some(Box::new(crate::query::advisor::Advice {
+                window: "since 2026-11-01 (12 days)".into(),
+                evidence: vec!["role <app>: 187 GB to temp files".into()],
+                evidence_sql: "SELECT temp_bytes FROM pg_stat_database".into(),
+                change: Some(crate::query::advisor::SettingChange {
+                    name: "work_mem",
+                    current: "4MB".into(),
+                    suggested: "8MB".into(),
+                    reasoning: String::new(),
+                    restart: false,
+                    rds: String::new(),
+                }),
+            })),
+        });
+        let md = render_markdown(&s);
+        for want in [
+            "### ADV002 · queries spill to temp files",
+            "_since 2026-11-01 (12 days)_",
+            "- role &lt;app&gt;: 187 GB to temp files",
+            "- **setting:** `work_mem` 4MB → 8MB\n",
+            "- **suggest:** ALTER ROLE app SET work_mem = '8MB'",
+            "````sql\nSELECT temp_bytes FROM pg_stat_database\n````",
+        ] {
+            assert!(md.contains(want), "{want:?} in\n{md}");
+        }
+        let html = render_html(&s);
+        for want in [
+            "<h3>ADV002 · queries spill to temp files</h3>",
+            "<li>role &lt;app&gt;: 187 GB to temp files</li>",
+            "<code>work_mem</code> 4MB → 8MB</li>",
+            "<pre>SELECT temp_bytes FROM pg_stat_database</pre>",
+        ] {
+            assert!(html.contains(want), "{want:?} in\n{html}");
+        }
+        // A lint finding has no evidence section.
+        s.lint_findings[0].advice = None;
+        assert!(!render_markdown(&s).contains("### ADV002"));
     }
 
     #[test]

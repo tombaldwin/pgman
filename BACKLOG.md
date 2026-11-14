@@ -382,9 +382,6 @@ batch.
 - **The advisor and the live lint run on the editor's session**, so
   inside an open user transaction `pg_stat_*` reads are the
   transaction's cached snapshot and a refresh can be stale.
-- **The HTML report doesn't carry the advisor's evidence**: `report.rs`
-  lists ADV rows without evidence or `advice` (MCP's `schema_lint` does
-  since 2026-11-14).
 - **ADV002's suggested role** is the worst spiller's, even when that
   spill is past 4x `work_mem` and the setting can't fix it; pick per
   role instead.

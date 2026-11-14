@@ -8,6 +8,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `\report` follows the findings table with each advisor finding's
+  evidence: the window, the numbers, the setting it would change, the
+  suggestion and the statement that read them.
 - MCP `schema_lint` runs the configuration advisor too, as the TUI's
   wizard does: its ADV findings, each with the window its numbers
   cover, the numbers, the statement that read them and the setting it
