@@ -29,6 +29,7 @@ Output in `target/video/out/`:
 |---|---|
 | `pgman-overview-web.mp4` | 16:9, 1920×1080, ~90s |
 | `pgman-overview-square.mp4` | 1:1, 1080×1080, the same cut for LinkedIn |
+| `pgman-overview-*.jpg` | each overview's poster (its title card) |
 | `pgman-<scene>-loop.mp4` / `.jpg` | a feature loop and its poster |
 
 - `scenes/*.tape`: one recording each; `_setup.tape` is the shared

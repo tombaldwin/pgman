@@ -78,8 +78,8 @@ SEGMENTS = [
               (4.0, 99, "Flyway, Liquibase, Alembic, or your own version table: who is behind")], 0.6),
     ("db-masking", [(0, 99, "What a masked copy does to every column, and why")], 0.3, (0, 5.0)),
     ("db-masking", [(0, 99, "Production asks why first, then copies it masked and encrypted")], 0.3, (5.0, 13.2)),
-    ("db-masking", [(0, 99, "Real customers in production. Nobody real in the local copy.")], 0.3, (19.9, 27.8)),
-    ("db-masking", [(0, 99, "Every local copy on record: why it was taken, where it went, until it is deleted")], 0.8, (27.8, 99)),
+    ("db-masking", [(0, 99, "Real customers in production. Nobody real in the local copy.")], 0.3, (19.9, 27.3)),
+    ("db-masking", [(0, 99, "Every local copy on record: why it was taken, where it went, until it is deleted")], 0.8, (27.6, 99)),
     ("patches", [(0, 99, "Migrations dry-run in one transaction, then roll back")], 0.6, (3.3, 99)),
     ("safety", [(0, 99, "Read-only by default. Guard rails on every write.")], 0.4),
     ("db-spring", [(0, 99, "In a Spring project it finds your datasources; nothing connects until you say")], 0.4, (0, 6.3)),
@@ -95,8 +95,8 @@ SEGMENTS = [
 # its last frame, so a short scene still reads before it starts over).
 LOOPS = {
     "envs": ("envs", None, 2.0),
-    "masking": ("db-masking", (0, 27.8), 1.5),
-    "copies": ("db-masking", (27.8, 99), 2.0),
+    "masking": ("db-masking", (0, 27.3), 1.5),
+    "copies": ("db-masking", (27.6, 99), 2.0),
     "patches": ("patches", None, 2.0),
     "safety": ("safety", None, 2.0),
     "sessions": ("sessions", None, 3.0),
@@ -420,6 +420,9 @@ def build(fmt):
     run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(graph), "-map", "[out]",
          "-r", str(FPS), "-c:v", "libx264", "-crf", "19", "-preset", "slow", "-pix_fmt", "yuv420p",
          "-movflags", "+faststart", final])
+    # A poster for the page to show before the video plays: the title card.
+    run(["ffmpeg", "-y", "-v", "error", "-ss", "2", "-i", final, "-frames:v", "1", "-q:v", "3",
+         final.replace(".mp4", ".jpg")])
     print(f"{final}  {duration(final):.1f}s")
 
 
