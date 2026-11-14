@@ -40,6 +40,11 @@ Historical record. Newest at the top within each section.
 - The wizard's live checks and advisor wait for an open transaction to
   end.
 - `JOIN … ON` offers a multi-column foreign key as one predicate.
+- Killed by evidence: "cell edit compares the FROM table by name only:
+  a same-named view earlier on the search path is bypassed" (v0.2.0
+  panel). The server names the view, not the table under it, as the
+  columns' origin, so the edit is refused as a view;
+  `u_refuses_a_view_that_shadows_its_table` pins it on a real server.
 - An unqualified FROM resolves along the session's search path (the
   INSERT yank, `:fixture`, cell edit); `:fixture` keeps a schema other
   than `public`.

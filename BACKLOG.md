@@ -229,9 +229,6 @@ buckets were folded in once their initial passes shipped).
   the `Failed` refusals in `db` / `spawn_run` / `spawn_page_request`.
 - **`a_cell_edit_that_is_not_one_row_changes_nothing` flaked once** in a
   full integration run with other worktrees sharing the database.
-- **Cell edit compares the FROM table by name only**: a same-named view in
-  an earlier search_path schema over the base table is bypassed (same
-  row, but INSTEAD OF triggers / CHECK OPTION skipped).
 
 ### Credentials & config
 - `${...}` placeholder resolution. (Blocked — needs real-world

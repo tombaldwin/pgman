@@ -1004,6 +1004,40 @@ mod live {
         assert_eq!(more, crate::grid::More::Unpaged);
     }
 
+    /// A view the search path finds before its table of the same name:
+    /// the server names the view as the columns' origin (not the table
+    /// under it), so `u` refuses it as a view rather than edit the table
+    /// past its INSTEAD OF triggers and CHECK OPTION.
+    #[tokio::test]
+    async fn u_refuses_a_view_that_shadows_its_table() {
+        let client = client().await;
+        let t = name("live_shadow");
+        let s = name("live_shadow_s");
+        client
+            .batch_execute(&format!(
+                "CREATE TABLE public.{t} (id int PRIMARY KEY, v text); \
+                 INSERT INTO public.{t} VALUES (1, 'a'); \
+                 CREATE SCHEMA {s}; CREATE VIEW {s}.{t} AS SELECT * FROM public.{t}; \
+                 SET search_path = {s}, public"
+            ))
+            .await
+            .expect("create");
+        let mut a = app(&client).await;
+        run(&mut a, &format!("SELECT * FROM {t}")).await;
+        u_at(&mut a, 0, 1);
+        let refused = a.last_error.clone();
+        let _ = client
+            .batch_execute(&format!(
+                "RESET search_path; DROP SCHEMA {s} CASCADE; DROP TABLE public.{t}"
+            ))
+            .await;
+        assert_ne!(a.mode, Mode::CellEdit);
+        assert_eq!(
+            refused.as_deref(),
+            Some(format!("can't edit: {s}.{t} is a view · edit the table under it").as_str())
+        );
+    }
+
     /// A value the server refuses (not a number) leaves the row as it
     /// was and opens the editor again holding what was typed.
     #[tokio::test]
