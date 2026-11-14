@@ -332,8 +332,19 @@ pub fn build_update_sql(edit: &CellEdit, new: Option<&str>) -> String {
 /// table, `[schema, table, column]` for a column. The edited column
 /// comes first, then the key in key order.
 pub fn expected_identity(edit: &CellEdit) -> Vec<(i16, Vec<String>)> {
+    // The session's own temporary schema is `pg_temp_3` in the catalog
+    // pgman read, but `pg_temp` to pg_identify_object_as_address.
+    let temp = edit
+        .schema
+        .strip_prefix("pg_temp_")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    let schema = if temp {
+        "pg_temp".to_string()
+    } else {
+        edit.schema.clone()
+    };
     let names = |column: Option<&str>| {
-        let mut v = vec![edit.schema.clone(), edit.table.clone()];
+        let mut v = vec![schema.clone(), edit.table.clone()];
         v.extend(column.map(str::to_string));
         v
     };
@@ -775,6 +786,27 @@ mod tests {
             .collect();
         assert_eq!(expected_identity(&edit), want);
         assert_eq!(check_identity(&edit, &server), Ok(()));
+    }
+
+    /// A temporary table's schema is `pg_temp_N` in the catalog but
+    /// `pg_temp` to the server's identity check: the same table, not a
+    /// renamed one.
+    #[test]
+    fn a_temporary_tables_schema_is_pg_temp_to_the_check() {
+        let (mut edit, server) = nick_edit();
+        edit.schema = "pg_temp_3".into();
+        let temp: Vec<ServerName> = server
+            .iter()
+            .map(|(n, names)| {
+                let mut v = names.clone().unwrap();
+                v[0] = "pg_temp".into();
+                (*n, Some(v))
+            })
+            .collect();
+        assert_eq!(check_identity(&edit, &temp), Ok(()));
+        // Only the session's own temp schema, named exactly so.
+        edit.schema = "pg_temp_x".into();
+        assert!(check_identity(&edit, &temp).is_err());
     }
 
     /// A rename of the edited column, of a key column, or of the table,

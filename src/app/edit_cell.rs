@@ -1398,6 +1398,31 @@ mod live {
         assert_eq!(a.grid.rows[0][1].as_deref(), Some("p"));
     }
 
+    /// A temporary table's cell is edited: its schema, `pg_temp_N` in
+    /// the catalog, is `pg_temp` to the identity check, which refused
+    /// every such edit as a renamed table.
+    #[tokio::test]
+    async fn a_temporary_tables_cell_is_edited() {
+        let client = client().await;
+        let t = name("live_temp");
+        client
+            .batch_execute(&format!(
+                "CREATE TEMP TABLE {t} (id int PRIMARY KEY, note text); INSERT INTO {t} VALUES (1, 'a')"
+            ))
+            .await
+            .expect("create");
+        let mut a = app(&client).await;
+        run(&mut a, &format!("SELECT * FROM {t}")).await;
+        u_at(&mut a, 0, 1);
+        type_and_save(&mut a, "b");
+        a.on_key(key(KeyCode::Char('y')));
+        pump(&mut a).await;
+        let note = scalar(&client, &format!("SELECT note FROM {t}")).await;
+        let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+        assert_eq!(a.last_error, None);
+        assert_eq!(note.as_deref(), Some("b"));
+    }
+
     /// `auto_tx`: the edit waits on the commit / rollback prompt; `n`
     /// rolls it back in the database and in the grid.
     #[tokio::test]
