@@ -292,7 +292,8 @@ def card_png(fmt, kind, path):
                 y += 50 * s
         else:
             mono = ImageFont.truetype(MONO, round(36 * s))
-            for cmd in ("brew install tombaldwin/tap/pgman", "cargo install pgman --locked"):
+            for cmd in ("brew trust tombaldwin/tap", "brew install tombaldwin/tap/pgman",
+                        "cargo install pgman --locked"):
                 y = install_box(img, cx, y, cmd, mono, s) + 22 * s
             y += 34 * s
             centred(d, cx, y, "poly.io/pgman", sans(700, 48 * s), BUTTER)
