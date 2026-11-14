@@ -445,6 +445,26 @@ fn any(w: &[String], phrases: &[&str]) -> bool {
     phrases.iter().any(|p| has(w, p))
 }
 
+/// Last words saying a number measures something (a duration, a count,
+/// a limit) rather than holds it.
+const MEASURE: &[&str] = &[
+    "lifespan", "lifetime", "ttl", "timeout", "duration", "seconds", "secs", "minutes", "mins",
+    "hours", "days", "count", "attempts", "retries", "length", "len", "limit", "max", "min",
+];
+
+/// Words before `fname` that make it a file's name: Odoo's
+/// `ir_attachment.store_fname`.
+const FILE_WORDS: &[&str] = &[
+    "store",
+    "file",
+    "attachment",
+    "upload",
+    "orig",
+    "local",
+    "tmp",
+    "temp",
+];
+
 /// Secrets: dropped whatever else the name says.
 const SECRET: &[&str] = &[
     "token",
@@ -1111,8 +1131,16 @@ fn by_name_and_type(
             base,
             "date" | "timestamp" | "timestamptz" | "time" | "timetz" | "interval" | "bool"
         );
+    // A number that measures a secret, how long a token lives or how many
+    // tries a code gets, is about it: `access_token_lifespan`. A number
+    // named for a secret alone (`otp`, `sms_code`) may be one.
+    let measures = matches!(
+        base,
+        "int2" | "int4" | "int8" | "numeric" | "float4" | "float8"
+    ) && col.ty.array_of.is_none()
+        && MEASURE.contains(&last);
     // Specific before general: a token is a token whatever else it is.
-    if !about && any(&w, SECRET) {
+    if !about && !measures && any(&w, SECRET) {
         return (Rule::Null, why("a secret, by name"));
     }
     if !about && any(&w, PASSWORD) {
@@ -1245,7 +1273,11 @@ fn by_name_and_type(
         return (Rule::Phone, why("a phone number, by name"));
     }
     if text {
-        if any(&w, FIRST) {
+        let file_name = w
+            .iter()
+            .position(|x| x == "fname")
+            .is_some_and(|at| at > 0 && FILE_WORDS.contains(&w[at - 1].as_str()));
+        if any(&w, FIRST) && !file_name {
             return (Rule::Name(NamePart::First), why("a first name, by name"));
         }
         if any(&w, LAST) {
@@ -2133,6 +2165,52 @@ mod tests {
 
     fn rule(table: &str, name: &str, base: &str, max_len: Option<usize>) -> Rule {
         default_rule(table, &c(name, base, max_len), &[], &[]).0
+    }
+
+    /// A number measuring a secret (how long a token lives, how many
+    /// tries a code gets) is kept; a number named for the secret alone
+    /// may be one (a six-digit code), and is dropped.
+    #[test]
+    fn a_number_measuring_a_secret_is_kept() {
+        for (name, base) in [
+            ("access_token_lifespan", "int4"),
+            ("sso_session_idle_timeout", "int4"),
+            ("otp_attempts", "int2"),
+            ("token_max", "int8"),
+        ] {
+            assert_eq!(rule("realm", name, base, None), Rule::Keep, "{name}");
+        }
+        for (name, base) in [
+            ("otp", "int4"),
+            ("sms_code_token", "int8"),
+            ("session_secret", "text"),
+        ] {
+            assert_eq!(rule("t", name, base, None), Rule::Null, "{name}");
+        }
+        // A text column the measure word ends is still a secret's.
+        assert_eq!(rule("t", "token_length", "varchar", Some(64)), Rule::Null);
+    }
+
+    /// `fname` after a file word is a file's name (Odoo's
+    /// `ir_attachment.store_fname`), not a person's first name.
+    #[test]
+    fn a_stored_file_name_is_not_a_first_name() {
+        assert_eq!(
+            rule("ir_attachment", "store_fname", "varchar", Some(255)),
+            Rule::Keep
+        );
+        assert_eq!(
+            rule("upload", "file_fname", "varchar", Some(255)),
+            Rule::Keep
+        );
+        assert_eq!(
+            rule("customer", "fname", "varchar", Some(50)),
+            Rule::Name(NamePart::First)
+        );
+        assert_eq!(
+            rule("customer", "contact_fname", "varchar", Some(50)),
+            Rule::Name(NamePart::First)
+        );
     }
 
     #[test]

@@ -116,6 +116,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Masking keeps a number that measures a secret rather than holds one
+  (`access_token_lifespan`, `sso_session_idle_timeout`,
+  `otp_attempts`), as it already kept a date or an interval. Odoo's
+  `ir_attachment.store_fname`, a file's name, no longer gets a fake
+  first name (which broke every attachment's path).
 - An edited cell is sorted and filtered by its new value: the row moves
   where the grid's sort puts it, with the selection on it, or is hidden
   when the filter no longer matches (the status says so). A rollback
