@@ -286,7 +286,21 @@ pub fn diff_reads(
         (Ok(da), Ok(db)) => Some((da, db)),
         _ => None,
     };
-    (diff_with(a, b, defs), notes)
+    let d = diff_with(a, b, defs);
+    // A server prints a view or function its own major's way: PG 16
+    // dropped the table prefix from a view's columns, so between 12 and
+    // 17 every view reads as redefined.
+    if let Some((da, db)) = defs {
+        let redefined = !d.views_changed.is_empty() || !d.functions_changed.is_empty();
+        if da.major != db.major && redefined {
+            notes.push(format!(
+                "{la} is PostgreSQL {} and {lb} {}: each prints views and functions its own way, \
+                 so one defined the same can show as redefined",
+                da.major, db.major
+            ));
+        }
+    }
+    (d, notes)
 }
 
 /// A dry run's schema changes, from its reads before and after the
@@ -854,6 +868,31 @@ mod tests {
         );
         let (d, notes) = diff_reads((&c, &ok, "a"), (&c, &ok, "b"));
         assert!(d.definitions_compared && notes.is_empty());
+    }
+
+    /// Servers of two majors print a view differently: a note says so
+    /// when a view or function reads as redefined.
+    #[test]
+    fn two_majors_redefining_a_view_get_a_note() {
+        let mut old = defs();
+        old.major = 12;
+        old.views
+            .insert(key("open_orders"), " SELECT orders.id FROM orders;".into());
+        let mut new = defs();
+        new.major = 17;
+        let v = with_view(base());
+        let (d, notes) = diff_reads((&v, &Ok(old), "staging"), (&v, &Ok(new.clone()), "next"));
+        assert_eq!(d.views_changed.len(), 1);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(
+            notes[0].starts_with("staging is PostgreSQL 12 and next 17"),
+            "{notes:?}"
+        );
+        // Nothing reads as redefined: nothing to say.
+        let mut same = defs();
+        same.major = 12;
+        let (_, notes) = diff_reads((&v, &Ok(same), "a"), (&v, &Ok(new), "b"));
+        assert!(notes.is_empty(), "{notes:?}");
     }
 
     /// A dry run whose read after the patches was cut short shows no

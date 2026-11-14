@@ -20,6 +20,9 @@ pub struct Definitions {
     /// Functions and procedures, `schema.name(argument types)` → the
     /// `CREATE OR REPLACE` the server prints.
     pub functions: BTreeMap<String, String>,
+    /// The server's major version (`server_version_num / 10000`): each
+    /// major prints a definition its own way.
+    pub major: i32,
 }
 
 /// An object an extension owns (`pg_depend`'s `e`), by its catalog.
@@ -108,7 +111,10 @@ pub async fn fetch(client: &tokio_postgres::Client) -> Result<Definitions, Strin
         client.query(VIEWS_SQL, &[]),
         client.query(functions_sql, &[]),
     );
-    let mut out = Definitions::default();
+    let mut out = Definitions {
+        major: version / 10_000,
+        ..Definitions::default()
+    };
     for row in checks.map_err(|e| format!("CHECK constraints: {e}"))? {
         out.checks
             .entry((row.get(0), row.get(1)))
