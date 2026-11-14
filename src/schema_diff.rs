@@ -71,7 +71,13 @@ async fn read(
     let opened = crate::pgtool::open(&resolved).await?;
     let client = crate::conn::connect_via(opened.dsn.clone(), opened.via, 30_000)
         .await
-        .map_err(|e| format!("{}: {e}", resolved.label))?;
+        .map_err(|e| {
+            format!(
+                "{}: {}",
+                resolved.label,
+                crate::pgtool::explain_connect(e, &resolved)
+            )
+        })?;
     let cache = crate::query::schema::fetch(&client).await;
     let defs = crate::query::definitions::fetch(&client).await;
     Ok((cache, defs, resolved.label.clone(), resolved.describe()))

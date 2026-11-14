@@ -3753,6 +3753,18 @@ fn query_takes_an_environment_target() {
     assert!(!table_exists(&home, &table), "nothing was created");
 }
 
+/// `pgman diff` to a URL without a password says where one comes from,
+/// as dump and restore do, not the driver's bare "password missing".
+#[test]
+fn diff_without_a_password_says_where_one_comes_from() {
+    let home = scratch_home("diffnopw", WRITABLE_PROFILE);
+    let url = "postgres://pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable";
+    let out = pgman_in(&home, &home, &["diff", url, url]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("doesn't read PGPASSWORD here"), "{err}");
+}
+
 /// `pgman diff` and MCP's `schema_diff` between two real databases: what
 /// drifted is named; the same database twice matches (exit 0).
 #[test]
