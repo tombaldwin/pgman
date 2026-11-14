@@ -1344,8 +1344,9 @@ fn by_name_and_type(
     if any(&w, AGE) {
         return (Rule::Null, why("an age, by name"));
     }
-    // A flag can't be a photo: require_signature.
-    if any(&w, LOCATION) || (any(&w, IMAGE) && base != "bool") || any(&w, FAMILY) {
+    // A flag can't be a photo: require_signature. Nor can a number that
+    // measures be a place: geo_status_timeout, photo_count.
+    if !measures && (any(&w, LOCATION) || (any(&w, IMAGE) && base != "bool") || any(&w, FAMILY)) {
         return (Rule::Null, why("about a person, by name"));
     }
     if ACTOR_LAST.contains(&last) || any(&w, ACTOR) {
@@ -2189,6 +2190,22 @@ mod tests {
         }
         // A text column the measure word ends is still a secret's.
         assert_eq!(rule("t", "token_length", "varchar", Some(64)), Rule::Null);
+    }
+
+    /// A number measuring something isn't a place or a photo: a timeout
+    /// beside a location word is kept. A coordinate is still a place.
+    #[test]
+    fn a_number_measuring_is_not_a_location() {
+        assert_eq!(
+            rule("res_partner", "geo_status_timeout", "int4", None),
+            Rule::Keep
+        );
+        assert_eq!(rule("album", "photo_count", "int4", None), Rule::Keep);
+        assert_eq!(rule("res_partner", "geo_lat", "float8", None), Rule::Null);
+        assert_eq!(
+            rule("res_partner", "partner_latitude", "numeric", None),
+            Rule::Null
+        );
     }
 
     /// `fname` after a file word is a file's name (Odoo's

@@ -47,8 +47,8 @@ Historical record. Newest at the top within each section.
   `u_refuses_a_view_that_shadows_its_table` pins it on a real server.
 - An edited cell is sorted and filtered by its new value.
 - Classifier: a number measuring a secret (`access_token_lifespan`) is
-  kept (an interval or date already was); `store_fname` isn't a first
-  name.
+  kept (an interval or date already was), and isn't a location either
+  (`geo_status_timeout`); `store_fname` isn't a first name.
 - Killed by evidence: "a tab switched away from mid-save keeps its old
   snapshot". A tab can't be switched, opened or closed while a query
   runs (the save is one), and the commit prompt takes the keys while an
