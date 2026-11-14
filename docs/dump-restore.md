@@ -469,8 +469,10 @@ pgman copies report [--since YYYY-MM-DD] [--format text|markdown|json]
 Every dump pgman takes goes in a journal on this machine
 (`~/.local/share/pgman/journal.jsonl`, readable by you alone): when, of
 what, raw or schema, from a protected target or not, why, the file and
-its size, when it expires, from the command line, unattended or MCP; and
-each restore of it, and its deletion. No data, no connection details, no
+its size, when it expires, from the command line, unattended or MCP; for
+a masked copy, which rules masked it (the rules file's sha256, or the
+defaults) and whether you had confirmed that file; and each restore of
+it, and its deletion. No data, no connection details, no
 secrets.
 
 - `pgman copies` lists the copies still on disk — their id, age, size,
@@ -478,7 +480,7 @@ secrets.
   current directory and pgman's dump directory that the journal doesn't
   know (an older pgman's, or pg_dump's by hand).
 - `pgman copies show <copy>` gives one in full, with where it was
-  restored. A copy is named by the start of its id, or by its file (its
+  restored and, for a masked copy, the rules that masked it. A copy is named by the start of its id, or by its file (its
   `-latest` link too).
 - `pgman copies rm <copy>` deletes the file (asking first, `[y/N]`,
   unless `--yes`), records the deletion, and points the `-latest` link at the

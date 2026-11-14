@@ -892,6 +892,10 @@ pub struct Done {
     pub replaced: bool,
     /// Its id in the journal, once recorded.
     pub copy: Option<String>,
+    /// A masked dump's rules: their digest (`defaults` with no file),
+    /// and whether the file was confirmed.
+    pub rules: Option<String>,
+    pub rules_confirmed: Option<bool>,
 }
 
 /// What a dump is, for the journal: settled before it runs.
@@ -1051,6 +1055,8 @@ pub fn journal_dump(
                 .and_then(|h| h.seal)
                 .map(|s| s.journal());
             e.expires = Some(now.saturating_add(entry.ttl_secs));
+            e.rules = done.rules.clone();
+            e.rules_confirmed = done.rules_confirmed;
         }
         Err(_) => e.ok = Some(false),
     }
@@ -1699,6 +1705,8 @@ pub async fn run(
         notes,
         replaced,
         copy: None,
+        rules: None,
+        rules_confirmed: None,
     })
 }
 

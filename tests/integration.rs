@@ -10748,6 +10748,21 @@ fn an_unconfirmed_rules_file_that_keeps_columns_needs_a_terminal() {
     said.push_str(&String::from_utf8_lossy(&used.stderr));
     assert!(used.status.success(), "{said}");
     assert!(said.contains("isn't confirmed"), "{said}");
+    // The journal says which rules masked it, and that they weren't
+    // confirmed; copies show says so too.
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let last: serde_json::Value = serde_json::from_str(journal.lines().last().unwrap()).unwrap();
+    let digest = pgman::masking::archive::sha256_file(&rules).unwrap();
+    assert_eq!(last["rules"].as_str(), Some(digest.as_str()), "{last}");
+    assert_eq!(last["rules_confirmed"].as_bool(), Some(false), "{last}");
+    let copy = last["copy"].as_str().unwrap();
+    let show = pgman_in(&home, &out, &["copies", "show", &copy[..8]]);
+    let shown = String::from_utf8_lossy(&show.stdout);
+    assert!(
+        shown.contains(&format!("a rules file, sha256 {}", &digest[..12]))
+            && shown.contains("not confirmed"),
+        "{shown}"
+    );
     let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {src}"));
 }
 
@@ -11326,6 +11341,11 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
     let v: serde_json::Value = serde_json::from_str(&t).unwrap();
     let file = v["file"].as_str().unwrap().to_string();
     assert!(file.ends_with(".pgman-dump"), "{file}");
+    // The journal names the rules that masked it, confirmed.
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let last: serde_json::Value = serde_json::from_str(journal.lines().last().unwrap()).unwrap();
+    assert_eq!(last["rules"].as_str(), Some(digest.as_str()), "{last}");
+    assert_eq!(last["rules_confirmed"].as_bool(), Some(true), "{last}");
     // In the work tree, but git leaves it out, and (on macOS) so does
     // Time Machine, as for a dump at the command line.
     let status = std::process::Command::new("git")
@@ -11511,6 +11531,10 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         (Some("masked"), Some(true)),
         "{last}"
     );
+    // No rules file: the defaults masked it, and there was nothing to
+    // confirm.
+    assert_eq!(last["rules"].as_str(), Some("defaults"), "{last}");
+    assert!(last.get("rules_confirmed").is_none(), "{last}");
     // A masked archive moved or copied is still the dump it was; one
     // whose manifest isn't the one pgman wrote (an agent's own archive,
     // or an edited one) is refused before anything is asked.

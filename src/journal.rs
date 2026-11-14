@@ -86,6 +86,14 @@ pub struct Event {
     /// What a dump is encrypted to: `kms:<key>` or `age:<public key>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encrypted: Option<String>,
+    /// The masking rules a masked dump used: the rules file's sha256,
+    /// or `defaults` with none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<String>,
+    /// Whether the rules file was one the operator had confirmed; unset
+    /// with no rules file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules_confirmed: Option<bool>,
     /// A restore's target: server and database.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub into_server: Option<String>,

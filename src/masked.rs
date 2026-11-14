@@ -563,7 +563,7 @@ pub async fn run(
         schema_sha256: archive::sha256_file(&p.partial.join(archive::SCHEMA))?,
         tables,
         large_objects: rules.large_objects_kept,
-        rules: rules_digest,
+        rules: rules_digest.clone(),
         key: "fresh".to_string(),
         words: crate::masking::transform::WORDS_VERSION,
         sequences,
@@ -621,6 +621,9 @@ pub async fn run(
         crate::masking::transform::TEST_PASSWORD
     ));
     notes.extend(pre.notes);
+    // A file used without the operator's confirmation (no terminal to
+    // ask at) says so in the notes, and the journal records it.
+    let rules_unconfirmed = unconfirmed.is_some();
     notes.extend(unconfirmed);
     let mut latest = None;
     if let Some(l) = &p.latest {
@@ -637,6 +640,8 @@ pub async fn run(
         notes,
         replaced,
         copy: None,
+        rules_confirmed: rules.file.as_ref().map(|_| !rules_unconfirmed),
+        rules: Some(rules_digest),
     })
 }
 

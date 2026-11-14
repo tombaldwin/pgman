@@ -78,6 +78,10 @@ pub struct Copy {
     pub expires: Option<u64>,
     /// What it is encrypted to: `kms:<key>`, `age:<public key>`.
     pub encrypted: Option<String>,
+    /// A masked copy's rules: the rules file's sha256, or `defaults`.
+    pub rules: Option<String>,
+    /// Whether that rules file was confirmed by the operator.
+    pub rules_confirmed: Option<bool>,
     /// When it was deleted, and why.
     pub deleted: Option<(u64, String)>,
     pub restores: Vec<Restored>,
@@ -149,6 +153,8 @@ pub fn registry(events: &[Event]) -> Vec<Copy> {
                     sha256: e.sha256.clone(),
                     expires: e.expires,
                     encrypted: e.encrypted.clone(),
+                    rules: e.rules.clone(),
+                    rules_confirmed: e.rules_confirmed,
                     deleted: None,
                     restores: Vec::new(),
                 });
@@ -609,6 +615,23 @@ pub fn render_list(
     out.trim_end().to_string()
 }
 
+/// Which rules masked a copy, for `show`: the defaults, or the rules
+/// file by its digest and whether the operator had confirmed it. Pure.
+fn rules_line(rules: &str, confirmed: Option<bool>) -> String {
+    if rules == "defaults" {
+        return "masked by the defaults (no rules file)".to_string();
+    }
+    let short = &rules[..rules.len().min(12)];
+    format!(
+        "masked by the defaults and a rules file, sha256 {short}… ({})",
+        match confirmed {
+            Some(true) => "confirmed",
+            Some(false) => "not confirmed: used unattended, or keeping nothing the defaults mask",
+            None => "confirmation not recorded",
+        }
+    )
+}
+
 /// `pgman copies show`: one copy in full. Pure.
 pub fn render_show(c: &Copy, present: bool, now: u64, ticket_url: Option<&str>) -> String {
     let mut out = vec![
@@ -652,6 +675,9 @@ pub fn render_show(c: &Copy, present: bool, now: u64, ticket_url: Option<&str>) 
         Some(to) => format!("encrypted to {to}"),
         None => "not encrypted".to_string(),
     });
+    if let Some(rules) = &c.rules {
+        out.push(rules_line(rules, c.rules_confirmed));
+    }
     for r in &c.restores {
         out.push(format!(
             "restored  into {} on {}, {}{}",
@@ -1750,6 +1776,34 @@ mod tests {
         d.copy = Some("aaaa1111ffff".into());
         let copies = registry(&[a, b, r, d]);
         assert!(ids(&copies, &|_| true).is_empty());
+    }
+
+    /// show names the rules that masked a copy: the defaults, or the
+    /// file by its digest and whether it was confirmed; a raw copy says
+    /// nothing of rules.
+    #[test]
+    fn show_names_the_rules_that_masked_a_copy() {
+        let mut e = dump_event("aaaa1111ffff", 100, "production/ledger", "/d/a.dump");
+        let line = |e: &Event| {
+            render_show(&registry(std::slice::from_ref(e))[0], true, 200, None)
+                .lines()
+                .find(|l| l.starts_with("masked by"))
+                .map(str::to_string)
+        };
+        assert_eq!(line(&e), None);
+        e.rules = Some("defaults".into());
+        assert_eq!(
+            line(&e).as_deref(),
+            Some("masked by the defaults (no rules file)")
+        );
+        e.rules = Some("0123456789abcdef0123".into());
+        e.rules_confirmed = Some(true);
+        assert_eq!(
+            line(&e).as_deref(),
+            Some("masked by the defaults and a rules file, sha256 0123456789ab… (confirmed)")
+        );
+        e.rules_confirmed = Some(false);
+        assert!(line(&e).unwrap().contains("(not confirmed"));
     }
 
     #[test]

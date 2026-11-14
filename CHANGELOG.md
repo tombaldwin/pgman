@@ -8,6 +8,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- A masked dump's journal event records which rules masked it (the
+  rules file's sha256, or `defaults`) and whether the operator had
+  confirmed that file; `pgman copies show` says so, and the JSON report
+  and CloudWatch carry it.
 - The TUI's footer shows `EXPIRED ×N` while N dump copies are past
   their expiry with something left to delete (`pgman copies prune`).
 - `pgman copies prune`: deletes every copy past its expiry, with the
