@@ -74,6 +74,7 @@ pub fn app(theme: Theme) -> App {
             Box::pin(std::future::ready(
                 crate::inventory::patching::ApplyReport {
                     schema_changes: None,
+                    schema_notes: Vec::new(),
                     results: p
                         .patches
                         .iter()

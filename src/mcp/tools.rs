@@ -1306,6 +1306,7 @@ pub fn render_apply(
         "schema_changes": report
             .and_then(|r| r.schema_changes.as_ref())
             .map(|d| crate::schema_diff::to_json(d, "before", "after")),
+        "schema_notes": report.map(|r| r.schema_notes.clone()).unwrap_or_default(),
         "copy": report.and_then(|r| r.copy.as_ref()).map(|c| json!({
             "name": c.name,
             "dropped": c.dropped.is_ok(),

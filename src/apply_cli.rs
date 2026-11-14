@@ -168,6 +168,9 @@ pub fn render_report(report: &patching::ApplyReport) -> String {
             out.push_str(&format!("\nschema changes:\n{}", changes.trim_end()));
         }
     }
+    for n in &report.schema_notes {
+        out.push_str(&format!("\nschema changes: note: {n}"));
+    }
     out
 }
 

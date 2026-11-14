@@ -169,6 +169,10 @@ pub struct SchemaCache {
     /// for these rather than show no size and no indexes, which reads as
     /// a table that has none.
     pub skipped: std::collections::HashSet<(String, String)>,
+    /// A catalog read failed (a timeout, a permission gap), leaving a
+    /// whole part out: every table's keys, say, not one locked table's
+    /// indexes. [`Self::incomplete`] says which.
+    pub reads_failed: bool,
 }
 
 /// A relation another backend holds, or waits for, an `ACCESS
@@ -719,6 +723,7 @@ pub async fn fetch(client: &tokio_postgres::Client) -> SchemaCache {
     // The lookup names what the others skipped, so it goes last.
     let failed: Vec<(&str, ReadFailure)> = read_failures.chain(lookup_failed).collect();
     let incomplete = incomplete_reason(&locked, &catalog_locked, &failed);
+    let reads_failed = !failed.is_empty();
     if let Some(why) = &incomplete {
         tracing::warn!("schema cache incomplete: {why}");
     }
@@ -728,12 +733,14 @@ pub async fn fetch(client: &tokio_postgres::Client) -> SchemaCache {
             tracing::warn!("schema cache fetch failed: {e}; completion disabled");
             return SchemaCache {
                 incomplete,
+                reads_failed,
                 ..SchemaCache::default()
             };
         }
     };
     let mut cache = SchemaCache {
         incomplete,
+        reads_failed,
         skipped: locked.iter().map(|l| l.table.clone()).collect(),
         search_path: path_res
             .ok()

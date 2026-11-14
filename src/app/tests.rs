@@ -12575,6 +12575,7 @@ fn patching_app_with(
             Box::pin(std::future::ready(
                 crate::inventory::patching::ApplyReport {
                     schema_changes: None,
+                    schema_notes: Vec::new(),
                     results: vec![crate::inventory::patching::PatchResult {
                         file: p.patches[0].file.file.clone(),
                         outcome: Ok(2),
@@ -13309,6 +13310,7 @@ fn a_patch_run_that_succeeds_takes_down_an_earlier_failure() {
     a.on_msg(AppMsg::EnvPatched {
         report: crate::inventory::patching::ApplyReport {
             schema_changes: None,
+            schema_notes: Vec::new(),
             results: vec![],
             error: None,
             recorded_after: None,

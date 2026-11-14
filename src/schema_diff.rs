@@ -281,6 +281,53 @@ pub fn diff_reads(
     (diff_with(a, b, defs), notes)
 }
 
+/// A dry run's schema changes, from its reads before and after the
+/// patches, and notes on what wasn't compared. None when a catalog read
+/// failed on either side (a timeout, a permission gap): its empty part
+/// would read as every key or index dropped. A table another session's
+/// lock kept the indexes of out, on either side, has its indexes left
+/// out of the comparison. Otherwise [`diff_reads`]. Pure.
+pub fn dry_run_changes(
+    (a, da): (&SchemaCache, &Result<Definitions, String>),
+    (b, db): (&SchemaCache, &Result<Definitions, String>),
+) -> (Option<Diff>, Vec<String>) {
+    let sides = [("before", a), ("after", b)];
+    let cut: Vec<String> = sides
+        .iter()
+        .filter(|(_, c)| c.reads_failed)
+        .map(|(label, c)| {
+            format!(
+                "the schema read {label} the patches was incomplete ({}): not compared",
+                c.incomplete.as_deref().unwrap_or("a catalog read failed")
+            )
+        })
+        .collect();
+    if !cut.is_empty() {
+        return (None, cut);
+    }
+    let (mut d, mut notes) = diff_reads((a, da, "before"), (b, db, "after"));
+    for (label, c) in sides {
+        if let (Some(why), false) = (&c.incomplete, c.skipped.is_empty()) {
+            notes.push(format!(
+                "the schema read {label} the patches skipped locked tables ({why}): their indexes not compared"
+            ));
+        }
+    }
+    let skipped: std::collections::HashSet<String> = a
+        .skipped
+        .iter()
+        .chain(&b.skipped)
+        .map(|(s, t)| format!("{s}.{t}"))
+        .collect();
+    for t in d.tables.iter_mut().filter(|t| skipped.contains(&t.table)) {
+        t.indexes_only_a.clear();
+        t.indexes_only_b.clear();
+        t.indexes_changed.clear();
+    }
+    d.tables.retain(|t| !t.is_empty());
+    (Some(d), notes)
+}
+
 /// `key`'s CHECK constraints in `da` and `db`, into `t`.
 fn checks_diff(t: &mut TableDiff, da: &Definitions, db: &Definitions, key: &Key) {
     let empty = BTreeMap::new();
@@ -799,6 +846,35 @@ mod tests {
         );
         let (d, notes) = diff_reads((&c, &ok, "a"), (&c, &ok, "b"));
         assert!(d.definitions_compared && notes.is_empty());
+    }
+
+    /// A dry run whose read after the patches was cut short shows no
+    /// schema changes, and says why: its empty buckets aren't drops.
+    #[test]
+    fn a_cut_short_dry_run_read_shows_no_changes() {
+        let c = base();
+        let mut cut = base();
+        cut.incomplete = Some("primary keys gave up at lock_timeout".into());
+        cut.reads_failed = true;
+        let ok: Result<Definitions, String> = Ok(defs());
+        let (d, notes) = dry_run_changes((&c, &ok), (&cut, &ok));
+        assert!(d.is_none(), "{d:?}");
+        assert_eq!(
+            notes,
+            ["the schema read after the patches was incomplete (primary keys gave up at lock_timeout): not compared"]
+        );
+        let (d, notes) = dry_run_changes((&c, &ok), (&c, &ok));
+        assert!(d.is_some_and(|d| d.is_empty()) && notes.is_empty());
+        // One table locked on one side: its indexes aren't compared, the
+        // rest is, and a note says so.
+        let mut locked = base();
+        locked.indexes_by_table.remove(&key("orders"));
+        locked.skipped.insert(key("orders"));
+        locked.incomplete = Some("pid 7 holds ACCESS EXCLUSIVE".into());
+        let (d, notes) = dry_run_changes((&c, &ok), (&locked, &ok));
+        assert!(d.as_ref().is_some_and(Diff::is_empty), "{d:?}");
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("their indexes not compared"), "{notes:?}");
     }
 
     #[test]

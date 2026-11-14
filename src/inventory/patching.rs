@@ -321,6 +321,9 @@ pub struct ApplyReport {
     /// A dry run's: what its patches changed in the schema, read in its
     /// transaction before and after them, before the rollback.
     pub schema_changes: Option<Box<crate::schema_diff::Diff>>,
+    /// Why a dry run's schema changes are missing or partial: a read cut
+    /// short, definitions that couldn't be read.
+    pub schema_notes: Vec<String>,
 }
 
 impl ApplyReport {
@@ -961,12 +964,12 @@ impl Run<'_> {
             if let (Some((b, db)), Some((a, da))) =
                 (&before, crate::query::apply::schema_in_tx(client).await)
             {
-                let (d, notes) =
-                    crate::schema_diff::diff_reads((b, db, "before"), (&a, &da, "after"));
-                for n in notes {
+                let (d, notes) = crate::schema_diff::dry_run_changes((b, db), (&a, &da));
+                for n in &notes {
                     tracing::warn!(target: "pgman::patching", "dry run: {n}");
                 }
-                report.schema_changes = Some(Box::new(d));
+                report.schema_changes = d.map(Box::new);
+                report.schema_notes = notes;
             }
             // Failing, the connection closing undoes it all the same.
             if let Err(e) = crate::query::apply::rollback(client).await {
@@ -1433,6 +1436,7 @@ mod tests {
     fn the_summary_names_the_failure() {
         let r = ApplyReport {
             schema_changes: None,
+            schema_notes: Vec::new(),
             results: vec![
                 PatchResult {
                     file: "2-x.sql".into(),

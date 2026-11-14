@@ -1862,6 +1862,9 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
                 out.extend(changes.lines().map(|l| (format!("  {l}"), false)));
             }
         }
+        for n in &report.schema_notes {
+            out.push((format!("  schema changes: note: {n}"), false));
+        }
         if let Some(c) = &report.copy {
             match &c.dropped {
                 Ok(()) => out.push((format!("  copy {} dropped", c.name), false)),
@@ -4086,6 +4089,18 @@ mod tests {
         assert!(text.contains(&"  schema changes:".to_string()), "{text:?}");
         assert!(
             text.contains(&"    + table public.dunning_stages".to_string()),
+            "{text:?}"
+        );
+        // A read cut short: no changes, a note.
+        let mut cut = done(RunMode::DryRun, None);
+        cut.schema_notes = vec!["the schema read after the patches was incomplete".into()];
+        v.stage = PatchStage::Done(plan.clone(), cut);
+        let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
+        assert!(
+            text.contains(
+                &"  schema changes: note: the schema read after the patches was incomplete"
+                    .to_string()
+            ),
             "{text:?}"
         );
         let copy = CopyNote {
