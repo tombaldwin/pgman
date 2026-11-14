@@ -40,6 +40,11 @@ Historical record. Newest at the top within each section.
 - The wizard's live checks and advisor wait for an open transaction to
   end.
 - `JOIN … ON` offers a multi-column foreign key as one predicate.
+- Killed by evidence: "the schema reload has no `lock_timeout`
+  backstop" (v0.2.1 polish). Filed at 15:12 on 2026-10-24 and fixed at
+  17:23 the same day by 2f2aa5b (`schema::fetch_bounded`, pinned by
+  `a_reload_behind_a_catalog_lock_gives_up_and_says_why`); the entry
+  stayed.
 - ADV003, autovacuum behind: `VACUUM (VERBOSE)`, not a lower scale
   factor. Killed by evidence, its other half: the `ALTER TABLE … SET
   (autovacuum…)` doesn't queue behind a reader (SHARE UPDATE EXCLUSIVE;

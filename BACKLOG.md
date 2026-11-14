@@ -338,9 +338,6 @@ batch.
   external editor; decide whether that breaks the "no disk writes"
   promise or is the operator asking for it.
 
-- **The schema reload has no `lock_timeout` backstop**: it skips
-  relations under another session's ACCESS EXCLUSIVE lock as the connect
-  does, but a lock on a catalog table can still stall it.
 - **A FATAL the connect's schema fetch swallows** still leaves the
   closed connect's card saying only that the connection closed:
   `query::schema::fetch` logs and drops its errors, so `Booted.ended_by`
