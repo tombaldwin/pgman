@@ -187,7 +187,7 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   take a subquery's alias, a function or a CTE for a table:
   `SELECT * FROM (SELECT …) sub` was read as `public.sub`, which
   doesn't exist. They now say they need a single-table result.
-- The sessions panel (`S`) stays open when it can't read
+- The sessions panel (`L`) stays open when it can't read
   `pg_stat_activity` and says why, as the slow-query panel does. It
   used to close at once, so the `q` pressed to close it quit pgman.
 - A statement starting `explain8` (EXPLAIN's letters, then more) sent
