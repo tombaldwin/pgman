@@ -105,6 +105,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- With DNS down (a VPN off), `dump`, `restore` and `run` no longer
+  stall before their first prompt: protection resolves each server's
+  name once per run, for at most 2 seconds, then matches it by its
+  name as it does a name that doesn't resolve.
 - The advisor's temp-file finding (ADV002) suggests `work_mem` for the
   role whose spills a raise can cover. It named the worst spiller's
   role even when that statement spilled more than 4× `work_mem`, past

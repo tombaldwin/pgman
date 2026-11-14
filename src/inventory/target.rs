@@ -389,21 +389,90 @@ fn ip_key(ip: std::net::IpAddr) -> String {
 /// Every key `host` is known by: its own ([`host_key`]) and each address
 /// it resolves to — so `127.1`, `0x7f000001`, `localhost.` and a
 /// hostname and its IP all compare equal, however written. Blocking (the
-/// resolver); a name that doesn't resolve keeps its own key alone.
+/// resolver, [`resolved_addrs`]); a name that doesn't resolve keeps its
+/// own key alone.
 fn server_keys(host: &str, port: u16) -> Vec<String> {
-    use std::net::ToSocketAddrs;
     let own = host_key(host);
     let mut keys = vec![own.clone()];
     let bare = host.trim_start_matches('[').trim_end_matches(']');
-    if let Ok(addrs) = (bare, port).to_socket_addrs() {
-        for a in addrs {
-            let k = ip_key(a.ip());
-            if !keys.contains(&k) {
-                keys.push(k);
-            }
+    for ip in resolved_addrs(bare, port) {
+        let k = ip_key(ip);
+        if !keys.contains(&k) {
+            keys.push(k);
         }
     }
     keys
+}
+
+/// How long one name may take to resolve before it is matched by its
+/// name alone, as a name that doesn't resolve is. With DNS down (a VPN
+/// off) the resolver's own timeout came before the first prompt, once
+/// for every protected connection and every target.
+const RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `host:port`'s addresses, each name resolved once per run and for no
+/// longer than [`RESOLVE_TIMEOUT`]. Blocking.
+fn resolved_addrs(host: &str, port: u16) -> Vec<std::net::IpAddr> {
+    use std::net::ToSocketAddrs;
+    static CACHE: std::sync::OnceLock<ResolveCache> = std::sync::OnceLock::new();
+    cached_lookup(
+        CACHE.get_or_init(Default::default),
+        host,
+        port,
+        RESOLVE_TIMEOUT,
+        |name, port| {
+            (name.as_str(), port)
+                .to_socket_addrs()
+                .map(|a| a.map(|s| s.ip()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        },
+    )
+}
+
+/// Names already resolved this run, and what to.
+type ResolveCache =
+    std::sync::Mutex<std::collections::HashMap<(String, u16), Vec<std::net::IpAddr>>>;
+
+/// `host:port` from `cache`, or `lookup` (bounded by `limit`) the first
+/// time, its answer kept — an empty one too, so a name that timed out
+/// isn't waited on again.
+fn cached_lookup(
+    cache: &ResolveCache,
+    host: &str,
+    port: u16,
+    limit: std::time::Duration,
+    lookup: impl FnOnce(String, u16) -> Vec<std::net::IpAddr> + Send + 'static,
+) -> Vec<std::net::IpAddr> {
+    let key = (host.to_string(), port);
+    if let Some(hit) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return hit.clone();
+    }
+    let name = host.to_string();
+    let addrs = bounded(limit, move || lookup(name, port)).unwrap_or_else(|| {
+        tracing::warn!(
+            host,
+            "name didn't resolve within {limit:?}: matched by its name"
+        );
+        Vec::new()
+    });
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, addrs.clone());
+    addrs
+}
+
+/// `f`'s answer, run on its own thread, if it comes within `limit`;
+/// `None` if not, the thread left to finish on its own.
+fn bounded<T: Send + 'static>(
+    limit: std::time::Duration,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(limit).ok()
 }
 
 /// Whether `host:port` is a server a protected environment reaches: the
@@ -525,6 +594,53 @@ fn resolve_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A slow answer is given up on at the limit; a quick one is used.
+    #[test]
+    fn a_slow_lookup_is_given_up_on_at_the_limit() {
+        let ms = std::time::Duration::from_millis;
+        let started = std::time::Instant::now();
+        let slow = bounded(ms(50), move || {
+            std::thread::sleep(ms(2_000));
+            1
+        });
+        assert_eq!(slow, None);
+        assert!(started.elapsed() < ms(1_000), "{:?}", started.elapsed());
+        assert_eq!(bounded(ms(1_000), || 7), Some(7));
+    }
+
+    /// Each name is looked up once per run, a timed-out one too: the
+    /// second ask is the cache's.
+    #[test]
+    fn a_name_is_resolved_once_per_run() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let ms = std::time::Duration::from_millis;
+        let cache = ResolveCache::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ip: std::net::IpAddr = "10.0.1.23".parse().unwrap();
+        for _ in 0..3 {
+            let c = calls.clone();
+            let got = cached_lookup(&cache, "db.example", 5432, ms(1_000), move |_, _| {
+                c.fetch_add(1, Ordering::SeqCst);
+                vec![ip]
+            });
+            assert_eq!(got, vec![ip]);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // Timed out: no addresses, and not asked again.
+        for _ in 0..2 {
+            let c = calls.clone();
+            let got = cached_lookup(&cache, "slow.example", 5432, ms(20), move |_, _| {
+                c.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(ms(500));
+                vec![ip]
+            });
+            assert!(got.is_empty());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(server_keys("localhost", 54_321).contains(&"localhost".to_string()));
+    }
 
     fn row(server: &str, db: &str, role: Role, status: Option<&str>) -> Target {
         Target {
