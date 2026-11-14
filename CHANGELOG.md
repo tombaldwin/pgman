@@ -109,6 +109,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A session pinned read-only because the server was a standby asks
+  again when it reconnects (`r`, `\c`): a standby promoted since is
+  writable as its profile says. An environment's replica stays pinned.
 - With DNS down (a VPN off), `dump`, `restore` and `run` no longer
   stall before their first prompt: protection resolves each server's
   name once per run, for at most 2 seconds, then matches it by its

@@ -13,6 +13,9 @@ impl App {
         self.in_recovery = in_recovery;
         if in_recovery == Some(true) {
             self.read_only = true;
+            if !self.replica_pin {
+                self.standby_pin = true;
+            }
             self.replica_pin = true;
         }
     }

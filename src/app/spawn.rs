@@ -123,6 +123,14 @@ impl App {
         self.conn_state = ConnState::Connecting;
         self.lost_while_connecting = None;
         self.in_recovery = None;
+        // A pin the last connect learnt from the server is asked again:
+        // a standby promoted since is writable as its profile says. The
+        // connect pins it again if it is still in recovery.
+        if std::mem::take(&mut self.standby_pin) {
+            self.replica_pin = false;
+            self.read_only = self.safety_config.profile_for(&dsn.dbname).read_only
+                || self.read_only_override == Some(true);
+        }
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         let read_only = self.read_only;
@@ -406,6 +414,7 @@ impl App {
         self.read_only =
             profile.read_only || self.read_only_override == Some(true) || pin_read_only;
         self.replica_pin = pin_read_only;
+        self.standby_pin = false;
         self.statement_timeout_ms = profile.statement_timeout_ms;
         self.dsn = Some(dsn);
         self.dsn_origin = Some(origin);

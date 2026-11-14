@@ -1880,6 +1880,11 @@ pub struct App {
     /// connect (`App::note_server_role`): read-only for the whole
     /// session, `\c <db>` included, and `:readonly off` is refused.
     pub replica_pin: bool,
+    /// `replica_pin` came from the server (`pg_is_in_recovery()`), not
+    /// from an environment listing it as a replica: the next connect
+    /// asks again, so a standby promoted since is writable as its
+    /// profile says.
+    pub standby_pin: bool,
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
     msg_rx: Option<UnboundedReceiver<AppMsg>>,
@@ -2073,6 +2078,7 @@ impl App {
             environments_loader: None,
             secret_fetcher: None,
             replica_pin: false,
+            standby_pin: false,
             env_discoverer: None,
             env_prober: None,
             environments_state_file: None,

@@ -15713,3 +15713,52 @@ fn a_connection_lost_message_only_moves_a_connected_app() {
     });
     assert!(matches!(a.conn_state, ConnState::Connected { .. }));
 }
+
+/// A pin learnt from the server (a standby, by `pg_is_in_recovery()`)
+/// is asked again at the next connect, so a standby promoted since is
+/// writable as its profile says; an environment's replica pin, and a
+/// `\c` from a pinned replica, stay pinned. A standby's pin isn't
+/// carried through `\c` either: the connect asks again.
+#[tokio::test]
+async fn a_standby_pin_is_asked_again_at_the_next_connect() {
+    let writable = || {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        cfg
+    };
+    let dsn = || crate::conn::Dsn::parse("postgres://u@127.0.0.1:1/db").ok();
+    // A standby noticed at connect: pinned, then asked again.
+    let mut a = App::new(Theme::default(), dsn(), Vec::new(), writable());
+    a.read_only = false;
+    a.note_server_role(Some(true));
+    assert!(a.read_only && a.replica_pin && a.standby_pin);
+    a.start_connect();
+    assert!(!a.replica_pin && !a.standby_pin && !a.read_only);
+    // `:readonly on` still holds through it.
+    let mut a = App::new(Theme::default(), dsn(), Vec::new(), writable());
+    a.read_only_override = Some(true);
+    a.note_server_role(Some(true));
+    a.start_connect();
+    assert!(a.read_only && !a.replica_pin);
+    // An environment's replica: pinned before the server says anything,
+    // and kept across a reconnect.
+    let mut a = App::new(Theme::default(), dsn(), Vec::new(), writable());
+    a.replica_pin = true;
+    a.read_only = true;
+    a.note_server_role(Some(true));
+    assert!(!a.standby_pin);
+    a.start_connect();
+    assert!(a.replica_pin && a.read_only);
+    // `\c` from a standby: the pin isn't carried. From an environment's
+    // replica, it is.
+    let mut a = App::new(Theme::default(), dsn(), Vec::new(), writable());
+    a.read_only = false;
+    a.note_server_role(Some(true));
+    a.dispatch_connect(Some("other".into()));
+    assert!(!a.replica_pin && !a.read_only);
+    let mut a = App::new(Theme::default(), dsn(), Vec::new(), writable());
+    a.replica_pin = true;
+    a.read_only = true;
+    a.dispatch_connect(Some("other".into()));
+    assert!(a.replica_pin && a.read_only);
+}

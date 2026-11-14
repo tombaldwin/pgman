@@ -637,7 +637,7 @@ impl App {
     /// path — `Dsn::dbname` is a plain `String` field, so the swap is
     /// trivial and doesn't require reconstructing host/user/etc. With
     /// no active connection to swap, that's an actionable error.
-    fn dispatch_connect(&mut self, target: Option<String>) {
+    pub(super) fn dispatch_connect(&mut self, target: Option<String>) {
         let Some(name) = target else {
             self.start_connection_change();
             return;
@@ -704,8 +704,9 @@ impl App {
         };
         dsn.dbname = name.clone();
         // Same server: a replica stays pinned read-only, and an
-        // environment's database stays in its environment.
-        let pin = self.replica_pin;
+        // environment's database stays in its environment. A standby's
+        // pin isn't carried: the connect asks the server again.
+        let pin = self.replica_pin && !self.standby_pin;
         let scope = self.safety_config.scope.clone();
         self.connect_to_target(
             dsn,
