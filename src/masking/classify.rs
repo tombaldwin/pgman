@@ -454,8 +454,12 @@ const MEASURE: &[&str] = &[
 
 /// Of [`MEASURE`], the words that can't end a coordinate: `lat_min` is a
 /// bounding box's edge and `lat_minutes` part of a position, so neither
-/// keeps a place.
+/// keeps a place. Only beside a [`COORDINATE`] word: `gps_poll_seconds`
+/// and `photo_max` still measure.
 const MEASURE_NOT_PLACE: &[&str] = &["max", "min", "minutes", "mins", "seconds", "secs"];
+
+/// Of [`LOCATION`], the words that name a coordinate.
+const COORDINATE: &[&str] = &["lat", "lng", "lon", "latitude", "longitude"];
 
 /// Words before `fname` that make it a file's name: Odoo's
 /// `ir_attachment.store_fname`. Not `local` or `orig`: `local_fname` is
@@ -1345,7 +1349,7 @@ fn by_name_and_type(
     }
     // A flag can't be a photo: require_signature. Nor can a number that
     // measures be a place: geo_status_timeout, photo_count.
-    let measures = measures && !MEASURE_NOT_PLACE.contains(&last);
+    let measures = measures && !(MEASURE_NOT_PLACE.contains(&last) && any(&w, COORDINATE));
     if !measures && (any(&w, LOCATION) || (any(&w, IMAGE) && base != "bool") || any(&w, FAMILY)) {
         return (Rule::Null, why("about a person, by name"));
     }
@@ -2201,6 +2205,16 @@ mod tests {
             Rule::Keep
         );
         assert_eq!(rule("album", "photo_count", "int4", None), Rule::Keep);
+        // Minutes or a maximum beside a place or photo word that isn't a
+        // coordinate still measure.
+        for col in [
+            "location_minutes",
+            "gps_poll_seconds",
+            "photo_max",
+            "spouse_max",
+        ] {
+            assert_eq!(rule("settings", col, "int4", None), Rule::Keep, "{col}");
+        }
         // A bounding box's edge or a coordinate's minutes are a place.
         for (col, ty) in [
             ("lat_min", "float8"),
