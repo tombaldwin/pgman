@@ -1912,6 +1912,21 @@ pub struct SingleRowUpdate {
     pub tx: EditTx,
 }
 
+/// Whether the session is inside a transaction block, an aborted one
+/// included: a `BEGIN` typed into the editor, which pgman doesn't track.
+/// Asked the way [`run_single_row_update`] asks, with a savepoint
+/// released at once; outside a block that fails with `25P01` and
+/// changes nothing.
+pub async fn in_transaction(client: &tokio_postgres::Client) -> bool {
+    match client.batch_execute("SAVEPOINT pgman_probe").await {
+        Ok(()) => {
+            let _ = client.batch_execute("RELEASE SAVEPOINT pgman_probe").await;
+            true
+        }
+        Err(e) => e.code() != Some(&tokio_postgres::error::SqlState::NO_ACTIVE_SQL_TRANSACTION),
+    }
+}
+
 /// The savepoint [`run_single_row_update`] brackets an edit with when
 /// the session is already inside a transaction.
 const EDIT_SAVEPOINT: &str = "pgman_cell_edit";

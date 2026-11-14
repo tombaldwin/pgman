@@ -1717,4 +1717,55 @@ mod live {
             Some("1min")
         );
     }
+
+    /// A BEGIN typed into the editor (pgman's tx_open doesn't know it):
+    /// the wizard still runs no live checks inside it. Outside one, it
+    /// runs them.
+    #[tokio::test]
+    async fn the_wizard_runs_no_live_checks_inside_a_typed_begin() {
+        let client = client().await;
+        let t = name("wizard_begin");
+        client
+            .batch_execute(&format!("CREATE TABLE {t} (id int PRIMARY KEY)"))
+            .await
+            .expect("create");
+        let mut a = app(&client).await;
+        a.editor.buffer = "BEGIN".into();
+        a.request_run(RunKind::Run);
+        if a.mode == Mode::Confirm {
+            a.on_key(key(KeyCode::Char('y')));
+        }
+        pump(&mut a).await;
+        assert!(!a.tx_open, "the test needs a BEGIN pgman doesn't track");
+        a.mode = Mode::Normal;
+        a.on_key(key(KeyCode::Char('W')));
+        while a.schema_lint.live_note.is_none() {
+            pump(&mut a).await;
+        }
+        assert_eq!(
+            a.schema_lint.live_note.as_deref(),
+            Some(App::LINT_IN_TRANSACTION)
+        );
+        // Still the operator's transaction, nothing of the probe left.
+        assert_eq!(
+            scalar(&client, "now() <> statement_timestamp()")
+                .await
+                .as_deref(),
+            Some("true")
+        );
+        client.batch_execute("ROLLBACK").await.expect("rollback");
+        a.mode = Mode::Normal;
+        a.on_key(key(KeyCode::Char('W')));
+        while a.schema_lint.live_note.is_none() {
+            pump(&mut a).await;
+        }
+        assert_ne!(
+            a.schema_lint.live_note.as_deref(),
+            Some(App::LINT_IN_TRANSACTION)
+        );
+        client
+            .batch_execute(&format!("DROP TABLE {t}"))
+            .await
+            .expect("drop");
+    }
 }

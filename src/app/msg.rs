@@ -196,6 +196,9 @@ pub enum AppMsg {
         generation: u64,
         result: Result<Vec<crate::query::lint::Finding>, String>,
     },
+    /// The wizard's live checks and advisor weren't run: the session is
+    /// inside a transaction pgman didn't open (a typed `BEGIN`).
+    LintInTransaction { generation: u64 },
     /// The config advisor's checks (ADV…) finished. Merged into the
     /// wizard's findings the same way as [`AppMsg::LiveLintLoaded`].
     AdvisorLoaded {
@@ -314,6 +317,7 @@ impl AppMsg {
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. }
+            | AppMsg::LintInTransaction { generation }
             | AppMsg::AdvisorLoaded { generation, .. }
             | AppMsg::DdlLoaded { generation, .. }
             | AppMsg::ReadOnlyApplied { generation, .. } => *generation,

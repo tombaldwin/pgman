@@ -454,6 +454,12 @@ impl App {
             } => self.on_env_probed(seq, report, outcomes),
             AppMsg::SessionsLoaded { result, .. } => self.on_sessions_loaded(result),
             AppMsg::LiveLintLoaded { result, .. } => self.on_live_lint_loaded(result),
+            AppMsg::LintInTransaction { .. } => {
+                if self.mode == Mode::SchemaLint {
+                    self.schema_lint.live_note = Some(Self::LINT_IN_TRANSACTION.to_string());
+                    self.last_status = Some(self.schema_lint.status());
+                }
+            }
             AppMsg::AdvisorLoaded { result, .. } => self.on_advisor_loaded(result),
             AppMsg::ReadOnlyApplied {
                 want,

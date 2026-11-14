@@ -5262,6 +5262,11 @@ impl App {
             let generation = self.generation;
             tokio::spawn(async move {
                 let client = db.ready().await;
+                // A BEGIN typed into the editor: tx_open doesn't know it.
+                if crate::conn::in_transaction(&client).await {
+                    let _ = tx.send(AppMsg::LintInTransaction { generation });
+                    return;
+                }
                 let result = crate::query::lint::fetch_live(&client).await;
                 let _ = tx.send(AppMsg::LiveLintLoaded { generation, result });
                 let th = crate::query::advisor::Thresholds::default();
