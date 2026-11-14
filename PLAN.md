@@ -123,6 +123,12 @@ good, schema diff across majors and a table become a view, and five
 smaller ones. What's left is in BACKLOG.md → "From the 0.5.3 release
 panel", the masking classifier's pre-existing gaps first.
 
+A closing review of those fixes (three Fable reviewers) found the
+`--target` pin still lifted by a script's own `SET TRANSACTION READ
+WRITE` (HIGH, fixed), a timed-out cell save treated as Ctrl-C and the
+location fix over-masking `photo_max` (both MEDIUM, fixed), and three
+LOWs (fixed); the rest joined the same BACKLOG section.
+
 ### 2. Waiting on Tom
 
 - **Release 0.5.3**: on Tom's go.
