@@ -48,7 +48,8 @@ Historical record. Newest at the top within each section.
 - An edited cell is sorted and filtered by its new value.
 - Classifier: a number measuring a secret (`access_token_lifespan`) is
   kept (an interval or date already was), and isn't a location either
-  (`geo_status_timeout`); `store_fname` isn't a first name.
+  (`geo_status_timeout`); `store_fname` isn't a first name; a flag
+  named for pay (`pay_invoices_online`) is kept.
 - Killed by evidence: "a tab switched away from mid-save keeps its old
   snapshot". A tab can't be switched, opened or closed while a query
   runs (the save is one), and the commit prompt takes the keys while an

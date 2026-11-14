@@ -1307,7 +1307,8 @@ fn by_name_and_type(
     }
     // A card's last four, not the last 4 weeks.
     let last4 = w.ends_with(&["last".to_string(), "4".to_string()]) || has(&w, "last 4 digits");
-    if any(&w, IDENTIFIER) || last4 {
+    // A flag holds no identifier or pay: pay_invoices_online.
+    if (any(&w, IDENTIFIER) || last4) && base != "bool" {
         return (Rule::Null, why("an identifier or pay, by name"));
     }
     if any(&w, HANDLE) {
@@ -2206,6 +2207,18 @@ mod tests {
             rule("res_partner", "partner_latitude", "numeric", None),
             Rule::Null
         );
+    }
+
+    /// A flag can't hold an identifier or pay: a boolean named for one is
+    /// a setting.
+    #[test]
+    fn a_flag_named_for_pay_is_kept() {
+        assert_eq!(
+            rule("res_partner", "pay_invoices_online", "bool", None),
+            Rule::Keep
+        );
+        assert_eq!(rule("employee", "salary", "numeric", None), Rule::Null);
+        assert_eq!(rule("employee", "pay_rate", "numeric", None), Rule::Null);
     }
 
     /// `fname` after a file word is a file's name (Odoo's

@@ -116,6 +116,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- Masking keeps a flag named for pay or an identifier
+  (`pay_invoices_online`): a boolean holds neither.
 - Masking keeps a number that measures beside a location or photo word
   (`geo_status_timeout`, `photo_count`); a coordinate is still removed.
 - Masking keeps a number that measures a secret rather than holds one

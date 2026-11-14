@@ -67,7 +67,7 @@ note.
   table, `rate` on a pay table: kept, since the column's words alone
   aren't personal. Table words would settle them. 2026-10-30.
 - **Classifier noise left from the open-source run (2026-10-30).** `tax`
-  and `pay` NULL amounts (`amount_tax`, `pay_invoices_online`);
+  NULLs an invoice's amount (`amount_tax`);
   `license` a module's licence; `age_value`; `client` makes an OAuth client's `name` a person's. From the release
   panel: `visa_type` is kept by the `type` flag word; presets match a
   table's name in any schema.
