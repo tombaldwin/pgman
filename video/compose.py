@@ -43,7 +43,7 @@ FADE = 0.35
 
 # Seconds cut from a recording's start: the start card before the key
 # that opens the scene's panel.
-SKIP = {"envs": 1.0, "sessions": 1.0, "slow": 1.0, "safety": 0.9, "patches": 1.0}
+SKIP = {"envs": 1.0, "sessions": 1.0, "slow": 1.0, "safety": 0.9, "patches": 1.0, "tap": 0.6}
 
 FORMATS = {
     # name: canvas, terminal box (x, y, w, h), caption box (x, y, w, h), caption size
@@ -51,30 +51,42 @@ FORMATS = {
     "square": dict(size=(1080, 1080), term=(20, 300, 1040, 545), cap=(50, 40, 980, 240), cap_px=52),
 }
 
-# (scene, [(start, end, caption)], hold seconds after the recording ends)
+# (scene, [(start, end, caption)], hold seconds after the recording
+# ends, and optionally (start, end): the part of the recording to use,
+# for a recording cut into several segments). Caption times are within
+# the part used.
 SEGMENTS = [
     ("card:intro", 3.5),
-    ("logs", [(0.0, 3.6, "Point pgman at your Spring app's Hibernate log"),
-              (3.6, 10.9, "It rebuilds the SQL and flags the N+1"),
-              (10.9, 99, "Binds filled in. Run it, get rows.")], 1.0),
-    ("envs", [(0, 99, "Every environment at a glance: replicas, lag, blocked sessions, pending migrations")], 0.8),
-    ("sessions", [(0, 99, "Who is blocking whom, right now")], 0.8),
-    ("slow", [(0, 99, "Your slowest queries, straight from pg_stat_statements")], 0.6),
-    ("safety", [(0, 99, "Read-only by default. Guard rails on every write.")], 0.6),
-    ("patches", [(0, 99, "Migrations dry-run in one transaction, then roll back")], 1.0),
+    ("envs", [(0, 4.0, "Every environment on one screen: replicas, lag, sessions, pending migrations"),
+              (4.0, 99, "Flyway, Liquibase, Alembic, or your own version table: who is behind")], 0.6),
+    ("db-masking", [(0, 99, "What a masked copy does to every column, and why")], 0.3, (0, 5.0)),
+    ("db-masking", [(0, 99, "Production asks why first, then copies it masked and encrypted")], 0.3, (5.0, 13.2)),
+    ("db-masking", [(0, 99, "Real customers in production. Nobody real in the local copy.")], 0.3, (19.9, 27.8)),
+    ("db-masking", [(0, 99, "Every local copy on record: why it was taken, where it went, until it is deleted")], 0.8, (27.8, 99)),
+    ("patches", [(0, 99, "Migrations dry-run in one transaction, then roll back")], 0.6, (3.3, 99)),
+    ("safety", [(0, 99, "Read-only by default. Guard rails on every write.")], 0.4),
+    ("db-spring", [(0, 99, "In a Spring project it finds your datasources; nothing connects until you say")], 0.4, (0, 6.3)),
+    ("logs", [(0.0, 3.3, "Point it at a Hibernate log"),
+              (3.3, 10.6, "It rebuilds the SQL and flags the N+1"),
+              (10.6, 99, "Binds filled in. Run it.")], 0.3, (0, 13.5)),
+    ("tap", [(0, 99, "Your app's live queries over JDBC, down to the calling method")], 0.6, (0.6, 7.2)),
     ("card:agents", 4.5),
     ("card:end", 4.5),
 ]
 
-# The feature loops: scene, seconds held on its last frame (so a short
-# scene still reads before it starts over).
+# The feature loops: name, (scene, part of it or None, seconds held on
+# its last frame, so a short scene still reads before it starts over).
 LOOPS = {
-    "logs": 1.5,
-    "envs": 2.0,
-    "sessions": 3.0,
-    "slow": 2.0,
-    "safety": 2.0,
-    "patches": 2.0,
+    "envs": ("envs", None, 2.0),
+    "masking": ("db-masking", (0, 27.8), 1.5),
+    "copies": ("db-masking", (27.8, 99), 2.0),
+    "patches": ("patches", None, 2.0),
+    "safety": ("safety", None, 2.0),
+    "sessions": ("sessions", None, 3.0),
+    "slow": ("slow", None, 2.0),
+    "spring": ("db-spring", None, 1.5),
+    "logs": ("logs", None, 1.5),
+    "tap": ("tap", None, 1.5),
 }
 
 
@@ -135,26 +147,35 @@ def card_png(fmt, kind, path):
     cx = W / 2
     mono = ImageFont.truetype(MONO, int(40 * s))
     if kind == "intro":
-        centred(d, cx, H * 0.30, "pgman", font(800, int(150 * s)), BLUE)
-        centred(d, cx, H * 0.30 + 200 * s, "A Postgres terminal for Java teams", font(600, int(60 * s)), TEXT)
-        sub = "Spring logs to SQL  ·  read-only by default  ·  built for agents too"
+        centred(d, cx, H * 0.27, "pgman", font(800, int(150 * s)), BLUE)
+        f = font(600, int(58 * s))
+        for i, line in enumerate(balanced(d, "Every Postgres database you run, on one screen", f, W * 0.86)):
+            centred(d, cx, H * 0.27 + 200 * s + i * 72 * s, line, f, TEXT)
+        sub = "masked copies  ·  an audit trail  ·  safe migrations  ·  made for Java teams"
         f = font(400, int(36 * s))
-        for i, line in enumerate(wrap(d, sub, f, W * 0.86)):
-            centred(d, cx, H * 0.30 + 300 * s + i * 48 * s, line, f, SUBTEXT)
+        lines = balanced(d, "Every Postgres database you run, on one screen", font(600, int(58 * s)), W * 0.86)
+        top = H * 0.27 + 200 * s + len(lines) * 72 * s + 40 * s
+        for i, line in enumerate(balanced(d, sub, f, W * 0.86)):
+            centred(d, cx, top + i * 48 * s, line, f, SUBTEXT)
     elif kind == "agents":
-        centred(d, cx, H * 0.22, "And an MCP server for coding agents", font(800, int(64 * s)), TEXT)
+        f = font(800, int(64 * s))
+        y = H * 0.22
+        for line in balanced(d, "All of it drivable by your coding agent", f, W * 0.86):
+            centred(d, cx, y, line, f, TEXT)
+            y += 80 * s
+        centred(d, cx, y + 10 * s, "over MCP, with the same guards in place", font(600, int(42 * s)), BLUE)
         items = [
-            ("read-only queries, EXPLAIN and schema diff", GREEN),
-            ("masked dumps, so real data stays put", GREEN),
-            ("writes only when you confirm them", PEACH),
+            ("read-only by default, the same guard rails", GREEN),
+            ("masked dumps, journaled like yours", GREEN),
+            ("every write waits for your confirmation", PEACH),
         ]
-        f = font(600, int(44 * s))
-        y = H * 0.22 + 150 * s
+        f = font(600, int(40 * s))
+        y += 120 * s
         for text, colour in items:
-            for line in wrap(d, "›  " + text, f, W * 0.86):
+            for line in balanced(d, "›  " + text, f, W * 0.86):
                 centred(d, cx, y, line, f, colour)
-                y += 64 * s
-            y += 14 * s
+                y += 58 * s
+            y += 12 * s
     elif kind == "end":
         centred(d, cx, H * 0.24, "pgman", font(800, int(130 * s)), BLUE)
         y = H * 0.24 + 210 * s
@@ -185,13 +206,14 @@ def fades(d):
     return f"fade=t=in:st=0:d={FADE},fade=t=out:st={d - FADE:.3f}:d={FADE}"
 
 
-def scene_filter(name, src):
-    """The filter prefix that plays scene `name` (input 1) with its
-    SKIP applied, and how long it then runs."""
+def scene_filter(name, src, part=None):
+    """The filter prefix that plays scene `name` (input 1), from `part`
+    when given, else with its SKIP applied, and how long it then runs."""
     length = duration(src)
-    if name in SKIP:
-        return (f"[1:v]trim=start={SKIP[name]},setpts=PTS-STARTPTS[src];[src]",
-                length - SKIP[name])
+    a, b = part if part else (SKIP.get(name, 0), length)
+    b = min(b, length)
+    if a or b < length:
+        return f"[1:v]trim=start={a}:end={b},setpts=PTS-STARTPTS[src];[src]", b - a
     return "[1:v]", length
 
 
@@ -211,9 +233,9 @@ def build(fmt):
                  "-i", png, "-vf", f"format=yuv420p,{fades(secs)}", "-r", str(FPS),
                  "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", out])
         else:
-            name, captions, hold = seg
+            name, captions, hold, *part = seg
             src = os.path.join(SCENES, f"{name}.mp4")
-            pre, length = scene_filter(name, src)
+            pre, length = scene_filter(name, src, part[0] if part else None)
             total = length + hold
             x, y, w, h = spec["term"]
             inputs = ["-f", "lavfi", "-i", f"color=c=0x{'%02x%02x%02x' % CRUST}:s={W}x{H}:r={FPS}:d={total:.3f}",
@@ -251,9 +273,9 @@ def loops():
     for the page to show before the video loads."""
     os.makedirs(OUT, exist_ok=True)
     bg = "0x1e1e2e"  # Catppuccin Mocha base, the terminal's background
-    for name, hold in LOOPS.items():
-        src = os.path.join(SCENES, f"{name}.mp4")
-        pre, length = scene_filter(name, src)
+    for name, (scene, part, hold) in LOOPS.items():
+        src = os.path.join(SCENES, f"{scene}.mp4")
+        pre, length = scene_filter(scene, src, part)
         total = length + hold
         out = os.path.join(OUT, f"pgman-{name}-loop.mp4")
         graph = (f"{pre}tpad=stop_mode=clone:stop_duration={hold},"

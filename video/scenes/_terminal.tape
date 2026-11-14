@@ -13,6 +13,10 @@ Set Framerate 30
 Hide
 Type `export PATH="$PWD/target/release:$PATH" HOME="$PWD/target/video/home" XDG_CONFIG_HOME="$PWD/target/video/cfg" XDG_CACHE_HOME="$PWD/target/video/cache" XDG_DATA_HOME="$PWD/target/video/data"`
 Enter
+# The video databases' password (video/render.sh makes it), for the
+# db-* scenes' connections.toml and the Spring app's ${DB_PASSWORD}.
+Type `export VIDEO_PW="$(cat target/video/db/pw 2>/dev/null)"; export DB_PASSWORD="$VIDEO_PW"`
+Enter
 Type "clear"
 Enter
 Sleep 300ms

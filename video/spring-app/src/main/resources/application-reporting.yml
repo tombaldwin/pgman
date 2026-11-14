@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:55442/ledger?currentSchema=public
+    username: reporting_ro
+    password: ${REPORTING_PASSWORD}

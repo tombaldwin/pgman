@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: billing-api
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:55442/ledger
+    username: postgres
+    password: ${DB_PASSWORD}
+  jpa:
+    show-sql: true
