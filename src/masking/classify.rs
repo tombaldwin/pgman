@@ -458,17 +458,10 @@ const MEASURE: &[&str] = &[
 const MEASURE_NOT_PLACE: &[&str] = &["max", "min", "minutes", "mins", "seconds", "secs"];
 
 /// Words before `fname` that make it a file's name: Odoo's
-/// `ir_attachment.store_fname`.
-const FILE_WORDS: &[&str] = &[
-    "store",
-    "file",
-    "attachment",
-    "upload",
-    "orig",
-    "local",
-    "tmp",
-    "temp",
-];
+/// `ir_attachment.store_fname`. Not `local` or `orig`: `local_fname` is
+/// a name in the local script, and an original upload's name is often a
+/// person's (`CV_Jane_Doe.pdf`).
+const FILE_WORDS: &[&str] = &["store", "file", "attachment", "upload", "tmp", "temp"];
 
 /// Secrets: dropped whatever else the name says.
 const SECRET: &[&str] = &[
@@ -2255,6 +2248,10 @@ mod tests {
         );
         assert_eq!(
             rule("customer", "contact_fname", "varchar", Some(50)),
+            Rule::Name(NamePart::First)
+        );
+        assert_eq!(
+            rule("employees", "local_fname", "varchar", Some(100)),
             Rule::Name(NamePart::First)
         );
     }
