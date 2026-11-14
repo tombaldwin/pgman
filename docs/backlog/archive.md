@@ -46,6 +46,11 @@ Historical record. Newest at the top within each section.
   columns' origin, so the edit is refused as a view;
   `u_refuses_a_view_that_shadows_its_table` pins it on a real server.
 - An edited cell is sorted and filtered by its new value.
+- Killed by evidence: "a tab switched away from mid-save keeps its old
+  snapshot". A tab can't be switched, opened or closed while a query
+  runs (the save is one), and the commit prompt takes the keys while an
+  edit waits; `tabs_hold_still_while_a_query_runs_or_an_edit_waits`
+  now pins both.
 - `Ctrl-C` cancels an edit waiting from row detail too (the grid's
   already did).
 - An unqualified FROM resolves along the session's search path (the

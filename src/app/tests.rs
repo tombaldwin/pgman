@@ -15861,3 +15861,26 @@ async fn the_wizard_waits_for_an_open_transaction_to_end() {
         .status()
         .contains("skipped inside your transaction"));
 }
+
+/// A tab can't change while a query (a cell edit's save among them)
+/// runs, nor while an edit waits on its commit prompt: what lands then
+/// lands in the tab it came from.
+#[test]
+fn tabs_hold_still_while_a_query_runs_or_an_edit_waits() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.new_tab();
+    a.switch_to_tab(0);
+    assert_eq!((a.tabs.len(), a.active_tab), (2, 0));
+    a.query_running = true;
+    a.switch_to_tab(1);
+    a.new_tab();
+    a.close_active_tab();
+    assert_eq!((a.tabs.len(), a.active_tab), (2, 0));
+    a.query_running = false;
+    // The auto_tx prompt takes the keys: ] and Ctrl-T do nothing there.
+    a.mode = Mode::TxDecision;
+    a.on_key(KeyEvent::from(KeyCode::Char(']')));
+    a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert_eq!((a.tabs.len(), a.active_tab), (2, 0));
+}

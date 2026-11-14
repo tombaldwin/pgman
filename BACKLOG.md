@@ -256,8 +256,6 @@ batch.
   inline** (refused with a reason); a multi-line editor would.
 - **`--demo` can't edit cells**: its grids carry no column origins.
 - **Editing several cells of one row** as a single UPDATE.
-- **A tab switched away from mid-save keeps its old snapshot** of an
-  edited cell (the sort and filter are re-applied since 2026-11-14).
 - **Possible flake**: `a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently`
   failed once in a full parallel integration run; not reproduced.
 
