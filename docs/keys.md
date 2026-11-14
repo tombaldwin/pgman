@@ -53,7 +53,7 @@ once a query has run share one key map.
 
 | Key | Action |
 |---|---|
-| `q` | Quit (`Ctrl-C` twice also quits, except from the editor — and from the results while a query or `M` fetch runs — where it cancels the running query) |
+| `q` | Quit (`Ctrl-C` twice also quits, except from the editor — and from the results or row detail while a query, an `M` fetch or a cell edit runs — where it cancels the running query) |
 | `?` / `F1` | Toggle help (both work from every non-typing mode) |
 | `:` | Open the command bar — see [Command bar](#command-bar-) |
 | `A` | About pgman |

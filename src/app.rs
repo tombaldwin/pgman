@@ -2653,8 +2653,10 @@ impl App {
         {
             // From the results, a running query or `M` fetch is what
             // Ctrl-C stops, as it does from the editor; quitting stays
-            // a second press once nothing runs (and `q` either way).
-            if self.mode == Mode::Normal && self.query_running {
+            // a second press once nothing runs (and `q` either way). Row
+            // detail too: a cell edit saved there waits there, on a row
+            // lock perhaps.
+            if matches!(self.mode, Mode::Normal | Mode::RowDetail) && self.query_running {
                 self.cancel_running_query();
                 return;
             }

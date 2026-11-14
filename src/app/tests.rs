@@ -15110,6 +15110,14 @@ fn ctrl_c_from_the_results_cancels_a_running_fetch() {
     a.query_running = false;
     a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     assert_eq!(a.last_status.as_deref(), Some("ctrl-c again to quit"));
+    // From row detail, where an edit saved there waits (a row lock).
+    a.armed_chord = None;
+    a.mode = Mode::RowDetail;
+    a.query_running = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+    assert_eq!(a.last_status.as_deref(), Some("cancelling query…"));
+    assert!(!a.should_quit);
 }
 
 /// Every piece of database work reaches the client through `App::db` (or

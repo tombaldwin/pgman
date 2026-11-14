@@ -116,6 +116,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- `Ctrl-C` in row detail cancels a cell edit saved there that is
+  waiting (a row lock), as it does from the grid. It armed quit.
 - The INSERT yank (`I`), `:fixture` and cell editing resolve an
   unqualified table along the session's `search_path`, as the server
   does; it was always taken for `public`. `:fixture` keeps a schema

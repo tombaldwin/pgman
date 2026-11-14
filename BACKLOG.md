@@ -258,8 +258,6 @@ batch.
 - **Editing several cells of one row** as a single UPDATE.
 - **An edit doesn't re-apply the filter or sort** to the edited cell,
   and a tab switched away from mid-save keeps its old snapshot.
-- **An edit waiting on a row lock** can only be cancelled from the
-  editor (`e`, then `Ctrl-C`).
 - **Possible flake**: `a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently`
   failed once in a full parallel integration run; not reproduced.
 
