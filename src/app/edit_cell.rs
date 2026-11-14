@@ -402,8 +402,13 @@ impl App {
         error: conn::QueryErr,
     ) {
         let ended = error.detail.as_ref().is_some_and(|d| d.ends_session());
+        // Ctrl-C was the operator leaving it: no editor to Esc out of.
+        let cancelled = error
+            .detail
+            .as_ref()
+            .is_some_and(|d| d.code.as_deref() == Some("57014"));
         self.on_query_failed(error.msg, None, error.detail);
-        if ended || self.mode != pending.return_to || self.cell_edit.is_some() {
+        if ended || cancelled || self.mode != pending.return_to || self.cell_edit.is_some() {
             return;
         }
         self.cell_edit = Some(CellEditUi {
@@ -869,6 +874,30 @@ mod tests {
         });
         assert!(a.cell_edit.is_none());
         assert_ne!(a.mode, Mode::CellEdit);
+    }
+
+    /// A save cancelled with Ctrl-C doesn't open the editor again: the
+    /// operator was leaving.
+    #[test]
+    fn a_cancelled_save_does_not_open_the_editor_again() {
+        let mut a = editing(Some("bo"));
+        let p = pending(&a, Some("slow"));
+        a.cell_edit = None;
+        a.mode = Mode::Normal;
+        a.on_msg(AppMsg::CellUpdateFailed {
+            generation: a.generation,
+            pending: p,
+            error: conn::QueryErr {
+                msg: "canceling statement due to user request".into(),
+                position: None,
+                detail: Some(conn::QueryErrDetail {
+                    code: Some("57014".into()),
+                    ..Default::default()
+                }),
+            },
+        });
+        assert!(a.cell_edit.is_none());
+        assert_eq!(a.mode, Mode::Normal);
     }
 
     /// `:` over an edit's confirm cancels it back to the grid, like `n`.
