@@ -119,7 +119,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Masking keeps a flag named for pay or an identifier
   (`pay_invoices_online`): a boolean holds neither.
 - Masking keeps a number that measures beside a location or photo word
-  (`geo_status_timeout`, `photo_count`); a coordinate is still removed.
+  (`geo_status_timeout`, `photo_count`); a coordinate, its minutes and
+  seconds and a bounding box's edges (`lat_min`) are still removed.
 - Masking keeps a number that measures a secret rather than holds one
   (`access_token_lifespan`, `sso_session_idle_timeout`,
   `otp_attempts`), as it already kept a date or an interval. Odoo's
