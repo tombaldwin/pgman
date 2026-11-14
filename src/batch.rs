@@ -141,6 +141,8 @@ pub struct Opts {
     /// Downgrade `Guard::Confirm` to "proceed" non-interactively (the
     /// `--yes` flag). `Guard::Block` stays blocked regardless.
     pub assume_yes: bool,
+    /// Why `--target` made the session read-only, for a refusal's hint.
+    pub pin: Option<String>,
 }
 
 /// First line of a statement, trimmed and length-capped, for safety
@@ -618,6 +620,9 @@ fn is_renderable(c: char) -> bool {
 /// knows the database's profile, but not whether the server is a
 /// standby, so a refusal its profile didn't cause says it may be.
 fn read_only_cause(opts: &Opts) -> conn::ReadOnlyCause {
+    if let Some(why) = &opts.pin {
+        return conn::ReadOnlyCause::Target(why.clone());
+    }
     let safety_toml = crate::util::config_file("safety.toml");
     conn::ReadOnlyCause::for_session(
         &opts.safety,

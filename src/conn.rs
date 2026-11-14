@@ -295,6 +295,9 @@ pub enum ReadOnlyCause {
     },
     /// `:readonly on` in this session.
     Toggle,
+    /// `--target` opened it read-only, for the reason given (a protected
+    /// environment, no `--primary`).
+    Target(String),
     /// None of pgman's settings: a `SET`, `BEGIN READ ONLY`, or the
     /// role's or database's `default_transaction_read_only` — or, when
     /// `standby_unknown`, a standby pgman didn't ask about.
@@ -413,6 +416,7 @@ fn read_only_refusal_hint(
             }
         }
         ReadOnlyCause::Toggle => hint("read-only by :readonly on · :readonly off to write", None),
+        ReadOnlyCause::Target(why) => hint(&format!("read-only by --target: {why}"), None),
         ReadOnlyCause::Elsewhere { standby_unknown } => hint(
             if *standby_unknown {
                 READ_ONLY_ELSEWHERE_OR_STANDBY_HINT
@@ -4090,6 +4094,10 @@ mod tests {
             "read-only by :readonly on · :readonly off to write"
         );
         assert!(footer(ReadOnlyCause::ReplicaPin).contains("replica"));
+        assert_eq!(
+            footer(ReadOnlyCause::Target("live/ledger is protected".into())),
+            "read-only by --target: live/ledger is protected"
+        );
         assert_eq!(
             footer(ReadOnlyCause::Elsewhere {
                 standby_unknown: false

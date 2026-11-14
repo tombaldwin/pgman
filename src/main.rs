@@ -88,7 +88,7 @@ struct Cli {
     /// In --batch: an environment's database (ENV, ENV/DATABASE,
     /// ENV/SERVER/DATABASE) or a connections.toml name, as `pgman dump`
     /// takes, with its secret and ssh tunnel. Its replica, read-only,
-    /// unless --primary.
+    /// unless --primary; a protected environment is read-only always.
     #[arg(
         long,
         value_name = "TARGET",
@@ -1326,14 +1326,49 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
     batch_dsn_from_picks(picks, cli.discovered)
 }
 
+/// Why `--target`'s connection is read-only, whatever `safety.toml`
+/// says, or `None` when it may write. A protected environment is
+/// confirmed by typing its name, which batch can't ask and `--yes`
+/// doesn't answer (`pgman run` refuses it the same way); without
+/// `--primary` the target is read-only even where no replica answered
+/// and its primary did. Pure.
+fn batch_target_pin(
+    label: &str,
+    primary: bool,
+    replica: bool,
+    protected: Option<&str>,
+) -> Option<String> {
+    if let Some(why) = protected {
+        return Some(format!(
+            "{label} is protected ({why}): read-only here, since it is confirmed by typing \
+             its name, which --yes doesn't answer; pgman run asks for it"
+        ));
+    }
+    if replica {
+        return Some(format!("{label} is a replica: read-only"));
+    }
+    (!primary).then(|| {
+        format!("{label} has no replica, so this is its primary: read-only without --primary")
+    })
+}
+
 /// `--target`: the database `text` names, as `pgman dump` resolves it
 /// (its replica unless `primary`), its secret read now and its tunnel
 /// left for the connect to open; the safety scope it is keyed under;
-/// whether it is a replica; and which database it chose, to say.
+/// why it is read-only ([`batch_target_pin`]); and which database it
+/// chose, to say.
 async fn resolve_batch_target(
     text: &str,
     primary: bool,
-) -> Result<(conn::Dsn, Option<pgman::safety::Scope>, bool, String), String> {
+) -> Result<
+    (
+        conn::Dsn,
+        Option<pgman::safety::Scope>,
+        Option<String>,
+        String,
+    ),
+    String,
+> {
     use pgman::inventory::target::Want;
     let want = if primary {
         Want::Primary
@@ -1354,12 +1389,14 @@ async fn resolve_batch_target(
             environment,
             server: Some(resolved.server.clone()),
         });
-    Ok((
-        dsn,
-        scope,
+    let why = resolved.protected.then(|| resolved.protection());
+    let pin = batch_target_pin(
+        &resolved.label,
+        primary,
         resolved.role == pgman::mcp::connections::Role::Replica,
-        chose,
-    ))
+        why.as_deref(),
+    );
+    Ok((dsn, scope, pin, chose))
 }
 
 /// Drop discovered picks that are the same connection as an earlier one:
@@ -1470,13 +1507,16 @@ fn batch_dsn_from_picks(
 }
 
 async fn run_batch(cli: &Cli) -> i32 {
-    let (dsn, scope, on_replica) = match &cli.target {
+    let (dsn, scope, pin) = match &cli.target {
         Some(t) => match resolve_batch_target(t, cli.primary).await {
-            Ok((dsn, scope, on_replica, chose)) => {
+            Ok((dsn, scope, pin, chose)) => {
                 // Which database the target came to, on stderr: stdout
                 // is the result's.
                 eprintln!("pgman: {}", batch::terminal_safe(&chose));
-                (dsn, scope, on_replica)
+                if let Some(why) = &pin {
+                    eprintln!("pgman: {}", batch::terminal_safe(why));
+                }
+                (dsn, scope, pin)
             }
             Err(e) => {
                 eprintln!("pgman: {}", batch::terminal_safe(&e));
@@ -1484,7 +1524,7 @@ async fn run_batch(cli: &Cli) -> i32 {
             }
         },
         None => match resolve_batch_dsn(cli) {
-            Ok(d) => (d, None, false),
+            Ok(d) => (d, None, None),
             Err(e) => {
                 // Names a discovered pick — text the checkout wrote.
                 eprintln!("{}", batch::terminal_safe(&e));
@@ -1529,11 +1569,12 @@ async fn run_batch(cli: &Cli) -> i32 {
     // An environment's database is keyed `ENV/DATABASE` in safety.toml.
     safety_cfg.scope = scope;
     // Read the profile values out before moving the config into Opts.
-    // A replica is read-only, whatever safety.toml says: as in the TUI.
+    // A replica, a protected target or one without --primary is
+    // read-only, whatever safety.toml says (`batch_target_pin`).
     let (read_only, statement_timeout_ms) = {
         let profile = safety_cfg.profile_for(&dsn.dbname);
         (
-            profile.read_only || on_replica,
+            profile.read_only || pin.is_some(),
             profile.statement_timeout_ms,
         )
     };
@@ -1549,6 +1590,7 @@ async fn run_batch(cli: &Cli) -> i32 {
         format,
         safety: safety_cfg,
         assume_yes: cli.yes,
+        pin,
     };
     match batch::run(opts).await {
         Ok(code) => code,
@@ -1898,6 +1940,28 @@ fn load_safety_config() -> safety::SafetyConfig {
 mod main_tests {
     use super::*;
     use pgman::discover::resolve_intellij_placeholders;
+
+    /// `--target` writes only to an unprotected primary named with
+    /// `--primary`: a protected one is read-only even with `--primary`
+    /// (and `--yes`), and without `--primary` a primary standing in for
+    /// a missing replica is read-only too.
+    #[test]
+    fn a_batch_target_writes_only_to_an_unprotected_primary_asked_for() {
+        assert_eq!(batch_target_pin("staging/ledger", true, false, None), None);
+        let pin = batch_target_pin("live/ledger", true, false, Some("it says protected = true"));
+        assert!(
+            pin.as_deref()
+                .is_some_and(|p| p.contains("protected (it says protected = true)")),
+            "{pin:?}"
+        );
+        let pin = batch_target_pin("staging/ledger", false, false, None);
+        assert!(
+            pin.as_deref()
+                .is_some_and(|p| p.contains("without --primary")),
+            "{pin:?}"
+        );
+        assert!(batch_target_pin("staging/ledger", false, true, None).is_some());
+    }
 
     #[test]
     fn parse_tap_addr_accepts_colon_port() {
