@@ -5,6 +5,55 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### From the 0.5.3 release panel (2026-11-14)
+
+Five Fable reviewers (safety, masking, TUI correctness, a hand-driven
+session, server versions). What they found new in 0.5.3, and the
+medium findings, are fixed on main; these are left, most of them older
+than 0.5.3.
+
+- **Masking: names the classifier keeps raw (pre-existing, found with a
+  real dump).** Credential-grade first: Django REST Framework's
+  `authtoken_token.key` and other bare `key` columns (`api_keys.key`,
+  WordPress `user_activation_key`); `pass` isn't a password word
+  (`wp_users.user_pass`, `smtp_pass`, `pwhash`); `*_key` matched only
+  after `api`/`private`/`access` (`signing_key`, `hmac_key`,
+  `encryption_key`, `consumer_key`). Then phone numbers held as
+  integers (`phone int8`, `msisdn`), card and bank words (`card_no`,
+  `cvc`, `security_code`, `acct_no`, `bank_account`), national ids
+  outside the UK list (`id_number`, `tin`, `cpf`, `aadhaar`, `pesel`,
+  Odoo's `sinid`), relatives' and SSO names (`mother_name`,
+  `external_name`, `screen_name`, `object_repr`) and `about_me`. Each
+  word risks masking a column that isn't personal (a NOT NULL one then
+  refuses the dump), so each wants a test over the OSS schemas first.
+  The reviewer's probe list (about 230 cases) is the place to start.
+- **Masking: a preset-kept table keeps every column.** A custom Envers
+  revision entity's `ip_address`, `user_email` and `user_agent` stay
+  raw beside the masked `username`. Run the defaults over a
+  preset-kept table and keep only what they keep.
+- **Schema diff: what it doesn't compare, unsaid.** Domain CHECKs
+  (`contypid`, cheap to add), aggregates, a CHECK on one partition, and
+  an extension installed on one side only. Add domain checks and
+  extension names, and name the rest in USAGE and docs/commands.md.
+- **Schema lint on PG 10 loses LINT107** (`indnkeyatts` is PG 11+), and
+  the partial failure only reaches the log, as `db error`: use
+  `indnatts` before 11, show the server's message, and surface partial
+  failures in MCP `schema_lint`'s `live_checks_error`.
+- **Hibernate logs:** `[%c]%m` with no space parses nothing; `[%c] [%t]
+  %m` keeps the thread in the SQL; a statement starting `-- ` loses a
+  dash. All older than the Log4j change.
+- **Schema browser:** lists only primary keys and UNIQUE as
+  constraints (FKs and CHECKs missing), and nothing marks a view.
+- **Status line:** a long path is cut from the left of the file name,
+  so `wrote….xml · in /private/tmp/…` drops the part that matters.
+- **Help filter** drops the middle line of a wrapped entry
+  (`:readonly`).
+- **Row numbers under a filter:** row detail says `row 1 of 2`, cell
+  detail from it `row 3 of 6`.
+- **`--demo` can't run a typed query** (one cell: "this is --demo mode,
+  no database"), and **safety.toml isn't re-read on reconnect** (a new
+  `read_only = false` needs a restart; the hint says so).
+
 ### From a Fable review (2026-11-12)
 
 Five reviewers (MCP writes, masking, statement safety, code health,
