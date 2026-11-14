@@ -3679,13 +3679,33 @@ fn diff_names_what_drifted_between_two_databases() {
         on("pgman_test", &format!("CREATE DATABASE {db}")).unwrap();
     }
     for (db, sql) in [
-        (&a, "CREATE TABLE orders (id bigint PRIMARY KEY, note text)"),
+        (
+            &a,
+            "CREATE TABLE orders (id bigint PRIMARY KEY, note text CHECK (note <> ''))",
+        ),
         (&a, "CREATE TABLE gone (x int)"),
+        (&a, "CREATE VIEW recent AS SELECT id FROM orders"),
+        (
+            &a,
+            "CREATE FUNCTION only_a() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+        ),
+        (
+            &a,
+            "CREATE FUNCTION answer() RETURNS int LANGUAGE sql AS 'SELECT 42'",
+        ),
         (
             &b,
             "CREATE TABLE orders (id integer PRIMARY KEY, status text)",
         ),
         (&b, "CREATE INDEX orders_status ON orders (status)"),
+        (
+            &b,
+            "CREATE VIEW recent AS SELECT id FROM orders WHERE id > 0",
+        ),
+        (
+            &b,
+            "CREATE FUNCTION answer() RETURNS int LANGUAGE sql AS 'SELECT 41'",
+        ),
     ] {
         on(db, sql).unwrap();
     }
@@ -3707,6 +3727,12 @@ fn diff_names_what_drifted_between_two_databases() {
         "status text",
         "column changed: id: bigint → integer",
         "orders_status",
+        "check only in",
+        "orders_note_check CHECK ((note <> ''::text))",
+        "view defined differently:\n  public.recent",
+        "function only in",
+        "public.only_a()",
+        "function defined differently:\n  public.answer()",
     ] {
         assert!(text.contains(want), "{want:?} in\n{text}");
     }
@@ -3743,6 +3769,12 @@ fn diff_names_what_drifted_between_two_databases() {
     assert_eq!(v["same"], false);
     assert_eq!(v["only_a"], serde_json::json!(["public.gone"]));
     assert_eq!(v["tables"][0]["table"], "public.orders");
+    assert_eq!(
+        v["functions_only_a"],
+        serde_json::json!(["public.only_a()"])
+    );
+    assert_eq!(v["functions_changed"][0]["name"], "public.answer()");
+    assert_eq!(v["views_changed"][0]["name"], "public.recent");
     for db in [&a, &b] {
         let _ = on("pgman_test", &format!("DROP DATABASE IF EXISTS {db}"));
     }
@@ -5404,7 +5436,11 @@ fn a_dry_run_runs_every_patch_then_rolls_it_all_back() {
         // the transaction before it's rolled back.
         write(
             "004-bad.sql",
-            format!("{}CREATE INDEX {tbl}_id ON {tbl} (id);\n", row(4)),
+            format!(
+                "{}CREATE INDEX {tbl}_id ON {tbl} (id);\n\
+                 CREATE FUNCTION {tbl}_fn() RETURNS int LANGUAGE sql AS 'SELECT 1';\n",
+                row(4)
+            ),
         );
         let p = plan(&env, &target, &writable, &no_secrets, false, None)
             .await
@@ -5427,6 +5463,10 @@ fn a_dry_run_runs_every_patch_then_rolls_it_all_back() {
         );
         assert!(
             changes.contains(&format!("+ index CREATE INDEX {tbl}_id")),
+            "{changes}"
+        );
+        assert!(
+            changes.contains(&format!("+ function public.{tbl}_fn()")),
             "{changes}"
         );
         assert!(

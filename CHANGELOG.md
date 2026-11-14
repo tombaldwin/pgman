@@ -24,14 +24,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   run as-is.
 - A patch dry run (`pgman apply --dry-run`, MCP `apply_patches` with
   `mode: "dry_run"`) now says what its patches change in the schema —
-  tables, columns, keys and indexes added, dropped or changed — read in
-  its transaction before the rollback. The TUI's patch view (`P`) lists
+  tables, columns, keys, indexes, CHECKs and functions added, dropped or
+  changed, views redefined — read in its transaction before the
+  rollback. The TUI's patch view (`P`) lists
   them too.
 - `pgman diff <A> <B>` and MCP `schema_diff`: what differs between two
   databases' schemas — tables and views in one only, and per table,
-  columns added, dropped or changed, the primary key, indexes and
-  foreign keys. For drift between environments; a report, not a
-  migration.
+  columns added, dropped or changed, the primary key, indexes, foreign
+  keys and CHECK constraints; views defined differently; functions in
+  one only or defined differently. For drift between environments; a
+  report, not a migration.
 - `pgman query --target ENV/DATABASE` (and `--batch --target`): run a
   statement against an environment's database, or a connections.toml
   name, with its secret and ssh tunnel, as `pgman dump` reaches it. Its

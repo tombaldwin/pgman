@@ -4072,10 +4072,10 @@ mod tests {
             ..Default::default()
         };
         let mut dry = done(RunMode::DryRun, None);
-        dry.schema_changes = Some(crate::schema_diff::Diff {
+        dry.schema_changes = Some(Box::new(crate::schema_diff::Diff {
             only_b: vec!["public.dunning_stages".into()],
             ..Default::default()
-        });
+        }));
         v.stage = PatchStage::Done(plan.clone(), dry);
         let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
         assert_eq!(

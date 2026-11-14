@@ -122,7 +122,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "schema_diff",
-            "description": "What differs between two connections' schemas: tables and views in one only (`only_a`, `only_b`), and per table in both, columns added, dropped or changed (type, NOT NULL), the primary key, indexes (by name and definition) and foreign keys. Use it to find drift between environments before writing a migration, or to check one landed the same everywhere. `same` says whether anything differs. CAVEATS: only what each connection's role can see. Partitions are compared through their parent and extensions' own tables are left out; views by name only, not their definitions; CHECK constraints, triggers, functions, grants and comments aren't compared. A report, not a migration: no DDL is suggested. Two replicas lagging differently can differ for a moment.",
+            "description": "What differs between two connections' schemas: tables and views in one only (`only_a`, `only_b`), and per table in both, columns added, dropped or changed (type, NOT NULL), the primary key, indexes (by name and definition), foreign keys and CHECK constraints; views whose definitions differ (`views_changed`, both definitions); functions and procedures in one only or defined differently (`functions_only_a`, `functions_only_b`, `functions_changed`). Use it to find drift between environments before writing a migration, or to check one landed the same everywhere. `same` says whether anything differs. CAVEATS: only what each connection's role can see. Partitions are compared through their parent and extensions' own tables and functions are left out; triggers, grants and comments aren't compared; when one side's checks, views and functions can't be read, `notes` says so and they aren't compared. A report, not a migration: no DDL is suggested. Two replicas lagging differently can differ for a moment.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -450,16 +450,24 @@ impl Server {
 
     async fn tool_schema_diff(&self, args: &Value) -> Result<String, String> {
         let (a, b) = (arg_str(args, "a")?, arg_str(args, "b")?);
-        let mut caches = Vec::new();
+        let mut reads = Vec::new();
         for name in [a, b] {
             let target = self.prepare(name, "schema_diff")?;
             tracing::info!(target: "pgman::mcp", connection = name, "schema_diff");
             let (client, _tunnel) = connect(name, target, &self.tunnels).await?;
-            caches.push(crate::query::schema::fetch(&client).await);
+            let cache = crate::query::schema::fetch(&client).await;
+            let defs = crate::query::definitions::fetch(&client).await;
+            reads.push((cache, defs));
         }
-        let d = crate::schema_diff::diff(&caches[0], &caches[1]);
+        let (d, notes) = crate::schema_diff::diff_reads(
+            (&reads[0].0, &reads[0].1, a),
+            (&reads[1].0, &reads[1].1, b),
+        );
         let mut v = crate::schema_diff::to_json(&d, a, b);
-        v["incomplete"] = json!([caches[0].incomplete, caches[1].incomplete]);
+        v["incomplete"] = json!([reads[0].0.incomplete, reads[1].0.incomplete]);
+        if !notes.is_empty() {
+            v["notes"] = json!(notes);
+        }
         Ok(v.to_string())
     }
 

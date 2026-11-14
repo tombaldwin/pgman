@@ -19,8 +19,7 @@ left.
 - **Features, by value for effort:** index advice beyond explain's
   (which reads one plan's filters): across pg_stat_statements' top
   statements and the tap's hotspots, with hypopg to try an index
-  before building it (M). Schema diff (and the dry run's) could compare
-  CHECKs, views' definitions and functions too.
+  before building it (M).
 
 ### Postgres-compatible databases — from a compatibility run (2026-10-29)
 

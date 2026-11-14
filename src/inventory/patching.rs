@@ -320,7 +320,7 @@ pub struct ApplyReport {
     pub copy: Option<CopyNote>,
     /// A dry run's: what its patches changed in the schema, read in its
     /// transaction before and after them, before the rollback.
-    pub schema_changes: Option<crate::schema_diff::Diff>,
+    pub schema_changes: Option<Box<crate::schema_diff::Diff>>,
 }
 
 impl ApplyReport {
@@ -958,8 +958,15 @@ impl Run<'_> {
             // What the patches did to the schema, seen before it's undone.
             // After a failed patch the transaction is aborted, the
             // savepoint can't be taken, and nothing is read.
-            if let (Some(b), Some(a)) = (&before, crate::query::apply::schema_in_tx(client).await) {
-                report.schema_changes = Some(crate::schema_diff::diff(b, &a));
+            if let (Some((b, db)), Some((a, da))) =
+                (&before, crate::query::apply::schema_in_tx(client).await)
+            {
+                let (d, notes) =
+                    crate::schema_diff::diff_reads((b, db, "before"), (&a, &da, "after"));
+                for n in notes {
+                    tracing::warn!(target: "pgman::patching", "dry run: {n}");
+                }
+                report.schema_changes = Some(Box::new(d));
             }
             // Failing, the connection closing undoes it all the same.
             if let Err(e) = crate::query::apply::rollback(client).await {

@@ -581,21 +581,26 @@ pub async fn begin(client: &tokio_postgres::Client) -> Result<(), String> {
 }
 
 /// The schema as the transaction the caller holds sees it — a dry run's,
-/// its patches' DDL included — read behind a savepoint, so a catalog
-/// read that fails leaves the transaction as it was rather than
-/// aborted. `None` when the savepoint can't be taken.
+/// its patches' DDL included — with its CHECKs, views' definitions and
+/// functions, read behind a savepoint, so a catalog read that fails
+/// leaves the transaction as it was rather than aborted. `None` when the
+/// savepoint can't be taken.
 pub async fn schema_in_tx(
     client: &tokio_postgres::Client,
-) -> Option<crate::query::schema::SchemaCache> {
+) -> Option<(
+    crate::query::schema::SchemaCache,
+    Result<crate::query::definitions::Definitions, String>,
+)> {
     client.batch_execute("SAVEPOINT pgman_schema").await.ok()?;
     let cache = crate::query::schema::fetch(client).await;
+    let defs = crate::query::definitions::fetch(client).await;
     // Reads only: rolling back to the savepoint undoes nothing but an
     // aborted state.
     client
         .batch_execute("ROLLBACK TO SAVEPOINT pgman_schema; RELEASE SAVEPOINT pgman_schema")
         .await
         .ok()?;
-    Some(cache)
+    Some((cache, defs))
 }
 
 /// End a dry run: everything since [`begin`] is undone.
