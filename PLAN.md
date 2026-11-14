@@ -47,7 +47,7 @@ guards, DBUnit fixtures, the schema-lint wizard. The risk is not the
 wedge; it is that a first-time user hits a rough edge in the first
 minute and never reaches it.
 
-## Where we are (2026-11-12)
+## Where we are (2026-11-14)
 
 **v0.5.2 is released** (2026-11-11): GitHub release, crates.io, the MCP
 Registry and the Homebrew tap. The release flow is the one in
@@ -84,6 +84,28 @@ environment and the editor's Ctrl-A/Ctrl-E (posture and keymap calls),
 the main.rs split (main() itself is the 950 lines), index advice across
 pg_stat_statements, the tap and hypopg, and schema diff of CHECKs,
 views and functions.
+
+### 1b. A backlog pass (2026-11-13/14)
+
+Tom's "continue with the backlog", on main, unreleased: the sessions
+panel's failed load, `I`/`:fixture` on derived sources and along the
+search path, MCP's read-only hint, a refused cell save, the result
+diff's NULL keys, quoting, partial sides, stale pin and column order,
+`copies prune`, the `EXPIRED` badge, the rules digest and the rules
+confirmation's changes in the journal, schema diff of CHECKs, views and
+functions, MCP `schema_lint`'s advisor and `\report`'s evidence, ADV002
+and ADV003, the bounded name lookup, a standby's pin, Log4j's bracketed
+logger, the wizard inside a transaction, multi-column `JOIN … ON`,
+sort and filter after an edit, `Ctrl-C` in row detail, and classifier
+noise (measured secrets, `store_fname`, a pay flag). Four items were
+killed by evidence (archive.md).
+
+Left, each needing Tom or a design: the libpq environment, Ctrl-A /
+Ctrl-E, the main.rs split, index advice, the MCP confirmation's
+classifier summary (it would connect before the operator agrees), the
+TUI's patch lift, discovered names as dump targets, paging limits'
+home (config.toml or pgman.toml), and the classifier's table-aware
+words (`amount_tax`, `license`, `client`).
 
 ### 2. Waiting on Tom
 
