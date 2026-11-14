@@ -614,3 +614,45 @@ fn copies_prune_deletes_only_what_has_expired() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("nothing past its expiry"));
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// `copies rm` of a copy whose file a later dump wrote over keeps the
+/// file: it is the later dump, whatever the journal says of the path.
+#[test]
+fn copies_rm_keeps_a_file_another_dump_wrote_over() {
+    use pgman::journal::{Event, Kind};
+    let home = std::env::temp_dir().join(format!("pgman-test-rm-over-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let data = home.join(".local/share/pgman");
+    std::fs::create_dir_all(&data).unwrap();
+    let file = home.join("ledger.dump");
+    std::fs::write(&file, b"PGDMP the first dump").unwrap();
+    let first = pgman::copies::fingerprint(&file).unwrap();
+    std::fs::write(&file, b"PGDMP a later dump, same path").unwrap();
+    let mut e = Event::new(Kind::Dump, 1_000, "m-000000000000");
+    e.copy = Some("aaaa1111bbbb".into());
+    e.label = Some("ledger".into());
+    e.mode = Some("raw".into());
+    e.file = Some(file.display().to_string());
+    e.print = Some(first);
+    let line = serde_json::to_string(&e).unwrap() + "\n";
+    std::fs::write(data.join(pgman::journal::FILE), line).unwrap();
+    let out = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["copies", "rm", "aaaa1111", "--yes"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn pgman");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("holds another dump now"), "{said}");
+    assert!(file.exists(), "the later dump was deleted: {said}");
+    let journal = std::fs::read_to_string(data.join(pgman::journal::FILE)).unwrap();
+    assert!(
+        journal.contains("holds another dump now; kept"),
+        "{journal}"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}

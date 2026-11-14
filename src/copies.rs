@@ -113,12 +113,20 @@ pub fn expired_here() -> usize {
 
 /// The copies `pgman copies prune` removes: past their expiry and not
 /// deleted, with a file still there (`present`) or a database restored
-/// from them not yet dropped. Oldest first. Pure but for `present`.
+/// from them not yet dropped. A file a later dump wrote over is that
+/// dump's, not this copy's. Oldest first. Pure but for `present`.
 pub fn prune_candidates(copies: &[Copy], now: u64, present: impl Fn(&Path) -> bool) -> Vec<&Copy> {
     copies
         .iter()
-        .filter(|c| c.deleted.is_none() && c.expired(now))
-        .filter(|c| present(&c.file) || c.restores.iter().any(|r| r.dropped.is_none()))
+        .enumerate()
+        .filter(|(_, c)| c.deleted.is_none() && c.expired(now))
+        .filter(|&(i, c)| {
+            let overwritten = copies[i + 1..]
+                .iter()
+                .any(|l| l.deleted.is_none() && l.file == c.file);
+            (present(&c.file) && !overwritten) || c.restores.iter().any(|r| r.dropped.is_none())
+        })
+        .map(|(_, c)| c)
         .collect()
 }
 
@@ -1294,7 +1302,20 @@ async fn remove_copy_cli(
                 .collect()
         })
         .unwrap_or_default();
-    let on_disk = present(file);
+    let mut on_disk = present(file);
+    // A later dump to the same path replaced this copy's file: that file
+    // is the later dump, and isn't this copy's to delete.
+    let replaced = on_disk
+        && known
+            .and_then(|c| c.print.as_deref())
+            .is_some_and(|p| fingerprint(file).as_deref() != Some(p));
+    if replaced {
+        println!(
+            "{} holds another dump now; it stays (not this copy's)",
+            file.display()
+        );
+        on_disk = false;
+    }
     if !on_disk && known.is_none() {
         return Err(format!("{} isn't there", file.display()));
     }
@@ -1319,7 +1340,7 @@ async fn remove_copy_cli(
     if on_disk {
         delete_dump(file)?;
         println!("deleted {}", file.display());
-    } else {
+    } else if !replaced {
         println!("{} was already gone", file.display());
     }
     let mut e = Event::new(Kind::Delete, now, &journal::machine_id());
@@ -1328,6 +1349,8 @@ async fn remove_copy_cli(
     e.why = Some(
         if on_disk {
             why
+        } else if replaced {
+            "its file holds another dump now; kept"
         } else {
             "already gone from disk"
         }
@@ -1774,7 +1797,11 @@ mod tests {
         // Deleted already: not again.
         let mut d = Event::new(Kind::Delete, 2_000, "m");
         d.copy = Some("aaaa1111ffff".into());
-        let copies = registry(&[a, b, r, d]);
+        let copies = registry(&[a.clone(), b.clone(), r, d]);
+        assert!(ids(&copies, &|_| true).is_empty());
+        // A later dump wrote over its file: the file is that dump's.
+        let c = dump_event("cccc3333ffff", 200_000, "staging/ledger", "/d/a.dump");
+        let copies = registry(&[a, b, c]);
         assert!(ids(&copies, &|_| true).is_empty());
     }
 
