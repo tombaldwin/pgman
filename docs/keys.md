@@ -358,6 +358,9 @@ Opened with `W`. Pure checks (LINT001–004: missing PK, mixed-case, reserved
 word, mixed naming) run over the cached schema; live checks (LINT101–107: FK
 without index, unused index, duplicate indexes, bloat, no comment, mixed
 timestamp/timestamptz, a serial or identity column nothing keeps unique) query the database.
+Inside a transaction you opened, the live checks and the advisor wait: they
+would read its statistics as of its start, and one that failed would abort it.
+The panel says so; `r` runs them once you `COMMIT` or `ROLLBACK`.
 
 The **config advisor** findings (ADV…) join the same list. They come from the
 server's statistics, read-only, and each carries the numbers that triggered it

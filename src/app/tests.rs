@@ -15762,3 +15762,23 @@ async fn a_standby_pin_is_asked_again_at_the_next_connect() {
     a.dispatch_connect(Some("other".into()));
     assert!(a.replica_pin && a.read_only);
 }
+
+/// Inside an open transaction the wizard doesn't run its live checks or
+/// the advisor there: they'd read the transaction's old statistics, and
+/// one that failed would abort it. It says so, and `r` runs them later.
+#[tokio::test]
+async fn the_wizard_waits_for_an_open_transaction_to_end() {
+    let mut a = app_with_schemas();
+    a.client = None;
+    a.tx_open = true;
+    a.on_key(KeyEvent::from(KeyCode::Char('W')));
+    assert_eq!(a.mode, Mode::SchemaLint);
+    assert_eq!(
+        a.schema_lint.live_note.as_deref(),
+        Some(App::LINT_IN_TRANSACTION)
+    );
+    assert!(a
+        .schema_lint
+        .status()
+        .contains("skipped inside your transaction"));
+}

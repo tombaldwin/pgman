@@ -365,9 +365,6 @@ batch.
   transaction`. Not reproduced in four tries; look with the log on.
 - **Paging's 60 s idle / 10 min open limits are constants**; they could
   be `pgman.toml` settings.
-- **The advisor and the live lint run on the editor's session**, so
-  inside an open user transaction `pg_stat_*` reads are the
-  transaction's cached snapshot and a refresh can be stale.
 
 ### Code-review follow-ups (from the open-source-prep review)
 - The older single-line inputs (`SaveQueryPrompt` name,

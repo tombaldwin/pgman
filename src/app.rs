@@ -5167,6 +5167,11 @@ impl App {
         self.mode = Mode::SchemaBrowser;
     }
 
+    /// What the wizard says instead of running its live checks and the
+    /// advisor inside an open transaction.
+    pub const LINT_IN_TRANSACTION: &str =
+        "live checks and advisor skipped inside your transaction · COMMIT or ROLLBACK, then r";
+
     /// `W` from Normal — open the schema "wizard" (lint).
     /// Re-runs every check on entry so a fresh re-connect picks
     /// up the latest cache. Pure; sub-millisecond on a normal
@@ -5200,6 +5205,13 @@ impl App {
         if self.demo {
             self.on_live_lint_loaded(Ok(crate::demo::live_lint()));
             self.on_advisor_loaded(Ok(crate::demo::advisor()));
+        } else if self.tx_open {
+            // They'd run inside the open transaction: its statistics are
+            // as of its first read, and a check that fails (a timeout, a
+            // view the role can't read) would abort it, losing the
+            // operator's work.
+            self.schema_lint.live_note = Some(Self::LINT_IN_TRANSACTION.to_string());
+            self.last_status = Some(self.schema_lint.status());
         } else if let Some(db) = self.db() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;

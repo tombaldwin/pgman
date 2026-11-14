@@ -627,8 +627,17 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
     // A short terminal cuts the strip: the panel's bottom border says
     // how much more there is, leaving the strip's rows to the finding
-    // (an advisor's setting comes first).
-    if let Some(note) = detail_cut_note(cut) {
+    // (an advisor's setting comes first). Skipped live checks say so
+    // there too: the status line's first-visit tip can hide it.
+    let skipped =
+        app.schema_lint.live_note.as_deref() == Some(crate::app::App::LINT_IN_TRANSACTION);
+    let note = match (detail_cut_note(cut), skipped) {
+        (Some(c), true) => Some(format!("{c}· {} ", crate::app::App::LINT_IN_TRANSACTION)),
+        (Some(c), false) => Some(c),
+        (None, true) => Some(format!(" {} ", crate::app::App::LINT_IN_TRANSACTION)),
+        (None, false) => None,
+    };
+    if let Some(note) = note {
         let row = Rect {
             x: popup.x + 2,
             y: popup.y + popup.height.saturating_sub(1),

@@ -3118,3 +3118,28 @@ fn detail_cut_note_counts_the_lines_cut() {
     let note = super::schema::detail_cut_note(7).unwrap();
     assert!(note.contains("7 more line(s)"), "{note}");
 }
+
+/// Live checks skipped inside a transaction: the wizard's bottom border
+/// says so, whatever the status line shows.
+#[test]
+fn the_wizard_says_its_live_checks_wait_for_the_transaction() {
+    use crate::app::Mode;
+    let mut a = settled_app(false, true);
+    a.schema_lint.findings = vec![crate::query::lint::Finding {
+        severity: crate::query::lint::Severity::Low,
+        code: "LINT105",
+        title: "t".into(),
+        object: "public.tbl".into(),
+        detail: "d".into(),
+        suggestion: None,
+        advice: None,
+    }];
+    a.schema_lint.live_note = Some(crate::app::App::LINT_IN_TRANSACTION.into());
+    a.mode = Mode::SchemaLint;
+    let s = screen_text(&mut a, 140, 30);
+    assert!(
+        s.lines()
+            .any(|l| l.contains("skipped inside your transaction") && l.contains('╰')),
+        "wizard:\n{s}"
+    );
+}

@@ -37,6 +37,8 @@ Historical record. Newest at the top within each section.
   ways.
 - A standby's read-only pin is asked again at the next connect.
 - Log4j's bracketed logger (`DEBUG [org.hibernate.SQL] select …`) is read.
+- The wizard's live checks and advisor wait for an open transaction to
+  end.
 - Killed by evidence: "a static environment's primary row is never
   probed" (v0.2.0 panel). 130c4c3, the day before, links a static
   replica to its primary and reads the primary through it, as

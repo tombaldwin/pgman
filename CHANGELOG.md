@@ -112,6 +112,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- The schema wizard (`W`) no longer runs its live checks and the
+  config advisor inside a transaction you opened: they read its
+  statistics as of its start, and one that failed (a timeout, a view
+  the role can't read) aborted the transaction. It says so; `r` runs
+  them once it ends.
 - A session pinned read-only because the server was a standby asks
   again when it reconnects (`r`, `\c`): a standby promoted since is
   writable as its profile says. An environment's replica stays pinned.
