@@ -88,6 +88,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Changed
 
+- A cell edit's confirmation names the column both ways when the
+  result shows it under another name than the schema pgman read: an
+  alias, or a column renamed since (`S`, then `r`, reloads it). The
+  UPDATE goes by pgman's name, which the confirmation alone showed.
 - `D` with a pinned A from another table (or sharing no column with the
   current result) pins the current result as the new A, and says so.
   It diffed them, every row removed and added.

@@ -224,9 +224,6 @@ buckets were folded in once their initial passes shipped).
   server with a non-English `lc_messages`); the session read-only passed
   at `run_generated_select` and the cell edit (pgman's own SQL, which
   can't carry the escape).
-- **The cell-edit confirm shows a stale column name** (`SET b`) before
-  the server-side identity check refuses it. Warn at plan time when an
-  unaliased result column's name differs from the schema cache.
 - **A standby pin outlives a promotion** across a same-DSN reconnect, as
   an environment's replica pin does. Re-ask `pg_is_in_recovery()` and
   unpin when it says no.

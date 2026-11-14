@@ -48,6 +48,19 @@ pub(crate) fn edit_target(edit: &cell_edit::CellEdit) -> String {
     )
 }
 
+/// What the confirm adds when the result shows the column under another
+/// name than the schema pgman read gives it: an alias, or a column
+/// renamed since the read. The UPDATE goes by pgman's name, so the
+/// operator sees which, and how to reload when it is the rename (the
+/// server refuses that write either way). `None` when they match. Pure.
+pub(crate) fn shown_as_note(shown: &str, column: &str) -> Option<String> {
+    (shown != column).then(|| {
+        format!(
+            " · shown as {shown}: pgman's schema calls it {column} (S, then r, reloads it if it was renamed)"
+        )
+    })
+}
+
 /// Put `value` in column `col` of the row that read `before`, trying
 /// `hint` first: the row may have moved (a sort) since the edit was
 /// planned. `false` when no row reads `before` any more. A primary key
@@ -247,7 +260,17 @@ impl App {
             .map(|d| d.dbname.clone())
             .unwrap_or_else(|| "default".into());
         let decision = safety::evaluate_in_session(&self.safety_config, &db, &sql, self.read_only);
-        let summary = format!("edit {}", edit_target(&ui.edit));
+        let shown = self
+            .grid
+            .columns
+            .get(ui.edit.col)
+            .map(String::as_str)
+            .unwrap_or("");
+        let summary = format!(
+            "edit {}{}",
+            edit_target(&ui.edit),
+            shown_as_note(shown, &ui.edit.column).unwrap_or_default()
+        );
         let pending = PendingCellEdit {
             edit: ui.edit,
             new,
@@ -510,6 +533,24 @@ mod tests {
         assert_eq!(a.last_status.as_deref(), Some("no change"));
         assert!(a.pending_run.is_none());
         assert_eq!(a.mode, Mode::Normal);
+    }
+
+    /// A column the result shows under another name (an alias, or a
+    /// rename since the schema was read) is named both ways in the
+    /// confirm, since the UPDATE goes by pgman's name.
+    #[test]
+    fn the_confirm_names_a_column_shown_under_another_name() {
+        let mut a = editing(Some("bo"));
+        a.grid.columns[1] = "full_name".into();
+        typed(&mut a, "BO");
+        a.on_key(key(KeyCode::Enter));
+        assert_eq!(a.mode, Mode::Confirm);
+        let summary = a.pending_run.as_ref().unwrap().summary.clone().unwrap();
+        assert_eq!(
+            summary,
+            "edit public.users.name where id = 2 · shown as full_name: pgman's schema calls it name (S, then r, reloads it if it was renamed)"
+        );
+        assert_eq!(shown_as_note("name", "name"), None);
     }
 
     /// The default guard confirms an UPDATE: the modal holds the
