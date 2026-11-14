@@ -632,17 +632,22 @@ pub(super) fn draw_completion_popup(
     // operator typed `T_` and Tab-expanded to `T_USER_`, but the popup
     // bolds `t_user_` (lowercase) on each row.
     //
-    // The cycle's [start..end) is always the live prefix (LCP-expanded,
-    // single-match-inserted, or narrowed-via-typing — refresh_completion
-    // / editor_complete maintain this invariant). When the slice isn't
-    // on a char boundary (shouldn't happen in practice, but defensive
-    // here), .get returns None and we fall back to no highlighting.
-    let typed_head: String = app
-        .editor
-        .buffer
-        .get(cycle.start..cycle.end)
-        .unwrap_or("")
-        .to_string();
+    // Before a pick, [start..end) is the live prefix (LCP-expanded or
+    // narrowed-via-typing). Once Tab has inserted a candidate it is that
+    // candidate, and every row was drawn as the pick's text plus its own
+    // tail (`customerstotals`); then the head is what the operator typed
+    // before the cycle began. When the slice isn't on a char boundary
+    // (shouldn't happen in practice, but defensive here), .get returns
+    // None and we fall back to no highlighting.
+    let typed_head: String = match cycle.selected {
+        Some(_) => cycle.origin_prefix.clone(),
+        None => app
+            .editor
+            .buffer
+            .get(cycle.start..cycle.end)
+            .unwrap_or("")
+            .to_string(),
+    };
     let typed_head_char_count = typed_head.chars().count();
 
     let inner_w = popup.width.saturating_sub(2) as usize;

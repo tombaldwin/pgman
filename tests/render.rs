@@ -2926,6 +2926,38 @@ fn completion_popup_with_one_candidate_says_one_match() {
     assert!(screen.contains(" 1 match · Tab to cycle "), "{screen}");
 }
 
+/// After Tab has inserted one candidate, every row still reads as its
+/// own name: the head is what was typed, not the inserted pick
+/// (`customerstotals` for `customer_totals`).
+#[test]
+fn completion_popup_rows_keep_their_names_after_a_pick() {
+    use pgman::query::complete::{Candidate, CandidateKind};
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT * FROM customers".into();
+    a.editor.cursor = a.editor.buffer.len();
+    let start = "SELECT * FROM ".len();
+    let table = |name: &str| Candidate {
+        display: name.into(),
+        insert: name.into(),
+        kind: CandidateKind::Table,
+        context: None,
+    };
+    a.completion = Some(pgman::app::CompletionCycle {
+        start,
+        end: a.editor.cursor,
+        origin: "cus".into(),
+        origin_prefix: "cus".into(),
+        origin_cursor: start + 3,
+        candidates: vec![table("customer_totals"), table("customers")],
+        selected: Some(1),
+        auto: false,
+    });
+    let screen = dump(&render(&mut a, 80, 18));
+    assert!(screen.contains("customer_totals"), "{screen}");
+    assert!(!screen.contains("customerstotals"), "{screen}");
+}
+
 /// Row detail's `↓ N more fields below` counts the fields the operator
 /// can't see — including the one under the indicator itself — and says
 /// fields, as the title does, not wrapped lines.
