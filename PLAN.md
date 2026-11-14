@@ -107,6 +107,22 @@ TUI's patch lift, discovered names as dump targets, paging limits'
 home (config.toml or pgman.toml), and the classifier's table-aware
 words (`amount_tax`, `license`, `client`).
 
+### 1c. The 0.5.3 release panel (2026-11-14)
+
+Five Fable reviewers on 4f4f4b1: safety, masking, TUI correctness, a
+hand-driven session against a real server, and PG 10/12/17. Each
+verdict was GO-with-fixes. Fixed on main, one commit each: `pgman
+query --target` writing to a protected environment under `--yes` (and
+without `--primary`), `copies prune` deleting a dump a later one
+wrote at the same path, two masking loosenings (a bounding box's
+edges, `local_fname`), a dry run reporting invented schema changes
+after a read cut short, `I` / `:fixture` after `SET search_path`, the
+wizard inside a typed `BEGIN`, a temp table's cell edit, the
+completion popup's garbled rows, the DNS cache keeping a timeout for
+good, schema diff across majors and a table become a view, and five
+smaller ones. What's left is in BACKLOG.md → "From the 0.5.3 release
+panel", the masking classifier's pre-existing gaps first.
+
 ### 2. Waiting on Tom
 
 - **Release 0.5.3**: on Tom's go.
