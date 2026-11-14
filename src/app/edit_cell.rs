@@ -402,11 +402,14 @@ impl App {
         error: conn::QueryErr,
     ) {
         let ended = error.detail.as_ref().is_some_and(|d| d.ends_session());
-        // Ctrl-C was the operator leaving it: no editor to Esc out of.
-        let cancelled = error
-            .detail
-            .as_ref()
-            .is_some_and(|d| d.code.as_deref() == Some("57014"));
+        // Ctrl-C was the operator leaving it: no editor to Esc out of. A
+        // statement_timeout is 57014 too, but nobody asked for it: read
+        // the request before on_query_failed takes it.
+        let cancelled = self.cancel_requested
+            && error
+                .detail
+                .as_ref()
+                .is_some_and(|d| d.code.as_deref() == Some("57014"));
         self.on_query_failed(error.msg, None, error.detail);
         if ended || cancelled || self.mode != pending.return_to || self.cell_edit.is_some() {
             return;
@@ -880,24 +883,34 @@ mod tests {
     /// operator was leaving.
     #[test]
     fn a_cancelled_save_does_not_open_the_editor_again() {
+        let failed = |a: &mut App, msg: &str| {
+            let p = pending(a, Some("slow"));
+            a.cell_edit = None;
+            a.mode = Mode::Normal;
+            a.on_msg(AppMsg::CellUpdateFailed {
+                generation: a.generation,
+                pending: p,
+                error: conn::QueryErr {
+                    msg: msg.into(),
+                    position: None,
+                    detail: Some(conn::QueryErrDetail {
+                        code: Some("57014".into()),
+                        ..Default::default()
+                    }),
+                },
+            });
+        };
         let mut a = editing(Some("bo"));
-        let p = pending(&a, Some("slow"));
-        a.cell_edit = None;
-        a.mode = Mode::Normal;
-        a.on_msg(AppMsg::CellUpdateFailed {
-            generation: a.generation,
-            pending: p,
-            error: conn::QueryErr {
-                msg: "canceling statement due to user request".into(),
-                position: None,
-                detail: Some(conn::QueryErrDetail {
-                    code: Some("57014".into()),
-                    ..Default::default()
-                }),
-            },
-        });
+        a.cancel_requested = true;
+        failed(&mut a, "canceling statement due to user request");
         assert!(a.cell_edit.is_none());
         assert_eq!(a.mode, Mode::Normal);
+        // A statement_timeout is 57014 too, unasked: what was typed comes
+        // back, as for any other refused save.
+        let mut a = editing(Some("bo"));
+        failed(&mut a, "canceling statement due to statement timeout");
+        let back = a.cell_edit.as_ref().expect("the editor opens again");
+        assert_eq!(back.input.text(), "slow");
     }
 
     /// `:` over an edit's confirm cancels it back to the grid, like `n`.
