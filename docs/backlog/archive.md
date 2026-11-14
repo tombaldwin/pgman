@@ -27,6 +27,8 @@ Historical record. Newest at the top within each section.
   journal event and `copies show`.
 - Schema diff (`pgman diff`, MCP `schema_diff`, a dry run) compares
   CHECKs, views' definitions and functions.
+- A rules file asked about again says what it now also keeps and no
+  longer keeps; a confirmation is journalled (`rules`).
 - Killed by evidence: "a static environment's primary row is never
   probed" (v0.2.0 panel). 130c4c3, the day before, links a static
   replica to its primary and reads the primary through it, as

@@ -11374,6 +11374,18 @@ fn an_agent_gets_masked_copies_and_never_a_raw_protected_one() {
         list.contains("confirmed over MCP") && list.contains(&digest),
         "{list}"
     );
+    // The list records what the file kept, for the next confirmation to
+    // compare with, and the journal records the confirmation.
+    assert!(list.contains("# keeps nothing"), "{list}");
+    let journal = std::fs::read_to_string(home.join(".local/share/pgman/journal.jsonl")).unwrap();
+    let confirmed: Vec<serde_json::Value> = journal
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .filter(|e: &serde_json::Value| e["event"] == "rules")
+        .collect();
+    assert_eq!(confirmed.len(), 1, "{journal}");
+    assert_eq!(confirmed[0]["rules"].as_str(), Some(digest.as_str()));
+    assert_eq!(confirmed[0]["via"], "mcp");
     // Confirmed: the next dump only says so, and takes a tick.
     let (t, err, message) = call(4, "dump", masked.clone(), yes());
     assert!(!err, "{t}");

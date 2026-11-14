@@ -51,8 +51,6 @@ note.
   data and say what it became, so they can log in to the copy.
 - **The MCP confirmation's classifier summary**: what will be masked, as
   the terminal's summary says after.
-- **A rules file's changes since last confirmed**: show the diff of
-  what loosened, and journal a `rules_confirmed` event.
 - **Non-English and non-UK vocabulary**: `nom`, `prenom`, `telefon`,
   PESEL, CPF, BSN… A preset per language or country, chosen in the rules
   file. (privacy.md says the words are English and British.)

@@ -994,30 +994,124 @@ pub fn confirmed_in(text: &str, digest: &str, file: &Path) -> bool {
 
 /// The confirmed list's lines for `digest` of `file`, confirmed `how`
 /// ("at a terminal", "over MCP") at `at` (unix seconds): a comment
-/// saying when and how, then the `digest  path` line [`confirmed_in`]
-/// reads. Pure.
-pub fn confirmation_lines(digest: &str, file: &Path, how: &str, at: u64) -> String {
-    format!(
-        "# {} confirmed {how}\n{digest}  {}\n",
-        crate::app::format_unix_secs_utc(at),
-        file.display()
-    )
+/// saying when and how, one per thing it keeps that the defaults would
+/// mask (`keeps`, from `rules::loosening`; `# keeps nothing` for none),
+/// then the `digest  path` line [`confirmed_in`] reads. Pure.
+pub fn confirmation_lines(
+    digest: &str,
+    file: &Path,
+    how: &str,
+    at: u64,
+    keeps: &[String],
+) -> String {
+    let mut out = format!(
+        "# {} confirmed {how}\n",
+        crate::app::format_unix_secs_utc(at)
+    );
+    if keeps.is_empty() {
+        out.push_str("# keeps nothing\n");
+    }
+    for k in keeps {
+        out.push_str(&format!("# keeps: {}\n", k.replace('\n', " ")));
+    }
+    out.push_str(&format!("{digest}  {}\n", file.display()));
+    out
 }
 
-/// Record `digest` of `file` as confirmed `how`. Writes the data
-/// directory.
-pub fn confirm(digest: &str, file: &Path, how: &str) -> Result<(), String> {
+/// What `file` kept when it was last confirmed, from `text` (the
+/// confirmed list): `None` when it never was, or was by a pgman that
+/// didn't record it. Reads the filesystem, to compare paths.
+pub fn keeps_in(text: &str, file: &Path) -> Option<Vec<String>> {
+    let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let want = real(file);
+    let (mut pending, mut recorded) = (Vec::new(), false);
+    let mut last = None;
+    for l in text.lines() {
+        if let Some(k) = l.strip_prefix("# keeps: ") {
+            pending.push(k.to_string());
+            recorded = true;
+        } else if l == "# keeps nothing" {
+            recorded = true;
+        } else if let Some((_, p)) = l.split_once("  ").filter(|_| !l.starts_with('#')) {
+            if real(Path::new(p)) == want {
+                last = recorded.then(|| pending.clone());
+            }
+            pending.clear();
+            recorded = false;
+        }
+    }
+    last
+}
+
+/// What a rules file keeps now (`now`) that it didn't when last
+/// confirmed (`before`), and what it no longer keeps; `None` when
+/// nothing was recorded then, or nothing changed. Pure.
+pub fn since_confirmed(before: Option<&[String]>, now: &[String]) -> Option<String> {
+    let before = before?;
+    let added: Vec<&String> = now.iter().filter(|k| !before.contains(k)).collect();
+    let gone: Vec<&String> = before.iter().filter(|k| !now.contains(k)).collect();
+    if added.is_empty() && gone.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if !added.is_empty() {
+        parts.push(format!(
+            "it now also keeps:\n  {}",
+            added
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        ));
+    }
+    if !gone.is_empty() {
+        parts.push(format!(
+            "it no longer keeps:\n  {}",
+            gone.iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        ));
+    }
+    Some(format!("Since you last confirmed it, {}", parts.join("\n")))
+}
+
+/// [`since_confirmed`] for `file` against the confirmed list. Reads the
+/// data directory.
+pub fn changes_since_confirmed(file: &Path, now: &[String]) -> Option<String> {
+    let text = std::fs::read_to_string(confirmed_file()).unwrap_or_default();
+    since_confirmed(keeps_in(&text, file).as_deref(), now)
+}
+
+/// Record `digest` of `file` as confirmed `how` (`via`, for the
+/// journal: `cli` or `mcp`), keeping `keeps`. Writes the data
+/// directory and the journal.
+pub fn confirm(
+    digest: &str,
+    file: &Path,
+    how: &str,
+    via: &str,
+    keeps: &[String],
+) -> Result<(), String> {
     let path = confirmed_file();
     crate::util::ensure_private_dir(&crate::journal::dir()).map_err(|e| e.to_string())?;
     let mut text = std::fs::read_to_string(&path).unwrap_or_default();
     let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
-    text.push_str(&confirmation_lines(
-        digest,
-        &file,
-        how,
-        crate::journal::now(),
-    ));
-    crate::util::write_private(&path, &text).map_err(|e| format!("{}: {e}", path.display()))
+    let now = crate::journal::now();
+    text.push_str(&confirmation_lines(digest, &file, how, now, keeps));
+    crate::util::write_private(&path, &text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut e = crate::journal::Event::new(
+        crate::journal::Kind::Rules,
+        now,
+        &crate::journal::machine_id(),
+    );
+    e.file = Some(file.display().to_string());
+    e.rules = Some(digest.to_string());
+    e.via = Some(via.to_string());
+    if let Some(w) = crate::journal::append(&e) {
+        tracing::warn!("{w}");
+    }
+    Ok(())
 }
 
 /// Where an agent's rules file stands.
@@ -1123,6 +1217,9 @@ pub fn confirm_rules_cli(
         return unconfirmed_without_terminal(&file.display().to_string(), &loose, unattended);
     }
     let sets = crate::masking::rules::overrides(rules);
+    if let Some(since) = changes_since_confirmed(file, &loose) {
+        eprintln!("pgman dump: {since}");
+    }
     eprintln!(
         "pgman dump: {} is new or changed since you last confirmed it.{}{}",
         file.display(),
@@ -1143,7 +1240,7 @@ pub fn confirm_rules_cli(
     if !crate::pgtool::confirm_cli("use these rules? [y/N] ", "y")? {
         return Err("rules not confirmed; nothing dumped".into());
     }
-    confirm(digest, file, "at a terminal")?;
+    confirm(digest, file, "at a terminal", "cli", &loose)?;
     Ok(None)
 }
 
@@ -2076,16 +2173,74 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let ledger = dir.join("ledger.toml");
         std::fs::write(&ledger, "version = 1\n").unwrap();
-        let lines = confirmation_lines("abc123", &ledger, "over MCP", 1_794_000_000);
+        let lines = confirmation_lines("abc123", &ledger, "over MCP", 1_794_000_000, &[]);
         assert_eq!(
             lines,
             format!(
-                "# 2026-11-06T21:20:00Z confirmed over MCP\nabc123  {}\n",
+                "# 2026-11-06T21:20:00Z confirmed over MCP\n# keeps nothing\nabc123  {}\n",
                 ledger.display()
             )
         );
         assert!(confirmed_in(&lines, "abc123", &ledger));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What a file kept when last confirmed is read back from the list,
+    /// for that file only and from its newest confirmation; a pgman that
+    /// didn't record it gives nothing to compare with.
+    #[test]
+    fn what_a_rules_file_kept_is_read_back_from_its_last_confirmation() {
+        let dir = std::env::temp_dir().join(format!("pgman-confirm-keeps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (ledger, other) = (dir.join("ledger.toml"), dir.join("other.toml"));
+        for f in [&ledger, &other] {
+            std::fs::write(f, "version = 1\n").unwrap();
+        }
+        let keep = |s: &str| vec![s.to_string()];
+        let mut text = format!("# old\nd0  {}\n", ledger.display());
+        assert_eq!(keeps_in(&text, &ledger), None, "not recorded then");
+        text.push_str(&confirmation_lines(
+            "d1",
+            &ledger,
+            "at a terminal",
+            1,
+            &keep("a.x kept"),
+        ));
+        text.push_str(&confirmation_lines(
+            "d9",
+            &other,
+            "at a terminal",
+            2,
+            &keep("z.z kept"),
+        ));
+        assert_eq!(keeps_in(&text, &ledger), Some(keep("a.x kept")));
+        text.push_str(&confirmation_lines("d2", &ledger, "over MCP", 3, &[]));
+        assert_eq!(keeps_in(&text, &ledger), Some(vec![]));
+        assert_eq!(keeps_in(&text, &other), Some(keep("z.z kept")));
+        assert_eq!(keeps_in(&text, &dir.join("never.toml")), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn since_confirmed_says_what_is_newly_kept_and_what_no_longer() {
+        let v = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(since_confirmed(None, &v(&["a kept"])), None);
+        assert_eq!(
+            since_confirmed(Some(&v(&["a kept"])), &v(&["a kept"])),
+            None
+        );
+        let said =
+            since_confirmed(Some(&v(&["a kept", "b kept"])), &v(&["b kept", "c kept"])).unwrap();
+        assert_eq!(
+            said,
+            "Since you last confirmed it, it now also keeps:\n  c kept\nit no longer keeps:\n  a kept"
+        );
+        let said = since_confirmed(Some(&[]), &v(&["c kept"])).unwrap();
+        assert!(
+            said.contains("now also keeps:\n  c kept") && !said.contains("no longer"),
+            "{said}"
+        );
     }
 
     #[test]

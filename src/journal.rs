@@ -23,6 +23,9 @@ pub enum Kind {
     Dump,
     Restore,
     Delete,
+    /// A masking rules file confirmed by the operator: `file` the rules
+    /// file, `rules` its sha256, `via` how (`cli`, `mcp`).
+    Rules,
     /// An event a newer pgman writes: kept, not understood.
     #[serde(other)]
     Other,

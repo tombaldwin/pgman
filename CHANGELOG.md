@@ -8,6 +8,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- A masking rules file asked about again, changed since it was
+  confirmed, says first what changed: what it now also keeps that the
+  defaults would mask, and what it no longer keeps (at a terminal and
+  in MCP's question). Each confirmation goes in the journal as a
+  `rules` event.
 - A masked dump's journal event records which rules masked it (the
   rules file's sha256, or `defaults`) and whether the operator had
   confirmed that file; `pgman copies show` says so, and the JSON report

@@ -438,7 +438,10 @@ for. A bound on a text column's length is taken as its length, as
   confirm it: no tool argument does. A decline records nothing and is
   final for that database while the server runs. Either way the
   confirmation is recorded in `~/.local/share/pgman/masking.confirmed`
-  with when and how, and a later edit to the file is asked about again.
+  with when and how and what the file kept, and in the journal (a
+  `rules` event: the file, its sha256, `cli` or `mcp`). A later edit to
+  the file is asked about again, and the question starts with what
+  changed since: what it now also keeps, and what it no longer keeps.
   A confirmation is for that file: the same rules under another
   database's name are asked about again.
 

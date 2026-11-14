@@ -275,6 +275,7 @@ pub fn rules_question(
     digest: &str,
     loose: &[String],
     overrides: &[String],
+    since: Option<&str>,
     database: &str,
 ) -> String {
     let list = |items: &[String], none: &str| {
@@ -293,11 +294,12 @@ pub fn rules_question(
     };
     format!(
         "\n\nThe rules file {} (commit {}, sha256 {digest}) is new or changed since you last \
-         confirmed it. What it keeps that pgman's defaults would mask:{}\nWhat it sets itself:{}{joined}\n\
+         confirmed it. {}What it keeps that pgman's defaults would mask:{}\nWhat it sets itself:{}{joined}\n\
          Type {database} to confirm these rules and the dump. Your confirmation is recorded, so \
          later dumps use these rules until the file changes; a decline records nothing.",
         file.display(),
         commit.unwrap_or("unknown"),
+        since.map(|s| format!("{s}\n")).unwrap_or_default(),
         list(loose, "nothing."),
         list(overrides, "nothing."),
     )
@@ -461,15 +463,17 @@ impl Server {
                     return Err(why)
                 }
                 (Some(f), Some((digest, crate::masked::AgentRules::Unconfirmed, commit))) => {
+                    let since = crate::masked::changes_since_confirmed(f, &loose);
                     let note = rules_question(
                         f,
                         commit.as_deref(),
                         &digest,
                         &loose,
                         &crate::masking::rules::overrides(&rules),
+                        since.as_deref(),
                         &resolved.database,
                     );
-                    unconfirmed = Some((f.clone(), digest));
+                    unconfirmed = Some((f.clone(), digest, loose.clone()));
                     note
                 }
                 (Some(f), _) => format!(
@@ -533,11 +537,13 @@ impl Server {
         // Recorded only now, the operator's answer taken in full; the dump
         // checks the file again as it starts, so an edit since this
         // question is refused, not used.
-        if let Some((file, digest)) = unconfirmed {
+        if let Some((file, digest, keeps)) = unconfirmed {
             let shown = file.display().to_string();
-            tokio::task::spawn_blocking(move || crate::masked::confirm(&digest, &file, "over MCP"))
-                .await
-                .map_err(|e| format!("confirm task failed: {e}"))??;
+            tokio::task::spawn_blocking(move || {
+                crate::masked::confirm(&digest, &file, "over MCP", "mcp", &keeps)
+            })
+            .await
+            .map_err(|e| format!("confirm task failed: {e}"))??;
             tracing::warn!(target: "pgman::mcp", rules = %shown, "masking rules confirmed over MCP");
         }
         tracing::info!(target: "pgman::mcp", target = %resolved.label, "dump confirmed");
@@ -946,6 +952,7 @@ mod tests {
             "d1g35t",
             &["customers.notes kept: codes only".to_string()],
             &["customers.secret fixed \"x\"".to_string()],
+            Some("Since you last confirmed it, it now also keeps:\n  customers.notes kept"),
             "ledger",
         );
         for want in [
@@ -955,10 +962,11 @@ mod tests {
             "also keeps the columns joined to it by a foreign key",
             "Type ledger to confirm",
             "a decline records nothing",
+            "confirmed it. Since you last confirmed it, it now also keeps:\n  customers.notes kept\nWhat it keeps",
         ] {
             assert!(q.contains(want), "{want:?} in {q}");
         }
-        let none = rules_question(f, None, "d", &[], &[], "ledger");
+        let none = rules_question(f, None, "d", &[], &[], None, "ledger");
         assert!(
             none.contains("commit unknown") && none.contains("would mask: nothing."),
             "{none}"

@@ -25,7 +25,7 @@ URL-embedded password.
 | `~/.local/share/pgman/environments-last` | The overview row used last, to start on it next time. |
 | `~/.local/share/pgman/journal.jsonl` | Every dump and restore on this machine: `pgman copies`. See [dump and restore](dump-restore.md). |
 | `~/.local/share/pgman/journal.sent` | Which journal events went to the team's CloudWatch log, when an environment sends them. |
-| `~/.local/share/pgman/masking.confirmed` | Masking rules files the operator confirmed, by sha256, with when and how. |
+| `~/.local/share/pgman/masking.confirmed` | Masking rules files the operator confirmed, by sha256, with when and how, and what each kept that the defaults would mask. |
 | `~/.local/share/pgman/dumps/` | Where a dump goes when no FILE is given. |
 | `~/.config/pgman/keys/` | The operator's age keys (`pgman key new`), which encrypted dumps open with. |
 | `~/.cache/pgman/<table>-fixture-<ts>-<pid>.xml` | Default `\fixture` output path. |
