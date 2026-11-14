@@ -3422,6 +3422,25 @@ fn mcp_schema_lint_reports_a_table_without_a_primary_key() {
         .iter()
         .any(|f| f["code"] == "LINT001" && f["object"].as_str().unwrap().ends_with(&table));
     assert!(hit, "{text}");
+    let adv: Vec<&serde_json::Value> = v["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["code"].as_str().unwrap().starts_with("ADV"))
+        .collect();
+    // The configuration advisor runs too. A fresh cluster (CI's) gives
+    // ADV000, statistics too young; an older one, findings such as
+    // ADV005, the checkpoints this suite's CREATE DATABASE runs ask for.
+    // A finding with numbers behind it carries them (a note has none).
+    assert!(!adv.is_empty(), "{text}");
+    for f in adv.iter().filter(|f| f.get("advice").is_some()) {
+        let a = &f["advice"];
+        assert!(
+            !a["window"].as_str().unwrap().is_empty()
+                && !a["evidence_sql"].as_str().unwrap().is_empty(),
+            "{f}"
+        );
+    }
 }
 
 /// `describe` over MCP: the list, then one table with its keys both ways,

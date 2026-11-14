@@ -8,6 +8,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- MCP `schema_lint` runs the configuration advisor too, as the TUI's
+  wizard does: its ADV findings, each with the window its numbers
+  cover, the numbers, the statement that read them and the setting it
+  would change; `advisor_errors` names a check the role couldn't read.
 - A masking rules file asked about again, changed since it was
   confirmed, says first what changed: what it now also keeps that the
   defaults would mask, and what it no longer keeps (at a terminal and

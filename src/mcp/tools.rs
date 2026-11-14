@@ -95,7 +95,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "schema_lint",
-            "description": "The schema wizard's findings for one connection: tables without a primary key or unique constraint, mixed-case identifiers, and the live checks — foreign keys without a supporting index, unused indexes, overlapping indexes, table bloat, tables without a comment, schemas mixing timestamp with and without time zone, and serial or identity columns that no primary key or unique index covers. Each finding has a severity (high, medium, low), a code (LINT001…, LINT101…), the object, why it matters, and a suggested fix where there is one. CAVEATS: the unused-index (LINT102) and bloat (LINT104) checks read usage statistics, which a read replica keeps for ITS OWN activity: an index the primary uses can look unused on a replica, and a replica reports no dead tuples. Run those against the primary's figures before acting (the result says when it ran on a replica). Statistics reset with pg_stat_reset or a failover, so a young cluster reads as unused too. Suggestions are starting points, not migrations to run as-is.",
+            "description": "The schema wizard's findings for one connection: tables without a primary key or unique constraint, mixed-case identifiers, and the live checks — foreign keys without a supporting index, unused indexes, overlapping indexes, table bloat, tables without a comment, schemas mixing timestamp with and without time zone, and serial or identity columns that no primary key or unique index covers; and the configuration advisor's (ADV001… cache hit ratio, temp-file spills, vacuum, locks, checkpoints). Each finding has a severity (high, medium, low), a code (LINT001…, LINT101…, ADV000…), the object, why it matters, and a suggested fix where there is one; an advisor finding also has `advice`: the window its numbers cover, the numbers, the statement that read them (`evidence_sql`, runnable as it is) and the setting it would change. `advisor_errors` names an advisor check the role couldn't read. CAVEATS: the unused-index (LINT102) and bloat (LINT104) checks read usage statistics, which a read replica keeps for ITS OWN activity: an index the primary uses can look unused on a replica, and a replica reports no dead tuples. Run those against the primary's figures before acting (the result says when it ran on a replica). Statistics reset with pg_stat_reset or a failover, so a young cluster reads as unused too. Suggestions are starting points, not migrations to run as-is.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -567,11 +567,22 @@ impl Server {
             }
             Err(e) => Some(e),
         };
+        // The configuration advisor (ADV…), as the TUI's wizard runs it:
+        // pg_stat_* and pg_settings reads only.
+        let th = crate::query::advisor::Thresholds::default();
+        let advisor_errors = match crate::query::advisor::fetch(&client, &th).await {
+            Ok(report) => {
+                findings.extend(report.findings);
+                report.errors
+            }
+            Err(e) => vec![e],
+        };
         Ok(render_schema_lint(
             name,
             &findings,
             on_replica,
             live_error.as_deref(),
+            &advisor_errors,
         ))
     }
 
@@ -1328,18 +1339,23 @@ pub fn render_schema_lint(
     findings: &[crate::query::lint::Finding],
     on_replica: Option<bool>,
     live_error: Option<&str>,
+    advisor_errors: &[String],
 ) -> String {
     let rows: Vec<Value> = findings
         .iter()
         .map(|f| {
-            json!({
+            let mut row = json!({
                 "severity": format!("{:?}", f.severity).to_ascii_lowercase(),
                 "code": f.code,
                 "title": f.title,
                 "object": f.object,
                 "detail": f.detail,
                 "suggestion": f.suggestion,
-            })
+            });
+            if let Some(a) = &f.advice {
+                row["advice"] = render_advice(a);
+            }
+            row
         })
         .collect();
     let mut v = json!({
@@ -1348,6 +1364,9 @@ pub fn render_schema_lint(
         "findings": rows,
         "live_checks_error": live_error,
     });
+    if !advisor_errors.is_empty() {
+        v["advisor_errors"] = json!(advisor_errors);
+    }
     if on_replica == Some(true) {
         v["note"] = json!(
             "this is a replica: unused-index (LINT102) and bloat (LINT104) findings reflect the \
@@ -1355,6 +1374,25 @@ pub fn render_schema_lint(
         );
     }
     v.to_string()
+}
+
+/// A configuration-advisor finding's evidence, as `schema_lint` returns
+/// it: the window the numbers cover, the numbers, the statement that
+/// read them, and the setting it would change. Pure.
+pub fn render_advice(a: &crate::query::advisor::Advice) -> Value {
+    json!({
+        "window": a.window,
+        "evidence": a.evidence,
+        "evidence_sql": a.evidence_sql,
+        "setting": a.change.as_ref().map(|c| json!({
+            "name": c.name,
+            "current": c.current,
+            "suggested": c.suggested,
+            "reasoning": c.reasoning,
+            "needs_restart": c.restart,
+            "rds": c.rds,
+        })),
+    })
 }
 
 /// One database's probe as the `environments` tool reports it. Pure.
@@ -2084,8 +2122,10 @@ mod tests {
             advice: None,
         };
         let v: Value =
-            serde_json::from_str(&render_schema_lint("r", &[f], Some(true), None)).unwrap();
+            serde_json::from_str(&render_schema_lint("r", &[f], Some(true), None, &[])).unwrap();
         assert_eq!(v["findings"][0]["severity"], "high");
+        assert!(v["findings"][0].get("advice").is_none());
+        assert!(v.get("advisor_errors").is_none());
         assert_eq!(v["findings"][0]["code"], "LINT001");
         assert!(v["note"]
             .as_str()
@@ -2096,14 +2136,53 @@ mod tests {
             &[],
             Some(false),
             Some("LINT101: x"),
+            &["ADV004: permission denied".to_string()],
         ))
         .unwrap();
         assert!(v.get("note").is_none());
         assert_eq!(v["live_checks_error"], "LINT101: x");
+        assert_eq!(v["advisor_errors"][0], "ADV004: permission denied");
         assert!(
             connections::Role::Primary.refuses("schema_lint").is_some(),
             "the primary serves only the pre-flight and the patch check"
         );
+    }
+
+    /// An advisor finding carries its evidence over MCP, as the wizard's
+    /// detail strip shows it: the window, the numbers, the statement and
+    /// the setting.
+    #[test]
+    fn schema_lint_carries_an_advisor_findings_evidence() {
+        let f = crate::query::lint::Finding {
+            severity: crate::query::lint::Severity::Medium,
+            code: "ADV002",
+            title: "queries spill to temp files".into(),
+            object: "ledger".into(),
+            detail: "d".into(),
+            suggestion: Some("ALTER ROLE app SET work_mem = '8MB'".into()),
+            advice: Some(Box::new(crate::query::advisor::Advice {
+                window: "since 2026-11-01 (12 days)".into(),
+                evidence: vec!["187 GB written to temp files".into()],
+                evidence_sql: "SELECT temp_bytes FROM pg_stat_database".into(),
+                change: Some(crate::query::advisor::SettingChange {
+                    name: "work_mem",
+                    current: "4MB".into(),
+                    suggested: "8MB".into(),
+                    reasoning: "r".into(),
+                    restart: false,
+                    rds: "parameter group".into(),
+                }),
+            })),
+        };
+        let v: Value =
+            serde_json::from_str(&render_schema_lint("p", &[f], Some(false), None, &[])).unwrap();
+        let a = &v["findings"][0]["advice"];
+        assert_eq!(a["window"], "since 2026-11-01 (12 days)");
+        assert_eq!(a["evidence"][0], "187 GB written to temp files");
+        assert_eq!(a["evidence_sql"], "SELECT temp_bytes FROM pg_stat_database");
+        assert_eq!(a["setting"]["name"], "work_mem");
+        assert_eq!(a["setting"]["suggested"], "8MB");
+        assert_eq!(a["setting"]["needs_restart"], false);
     }
 
     #[test]
