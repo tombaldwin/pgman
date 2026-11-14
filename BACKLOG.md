@@ -27,6 +27,11 @@ than 0.5.3.
   word risks masking a column that isn't personal (a NOT NULL one then
   refuses the dump), so each wants a test over the OSS schemas first.
   The reviewer's probe list (about 230 cases) is the place to start.
+  The closing review added: `upload_fname` and `attachment_fname` stay
+  raw (`CV_Jane_Doe.pdf` came through a masked dump), though the
+  reason `orig_fname` is masked applies to them; decide whether an
+  upload's name is a person's or say in docs that file names are kept.
+  And `lat_limit`, `lon_len` read as measures.
 - **Masking: a preset-kept table keeps every column.** A custom Envers
   revision entity's `ip_address`, `user_email` and `user_agent` stay
   raw beside the masked `username`. Run the defaults over a
@@ -35,6 +40,18 @@ than 0.5.3.
   (`contypid`, cheap to add), aggregates, a CHECK on one partition, and
   an extension installed on one side only. Add domain checks and
   extension names, and name the rest in USAGE and docs/commands.md.
+  Also (closing review): a partitioned table and a plain one with the
+  same columns read as the same, a partition on one side only isn't
+  listed, and a materialized view is labelled `(view)`.
+- **A dry run that fails part-way says nothing of schema changes**
+  (`inventory/patching.rs`, `schema_in_tx` returns None): the FAILED
+  line explains it, but a note like the other `schema_notes` would
+  say the changes weren't read.
+- **`I` / `:fixture` on a catalog or temp table:** a `pg_catalog`
+  source falls back to `public` (`INSERT INTO public.pg_namespace`;
+  the schema cache leaves `pg_catalog` out), and a temp table is named
+  `pg_temp_4.t`, which no other session can use (nor `pg_temp.t`:
+  refuse a temp source instead?).
 - **Schema lint on PG 10 loses LINT107** (`indnkeyatts` is PG 11+), and
   the partial failure only reaches the log, as `db error`: use
   `indnatts` before 11, show the server's message, and surface partial
