@@ -5,6 +5,7 @@
 # the copy, then the journal of copies. compose.py cuts it into segments.
 # Long commands are typed off-screen and shown whole.
 Output target/video/scenes/db-masking.mp4
+Set FontSize 24
 Source video/scenes/_terminal.tape
 Show
 Sleep 300ms

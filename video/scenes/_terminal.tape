@@ -1,10 +1,11 @@
 # The terminal every scene records in, and its shell set up off-screen:
 # this checkout's release build first on PATH, scratch HOME and XDG dirs
 # in target/video, so no real config reaches the recording and the
-# recording writes nothing outside target/. Ends hidden.
+# recording writes nothing outside target/. Ends hidden. The font size
+# is the scene's: set before sourcing this (18 for pgman's screens, so
+# its panels fit; larger for shell output).
 Set Width 1680
 Set Height 880
-Set FontSize 18
 Set FontFamily "MesloLGS Nerd Font Mono"
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms

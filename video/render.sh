@@ -15,13 +15,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 W="$PWD/target/video"
-fonts() {
-  mkdir -p "$W/fonts"
-  for w in 400 600 800; do
-    f="$W/fonts/inter-$w.woff"
-    [ -s "$f" ] || curl -sfL -o "$f" \
-      "https://cdn.jsdelivr.net/npm/@fontsource/inter@5.0.18/files/inter-latin-$w-normal.woff"
-  done
+# poly.io's look: the site's fonts (Space Grotesk, the Neuropolitical
+# wordmark) and pgman's sprite, fetched from www.poly.io once.
+brand() {
+  mkdir -p "$W/brand"
+  local site=https://www.poly.io
+  get() { [ -s "$W/brand/$2" ] || curl -sfL -o "$W/brand/$2" "$site$1"; }
+  for w in 300 400 600 700; do get "/fonts/space-grotesk/space-grotesk-$w.woff2" "space-grotesk-$w.woff2"; done
+  get /fonts/neuropolitical/299997_0_0.woff neuropolitical.woff
+  get /images/pgman-elephant-pixel.svg pgman-elephant-pixel.svg
 }
 
 # The scenes named db-*: two scratch Postgres containers, "production"
@@ -95,5 +97,5 @@ if [ "${1:-}" != "--compose" ]; then
     vhs "video/scenes/$s.tape" >"$W/scenes/$s.log" 2>&1 || { tail -5 "$W/scenes/$s.log"; exit 1; }
   done
 fi
-fonts
+brand
 python3 video/compose.py

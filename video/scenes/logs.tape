@@ -3,6 +3,7 @@
 # the N+1 view (invoice_lines looked up once per invoice), `c` back,
 # then the first query loaded with its bind filled in, and run.
 Output target/video/scenes/logs.mp4
+Set FontSize 18
 Source video/scenes/_terminal.tape
 Type "cd video"
 Enter

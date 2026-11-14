@@ -10,6 +10,13 @@ containers that `render.sh` starts on 127.0.0.1:55441 ("production",
 seeded with made-up people by `seed/seed.py`) and 55442 ("local"), with
 a throwaway age key. Needs docker for those.
 
+The overview wears poly.io's look: the site's navy page and colour
+stripe, the terminal in the site's demo window, Space Grotesk captions,
+the pgman sprite and the polymorphism wordmark. `render.sh` fetches the
+fonts and the sprite from www.poly.io into `target/video/brand/`, so a
+change on the site reaches the next render. The loops stay plain
+terminal: the site puts its own window around them.
+
 ```bash
 video/render.sh            # build, record every scene, compose
 video/render.sh patches    # re-record one scene after a UI change
