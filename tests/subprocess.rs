@@ -616,6 +616,65 @@ fn copies_prune_deletes_only_what_has_expired() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+/// `copies rm` of a copy a later dump to the same path replaced keeps
+/// the file, though the two dumps are byte for byte the same (an older
+/// pg_dump of an unchanged database); and a dump file that can't be
+/// read is neither deleted nor journaled as gone.
+#[test]
+fn copies_rm_keeps_a_later_copys_identical_file_and_an_unreadable_one() {
+    use pgman::journal::{Event, Kind};
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::env::temp_dir().join(format!("pgman-test-rm-same-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let data = home.join(".local/share/pgman");
+    std::fs::create_dir_all(&data).unwrap();
+    let file = home.join("ledger.dump");
+    std::fs::write(&file, b"PGDMP the same dump twice").unwrap();
+    let print = pgman::copies::fingerprint(&file).unwrap();
+    let dump = |ts: u64, id: &str| {
+        let mut e = Event::new(Kind::Dump, ts, "m-000000000000");
+        e.copy = Some(id.into());
+        e.label = Some("ledger".into());
+        e.mode = Some("raw".into());
+        e.file = Some(file.display().to_string());
+        e.print = Some(print.clone());
+        serde_json::to_string(&e).unwrap() + "\n"
+    };
+    let journal = data.join(pgman::journal::FILE);
+    std::fs::write(
+        &journal,
+        dump(1_000, "aaaa1111bbbb") + &dump(2_000, "cccc2222dddd"),
+    )
+    .unwrap();
+    let rm = |id: &str| {
+        pgman()
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .current_dir(&home)
+            .args(["copies", "rm", id, "--yes"])
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn pgman")
+    };
+    let out = rm("aaaa1111");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("holds another dump now"), "{said}");
+    assert!(file.exists(), "the later copy's dump was deleted: {said}");
+    // The later copy's own file, unreadable: kept, and the copy too.
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let out = rm("cccc2222");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    assert!(err.contains("can't read"), "{err}");
+    assert!(file.exists());
+    let written = std::fs::read_to_string(&journal).unwrap();
+    assert_eq!(written.matches("\"delete\"").count(), 1, "{written}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 /// `copies rm` of a copy whose file a later dump wrote over keeps the
 /// file: it is the later dump, whatever the journal says of the path.
 #[test]

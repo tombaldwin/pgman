@@ -124,16 +124,22 @@ pub fn expired_here() -> usize {
 pub fn prune_candidates(copies: &[Copy], now: u64, present: impl Fn(&Path) -> bool) -> Vec<&Copy> {
     copies
         .iter()
-        .enumerate()
-        .filter(|(_, c)| c.deleted.is_none() && c.expired(now))
-        .filter(|&(i, c)| {
-            let overwritten = copies[i + 1..]
-                .iter()
-                .any(|l| l.deleted.is_none() && l.file == c.file);
-            (present(&c.file) && !overwritten) || c.restores.iter().any(|r| r.dropped.is_none())
+        .filter(|c| c.deleted.is_none() && c.expired(now))
+        .filter(|c| {
+            (present(&c.file) && later_copy(copies, c).is_none())
+                || c.restores.iter().any(|r| r.dropped.is_none())
         })
-        .map(|(_, c)| c)
         .collect()
+}
+
+/// The later live copy whose dump went to `c`'s path: the file there is
+/// that copy's, not `c`'s, though the two dumps may be byte for byte
+/// the same. Pure.
+fn later_copy<'a>(copies: &'a [Copy], c: &Copy) -> Option<&'a Copy> {
+    let i = copies.iter().position(|x| x.id == c.id)?;
+    copies[i + 1..]
+        .iter()
+        .find(|l| l.deleted.is_none() && l.file == c.file)
 }
 
 /// Every successful dump in `events`, oldest first, with what happened
@@ -1310,11 +1316,29 @@ async fn remove_copy_cli(
         .unwrap_or_default();
     let mut on_disk = present(file);
     // A later dump to the same path replaced this copy's file: that file
-    // is the later dump, and isn't this copy's to delete.
-    let replaced = on_disk
-        && known
-            .and_then(|c| c.print.as_deref())
-            .is_some_and(|p| fingerprint(file).as_deref() != Some(p));
+    // is the later dump, and isn't this copy's to delete. A file that
+    // can't be read can't be told apart, so nothing is deleted.
+    let replaced = match known {
+        Some(c) if on_disk => {
+            if later_copy(copies, c).is_some() {
+                true
+            } else if let Some(p) = c.print.as_deref() {
+                match fingerprint(file) {
+                    Some(now) => now != p,
+                    None => {
+                        return Err(format!(
+                            "can't read {} to tell whether it is still this copy's dump; \
+                             nothing deleted",
+                            file.display()
+                        ))
+                    }
+                }
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
     if replaced {
         println!(
             "{} holds another dump now; it stays (not this copy's)",
