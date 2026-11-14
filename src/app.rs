@@ -987,6 +987,28 @@ pub fn infer_source_table_in(sql: &str, cache: &SchemaCache) -> Option<(String, 
     Some((schema, name))
 }
 
+/// [`infer_source_table_in`], with the schema the server named when the
+/// result's columns carry their table: a `SET search_path` run in the
+/// editor isn't in the cached path, so an unqualified name could be
+/// read for another schema's twin. The origin counts only when it names
+/// the same table the FROM does. Pure.
+pub fn result_source_table(
+    sql: &str,
+    cache: &SchemaCache,
+    origins: &[Option<crate::grid::ColumnOrigin>],
+) -> Option<(String, String)> {
+    let (schema, name) = infer_source_table_in(sql, cache)?;
+    let served = origins
+        .iter()
+        .flatten()
+        .filter_map(|o| cache.relations_by_oid.get(&o.table_oid))
+        .find(|(_, t)| *t == name);
+    Some(match served {
+        Some((s, _)) => (s.clone(), name),
+        None => (schema, name),
+    })
+}
+
 /// The single table `sql` reads: its schema when the FROM gives one,
 /// and its name. `None` for no FROM, a join, or a FROM item that names
 /// no table. Pure.

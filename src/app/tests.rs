@@ -2726,6 +2726,37 @@ fn infer_source_table_in_follows_the_search_path() {
     );
 }
 
+/// The schema the server named for a result's columns beats the cached
+/// search path, which a `SET search_path` in the editor leaves stale;
+/// an origin naming another table (a join the parser missed) doesn't.
+#[test]
+fn a_result_source_takes_the_schema_the_server_named() {
+    let mut cache = crate::query::schema::SchemaCache {
+        search_path: vec!["public".into()],
+        ..Default::default()
+    };
+    for (oid, s, t) in [(10, "public", "t"), (20, "s", "t"), (30, "s", "u")] {
+        cache.tables.push(crate::query::schema::TableMeta {
+            schema: s.into(),
+            name: t.into(),
+        });
+        cache.relations_by_oid.insert(oid, (s.into(), t.into()));
+    }
+    let o = |oid| {
+        Some(crate::grid::ColumnOrigin {
+            table_oid: oid,
+            attnum: 1,
+        })
+    };
+    let src = |origins: &[Option<crate::grid::ColumnOrigin>]| {
+        result_source_table("SELECT * FROM t", &cache, origins)
+    };
+    assert_eq!(src(&[None, o(20)]), Some(("s".into(), "t".into())));
+    assert_eq!(src(&[o(30)]), Some(("public".into(), "t".into())));
+    assert_eq!(src(&[]), Some(("public".into(), "t".into())));
+    assert_eq!(src(&[o(99)]), Some(("public".into(), "t".into())));
+}
+
 /// A result's source table is found along the session's search path:
 /// the INSERT yank and `:fixture` name `app.orders`, not `public.orders`.
 #[test]

@@ -249,7 +249,7 @@ impl App {
                 self.grid_view.source = self
                     .last_run_sql
                     .as_deref()
-                    .and_then(|sql| infer_source_table_in(sql, &self.schema_cache));
+                    .and_then(|sql| result_source_table(sql, &self.schema_cache, &origins));
                 self.grid_view.origins = origins;
                 // psql `\x` — expanded output. Land the new result in
                 // the row-detail view for its first row instead of
