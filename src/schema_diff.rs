@@ -202,17 +202,19 @@ pub fn diff_with(
 ) -> Diff {
     let (ra, rb) = (relations(a), relations(b));
     let mut out = Diff::default();
+    // A table on one side and a view of its name on the other is one of
+    // each, not the same relation: `app.tv` and `app.tv (view)`.
     for (k, view) in &ra {
-        if !rb.contains_key(k) {
+        if rb.get(k) != Some(view) {
             out.only_a.push(named(k, *view));
         }
     }
     for (k, view) in &rb {
-        if !ra.contains_key(k) {
+        if ra.get(k) != Some(view) {
             out.only_b.push(named(k, *view));
         }
     }
-    for key in ra.keys().filter(|k| rb.contains_key(*k)) {
+    for key in ra.keys().filter(|k| rb.get(*k) == ra.get(*k)) {
         let mut t = table_diff(a, b, key);
         if let Some((da, db)) = defs {
             checks_diff(&mut t, da, db, key);
@@ -881,6 +883,19 @@ mod tests {
         assert!(d.as_ref().is_some_and(Diff::is_empty), "{d:?}");
         assert_eq!(notes.len(), 1, "{notes:?}");
         assert!(notes[0].contains("their indexes not compared"), "{notes:?}");
+    }
+
+    /// A table on one side and a view of its name on the other are
+    /// named on each side, not compared as one relation.
+    #[test]
+    fn a_table_become_a_view_is_named_on_each_side() {
+        let a = base();
+        let mut b = base();
+        b.views.insert(key("orders"));
+        let d = diff(&a, &b);
+        assert_eq!(d.only_a, ["public.orders"]);
+        assert_eq!(d.only_b, ["public.orders (view)"]);
+        assert!(d.tables.is_empty(), "{:?}", d.tables);
     }
 
     #[test]
