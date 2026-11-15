@@ -66,7 +66,7 @@ TERM_W, TERM_H = 1680, 880   # the recordings' size (video/scenes/_terminal.tape
 
 # Seconds cut from a recording's start: the start card before the key
 # that opens the scene's panel.
-SKIP = {"envs": 1.0, "sessions": 1.0, "slow": 1.0, "safety": 0.9, "patches": 1.0, "tap": 0.6}
+SKIP = {"envs": 1.0, "sessions": 1.0, "slow": 1.0, "safety": 0.9, "patches": 1.0}
 
 # (scene, [(start, end, caption)], hold seconds after the recording
 # ends, and optionally (start, end): the part of the recording to use,
@@ -86,9 +86,7 @@ SEGMENTS = [
     ("logs", [(0.0, 3.3, "Point it at a Hibernate log"),
               (3.3, 10.6, "It rebuilds the SQL and flags the N+1"),
               (10.6, 99, "Binds filled in. Run it.")], 0.3, (0, 13.5)),
-    # The list view only: hotspots and callers show a calling method,
-    # which --demo makes up and a real app (over OTLP) doesn't send.
-    ("tap", [(0, 99, "Your app's live queries, from the OpenTelemetry Java agent")], 1.4, (0.6, 2.9)),
+    ("db-tap", [(0, 99, "Your app's live queries, from the OpenTelemetry Java agent")], 0.6, (0.3, 99)),
     ("card:agents", 4.5),
     ("card:end", 5.0),
 ]
@@ -105,7 +103,7 @@ LOOPS = {
     "slow": ("slow", None, 2.0),
     "spring": ("db-spring", None, 1.5),
     "logs": ("logs", None, 1.5),
-    "tap": ("tap", (0.6, 2.9), 1.5),
+    "tap": ("db-tap", (0.3, 99), 1.5),
 }
 
 

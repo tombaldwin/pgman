@@ -5,7 +5,7 @@ LinkedIn, and the short silent loops for the product page's feature
 sections. Every frame is the real binary, recorded with
 [VHS](https://github.com/charmbracelet/vhs): most scenes against
 `pgman --demo`'s synthetic data; the `db-*` scenes (masked copies, the
-copies journal, Spring discovery) against two scratch Postgres
+copies journal, Spring discovery, the JDBC tap over OTLP) against two scratch Postgres
 containers that `render.sh` starts on 127.0.0.1:55441 ("production",
 seeded with made-up people by `seed/seed.py`) and 55442 ("local"), with
 a throwaway age key. Needs docker for those.
@@ -37,7 +37,10 @@ Output in `target/video/out/`:
 - `compose.py`: the overview's segments and captions (`SEGMENTS`, each
   optionally a part of a recording), the loops (`LOOPS`), and the trims.
 - `spring-app/`: a Spring Boot project's datasource config, for
-  discovery; `billing-api.log`: the Hibernate log the logs scene reads.
+  discovery; `billing-api.log`: the Hibernate log the logs scene reads;
+  `tap/otlp-burst.py`: the spans the OpenTelemetry Java agent would
+  export, posted to `pgman --tap-otlp` in the tap scene, so the screen
+  shows only what that route delivers (no rows, binds or callers).
 
 `docker rm -f pgman-video-prod pgman-video-local` removes the containers.
 
