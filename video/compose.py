@@ -86,7 +86,9 @@ SEGMENTS = [
     ("logs", [(0.0, 3.3, "Point it at a Hibernate log"),
               (3.3, 10.6, "It rebuilds the SQL and flags the N+1"),
               (10.6, 99, "Binds filled in. Run it.")], 0.3, (0, 13.5)),
-    ("tap", [(0, 99, "Your app's live queries over JDBC, down to the calling method")], 0.6, (0.6, 7.2)),
+    # The list view only: hotspots and callers show a calling method,
+    # which --demo makes up and a real app (over OTLP) doesn't send.
+    ("tap", [(0, 99, "Your app's live queries, from the OpenTelemetry Java agent")], 1.4, (0.6, 2.9)),
     ("card:agents", 4.5),
     ("card:end", 5.0),
 ]
@@ -103,7 +105,7 @@ LOOPS = {
     "slow": ("slow", None, 2.0),
     "spring": ("db-spring", None, 1.5),
     "logs": ("logs", None, 1.5),
-    "tap": ("tap", None, 1.5),
+    "tap": ("tap", (0.6, 2.9), 1.5),
 }
 
 
