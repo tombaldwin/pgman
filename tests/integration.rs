@@ -6364,6 +6364,33 @@ fn mcp_apply_patches_at_a_ref_refuses_a_branch_that_moved_since_the_dry_run() {
     let (text, is_error) = reply(&[next()], 4);
     assert!(!is_error, "{text}");
     assert!(table_has_id(&home, &vt, 2) && !table_has_id(&home, &vt, 3));
+
+    // Another spelling of the moved branch isn't refused, but the
+    // question opens with the commit the dry run read.
+    writeln!(
+        stdin,
+        "{}",
+        tool_call(5, "apply_patches", args("apply", "heads/main"))
+    )
+    .unwrap();
+    let ask = next();
+    assert_eq!(ask["method"], "elicitation/create", "{ask}");
+    let message = ask["params"]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(&format!(
+            "NOTE: this session's dry run read main at {}",
+            &first[..9]
+        )),
+        "{message}"
+    );
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": {"action": "decline"}})
+    )
+    .unwrap();
+    let (_, is_error) = reply(&[next()], 5);
+    assert!(is_error && !table_has_id(&home, &vt, 3));
     drop(stdin);
     assert!(child.wait().unwrap().success());
     let _ = batch_with_home(&home, &["--yes", "--sql", &format!("DROP TABLE {vt}")]);

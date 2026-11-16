@@ -461,7 +461,9 @@ proxy looks the same) gets a warning that the files aren't a named
 commit. A dry run at a ref
 remembers its commit for the session: an apply at the same ref that
 finds another commit — the branch moved — is refused, and says how to
-dry-run again or apply the commit that was dry-run.
+dry-run again or apply the commit that was dry-run. Any other run after
+a dry run that reads another commit (another spelling of the ref,
+another ref, the working tree) opens its question by saying so.
 
 ### From the command line: `pgman apply`
 

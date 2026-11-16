@@ -382,7 +382,12 @@ impl Server {
                 return Err(why);
             }
         }
-        let (message, schema) = confirm_request(&plan, mode);
+        let (mut message, schema) = confirm_request(&plan, mode);
+        if mode != RunMode::DryRun {
+            if let Some(note) = differs_from_dry_run(self.dry_run_of(&key).as_ref(), &plan.source) {
+                message = format!("{note} {message}");
+            }
+        }
         let answer = self.elicit(&message, schema).await?;
         if answer.get("action").and_then(Value::as_str) != Some("accept") {
             self.remember_decline(&environment, &server, &database);
@@ -1420,6 +1425,25 @@ pub fn moved_since_dry_run(
              dry-run",
             crate::patch_source::short_sha(sha),
             crate::patch_source::short_sha(dry_sha),
+        )
+    })
+}
+
+/// What the confirmation opens with when this session's dry run read
+/// another commit than this run will (`dry_run`: its ref and commit) —
+/// another spelling of the ref, another ref, or the working tree, which
+/// [`moved_since_dry_run`] doesn't compare. Pure.
+pub fn differs_from_dry_run(
+    dry_run: Option<&(String, String)>,
+    source: &crate::patch_source::Source,
+) -> Option<String> {
+    let (dry_ref, dry_sha) = dry_run?;
+    (source.sha() != Some(dry_sha.as_str())).then(|| {
+        format!(
+            "NOTE: this session's dry run read {dry_ref} at {}; this run reads {}, which is \
+             not what was dry-run.",
+            crate::patch_source::short_sha(dry_sha),
+            source.describe()
         )
     })
 }
@@ -2766,6 +2790,27 @@ mod tests {
             remote_work_tree_warning("demo", &Snapshot::default(), &remote),
             None
         );
+    }
+
+    #[test]
+    fn a_run_reading_another_commit_than_the_dry_run_says_so_first() {
+        use crate::patch_source::Source;
+        let at = |r: &str, sha: &str| Source::Commit {
+            git_ref: r.into(),
+            sha: sha.into(),
+        };
+        let (a, b) = ("a".repeat(40), "b".repeat(40));
+        let dry = ("main".to_string(), a.clone());
+        // The same commit by another name: nothing to say.
+        assert_eq!(
+            differs_from_dry_run(Some(&dry), &at("refs/heads/main", &a)),
+            None
+        );
+        let note = differs_from_dry_run(Some(&dry), &at("heads/main", &b)).unwrap();
+        assert!(note.starts_with("NOTE: this session's dry run read main at aaaaaaaaa; this run reads heads/main (bbbbbbbbb)"), "{note}");
+        let note = differs_from_dry_run(Some(&dry), &Source::WorkTree).unwrap();
+        assert!(note.contains("this run reads the working tree"), "{note}");
+        assert_eq!(differs_from_dry_run(None, &Source::WorkTree), None);
     }
 
     #[test]
