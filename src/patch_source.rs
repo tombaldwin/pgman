@@ -308,11 +308,15 @@ pub struct TreeEntry {
     pub name: String,
 }
 
-/// `git ls-tree -z` output, names with `prefix` taken off. Pure.
+/// `git ls-tree -z` output, names with `prefix` taken off. An entry
+/// whose name isn't UTF-8 is left out, as the working tree's reader
+/// leaves such a file out. Pure.
 pub fn parse_ls_tree(out: &[u8], prefix: &str) -> Result<Vec<TreeEntry>, String> {
     let mut entries = Vec::new();
     for record in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
-        let record = std::str::from_utf8(record).map_err(|_| "a file name isn't UTF-8")?;
+        let Ok(record) = std::str::from_utf8(record) else {
+            continue;
+        };
         let (meta, path) = record
             .split_once('\t')
             .ok_or_else(|| format!("unexpected ls-tree line {record:?}"))?;
@@ -647,6 +651,11 @@ mod tests {
         assert_eq!((e[1].mode.as_str(), e[1].oid.as_str()), ("120000", "bbb"));
         assert_eq!(e[2].kind, "tree");
         assert!(parse_ls_tree(b"garbage\0", "").is_err());
+        // One name that isn't UTF-8 leaves out that entry, not the read.
+        let mixed = b"100644 blob aaa\tp/\xff.sql\x00100644 blob bbb\tp/002.sql\x00";
+        let e = parse_ls_tree(mixed, "p/").unwrap();
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].name, "002.sql");
         assert!(parse_ls_tree(b"", "x/").unwrap().is_empty());
     }
 
