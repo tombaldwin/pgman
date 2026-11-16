@@ -13,7 +13,7 @@
 class Pgman < Formula
   desc "k9s-style terminal UI for PostgreSQL"
   homepage "https://github.com/tombaldwin/pgman"
-  version "0.5.3"
+  version "0.5.4"
   license "MIT OR Apache-2.0"
 
   # pgman dump and restore run pg_dump and pg_restore, from libpq. It is
@@ -23,18 +23,18 @@ class Pgman < Formula
   if OS.mac?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "e1cb4eaf1c1214d4b83df54076d6c7cb58e92997e11fbc08a996eff26e9d34d4"
+      sha256 "96cad31aef88ecbe5b2103d2a8f2415b5d42d3042c70da26d4c8e07f8fdbdcdd"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "0d197a3a91f12788de52b1cf626b03ed3b3914cdad9c74de6429765636d88a62"
+      sha256 "9002c1d76f7cee176b11fba833da007b3d2c3e701c0053f9c39a0f58d67f476a"
     end
   elsif OS.linux?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "9f5256017b6ae8e06d472fef24b3267dfdf2bdb878ee85033a38d0463625c6d2"
+      sha256 "b7c104e64c6baa29ca69eb5090c282051caa6895f7752304664b893d8ab5cb81"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "e8c1e713dbbf134a5dc93b97e31b0d65347000239364d7125b8525826806f9cf"
+      sha256 "d6d898711994e633c4b4cdf87d243adf437d6bdbea147a9b68c5882638cf7737"
     end
   end
 
