@@ -61,7 +61,16 @@ site's changelog entry. Earlier windows, v0.2.1 to v0.5.2, are in
 
 In 0.5.3 also: the agent's reason filled in for a dump and
 `restore_confirm = "clean_only"`. CHANGELOG's 0.5.3 section lists it
-all. Nothing on main is unreleased.
+all.
+
+**Unreleased on main (2026-11-16):** patch files at a git ref
+(`apply_patches` / `pending_patches` `ref`, `pgman apply --ref`), asked
+for by the client lead after a stale checkout hid a release's patches;
+a remote database's MCP apply from a checkout needs a ref. A Fable
+adversarial review found two HIGHs (replace refs, a partial clone's
+lazy fetch running the remote's transport), both fixed in `util::git()`,
+plus three MEDIUMs and four LOWs, all fixed. Follow-ups are in
+BACKLOG.md → "Patch files at a git ref". Waiting on Tom's go for 0.5.4.
 
 ## Window — after v0.5.2
 
