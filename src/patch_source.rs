@@ -673,8 +673,9 @@ mod tests {
         ok.then_some(root)
     }
 
+    /// Setup's git: plain, unlike `util::git()`, which refuses to clone.
     fn git(root: &Path, args: &[&str]) -> bool {
-        crate::util::git()
+        std::process::Command::new("git")
             .arg("-C")
             .arg(root)
             .args(args)
@@ -757,6 +758,65 @@ mod tests {
         let at = read(&root.join("db/patches"), Some("release-1")).unwrap();
         assert_eq!(at.texts["001-a.sql"], "SELECT 1;");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// In a partial clone, a blob not fetched yet is missing: reading it
+    /// must not fetch it, which would run the remote's transport from the
+    /// checkout's config (here an ssh command that leaves a mark).
+    #[cfg(unix)]
+    #[test]
+    fn a_partial_clones_missing_file_is_not_fetched() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(origin) = repo("lazy-origin") else {
+            return;
+        };
+        write(&origin, "001-a.sql", "SELECT 1;");
+        assert!(git(&origin, &["add", "."]) && git(&origin, &["commit", "-q", "-m", "one"]));
+        assert!(git(&origin, &["config", "uploadpack.allowFilter", "true"]));
+        let clone = origin.with_file_name(format!(
+            "pgman-patch-source-lazy-clone-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&clone);
+        let url = format!("file://{}", origin.display());
+        let cloned = git(
+            &origin,
+            &[
+                "clone",
+                "-q",
+                "--no-checkout",
+                "--filter=blob:none",
+                &url,
+                clone.to_str().unwrap(),
+            ],
+        );
+        assert!(cloned, "a partial clone over file:// needs git 2.19+");
+        std::fs::create_dir_all(clone.join("db/patches")).unwrap();
+        let mark = clone.join("fetched");
+        let ssh = clone.join("ssh.sh");
+        std::fs::write(
+            &ssh,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", mark.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(git(
+            &clone,
+            &["config", "remote.origin.url", "ssh://example.invalid/repo"]
+        ));
+        assert!(git(
+            &clone,
+            &["config", "core.sshCommand", ssh.to_str().unwrap()]
+        ));
+
+        let got = read(&clone.join("db/patches"), Some("HEAD"));
+        assert!(
+            !mark.exists(),
+            "reading a ref fetched, running the checkout's ssh command"
+        );
+        assert!(got.is_err(), "a missing blob reads as missing: {got:?}");
+        let _ = std::fs::remove_dir_all(&clone);
+        let _ = std::fs::remove_dir_all(&origin);
     }
 
     #[test]

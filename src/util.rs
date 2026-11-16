@@ -42,11 +42,17 @@ fn xdg_dir(xdg_var: &str, home_suffix: &str) -> PathBuf {
 /// commands that run filters (`status`; `hash-object` without
 /// `--no-filters`). Replace refs are ignored: `refs/replace/<sha>` would
 /// otherwise make an object read as another's, so a commit named to the
-/// operator could yield another commit's files.
+/// operator could yield another commit's files. Nothing is fetched: a
+/// partial clone's missing object would otherwise be fetched on read,
+/// running the remote's transport (`core.sshCommand`, a credential
+/// helper) from that config — so lazy fetching is off and every
+/// protocol refused, and a missing object reads as missing.
 pub fn git() -> std::process::Command {
     let mut c = std::process::Command::new("git");
     c.args([
         "--no-replace-objects",
+        "-c",
+        "protocol.allow=never",
         "-c",
         "core.fsmonitor=false",
         "-c",
@@ -55,6 +61,7 @@ pub fn git() -> std::process::Command {
         "log.showSignature=false",
     ])
     .env("GIT_TERMINAL_PROMPT", "0")
+    .env("GIT_NO_LAZY_FETCH", "1")
     .stdin(std::process::Stdio::null());
     c
 }
