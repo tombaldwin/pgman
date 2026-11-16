@@ -20,6 +20,11 @@ shipped; left:
   "origin/main" }`) would let a remote environment carry its rule
   instead of every call naming one. Design call: does it cover the
   probe and `P` too.
+- **Require a ref for a protected environment over loopback?** A
+  port-forward or a proxy socket reads as local, so MCP's rule doesn't
+  fire; the plan now warns and names the working tree instead. Tom's
+  call: his spec kept local working-tree reads, where testing an
+  unmerged patch is the point.
 - **A ref's directory must exist in the working tree**: the patch dir
   is resolved on disk first, so a directory that exists only at the ref
   is refused.
