@@ -432,12 +432,40 @@ environment's need: see [encrypted dumps](dump-restore.md#encrypted-dumps).
 `journal = { group = … }` sends the record of its copies to CloudWatch:
 see [the journal in CloudWatch](dump-restore.md#the-journal-in-cloudwatch).
 
+### Which files: the working tree, or a ref
+
+The patch files are read once, at the plan, and what runs is what the
+plan read. By default they come from the working tree, whatever branch
+the checkout is on as of its last pull: a stale `main` hides patches a
+release brings, and a feature branch offers one before the code that
+needs it. When the patches directory is in a git repository, the plan
+warns about what makes the working tree differ from its commit: files
+not committed or changed since, a branch other than the default, commits
+behind its upstream (as of the last fetch).
+
+Name a commit instead with a ref — a release tag, `origin/main`, a SHA,
+or `HEAD` for the checkout's own commit without its uncommitted changes:
+`pgman apply --ref`, or `ref` on MCP's `apply_patches` and
+`pending_patches`. The ref is resolved to one commit, shown in the plan
+and the confirmation (`from release-12 (5a17c0de2)`), and the files are
+read at it with `git ls-tree` and `git cat-file`: nothing is checked
+out, and the working tree isn't touched. A tag or branch from elsewhere
+needs fetching first.
+
+Over MCP, a remote database's patches (not this machine's, or reached
+through an ssh tunnel) are refused without a ref when the directory is
+in a checkout; `pgman apply` and `P` warn instead. A dry run at a ref
+remembers its commit for the session: an apply at the same ref that
+finds another commit — the branch moved — is refused, and says how to
+dry-run again or apply the commit that was dry-run.
+
 ### From the command line: `pgman apply`
 
 ```sh
 pgman apply staging/ledger --dry-run
 pgman apply staging/ledger
 pgman apply staging/ledger --outside      # also plan VACUUM, CONCURRENTLY…
+pgman apply staging/ledger --ref release-12   # the files at that commit
 ```
 
 The same plan and run as `P`, printed: the pending patches, what each

@@ -5,6 +5,25 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### Patch files at a git ref — follow-ups (2026-11-16)
+
+`ref` on `apply_patches` / `pending_patches` and `pgman apply --ref`
+shipped; left:
+
+- **The TUI's `P` takes no ref.** It reads the working tree and shows
+  its warnings, a remote database's included; choosing a ref there
+  needs a key and a prompt.
+- **The overview's probe counts pending patches from the working
+  tree** (`inventory/probe.rs`, `read_patch_files`), with no warnings:
+  the same stale-checkout blind spot as the plan had.
+- **A per-environment default ref** (`version_table = { …, ref =
+  "origin/main" }`) would let a remote environment carry its rule
+  instead of every call naming one. Design call: does it cover the
+  probe and `P` too.
+- **A ref's directory must exist in the working tree**: the patch dir
+  is resolved on disk first, so a directory that exists only at the ref
+  is refused.
+
 ### From the 0.5.3 release panel (2026-11-14)
 
 Five Fable reviewers (safety, masking, TUI correctness, a hand-driven

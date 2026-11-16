@@ -67,14 +67,15 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "pending_patches",
-            "description": "Which schema patch files the database has not recorded as applied. Reads every *.sql file in the patch directory, takes each file's id from its own version-row INSERT (INSERT INTO <table> (<column>, ...) VALUES (<id>, ...)), and compares that with the ids in <table>.<column>. Also reports recent files with no version row, files whose filename number and recorded id disagree, ids carried by two files, ids recorded whose file has no live version row (e.g. it is commented out), and ids recorded with no file at all. dir, table and column come from the [patches] block in .pgman/pgman.toml, and any of them can be passed to override it. CAVEATS: a file counts as applied when its id is in the table, NOT when its statements ran; a patch that failed partway but committed its version row looks applied. Only the first matching INSERT with an integer literal id counts. Files are read up to 1 MB each, the directory is not searched recursively, and it must resolve inside the server's working tree. Run it against the database the patches were applied to. A replica can lag its primary, so after applying a patch check on the `primary` connection (pending_patches is allowed there); a replica connection's result carries a `replica` object with its lag.",
+            "description": "Which schema patch files the database has not recorded as applied. Reads every *.sql file in the patch directory, takes each file's id from its own version-row INSERT (INSERT INTO <table> (<column>, ...) VALUES (<id>, ...)), and compares that with the ids in <table>.<column>. Also reports recent files with no version row, files whose filename number and recorded id disagree, ids carried by two files, ids recorded whose file has no live version row (e.g. it is commented out), and ids recorded with no file at all. dir, table and column come from the [patches] block in .pgman/pgman.toml, or else from an environments.toml version_table whose patches directory is inside the project (when all such agree), and any of them can be passed to override it. Files are read from the working tree, or with `ref` at that git commit; a working-tree read in a repository reports `source_warnings` (uncommitted or changed patch files, not on the default branch, behind its upstream as of the last fetch, a remote database). CAVEATS: a file counts as applied when its id is in the table, NOT when its statements ran; a patch that failed partway but committed its version row looks applied. Only the first matching INSERT with an integer literal id counts. The directory is not searched recursively, and it must resolve inside the server's working tree. Run it against the database the patches were applied to. A replica can lag its primary, so after applying a patch check on the `primary` connection (pending_patches is allowed there); a replica connection's result carries a `replica` object with its lag.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "connection": {"type": "string", "description": "A name from `connections`."},
                     "dir": {"type": "string", "description": "Patch directory, relative to the project root."},
                     "table": {"type": "string", "description": "Version table, name or schema.name."},
-                    "column": {"type": "string", "description": "Id column in the version table."}
+                    "column": {"type": "string", "description": "Id column in the version table."},
+                    "ref": {"type": "string", "description": "A git tag, branch or SHA: compare the patch files at that commit instead of the working tree — what a release at that ref would apply. The checkout is not touched; a tag or branch from elsewhere must be fetched first."}
                 },
                 "required": ["connection"],
                 "additionalProperties": false
@@ -181,14 +182,15 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "apply_patches",
-            "description": "Apply an environment database's pending schema patches, after the OPERATOR confirms through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name). Plans first, read-only: the pending patches in order, each checked against safety.toml, stopping before the first that can't run here (its own BEGIN/COMMIT, CONCURRENTLY, …). A database safety.toml keeps read-only, or statements its guards block, are shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. Then each runs in its own transaction with a 5s lock_timeout, re-reading the version table before each, and it stops at the first failure. `mode`: \"apply\" (the default) for real; \"dry_run\" runs them all in ONE transaction and rolls it back — nothing kept, but the same locks and work as applying, on the same server, so it is confirmed like a real run; \"copy\" applies them for real to a copy of the database made on the same server (CREATE DATABASE … TEMPLATE, which needs nobody else connected to it: an idle local or dev database), then drops the copy. CAVEATS: refused under --read-only, by a client that can't elicit, and on a replica; only an environment with a version_table naming its patches directory. Never call it to 'see' what is pending: use `environments` with probe, or `pending_patches`. If the call times out, a patch may have committed: check before calling again.",
+            "description": "Apply an environment database's pending schema patches, after the OPERATOR confirms through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name). Plans first, read-only: the pending patches in order, each checked against safety.toml, stopping before the first that can't run here (its own BEGIN/COMMIT, CONCURRENTLY, …). A database safety.toml keeps read-only, or statements its guards block, are shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. Then each runs in its own transaction with a 5s lock_timeout, re-reading the version table before each, and it stops at the first failure. `mode`: \"apply\" (the default) for real; \"dry_run\" runs them all in ONE transaction and rolls it back — nothing kept, but the same locks and work as applying, on the same server, so it is confirmed like a real run; \"copy\" applies them for real to a copy of the database made on the same server (CREATE DATABASE … TEMPLATE, which needs nobody else connected to it: an idle local or dev database), then drops the copy. CAVEATS: refused under --read-only, by a client that can't elicit, and on a replica; only an environment with a version_table naming its patches directory. `ref` names the commit the patch files are read at (see its description). Never call it to 'see' what is pending: use `environments` with probe, or `pending_patches`. If the call times out, a patch may have committed: check before calling again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "environment": {"type": "string"},
                     "server": {"type": "string"},
                     "database": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["apply", "dry_run", "copy"]}
+                    "mode": {"type": "string", "enum": ["apply", "dry_run", "copy"]},
+                    "ref": {"type": "string", "description": "A git tag, branch or SHA: read the patch files at that commit (resolved once; the operator is shown it, and only its files run), never the checkout's working tree. Required for a remote database when the patches directory is in a git repository: a checkout may be stale or on an unmerged branch. An apply at the same ref as this session's dry run must find the same commit."}
                 },
                 "required": ["environment", "server", "database"],
                 "additionalProperties": false
@@ -316,6 +318,18 @@ impl Server {
                 format!("mode must be \"apply\", \"dry_run\" or \"copy\", not {m}")
             })?,
         };
+        let git_ref = match args.get("ref") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(r)) => {
+                crate::patch_source::check_ref(r)?;
+                Some(r.clone())
+            }
+            Some(_) => return Err("'ref' must be a string".to_string()),
+        };
+        let from = crate::inventory::patching::PatchFrom {
+            git_ref,
+            require_ref: true,
+        };
         if self.declined(&environment, &server, &database) {
             return Err(format!(
                 "the operator declined patches for {environment} {server}/{database} earlier in this session; nothing asked, nothing applied (they can use P in pgman, or restart the MCP server)"
@@ -333,6 +347,7 @@ impl Server {
             false,
             None,
             safety.clone(),
+            from.clone(),
         )
         .await?;
         // Refused only for a read-only database or blocked statements:
@@ -354,11 +369,18 @@ impl Server {
                 false,
                 Some(floor),
                 safety.clone(),
+                from.clone(),
             )
             .await?;
         }
         if plan.patches.is_empty() {
             return Ok(render_apply(&plan, None, &plan.empty_summary()));
+        }
+        let key = (environment.clone(), server.clone(), database.clone());
+        if mode != RunMode::DryRun {
+            if let Some(why) = moved_since_dry_run(self.dry_run_of(&key).as_ref(), &plan.source) {
+                return Err(why);
+            }
         }
         let (message, schema) = confirm_request(&plan, mode);
         let answer = self.elicit(&message, schema).await?;
@@ -371,7 +393,12 @@ impl Server {
                 "nothing applied: {why}. That answer is final: don't call apply_patches again unless the operator asks"
             ));
         }
-        tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, patches = plan.patches.len(), mode = mode.name(), "apply_patches confirmed");
+        tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, patches = plan.patches.len(), mode = mode.name(), git_ref = plan.source.git_ref().unwrap_or("-"), commit = plan.source.sha().unwrap_or("working tree"), "apply_patches confirmed");
+        if let (RunMode::DryRun, Some(r), Some(sha)) =
+            (mode, plan.source.git_ref(), plan.source.sha())
+        {
+            self.remember_dry_run(key, r, sha);
+        }
         let lifted = plan.lifted();
         if !lifted.is_empty() {
             tracing::warn!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, "apply_patches: the operator lifted safety for this run: {}", lifted.join("; "));
@@ -715,11 +742,35 @@ impl Server {
             .as_ref()
             .map(|(r, _)| r.clone())
             .unwrap_or_else(|| self.cwd.clone());
-        let cfg = patches_config(project.and_then(|(_, c)| c.patches), args)?;
+        let git_ref = match args.get("ref") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(r)) => Some(r.clone()),
+            Some(_) => return Err("'ref' must be a string".to_string()),
+        };
+        let block = project.and_then(|(_, c)| c.patches);
+        // Only consulted for what the block and the arguments leave out.
+        let from_envs = if block.is_some()
+            || ["dir", "table", "column"]
+                .iter()
+                .all(|k| args.get(*k).is_some())
+        {
+            Vec::new()
+        } else {
+            patch_settings_from_environments(&root)
+        };
+        let (cfg, settings_from) = patches_config(block, args, &from_envs)?;
         let dir = patch_dir_within(&root, &cfg.dir)?;
-        let files = read_patch_files(&dir, &cfg)?;
+        let snapshot = {
+            let (dir, git_ref) = (dir.clone(), git_ref.clone());
+            tokio::task::spawn_blocking(move || crate::patch_source::read(&dir, git_ref.as_deref()))
+                .await
+                .map_err(|e| format!("patch files task failed: {e}"))??
+        };
+        let files = snapshot.patch_files(&cfg);
         let sql = patches::applied_ids_sql(&cfg)?;
         let target = self.prepare(name, "pending_patches")?;
+        let mut source_warnings = snapshot.warnings.clone();
+        source_warnings.extend(remote_work_tree_warning(name, &snapshot, &target.dsn));
         let statement = single_checked_statement(&target.safety, &target.dsn.dbname, &sql)?;
         tracing::info!(target: "pgman::mcp", connection = name, dir = %dir.display(), "pending_patches");
         let role = target.role;
@@ -731,10 +782,15 @@ impl Server {
         let applied = applied_ids(&typed, truncated, &cfg)?;
         let report = patches::reconcile(files, &applied);
         let replica = replica_state(&client, role).await;
-        Ok(with_replica(
-            render_pending_patches(name, &cfg, &dir, &report),
-            replica,
-        ))
+        let mut out = render_pending_patches(name, &cfg, &dir, &report);
+        if let Some(o) = out.as_object_mut() {
+            o.insert("source".into(), source_json(&snapshot.source));
+            o.insert("source_warnings".into(), json!(source_warnings));
+            if let Some(from) = settings_from {
+                o.insert("settings_from".into(), json!(from));
+            }
+        }
+        Ok(with_replica(out.to_string(), replica))
     }
 
     /// Everything about a connection that can be decided before
@@ -937,28 +993,107 @@ pub use crate::creds::aws_secrets::apply as apply_secret;
 pub use crate::query::patches::{applied_ids, read_patch_files, MAX_APPLIED_IDS, MAX_PATCH_BYTES};
 
 /// The `[patches]` block, with any of `dir` / `table` / `column` the
-/// client passed taking its place. All three must end up set.
+/// client passed taking its place, and what both leave out taken from
+/// `from_envs` (each environment whose version_table's patches directory
+/// is inside the project, with that directory made relative) when they
+/// all agree. All three must end up set. Returns where any came from
+/// environments.toml, to say so. Pure.
 pub fn patches_config(
     project: Option<patches::PatchesConfig>,
     args: &Value,
-) -> Result<patches::PatchesConfig, String> {
-    let pick = |key: &str, from_project: Option<&String>| -> Result<String, String> {
-        args.get(key)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| from_project.cloned())
-            .ok_or_else(|| {
-                format!(
-                    "no patch {key}: pass `{key}`, or add a [patches] block (dir, table, column) \
-                     to .pgman/pgman.toml"
-                )
-            })
+    from_envs: &[(String, patches::PatchesConfig)],
+) -> Result<(patches::PatchesConfig, Option<String>), String> {
+    let agreed = from_envs
+        .first()
+        .map(|(_, c)| c)
+        .filter(|c| from_envs.iter().all(|(_, o)| o == *c));
+    let mut used = Vec::new();
+    let mut missing = Vec::new();
+    let mut pick = |key: &'static str, get: fn(&patches::PatchesConfig) -> &String| -> String {
+        if let Some(v) = args.get(key).and_then(Value::as_str) {
+            return v.to_string();
+        }
+        if let Some(p) = &project {
+            return get(p).clone();
+        }
+        if let Some(c) = agreed {
+            used.push(key);
+            return get(c).clone();
+        }
+        missing.push(key);
+        String::new()
     };
-    Ok(patches::PatchesConfig {
-        dir: pick("dir", project.as_ref().map(|p| &p.dir))?,
-        table: pick("table", project.as_ref().map(|p| &p.table))?,
-        column: pick("column", project.as_ref().map(|p| &p.column))?,
-    })
+    let cfg = patches::PatchesConfig {
+        dir: pick("dir", |c| &c.dir),
+        table: pick("table", |c| &c.table),
+        column: pick("column", |c| &c.column),
+    };
+    if !missing.is_empty() {
+        let example = |c: &patches::PatchesConfig| {
+            format!(
+                "[patches]\ndir = {:?}\ntable = {:?}\ncolumn = {:?}",
+                c.dir, c.table, c.column
+            )
+        };
+        let hint = match from_envs {
+            [] => example(&patches::PatchesConfig {
+                dir: "db/patches".into(),
+                table: "schema_version".into(),
+                column: "id".into(),
+            }),
+            several => format!(
+                "environments.toml's version_tables disagree, so name one:\n{}",
+                several
+                    .iter()
+                    .map(|(env, c)| format!("# {env}\n{}", example(c)))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        };
+        return Err(format!(
+            "no patch {}: pass {}, or add a [patches] block to .pgman/pgman.toml, e.g.\n{hint}",
+            missing.join(", "),
+            missing
+                .iter()
+                .map(|k| format!("`{k}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
+    }
+    let note = (!used.is_empty()).then(|| {
+        let envs: Vec<&str> = from_envs.iter().map(|(e, _)| e.as_str()).collect();
+        format!(
+            "{} from environments.toml's version_table ({}); a [patches] block in \
+             .pgman/pgman.toml says it for good",
+            used.join(", "),
+            envs.join(", ")
+        )
+    });
+    Ok((cfg, note))
+}
+
+/// Each environment whose version_table's patches directory is inside
+/// `root`, with its settings and that directory relative to `root`.
+/// Reads environments.toml only; nothing is listed or connected.
+pub fn patch_settings_from_environments(
+    root: &std::path::Path,
+) -> Vec<(String, patches::PatchesConfig)> {
+    let Ok(envs) = crate::inventory::load().environments else {
+        return Vec::new();
+    };
+    let Ok(root) = root.canonicalize() else {
+        return Vec::new();
+    };
+    envs.into_iter()
+        .filter_map(|e| {
+            let vt = e.version_table?;
+            let dir = vt.patch_dir()?.ok()?.canonicalize().ok()?;
+            let rel = dir.strip_prefix(&root).ok()?.to_str()?.to_string();
+            let mut cfg = vt.config();
+            cfg.dir = if rel.is_empty() { ".".into() } else { rel };
+            Some((e.name, cfg))
+        })
+        .collect()
 }
 
 /// `dir` resolved against `root`, refused unless it is a directory that
@@ -990,7 +1125,7 @@ pub fn render_pending_patches(
     cfg: &patches::PatchesConfig,
     dir: &std::path::Path,
     r: &patches::Report,
-) -> String {
+) -> Value {
     let file = |p: &patches::PatchFile| json!({"file": p.file, "id": p.version_id, "filename_number": p.filename_number});
     json!({
         "connection": name,
@@ -1007,7 +1142,36 @@ pub fn render_pending_patches(
         "recorded_without_file": r.recorded_without_file,
         "recorded_by_unversioned_file": r.recorded_by_unversioned_file.iter().map(|(id, f)| json!({"id": id, "file": f})).collect::<Vec<_>>(),
     })
-    .to_string()
+}
+
+/// What `pending_patches` adds about a remote database (not this
+/// machine's, or reached through an ssh tunnel) compared with a
+/// checkout's working tree: its files are whatever the checkout is on.
+/// Pure.
+pub fn remote_work_tree_warning(
+    name: &str,
+    snapshot: &crate::patch_source::Snapshot,
+    dsn: &conn::Dsn,
+) -> Option<String> {
+    let remote = dsn.ssh_tunnel.is_some() || !crate::inventory::target::is_local_host(&dsn.host);
+    (snapshot.unpinned() && remote).then(|| {
+        format!(
+            "{name} is a remote database, and these files are the checkout's working tree — \
+             whatever branch it is on, as of its last pull. Pass ref (a release tag, \
+             origin/main) to see what a release would apply"
+        )
+    })
+}
+
+/// Where patch files were read, for a tool's result: `"working tree"`,
+/// or the ref and its commit. Pure.
+pub fn source_json(source: &crate::patch_source::Source) -> Value {
+    match source {
+        crate::patch_source::Source::WorkTree => json!("working tree"),
+        crate::patch_source::Source::Commit { git_ref, sha } => {
+            json!({"ref": git_ref, "commit": sha})
+        }
+    }
 }
 
 /// The first `name` on `PATH`, for `doctor` — whether a secret could be
@@ -1134,8 +1298,12 @@ pub fn confirm_request(
             "The database is copied on the same server first (CREATE DATABASE … TEMPLATE: it needs nobody else connected to it, and copies all of it), the patches applied to the copy each in its own transaction, then the copy dropped.",
         ),
     };
+    let from = match &plan.source {
+        crate::patch_source::Source::WorkTree => String::new(),
+        commit => format!(" from {}", commit.describe()),
+    };
     let mut message = format!(
-        "{verb} {} patch(es) to {onto}{} {}/{} (recorded up to {}): {}. {how}",
+        "{verb} {} patch(es){from} to {onto}{} {}/{} (recorded up to {}): {}. {how}",
         files.len(),
         plan.environment,
         plan.server,
@@ -1144,6 +1312,12 @@ pub fn confirm_request(
             .map_or("none".to_string(), |m| m.to_string()),
         files.join(", ")
     );
+    if !plan.source_warnings.is_empty() {
+        message.push_str(&format!(
+            " WARNING, about where these files came from: {}.",
+            plan.source_warnings.join("; ")
+        ));
+    }
     if let Some(asked) = plan.confirm_summary() {
         message.push_str(&format!(
             " {asked}. This one confirmation answers them all."
@@ -1182,7 +1356,10 @@ pub fn confirm_request(
             plan.below_recorded.join(", ")
         ));
     }
-    message.push_str(&format!("\n\nWhat will run (files in {}):", plan.dir));
+    message.push_str(&format!(
+        "\n\nWhat will run (files in {}):",
+        plan.files_from()
+    ));
     let mut shown = 0usize;
     'files: for p in &plan.patches {
         message.push_str(&format!("\n\n-- {}", p.file.file));
@@ -1221,6 +1398,27 @@ pub fn confirm_request(
         })
     };
     (message, schema)
+}
+
+/// The refusal of an apply whose ref names another commit than this
+/// session's dry run at the same ref found (`dry_run`: that ref and its
+/// commit): a moving branch would otherwise run patches nobody dry-ran.
+/// Pure.
+pub fn moved_since_dry_run(
+    dry_run: Option<&(String, String)>,
+    source: &crate::patch_source::Source,
+) -> Option<String> {
+    let (dry_ref, dry_sha) = dry_run?;
+    let (git_ref, sha) = (source.git_ref()?, source.sha()?);
+    (git_ref == dry_ref && sha != dry_sha).then(|| {
+        format!(
+            "nothing applied: {git_ref} is at {} now, but this session's dry run read it at {}. \
+             Dry-run again to apply what it is now, or pass ref={dry_sha} to apply what was \
+             dry-run",
+            crate::patch_source::short_sha(sha),
+            crate::patch_source::short_sha(dry_sha),
+        )
+    })
 }
 
 /// How much patch SQL the confirmation shows before it points at the
@@ -1292,6 +1490,8 @@ pub fn render_apply(
         "server": plan.server,
         "database": plan.database,
         "recorded_up_to": plan.applied_max,
+        "source": source_json(&plan.source),
+        "source_warnings": plan.source_warnings,
         "planned": plan.patches.iter().map(|p| p.file.file.as_str()).collect::<Vec<_>>(),
         "not_included": plan.stopped_at.as_ref().map(|(f, why)| json!({"file": f, "reason": why})),
         "blocked": plan.blocked.iter().map(|(f, g)| json!({"file": f, "line": g.line, "kind": g.kind, "statement": g.statement})).collect::<Vec<_>>(),
@@ -2484,12 +2684,114 @@ mod tests {
             table: "t_v".into(),
             column: "c".into(),
         };
-        let got = patches_config(Some(project.clone()), &json!({"table": "t_other"})).unwrap();
+        let (got, from) =
+            patches_config(Some(project.clone()), &json!({"table": "t_other"}), &[]).unwrap();
         assert_eq!(got.dir, "schema_updates");
         assert_eq!(got.table, "t_other");
         assert_eq!(got.column, "c");
-        let err = patches_config(None, &json!({"dir": "d", "table": "t"})).unwrap_err();
+        assert_eq!(from, None);
+        let err = patches_config(None, &json!({"dir": "d", "table": "t"}), &[]).unwrap_err();
         assert!(err.contains("column") && err.contains("[patches]"), "{err}");
+        assert!(!err.contains("`dir`"), "only what is missing: {err}");
+    }
+
+    #[test]
+    fn patch_settings_fall_back_to_environments_that_agree() {
+        let cfg = |dir: &str| patches::PatchesConfig {
+            dir: dir.into(),
+            table: "t_schema_version".into(),
+            column: "schema_version_id".into(),
+        };
+        let agree = [
+            ("staging".to_string(), cfg("db/patches")),
+            ("demo".to_string(), cfg("db/patches")),
+        ];
+        let (got, from) = patches_config(None, &json!({}), &agree).unwrap();
+        assert_eq!(got, cfg("db/patches"));
+        let from = from.unwrap();
+        assert!(
+            from.contains("dir, table, column") && from.contains("staging, demo"),
+            "{from}"
+        );
+        // An argument or the block wins, and isn't credited to them.
+        let (got, from) = patches_config(Some(cfg("other")), &json!({}), &agree).unwrap();
+        assert_eq!((got.dir.as_str(), from), ("other", None));
+        let (got, from) = patches_config(None, &json!({"column": "c"}), &agree).unwrap();
+        assert_eq!(got.column, "c");
+        assert!(from.unwrap().starts_with("dir, table from"));
+        // Disagreeing environments supply nothing, and are listed.
+        let split = [
+            ("staging".to_string(), cfg("db/patches")),
+            ("demo".to_string(), cfg("db/old")),
+        ];
+        let err = patches_config(None, &json!({}), &split).unwrap_err();
+        assert!(
+            err.contains("disagree") && err.contains("# demo") && err.contains("db/old"),
+            "{err}"
+        );
+        assert!(err.starts_with("no patch dir, table, column"), "{err}");
+    }
+
+    #[test]
+    fn pending_patches_warns_when_a_remote_database_meets_a_working_tree() {
+        use crate::patch_source::{Snapshot, Source};
+        let dsn = |u: &str| conn::Dsn::parse(u).unwrap();
+        let work = Snapshot {
+            in_git: true,
+            ..Default::default()
+        };
+        let remote = dsn("postgres://app@10.0.1.23:5432/ledger");
+        let w = remote_work_tree_warning("demo", &work, &remote).unwrap();
+        assert!(
+            w.starts_with("demo is a remote database") && w.contains("Pass ref"),
+            "{w}"
+        );
+        let tunnelled = dsn("postgres://app@127.0.0.1:5432/ledger?ssh_tunnel=bastion.example.com");
+        assert!(remote_work_tree_warning("demo", &work, &tunnelled).is_some());
+        let local = dsn("postgres://app@localhost:55432/ledger");
+        assert_eq!(remote_work_tree_warning("local", &work, &local), None);
+        let pinned = Snapshot {
+            in_git: true,
+            source: Source::Commit {
+                git_ref: "v1".into(),
+                sha: "a".repeat(40),
+            },
+            ..Default::default()
+        };
+        assert_eq!(remote_work_tree_warning("demo", &pinned, &remote), None);
+        assert_eq!(
+            remote_work_tree_warning("demo", &Snapshot::default(), &remote),
+            None
+        );
+    }
+
+    #[test]
+    fn an_apply_at_a_ref_that_moved_since_the_dry_run_is_refused() {
+        use crate::patch_source::Source;
+        let at = |r: &str, sha: &str| Source::Commit {
+            git_ref: r.into(),
+            sha: sha.into(),
+        };
+        let dry = ("main".to_string(), "a".repeat(40));
+        assert_eq!(
+            moved_since_dry_run(Some(&dry), &at("main", &"a".repeat(40))),
+            None
+        );
+        let why = moved_since_dry_run(Some(&dry), &at("main", &"b".repeat(40))).unwrap();
+        assert!(
+            why.contains("bbbbbbbbb") && why.contains(&format!("ref={}", "a".repeat(40))),
+            "{why}"
+        );
+        // Another ref, the working tree, or no dry run: nothing to compare.
+        assert_eq!(
+            moved_since_dry_run(Some(&dry), &at("release-1", &"b".repeat(40))),
+            None
+        );
+        assert_eq!(moved_since_dry_run(Some(&dry), &Source::WorkTree), None);
+        assert_eq!(
+            moved_since_dry_run(None, &at("main", &"b".repeat(40))),
+            None
+        );
     }
 
     #[test]

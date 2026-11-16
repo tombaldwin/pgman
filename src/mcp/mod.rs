@@ -91,6 +91,9 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
     Ok(opts)
 }
 
+/// An environment database patches go to: (environment, server, database).
+pub(crate) type PatchKey = (String, String, String);
+
 pub struct Server {
     pub(crate) opts: Opts,
     /// Discovery root: the directory the client started the server in.
@@ -110,6 +113,10 @@ pub struct Server {
     /// (environment, server, database) the operator declined patches
     /// for: not asked again while this server runs.
     declined: Mutex<std::collections::HashSet<(String, String, String)>>,
+    /// (environment, server, database) → the ref a confirmed dry run read
+    /// its patches at, and the commit it resolved to: an apply at the
+    /// same ref must find the same commit.
+    dry_runs: Mutex<std::collections::HashMap<PatchKey, (String, String)>>,
 }
 
 /// How long the operator has to answer an elicitation.
@@ -130,7 +137,18 @@ impl Server {
             waiting: Mutex::new(std::collections::HashMap::new()),
             next_request: AtomicU64::new(1),
             declined: Mutex::new(std::collections::HashSet::new()),
+            dry_runs: Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    pub(crate) fn remember_dry_run(&self, key: PatchKey, git_ref: &str, sha: &str) {
+        if let Ok(mut d) = self.dry_runs.lock() {
+            d.insert(key, (git_ref.into(), sha.into()));
+        }
+    }
+
+    pub(crate) fn dry_run_of(&self, key: &PatchKey) -> Option<(String, String)> {
+        self.dry_runs.lock().ok()?.get(key).cloned()
     }
 
     pub(crate) fn remember_decline(&self, environment: &str, server: &str, database: &str) {

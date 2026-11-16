@@ -1911,6 +1911,10 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     if !plan.patches.is_empty() {
         mode_lines(v, plan, &mut out);
     }
+    // Where the files came from, when the operator should know.
+    for w in &plan.source_warnings {
+        out.push((format!("  ⚠ {w}"), true));
+    }
     // Run from the editor each would be asked about; this one
     // confirmation answers them all, so it says so. Informational.
     let asked = plan.confirm_count();
@@ -4177,6 +4181,11 @@ mod tests {
             mode: Default::default(),
         };
         assert_eq!(patch_lines(&v).last(), Some(&warning));
+        // A working tree's warnings show with the plan.
+        let mut warned = plan.clone();
+        warned.source_warnings = vec!["not committed: 9-new.sql".into()];
+        v.stage = PatchStage::Plan(Ok(warned));
+        assert!(patch_lines(&v).contains(&("  ⚠ not committed: 9-new.sql".to_string(), true)));
         v.stage = PatchStage::Done(plan, Default::default());
         assert_eq!(patch_lines(&v).last(), Some(&warning));
     }

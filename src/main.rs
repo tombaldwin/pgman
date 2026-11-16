@@ -728,6 +728,8 @@ async fn main() -> anyhow::Result<()> {
                 // Only MCP's operator override lifts.
                 None,
                 safety,
+                // The working tree: its warnings show in the plan.
+                Default::default(),
             ))
         }),
         apply: std::sync::Arc::new(|plan, mode, cancel, safety| {

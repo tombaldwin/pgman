@@ -1450,6 +1450,8 @@ pub fn patch_plan(
         lift: false,
         read_only_lifted: false,
         liftable: false,
+        source: Default::default(),
+        source_warnings: Vec::new(),
         stopped_at,
     }
 }

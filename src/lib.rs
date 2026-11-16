@@ -29,6 +29,7 @@ pub mod journal_send;
 pub mod masked;
 pub mod masking;
 pub mod mcp;
+pub mod patch_source;
 pub mod pgtool;
 pub mod policy;
 pub mod project;

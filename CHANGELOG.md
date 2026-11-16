@@ -6,6 +6,32 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Patch files can be read at a git ref — a tag, branch or SHA — instead
+  of the working tree: `ref` on MCP's `apply_patches` and
+  `pending_patches`, `pgman apply --ref`. The ref is resolved once to a
+  commit, named in the plan, the confirmation, the result and the audit
+  log line, and read through `git ls-tree` / `git cat-file`; nothing is
+  checked out.
+- A plan or `pending_patches` read from a git checkout's working tree
+  warns about what differs from its commit: patch files not committed
+  or changed since, a branch other than the default, commits behind its
+  upstream (as of the last fetch), and a remote database.
+- `pending_patches` without a `[patches]` block takes the settings from
+  an `environments.toml` `version_table` whose patches directory is
+  inside the project, when all such agree; a missing setting's error
+  names every missing one and a block to paste.
+
+### Changed
+
+- MCP `apply_patches` refuses a remote database's patches from a
+  checkout's working tree without `ref`; a local database, or a patches
+  directory outside git, is as before. An apply at the same ref as the
+  session's dry run that finds another commit is refused.
+- A patch plan reads every file once, before connecting, and runs the
+  texts it read.
+
 ## [0.5.3] — 2026-11-14
 
 ### Added

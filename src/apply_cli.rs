@@ -15,7 +15,7 @@ use crate::inventory::patching::{self, PatchPlan, RunMode};
 use crate::inventory::target::{self, Want};
 
 pub const USAGE: &str = "\
-usage: pgman apply <target> [--outside] [--dry-run | --copy] [--yes]
+usage: pgman apply <target> [--ref REF] [--outside] [--dry-run | --copy] [--yes]
 
 <target> is ENV, ENV/DATABASE or ENV/SERVER/DATABASE in environments.toml.
 
@@ -25,6 +25,10 @@ does: planned read-only and checked against safety.toml, then each
 patch in its own transaction once you confirm, stopping at the first
 failure.
 
+  --ref REF   read the patch files at REF's commit (a tag, a branch, a
+              SHA) instead of the working tree; nothing is checked out.
+              Without it, a remote database's plan from a checkout warns
+              that the files are whatever the checkout is on
   --outside   also plan a patch that can't run in a transaction (VACUUM,
               CREATE INDEX CONCURRENTLY…): its statements then run one by
               one, each committing as it runs, so a failure part-way
@@ -35,11 +39,13 @@ failure.
   --yes       don't ask; not for a protected environment or --outside,
               which are confirmed by typing the environment's name
 
-  pgman apply staging/ledger --dry-run";
+  pgman apply staging/ledger --dry-run
+  pgman apply staging/ledger --ref release-12";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Opts {
     pub target: String,
+    pub git_ref: Option<String>,
     pub outside: bool,
     pub mode: RunMode,
     pub yes: bool,
@@ -48,10 +54,20 @@ pub struct Opts {
 /// Parse the arguments after `pgman apply`. Pure.
 pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
     let mut target = None;
+    let mut git_ref = None;
     let (mut outside, mut yes) = (false, false);
     let mut mode = RunMode::Apply;
-    for a in args {
+    let mut args = args.iter();
+    while let Some(a) = args.next() {
         match a.as_str() {
+            "--ref" if git_ref.is_some() => return Err(format!("--ref given twice\n\n{USAGE}")),
+            "--ref" => {
+                let r = args
+                    .next()
+                    .ok_or_else(|| format!("--ref needs a tag, branch or SHA\n\n{USAGE}"))?;
+                crate::patch_source::check_ref(r)?;
+                git_ref = Some(r.clone());
+            }
             "--outside" => outside = true,
             "--yes" | "-y" => yes = true,
             "--dry-run" | "--copy" if mode != RunMode::Apply => {
@@ -70,6 +86,7 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
     }
     Ok(Opts {
         target: target.ok_or_else(|| format!("which database? name a target\n\n{USAGE}"))?,
+        git_ref,
         outside,
         mode,
         yes,
@@ -88,8 +105,11 @@ pub fn render_plan(plan: &PatchPlan) -> String {
         plan.server,
         plan.database,
         plan.patches.len(),
-        plan.dir
+        plan.files_from()
     );
+    for w in &plan.source_warnings {
+        out.push_str(&format!("\n  WARNING: {w}"));
+    }
     for p in &plan.patches {
         out.push_str(&format!(
             "\n  {} — {} statement(s)",
@@ -203,6 +223,10 @@ pub async fn run_cli(opts: &Opts) -> Result<(String, bool), String> {
         opts.outside,
         None,
         safety.clone(),
+        patching::PatchFrom {
+            git_ref: opts.git_ref.clone(),
+            require_ref: false,
+        },
     )
     .await?;
     eprintln!("{}", render_plan(&plan));
@@ -245,7 +269,7 @@ pub async fn run_cli(opts: &Opts) -> Result<(String, bool), String> {
             std::process::exit(130);
         });
     }
-    tracing::info!(target: "pgman::apply", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), mode = opts.mode.name(), "pgman apply confirmed");
+    tracing::info!(target: "pgman::apply", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), mode = opts.mode.name(), git_ref = plan.source.git_ref().unwrap_or("-"), commit = plan.source.sha().unwrap_or("working tree"), "pgman apply confirmed");
     let report = patching::apply_for(plan.clone(), opts.mode, cancel, safety).await;
     let ok = report.error.is_none() && report.failed().is_none() && plan.stopped_at.is_none();
     Ok((render_report(&report), ok))
@@ -308,6 +332,8 @@ mod tests {
             lift: false,
             read_only_lifted: false,
             liftable: false,
+            source: Default::default(),
+            source_warnings: Vec::new(),
         }
     }
 
@@ -387,6 +413,40 @@ mod tests {
         assert!(
             q.starts_with("run them in one transaction and roll it back? [y/N]") && a == "y",
             "{q}"
+        );
+    }
+
+    #[test]
+    fn a_ref_is_parsed_checked_and_shown_with_the_plans_warnings() {
+        let o = parse_cli(&args(&[
+            "staging/ledger",
+            "--ref",
+            "release-12",
+            "--dry-run",
+        ]))
+        .unwrap();
+        assert_eq!(o.git_ref.as_deref(), Some("release-12"));
+        assert_eq!(parse_cli(&args(&["staging/ledger"])).unwrap().git_ref, None);
+        assert!(parse_cli(&args(&["staging/ledger", "--ref"]))
+            .unwrap_err()
+            .contains("--ref needs"));
+        assert!(parse_cli(&args(&["staging/ledger", "--ref", "a", "--ref", "b"])).is_err());
+        assert!(parse_cli(&args(&["staging/ledger", "--ref", "HEAD:x.sql"])).is_err());
+
+        let mut p = plan(false, None);
+        p.source = crate::patch_source::Source::Commit {
+            git_ref: "release-12".into(),
+            sha: "5a17c0de2".repeat(4) + "abcd",
+        };
+        p.source_warnings = vec!["the checkout is on branch feature-x, not main".into()];
+        let text = render_plan(&p);
+        assert!(
+            text.contains(&format!("from {} at release-12 (5a17c0de2)", p.dir)),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n  WARNING: the checkout is on branch feature-x, not main"),
+            "{text}"
         );
     }
 }

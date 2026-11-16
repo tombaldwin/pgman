@@ -2003,6 +2003,135 @@ fn mcp_pending_patches_reports_what_the_database_has_not_recorded() {
     assert!(is_error && text.contains("outside"), "{text}");
 }
 
+/// `ref` compares the patch files at a commit, not the working tree;
+/// a working-tree read in a repository says what isn't committed; with
+/// no [patches] block, an environments.toml version_table inside the
+/// project supplies the settings, and says so.
+#[test]
+fn mcp_pending_patches_reads_a_ref_and_warns_about_the_working_tree() {
+    let home = mcp_home("mcp-patches-ref");
+    let t = it_name("refversion");
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {t} (scriptId int); DELETE FROM {t} WHERE TRUE; \
+                 INSERT INTO {t} VALUES (1)"
+            ),
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let checkout = home.join("checkout");
+    let dir = checkout.join("db/patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.test")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.test")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !git(&["init", "-q", "-b", "main"]) {
+        eprintln!("skipped: no git");
+        return;
+    }
+    let row = |id: i64| format!("INSERT INTO {t} (scriptId) VALUES ({id});");
+    std::fs::write(dir.join("001-a.sql"), row(1)).unwrap();
+    std::fs::write(dir.join("002-b.sql"), row(2)).unwrap();
+    assert!(git(&["add", "."]) && git(&["commit", "-q", "-m", "one"]) && git(&["tag", "v1"]));
+    std::fs::write(dir.join("003-c.sql"), row(3)).unwrap();
+    // No [patches] block: environments.toml's version_table names the
+    // directory inside this checkout.
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"staging\"\nsource = {{ kind = \"static\", connections = [\"test\"] }}\n\
+             version_table = {{ table = \"{t}\", column = \"scriptId\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    let frames = mcp_session(
+        &home,
+        &checkout,
+        &[],
+        &[
+            tool_call(
+                1,
+                "pending_patches",
+                serde_json::json!({"connection": "test"}),
+            ),
+            tool_call(
+                2,
+                "pending_patches",
+                serde_json::json!({"connection": "test", "ref": "v1"}),
+            ),
+            tool_call(
+                3,
+                "pending_patches",
+                serde_json::json!({"connection": "test", "ref": "--output=x"}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let pending: Vec<&str> = v["pending"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(pending, ["002-b.sql", "003-c.sql"]);
+    assert_eq!(v["source"], "working tree");
+    assert!(
+        v["source_warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w == "not committed: 003-c.sql"),
+        "{text}"
+    );
+    assert!(
+        v["settings_from"].as_str().unwrap().contains("staging"),
+        "{text}"
+    );
+    assert_eq!(
+        v["dir"].as_str().map(|d| d.ends_with("db/patches")),
+        Some(true),
+        "{text}"
+    );
+
+    let (text, is_error) = reply(&frames, 2);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let pending: Vec<&str> = v["pending"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(pending, ["002-b.sql"]);
+    assert_eq!(v["source"]["ref"], "v1");
+    assert_eq!(v["source"]["commit"].as_str().map(str::len), Some(40));
+    assert_eq!(v["source_warnings"], serde_json::json!([]));
+
+    let (text, is_error) = reply(&frames, 3);
+    assert!(is_error && text.contains("starts with '-'"), "{text}");
+}
+
 /// A fake `aws` CLI on the server's PATH: logs its arguments, answers
 /// `sts get-caller-identity` with `$FAKE_AWS_ACCOUNT` and
 /// `secretsmanager get-secret-value` with credentials for the compose
@@ -4421,6 +4550,204 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
 /// An environment database's pending patches: planned read-only with
 /// their checks, then applied one transaction each, stopping at the first
 /// failure, and refusing a plan the database has moved past.
+/// A ref reads the patch files at its commit: the plan, and the apply
+/// that runs the plan's texts, take the tag's patches only, never a
+/// later commit's or an uncommitted one; the working tree's plan names
+/// what differs from its commit.
+#[test]
+fn environment_patches_at_a_ref_plan_and_apply_that_commits_files_only() {
+    let home = scratch_home("env-patch-ref", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_rv_{pid}");
+    let tbl = format!("pgman_it_rt_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let repo = home.join("checkout");
+    let dir = repo.join("db/patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.test")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.test")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output();
+        out.is_ok_and(|o| o.status.success())
+    };
+    if !git(&["init", "-q", "-b", "main"]) {
+        eprintln!("skipped: no git");
+        return;
+    }
+    let patch = |name: &str, id: i64, col: &str| {
+        std::fs::write(
+            dir.join(name),
+            format!(
+                "INSERT INTO {vt} (id) VALUES ({id});\nALTER TABLE {tbl} ADD COLUMN {col} int;\n"
+            ),
+        )
+        .unwrap();
+    };
+    std::fs::write(
+        dir.join("001-old.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (1);\n"),
+    )
+    .unwrap();
+    patch("002-a.sql", 2, "a");
+    assert!(
+        git(&["add", "."]) && git(&["commit", "-q", "-m", "release"]) && git(&["tag", "release-1"])
+    );
+    patch("003-b.sql", 3, "b");
+    assert!(git(&["add", "."]) && git(&["commit", "-q", "-m", "next"]));
+    patch("004-c.sql", 4, "c");
+    let env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"it-ref\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+         version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let target = pgman::inventory::Target {
+        database: "pgman_test".into(),
+        server: "local".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        }),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan_from, PatchFrom, RunMode};
+    let at = |r: &str| PatchFrom {
+        git_ref: Some(r.into()),
+        require_ref: true,
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let p = plan_from(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            false,
+            None,
+            &at("release-1"),
+        )
+        .await
+        .unwrap();
+        let files: Vec<&str> = p.patches.iter().map(|x| x.file.file.as_str()).collect();
+        assert_eq!(files, ["002-a.sql"]);
+        assert_eq!(p.source.git_ref(), Some("release-1"));
+        assert_eq!(p.source.sha().map(str::len), Some(40));
+        assert!(p.source_warnings.is_empty(), "{:?}", p.source_warnings);
+        assert!(
+            p.files_from().contains(" at release-1 ("),
+            "{}",
+            p.files_from()
+        );
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            RunMode::Apply,
+            &Default::default(),
+        )
+        .await;
+        assert!(r.error.is_none() && r.failed().is_none(), "{r:?}");
+
+        // The working tree: the later commit's patch and the uncommitted
+        // one, and the plan says the second isn't committed.
+        let p = plan_from(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            false,
+            None,
+            &PatchFrom::default(),
+        )
+        .await
+        .unwrap();
+        let files: Vec<&str> = p.patches.iter().map(|x| x.file.file.as_str()).collect();
+        assert_eq!(files, ["003-b.sql", "004-c.sql"]);
+        assert_eq!(p.source, pgman::patch_source::Source::WorkTree);
+        assert!(
+            p.source_warnings
+                .contains(&"not committed: 004-c.sql".to_string()),
+            "{:?}",
+            p.source_warnings
+        );
+        // Required, but the database is this machine's: no refusal.
+        let local = PatchFrom {
+            git_ref: None,
+            require_ref: true,
+        };
+        assert!(
+            plan_from(&env, &target, &writable, &no_secrets, false, None, &local)
+                .await
+                .is_ok()
+        );
+        let e = plan_from(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            false,
+            None,
+            &at("no-such-tag"),
+        )
+        .await
+        .unwrap_err();
+        assert!(e.contains("no commit"), "{e}");
+    });
+    let cols = batch_with_home(
+        &home,
+        &[
+            "--sql",
+            &format!(
+                "SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_name = '{tbl}'"
+            ),
+        ],
+    );
+    let cols = String::from_utf8_lossy(&cols.stdout);
+    assert!(cols.contains("a,id"), "{cols}");
+    let _ = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("DROP TABLE {vt}; DROP TABLE {tbl}"),
+        ],
+    );
+}
+
 #[test]
 fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
     let home = scratch_home("env-patch", WRITABLE_PROFILE);
@@ -5883,6 +6210,228 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
     assert!(child.wait().unwrap().success());
 }
 
+/// `apply_patches` at a ref: the operator is shown the ref and its
+/// commit, a dry run remembers that commit, and an apply at the same ref
+/// after the branch moved is refused before anything is asked; at the
+/// dry run's SHA it applies what was dry-run, and not the later patch.
+#[test]
+fn mcp_apply_patches_at_a_ref_refuses_a_branch_that_moved_since_the_dry_run() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply-ref", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_mr_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let repo = home.join("checkout");
+    let dir = repo.join("db/patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.test")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.test")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    if git(&["init", "-q", "-b", "main"]).is_none() {
+        eprintln!("skipped: no git");
+        return;
+    }
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    std::fs::write(dir.join("002-x.sql"), row(2)).unwrap();
+    git(&["add", "."]).unwrap();
+    git(&["commit", "-q", "-m", "two"]).unwrap();
+    let first = git(&["rev-parse", "HEAD"]).unwrap();
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-stage\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args = |mode: &str, r: &str| serde_json::json!({"environment": "it-stage", "server": "local", "database": "pgman_test", "mode": mode, "ref": r});
+    let accept = serde_json::json!({"action": "accept", "content": {"apply": true}});
+
+    // The dry run at main: asked, with the ref and its commit.
+    writeln!(
+        stdin,
+        "{}",
+        tool_call(2, "apply_patches", args("dry_run", "main"))
+    )
+    .unwrap();
+    let ask = next();
+    assert_eq!(ask["method"], "elicitation/create", "{ask}");
+    let message = ask["params"]["message"].as_str().unwrap();
+    assert!(
+        message.contains(&format!("from main ({})", &first[..9])),
+        "{message}"
+    );
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": accept})
+    )
+    .unwrap();
+    let (text, is_error) = reply(&[next()], 2);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["source"]["commit"], first.as_str(), "{text}");
+    assert!(!table_has_id(&home, &vt, 2), "a dry run keeps nothing");
+
+    // main moves on: an apply at main is refused without a question.
+    std::fs::write(dir.join("003-x.sql"), row(3)).unwrap();
+    git(&["add", "."]).unwrap();
+    git(&["commit", "-q", "-m", "three"]).unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        tool_call(3, "apply_patches", args("apply", "main"))
+    )
+    .unwrap();
+    let frame = next();
+    assert_eq!(frame["id"], 3, "a reply, not a question: {frame}");
+    let (text, is_error) = reply(&[frame], 3);
+    assert!(
+        is_error && text.contains("this session's dry run read it at"),
+        "{text}"
+    );
+    assert!(text.contains(&format!("ref={first}")), "{text}");
+
+    // At the dry run's commit: what was dry-run, and nothing after it.
+    writeln!(
+        stdin,
+        "{}",
+        tool_call(4, "apply_patches", args("apply", &first))
+    )
+    .unwrap();
+    let ask = next();
+    assert_eq!(ask["method"], "elicitation/create", "{ask}");
+    let message = ask["params"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("002-x.sql") && !message.contains("003-x.sql"),
+        "{message}"
+    );
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": accept})
+    )
+    .unwrap();
+    let (text, is_error) = reply(&[next()], 4);
+    assert!(!is_error, "{text}");
+    assert!(table_has_id(&home, &vt, 2) && !table_has_id(&home, &vt, 3));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+    let _ = batch_with_home(&home, &["--yes", "--sql", &format!("DROP TABLE {vt}")]);
+}
+
+/// Over MCP, a remote database's patches from a checkout's working tree
+/// are refused without a `ref`, before anything connects or is asked.
+#[test]
+fn mcp_apply_patches_needs_a_ref_for_a_remote_database_in_a_checkout() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply-remote", WRITABLE_PROFILE);
+    let dir = home.join("checkout/db/patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("002-x.sql"), "INSERT INTO v (id) VALUES (2);\n").unwrap();
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(home.join("checkout"))
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !init {
+        eprintln!("skipped: no git");
+        return;
+    }
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        "[[connections]]\nname = \"demo-db\"\nurl = \"postgres://app@192.0.2.1:5432/ledger?connect_timeout=1\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"demo\"\nsource = {{ kind = \"static\", connections = [\"demo-db\"] }}\n\
+             version_table = {{ table = \"v\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args = serde_json::json!({"environment": "demo", "server": "demo-db", "database": "ledger", "mode": "dry_run"});
+    writeln!(stdin, "{}", tool_call(2, "apply_patches", args)).unwrap();
+    let frame = next();
+    assert_eq!(frame["id"], 2, "a reply, not a question: {frame}");
+    let (text, is_error) = reply(&[frame], 2);
+    assert!(
+        is_error && text.contains("is a remote database") && text.contains("`ref`"),
+        "{text}"
+    );
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
 /// A database safety.toml keeps read-only, and a statement a guard
 /// blocks, are put to the operator over `apply_patches` instead of
 /// refused: typing the environment's name lifts them for that one run,
@@ -6588,6 +7137,8 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         lift: false,
         read_only_lifted: false,
         liftable: false,
+        source: Default::default(),
+        source_warnings: Vec::new(),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let r = rt.block_on(pgman::inventory::patching::apply(
@@ -10044,6 +10595,40 @@ fn pgman_apply_applies_patches_and_outside_needs_the_typed_name() {
             .map(|r| r.get(0))
             .collect()
     };
+
+    // At a ref: the commit's files only (003 isn't committed), and the
+    // plan says where they came from.
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.test")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.test")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if git(&["init", "-q"]) {
+        assert!(git(&["add", "002-col.sql"]) && git(&["commit", "-q", "-m", "two"]));
+        let o = pgman_in(
+            &home,
+            &out,
+            &["apply", "patchenv", "--ref", "HEAD", "--dry-run", "--yes"],
+        );
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            stderr.contains(&format!(
+                "1 pending patch(es) from {} at HEAD (",
+                dir.display()
+            )) && !stderr.contains("003-index.sql"),
+            "{stderr}"
+        );
+        assert!(o.status.success(), "{stderr}");
+        assert_eq!(recorded(), vec![1], "a dry run keeps nothing");
+    }
 
     let o = pgman_in(&home, &out, &["apply", "patchenv", "--dry-run", "--yes"]);
     let (stdout, stderr) = (

@@ -109,6 +109,72 @@ pub struct PatchPlan {
     /// Planned without `lift`, it stopped at a patch refused only for
     /// what `lift` lets through.
     pub liftable: bool,
+    /// Where the files were read: the working tree, or a ref's commit,
+    /// which an apply of this plan runs exactly (the texts are the
+    /// plan's).
+    pub source: crate::patch_source::Source,
+    /// What the operator should know about that source: a working tree
+    /// with uncommitted or changed patch files, off the default branch,
+    /// behind its upstream, or read for a remote database.
+    pub source_warnings: Vec<String>,
+}
+
+/// Where [`plan_from`] reads the patch files.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PatchFrom {
+    /// A tag, branch or SHA: the files at its commit, resolved once.
+    pub git_ref: Option<String>,
+    /// Refuse a remote database's plan from a repository's working tree
+    /// with no ref (MCP's `apply_patches`).
+    pub require_ref: bool,
+}
+
+/// Whether `target` is this machine's server, reached without an ssh
+/// tunnel (`target::Resolved::is_local`'s rule). Pure.
+pub fn target_is_local(target: &Target) -> bool {
+    target
+        .connect
+        .as_ref()
+        .is_ok_and(|c| c.dsn.ssh_tunnel.is_none() && super::target::is_local_host(&c.dsn.host))
+}
+
+/// What a plan of `target` read from `snapshot` is told about where its
+/// files came from — or the refusal, under `require_ref`, of a remote
+/// database's plan from a working tree. Pure.
+pub fn source_warnings(
+    snapshot: &crate::patch_source::Snapshot,
+    target: &Target,
+    require_ref: bool,
+) -> Result<Vec<String>, String> {
+    let mut warnings = snapshot.warnings.clone();
+    if snapshot.unpinned() && !target_is_local(target) {
+        let why = format!(
+            "{} is a remote database, and these files are the checkout's working tree — whatever \
+             branch it is on, as of its last pull",
+            target.server
+        );
+        if require_ref {
+            return Err(format!(
+                "{why}. Name the commit to apply from with `ref`: a release tag, origin/main, or a \
+                 SHA (\"HEAD\" for the checkout's own commit, without its uncommitted changes)"
+            ));
+        }
+        warnings.push(format!(
+            "{why}; `pgman apply --ref` or apply_patches' `ref` reads a commit instead"
+        ));
+    }
+    Ok(warnings)
+}
+
+impl PatchPlan {
+    /// Where its files came from: `dir`, or `dir at demo-12 (5a17c0de2)`.
+    /// Pure.
+    pub fn files_from(&self) -> String {
+        match &self.source {
+            crate::patch_source::Source::WorkTree => self.dir.clone(),
+            commit => format!("{} at {}", self.dir, commit.describe()),
+        }
+    }
 }
 
 impl PlannedPatch {
@@ -630,18 +696,44 @@ pub async fn plan(
     outside: bool,
     lift: Option<&crate::safety::SafetyConfig>,
 ) -> Result<PatchPlan, String> {
+    plan_from(
+        env,
+        target,
+        safety,
+        fetch_secret,
+        outside,
+        lift,
+        &PatchFrom::default(),
+    )
+    .await
+}
+
+/// [`plan`], reading the patch files `from` a ref's commit, or the
+/// working tree. Every file is read once, before connecting, and the
+/// plan's texts are what runs.
+pub async fn plan_from(
+    env: &Environment,
+    target: &Target,
+    safety: &crate::safety::SafetyConfig,
+    fetch_secret: &FetchSecret,
+    outside: bool,
+    lift: Option<&crate::safety::SafetyConfig>,
+    from: &PatchFrom,
+) -> Result<PatchPlan, String> {
     let cfg = refuse(env, target)?;
     let dir = env
         .version_table
         .as_ref()
         .and_then(|v| v.patch_dir())
         .ok_or("no patches directory")??;
-    let files = {
-        let (dir, cfg) = (dir.clone(), cfg.clone());
-        tokio::task::spawn_blocking(move || crate::query::patches::read_patch_files(&dir, &cfg))
+    let snapshot = {
+        let (dir, git_ref) = (dir.clone(), from.git_ref.clone());
+        tokio::task::spawn_blocking(move || crate::patch_source::read(&dir, git_ref.as_deref()))
             .await
             .map_err(|e| format!("patch files task failed: {e}"))??
     };
+    let source_warnings = source_warnings(&snapshot, target, from.require_ref)?;
+    let files = snapshot.patch_files(&cfg);
     let dsn = dsn_for(target, fetch_secret).await?;
     let (client, _tunnel) = connect(dsn, true, PLAN_STATEMENT_TIMEOUT_MS).await?;
     let applied = crate::query::apply::applied_ids(&client, &cfg).await?;
@@ -661,6 +753,8 @@ pub async fn plan(
         lift: lift.is_some(),
         read_only_lifted: false,
         liftable: false,
+        source: snapshot.source.clone(),
+        source_warnings,
         dir: dir.display().to_string(),
         recorded: {
             let mut r = applied.clone();
@@ -674,13 +768,13 @@ pub async fn plan(
     let (pending, below) = split_at_recorded(report.pending, report.applied_max);
     plan.below_recorded = below.into_iter().map(|f| f.file).collect();
     for file in pending {
-        let path = dir.join(&file.file);
+        let read = snapshot.texts.get(&file.file).cloned();
         if plan.stopped_at.is_some() {
             // Past the stop nothing is planned, but each file's blocked
             // statements are listed with the stop's.
-            if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Some(text) = &read {
                 if let Err(r) =
-                    crate::query::apply::check_patch(safety, &target.database, &text, outside)
+                    crate::query::apply::check_patch(safety, &target.database, text, outside)
                 {
                     plan.blocked
                         .extend(r.blocked.into_iter().map(|g| (file.file.clone(), g)));
@@ -703,12 +797,9 @@ pub async fn plan(
             ));
             continue;
         }
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) => {
-                plan.stopped_at = Some((file.file, format!("could not read it: {e}")));
-                continue;
-            }
+        let Some(text) = read else {
+            plan.stopped_at = Some((file.file, "could not read it".to_string()));
+            continue;
         };
         if let Some(floor) = lift {
             if let Err(r) =
@@ -1161,6 +1252,7 @@ pub async fn plan_for(
     outside: bool,
     lift: Option<crate::safety::SafetyConfig>,
     safety: crate::safety::SafetyConfig,
+    from: PatchFrom,
 ) -> Result<PatchPlan, String> {
     // Its `ENV/DATABASE` and `ENV/SERVER/DATABASE` entries apply here.
     let safety = safety.scoped(&environment, Some(&server));
@@ -1169,13 +1261,14 @@ pub async fn plan_for(
         tokio::task::spawn_blocking(move || resolve(&environment, &server, &database))
             .await
             .map_err(|e| format!("resolve task failed: {e}"))??;
-    plan(
+    plan_from(
         &env,
         &target,
         &safety,
         &aws_secrets(),
         outside,
         lift.as_ref(),
+        &from,
     )
     .await
 }
@@ -1326,6 +1419,8 @@ mod tests {
             lift: false,
             read_only_lifted: false,
             liftable: false,
+            source: Default::default(),
+            source_warnings: Vec::new(),
         }
     }
 
@@ -1397,6 +1492,129 @@ mod tests {
         assert!(still_as_planned(&p, 0, &[])
             .unwrap_err()
             .contains("version 1 was recorded at the plan"));
+    }
+
+    #[test]
+    fn a_remote_plan_from_a_working_tree_needs_a_ref_where_one_is_required() {
+        use crate::patch_source::{Snapshot, Source};
+        let target = |dsn: &str| Target {
+            database: "ledger".into(),
+            server: "demo-primary".into(),
+            role: Role::Primary,
+            replica_of: None,
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            connect: Ok(super::super::ConnectSpec {
+                dsn: crate::conn::Dsn::parse(dsn).unwrap(),
+                secret: None,
+                password_env: None,
+            }),
+        };
+        let remote = target("postgres://app@10.0.1.23:5432/ledger");
+        let tunnelled =
+            target("postgres://app@127.0.0.1:5432/ledger?ssh_tunnel=bastion.example.com");
+        let local = target("postgres://app@127.0.0.1:55432/ledger");
+        let work = Snapshot {
+            in_git: true,
+            warnings: vec!["not committed: 9.sql".into()],
+            ..Default::default()
+        };
+        assert!(target_is_local(&local));
+        assert!(!target_is_local(&remote) && !target_is_local(&tunnelled));
+
+        let why = source_warnings(&work, &remote, true).unwrap_err();
+        assert!(
+            why.contains("demo-primary is a remote database") && why.contains("`ref`"),
+            "{why}"
+        );
+        assert!(source_warnings(&work, &tunnelled, true).is_err());
+        // Not required: said, with the snapshot's own warnings first.
+        let w = source_warnings(&work, &remote, false).unwrap();
+        assert_eq!(w.len(), 2);
+        assert_eq!(w[0], "not committed: 9.sql");
+        assert!(w[1].contains("`pgman apply --ref`"), "{}", w[1]);
+        // A local database, a commit, or a directory outside git: no rule.
+        assert_eq!(source_warnings(&work, &local, true).unwrap().len(), 1);
+        let pinned = Snapshot {
+            in_git: true,
+            source: Source::Commit {
+                git_ref: "demo-12".into(),
+                sha: "a".repeat(40),
+            },
+            ..Default::default()
+        };
+        assert!(source_warnings(&pinned, &remote, true).unwrap().is_empty());
+        let no_git = Snapshot::default();
+        assert!(source_warnings(&no_git, &remote, true).unwrap().is_empty());
+    }
+
+    /// The rule holds in the planner itself, before it connects: a
+    /// remote target's plan from a repository's working tree is refused
+    /// under `require_ref`, and only then.
+    #[test]
+    fn plan_from_refuses_a_remote_working_tree_before_connecting() {
+        let root = std::env::temp_dir().join(format!("pgman-plan-ref-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("db/patches");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("002-x.sql"), "INSERT INTO v (id) VALUES (2);").unwrap();
+        let init = crate::util::git()
+            .arg("-C")
+            .arg(&root)
+            .args(["init", "-q"])
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !init {
+            return;
+        }
+        let mut e = env("demo", None);
+        e.version_table = Some(super::super::VersionTable {
+            table: "v".into(),
+            column: "id".into(),
+            patches: Some(dir.display().to_string()),
+            databases: Vec::new(),
+        });
+        let t = Target {
+            database: "ledger".into(),
+            server: "demo-primary".into(),
+            role: Role::Primary,
+            replica_of: None,
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            // No DSN: not this machine's, and getting past the rule
+            // shows up as this error rather than the refusal.
+            connect: Err("no connection in this test".into()),
+        };
+        let no_secrets: FetchSecret = std::sync::Arc::new(|_| Err("none".into()));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let run = |from: PatchFrom| {
+            rt.block_on(plan_from(
+                &e,
+                &t,
+                &crate::safety::SafetyConfig::default(),
+                &no_secrets,
+                false,
+                None,
+                &from,
+            ))
+        };
+        let refused = run(PatchFrom {
+            git_ref: None,
+            require_ref: true,
+        })
+        .unwrap_err();
+        assert!(refused.contains("is a remote database"), "{refused}");
+        let past = run(PatchFrom::default()).unwrap_err();
+        assert_eq!(past, "no connection in this test");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

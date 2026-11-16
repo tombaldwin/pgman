@@ -302,6 +302,8 @@ fn a_plan_refused_at_its_first_patch_is_not_nothing_to_apply() {
         lift: false,
         read_only_lifted: false,
         liftable: false,
+        source: Default::default(),
+        source_warnings: Vec::new(),
     };
     let s = plan.empty_summary();
     assert!(
@@ -359,6 +361,8 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         lift: false,
         read_only_lifted: false,
         liftable: false,
+        source: Default::default(),
+        source_warnings: Vec::new(),
     };
     let (message, schema) =
         tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);
@@ -634,4 +638,35 @@ async fn dump_and_restore_are_refused_read_only_or_without_elicitation() {
             text(&r)
         );
     }
+}
+
+#[test]
+fn the_confirmation_names_the_ref_its_commit_and_the_sources_warnings() {
+    use crate::inventory::patching::RunMode;
+    let mut plan = crate::demo::patch_plan("demo", "demo-primary", "ledger", false);
+    plan.source = crate::patch_source::Source::Commit {
+        git_ref: "demo-12".into(),
+        sha: "5a17c0de2".repeat(4) + "abcd",
+    };
+    let (message, _) = crate::mcp::tools::confirm_request(&plan, RunMode::Apply);
+    assert!(
+        message.starts_with(&format!(
+            "Apply {} patch(es) from demo-12 (5a17c0de2) to demo demo-primary/ledger",
+            plan.patches.len()
+        )),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("files in {} at demo-12 (5a17c0de2)", plan.dir)),
+        "{message}"
+    );
+    assert!(!message.contains("about where these files came from"));
+    plan.source = Default::default();
+    plan.source_warnings = vec!["not committed: 9-new.sql".into()];
+    let (message, _) = crate::mcp::tools::confirm_request(&plan, RunMode::Apply);
+    assert!(
+        message.contains("WARNING, about where these files came from: not committed: 9-new.sql."),
+        "{message}"
+    );
+    assert!(!message.contains(" from demo-12"));
 }
