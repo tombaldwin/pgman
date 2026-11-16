@@ -40,10 +40,13 @@ fn xdg_dir(xdg_var: &str, home_suffix: &str) -> PathBuf {
 /// may be an agent's, and its `.git/config` the agent's to write; pgman
 /// runs git there with the MCP server's environment. Callers also avoid
 /// commands that run filters (`status`; `hash-object` without
-/// `--no-filters`).
+/// `--no-filters`). Replace refs are ignored: `refs/replace/<sha>` would
+/// otherwise make an object read as another's, so a commit named to the
+/// operator could yield another commit's files.
 pub fn git() -> std::process::Command {
     let mut c = std::process::Command::new("git");
     c.args([
+        "--no-replace-objects",
         "-c",
         "core.fsmonitor=false",
         "-c",

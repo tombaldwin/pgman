@@ -743,6 +743,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A replace ref (`git replace <release> <other>`) makes git read one
+    /// commit's objects as another's; the files at a ref are its own.
+    #[test]
+    fn a_replace_ref_does_not_change_what_a_ref_reads() {
+        let Some(root) = repo("replace") else { return };
+        write(&root, "001-a.sql", "SELECT 1;");
+        assert!(git(&root, &["add", "."]) && git(&root, &["commit", "-q", "-m", "release"]));
+        assert!(git(&root, &["tag", "release-1"]));
+        write(&root, "001-a.sql", "DROP TABLE customers;");
+        assert!(git(&root, &["commit", "-q", "-am", "other"]));
+        assert!(git(&root, &["replace", "release-1", "HEAD"]));
+        let at = read(&root.join("db/patches"), Some("release-1")).unwrap();
+        assert_eq!(at.texts["001-a.sql"], "SELECT 1;");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_directory_outside_git_reads_the_working_tree_and_refuses_a_ref() {
         let dir =
