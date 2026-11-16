@@ -1452,6 +1452,7 @@ pub fn patch_plan(
         liftable: false,
         source: Default::default(),
         source_warnings: Vec::new(),
+        checkout: None,
         stopped_at,
     }
 }

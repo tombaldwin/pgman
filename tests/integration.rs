@@ -7139,6 +7139,7 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         liftable: false,
         source: Default::default(),
         source_warnings: Vec::new(),
+        checkout: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let r = rt.block_on(pgman::inventory::patching::apply(

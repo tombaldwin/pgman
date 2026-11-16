@@ -78,6 +78,9 @@ pub struct Snapshot {
     /// The directory is inside a git repository, so a ref could have
     /// named a commit instead.
     pub in_git: bool,
+    /// A working-tree read in a checkout: its branch and commit
+    /// (`branch main at 5a17c0de2`), for the operator to see.
+    pub checkout: Option<String>,
 }
 
 impl Snapshot {
@@ -151,21 +154,29 @@ pub fn read(dir: &Path, git_ref: Option<&str>) -> Result<Snapshot, String> {
                 texts,
                 warnings,
                 in_git: true,
+                checkout: None,
             })
         }
         None => {
             let texts = read_work_tree(dir)?;
-            let warnings = match &repo {
-                Ok(Some((top, prefix))) => work_tree_warnings(top, prefix, &texts),
-                Ok(None) => Vec::new(),
-                Err(e) => vec![format!(
-                    "the files are in a git checkout git couldn't read: {e}"
-                )],
+            let (warnings, checkout) = match &repo {
+                Ok(Some((top, prefix))) => {
+                    let (w, c) = work_tree_warnings(top, prefix, &texts);
+                    (w, Some(c))
+                }
+                Ok(None) => (Vec::new(), None),
+                Err(e) => (
+                    vec![format!(
+                        "the files are in a git checkout git couldn't read: {e}"
+                    )],
+                    Some("a checkout git couldn't read".to_string()),
+                ),
             };
             Ok(Snapshot {
                 source: Source::WorkTree,
                 texts,
                 warnings,
+                checkout,
                 // A checkout git can't read is still a checkout: the
                 // rules for one hold rather than lapse.
                 in_git: !matches!(repo, Ok(None)),
@@ -456,7 +467,11 @@ pub fn parse_cat_file_batch<R: std::io::BufRead>(
 /// not in HEAD, changed since, or missing; a branch other than the
 /// default; commits behind or ahead of its upstream (as of the last
 /// fetch). Each check that git can't answer is left out.
-fn work_tree_warnings(top: &Path, prefix: &str, texts: &BTreeMap<String, String>) -> Vec<String> {
+fn work_tree_warnings(
+    top: &Path,
+    prefix: &str,
+    texts: &BTreeMap<String, String>,
+) -> (Vec<String>, String) {
     let mut warnings = Vec::new();
     let head = tree_entries(top, "HEAD", prefix).and_then(|entries| {
         let (texts, _) = read_entries(top, entries, "in HEAD")?;
@@ -493,7 +508,22 @@ fn work_tree_warnings(top: &Path, prefix: &str, texts: &BTreeMap<String, String>
         default.as_deref(),
         upstream.as_deref().zip(counts),
     ));
-    warnings
+    (
+        warnings,
+        checkout_line(branch.as_deref(), head_short.as_deref()),
+    )
+}
+
+/// The checkout's branch and commit, for people: `branch main at
+/// 5a17c0de2`, `5a17c0de2 (no branch)`, `branch main, no commit yet`.
+/// Pure.
+pub fn checkout_line(branch: Option<&str>, head: Option<&str>) -> String {
+    match (branch, head) {
+        (Some(b), Some(h)) => format!("branch {b} at {h}"),
+        (Some(b), None) => format!("branch {b}, no commit yet"),
+        (None, Some(h)) => format!("{h} (no branch)"),
+        (None, None) => "no commit".to_string(),
+    }
 }
 
 /// The working tree's `*.sql` files against HEAD's: untracked, modified,
@@ -706,6 +736,22 @@ mod tests {
     }
 
     #[test]
+    fn checkout_line_names_the_branch_and_commit() {
+        assert_eq!(
+            checkout_line(Some("main"), Some("5a17c0de2")),
+            "branch main at 5a17c0de2"
+        );
+        assert_eq!(
+            checkout_line(None, Some("5a17c0de2")),
+            "5a17c0de2 (no branch)"
+        );
+        assert_eq!(
+            checkout_line(Some("main"), None),
+            "branch main, no commit yet"
+        );
+    }
+
+    #[test]
     fn a_commit_source_describes_its_ref_and_short_sha() {
         let sha = "5a17c0de2aaaabbbbccccddddeeeeffff0000111";
         let c = Source::Commit {
@@ -779,6 +825,14 @@ mod tests {
 
         let work = read(&dir, None).unwrap();
         assert_eq!(work.texts.len(), 4);
+        assert!(
+            work.checkout
+                .as_deref()
+                .is_some_and(|c| c.starts_with("branch main at ")),
+            "{:?}",
+            work.checkout
+        );
+        assert_eq!(at.checkout, None);
         assert!(work.unpinned());
         assert!(
             work.warnings

@@ -304,6 +304,7 @@ fn a_plan_refused_at_its_first_patch_is_not_nothing_to_apply() {
         liftable: false,
         source: Default::default(),
         source_warnings: Vec::new(),
+        checkout: None,
     };
     let s = plan.empty_summary();
     assert!(
@@ -363,6 +364,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         liftable: false,
         source: Default::default(),
         source_warnings: Vec::new(),
+        checkout: None,
     };
     let (message, schema) =
         tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);
@@ -669,4 +671,11 @@ fn the_confirmation_names_the_ref_its_commit_and_the_sources_warnings() {
         "{message}"
     );
     assert!(!message.contains(" from demo-12"));
+    // A checkout's working tree is named as such, with its branch.
+    plan.checkout = Some("branch feature-x at 5a17c0de2".into());
+    let (message, _) = crate::mcp::tools::confirm_request(&plan, RunMode::Apply);
+    assert!(
+        message.contains("patch(es) from the checkout's working tree (branch feature-x at 5a17c0de2, uncommitted changes included) to demo"),
+        "{message}"
+    );
 }

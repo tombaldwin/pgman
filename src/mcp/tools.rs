@@ -1298,9 +1298,12 @@ pub fn confirm_request(
             "The database is copied on the same server first (CREATE DATABASE … TEMPLATE: it needs nobody else connected to it, and copies all of it), the patches applied to the copy each in its own transaction, then the copy dropped.",
         ),
     };
-    let from = match &plan.source {
-        crate::patch_source::Source::WorkTree => String::new(),
-        commit => format!(" from {}", commit.describe()),
+    let from = match (&plan.source, &plan.checkout) {
+        (crate::patch_source::Source::WorkTree, None) => String::new(),
+        (crate::patch_source::Source::WorkTree, Some(c)) => {
+            format!(" from the checkout's working tree ({c}, uncommitted changes included)")
+        }
+        (commit, _) => format!(" from {}", commit.describe()),
     };
     let mut message = format!(
         "{verb} {} patch(es){from} to {onto}{} {}/{} (recorded up to {}): {}. {how}",

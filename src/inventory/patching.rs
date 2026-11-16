@@ -117,6 +117,8 @@ pub struct PatchPlan {
     /// with uncommitted or changed patch files, off the default branch,
     /// behind its upstream, or read for a remote database.
     pub source_warnings: Vec<String>,
+    /// Read from a checkout's working tree: its branch and commit.
+    pub checkout: Option<String>,
 }
 
 /// Where [`plan_from`] reads the patch files.
@@ -144,9 +146,19 @@ pub fn target_is_local(target: &Target) -> bool {
 pub fn source_warnings(
     snapshot: &crate::patch_source::Snapshot,
     target: &Target,
+    protected: bool,
     require_ref: bool,
 ) -> Result<Vec<String>, String> {
     let mut warnings = snapshot.warnings.clone();
+    if snapshot.unpinned() && protected && target_is_local(target) {
+        // Loopback, but a port-forward or a proxy looks the same: a
+        // protected environment's plan says where its files came from.
+        warnings.push(format!(
+            "{} is protected, and these files are the checkout's working tree, uncommitted \
+             changes included, not a named commit",
+            target.server
+        ));
+    }
     if snapshot.unpinned() && !target_is_local(target) {
         let why = format!(
             "{} is a remote database, and these files are the checkout's working tree — whatever \
@@ -170,9 +182,12 @@ impl PatchPlan {
     /// Where its files came from: `dir`, or `dir at demo-12 (5a17c0de2)`.
     /// Pure.
     pub fn files_from(&self) -> String {
-        match &self.source {
-            crate::patch_source::Source::WorkTree => self.dir.clone(),
-            commit => format!("{} at {}", self.dir, commit.describe()),
+        match (&self.source, &self.checkout) {
+            (crate::patch_source::Source::WorkTree, None) => self.dir.clone(),
+            (crate::patch_source::Source::WorkTree, Some(c)) => {
+                format!("{}, the working tree ({c})", self.dir)
+            }
+            (commit, _) => format!("{} at {}", self.dir, commit.describe()),
         }
     }
 }
@@ -732,7 +747,7 @@ pub async fn plan_from(
             .await
             .map_err(|e| format!("patch files task failed: {e}"))??
     };
-    let source_warnings = source_warnings(&snapshot, target, from.require_ref)?;
+    let source_warnings = source_warnings(&snapshot, target, is_protected(env), from.require_ref)?;
     let files = snapshot.patch_files(&cfg);
     let dsn = dsn_for(target, fetch_secret).await?;
     let (client, _tunnel) = connect(dsn, true, PLAN_STATEMENT_TIMEOUT_MS).await?;
@@ -755,6 +770,7 @@ pub async fn plan_from(
         liftable: false,
         source: snapshot.source.clone(),
         source_warnings,
+        checkout: snapshot.checkout.clone(),
         dir: dir.display().to_string(),
         recorded: {
             let mut r = applied.clone();
@@ -1421,6 +1437,7 @@ mod tests {
             liftable: false,
             source: Default::default(),
             source_warnings: Vec::new(),
+            checkout: None,
         }
     }
 
@@ -1526,19 +1543,22 @@ mod tests {
         assert!(target_is_local(&local));
         assert!(!target_is_local(&remote) && !target_is_local(&tunnelled));
 
-        let why = source_warnings(&work, &remote, true).unwrap_err();
+        let why = source_warnings(&work, &remote, false, true).unwrap_err();
         assert!(
             why.contains("demo-primary is a remote database") && why.contains("`ref`"),
             "{why}"
         );
-        assert!(source_warnings(&work, &tunnelled, true).is_err());
+        assert!(source_warnings(&work, &tunnelled, false, true).is_err());
         // Not required: said, with the snapshot's own warnings first.
-        let w = source_warnings(&work, &remote, false).unwrap();
+        let w = source_warnings(&work, &remote, false, false).unwrap();
         assert_eq!(w.len(), 2);
         assert_eq!(w[0], "not committed: 9.sql");
         assert!(w[1].contains("`pgman apply --ref`"), "{}", w[1]);
         // A local database, a commit, or a directory outside git: no rule.
-        assert_eq!(source_warnings(&work, &local, true).unwrap().len(), 1);
+        assert_eq!(
+            source_warnings(&work, &local, false, true).unwrap().len(),
+            1
+        );
         let pinned = Snapshot {
             in_git: true,
             source: Source::Commit {
@@ -1547,9 +1567,25 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(source_warnings(&pinned, &remote, true).unwrap().is_empty());
+        assert!(source_warnings(&pinned, &remote, false, true)
+            .unwrap()
+            .is_empty());
         let no_git = Snapshot::default();
-        assert!(source_warnings(&no_git, &remote, true).unwrap().is_empty());
+        assert!(source_warnings(&no_git, &remote, false, true)
+            .unwrap()
+            .is_empty());
+        // Protected and over loopback: allowed, and said.
+        let w = source_warnings(&work, &local, true, true).unwrap();
+        assert!(
+            w.iter().any(
+                |w| w.contains("is protected, and these files are the checkout's working tree")
+            ),
+            "{w:?}"
+        );
+        assert_eq!(
+            source_warnings(&pinned, &local, true, true).unwrap().len(),
+            0
+        );
     }
 
     /// The rule holds in the planner itself, before it connects: a

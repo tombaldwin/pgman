@@ -334,6 +334,7 @@ mod tests {
             liftable: false,
             source: Default::default(),
             source_warnings: Vec::new(),
+            checkout: None,
         }
     }
 

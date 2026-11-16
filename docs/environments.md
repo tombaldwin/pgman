@@ -454,7 +454,11 @@ needs fetching first.
 
 Over MCP, a remote database's patches (not this machine's, or reached
 through an ssh tunnel) are refused without a ref when the directory is
-in a checkout; `pgman apply` and `P` warn instead. A dry run at a ref
+in a checkout; `pgman apply` and `P` warn instead. Read from a
+checkout's working tree, the confirmation says so, with its branch and
+commit; a protected environment over loopback (a port-forward or a
+proxy looks the same) gets a warning that the files aren't a named
+commit. A dry run at a ref
 remembers its commit for the session: an apply at the same ref that
 finds another commit — the branch moved — is refused, and says how to
 dry-run again or apply the commit that was dry-run.
