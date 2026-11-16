@@ -198,10 +198,21 @@ fn read_work_tree(dir: &Path) -> Result<BTreeMap<String, String>, String> {
         if !is_sql(&name) || !path.is_file() {
             continue;
         }
-        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {name}: {e}"))?;
+        let bytes = read_capped(&path).map_err(|e| format!("cannot read {name}: {e}"))?;
         out.insert(name.clone(), text_of(&name, bytes)?);
     }
     Ok(out)
+}
+
+/// A file's bytes, but never more than one past [`MAX_FILE_BYTES`]: a
+/// bigger one is refused by its size, without reading it all.
+fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn is_sql(name: &str) -> bool {
@@ -211,12 +222,13 @@ fn is_sql(name: &str) -> bool {
 /// A patch file's bytes as text: UTF-8, and not past [`MAX_FILE_BYTES`].
 fn text_of(name: &str, bytes: Vec<u8>) -> Result<String, String> {
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(format!(
-            "{name} is {} bytes, more than a patch file pgman reads ({MAX_FILE_BYTES})",
-            bytes.len()
-        ));
+        return Err(too_big(name));
     }
     String::from_utf8(bytes).map_err(|_| format!("{name} isn't UTF-8 text"))
+}
+
+fn too_big(name: &str) -> String {
+    format!("{name} is bigger than a patch file pgman reads ({MAX_FILE_BYTES} bytes)")
 }
 
 /// git in `dir`, its stdout on success, its stderr's first line on
@@ -348,8 +360,7 @@ fn read_entries(
             ));
         }
     }
-    let oids: Vec<&str> = files.iter().map(|e| e.oid.as_str()).collect();
-    let blobs = cat_blobs(top, &oids)?;
+    let blobs = cat_blobs(top, &files)?;
     let mut texts = BTreeMap::new();
     for (e, bytes) in files.iter().zip(blobs) {
         texts.insert(e.name.clone(), text_of(&e.name, bytes)?);
@@ -357,10 +368,11 @@ fn read_entries(
     Ok((texts, warnings))
 }
 
-/// Each object in `oids`, by `git cat-file --batch` (no filters run).
-fn cat_blobs(top: &Path, oids: &[&str]) -> Result<Vec<Vec<u8>>, String> {
-    use std::io::{Read, Write};
-    if oids.is_empty() {
+/// Each of `files`' objects, by `git cat-file --batch` (no filters
+/// run), read as it streams: one past [`MAX_FILE_BYTES`] stops it.
+fn cat_blobs(top: &Path, files: &[TreeEntry]) -> Result<Vec<Vec<u8>>, String> {
+    use std::io::Write;
+    if files.is_empty() {
         return Ok(Vec::new());
     }
     let mut child = crate::util::git()
@@ -372,55 +384,70 @@ fn cat_blobs(top: &Path, oids: &[&str]) -> Result<Vec<Vec<u8>>, String> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("cannot run git: {e}"))?;
-    let mut input = oids.join("\n");
-    input.push('\n');
+    let input: String = files.iter().map(|e| format!("{}\n", e.oid)).collect();
     let mut stdin = child.stdin.take().ok_or("git cat-file has no stdin")?;
     // Written from its own thread: git answers as it reads, and a full
     // stdout pipe would otherwise stall both sides.
     let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
-    let mut out = Vec::new();
-    child
-        .stdout
-        .take()
-        .ok_or("git cat-file has no stdout")?
-        .read_to_end(&mut out)
-        .map_err(|e| format!("reading git cat-file: {e}"))?;
+    let stdout = child.stdout.take().ok_or("git cat-file has no stdout")?;
+    let names: Vec<&str> = files.iter().map(|e| e.name.as_str()).collect();
+    let parsed = parse_cat_file_batch(std::io::BufReader::new(stdout), &names, MAX_FILE_BYTES);
+    if parsed.is_err() {
+        // Its output is no longer read: stop it rather than wait.
+        let _ = child.kill();
+    }
     let _ = writer.join();
     let status = child.wait().map_err(|e| format!("git cat-file: {e}"))?;
+    let blobs = parsed?;
     if !status.success() {
         return Err("git cat-file failed".to_string());
     }
-    parse_cat_file_batch(&out, oids.len())
+    Ok(blobs)
 }
 
-/// `git cat-file --batch` output: `<oid> <type> <size>\n<content>\n` per
-/// object, `<oid> missing\n` for one it lacks. Exactly `count` blobs, or
-/// an error. Pure.
-pub fn parse_cat_file_batch(out: &[u8], count: usize) -> Result<Vec<Vec<u8>>, String> {
-    let mut blobs = Vec::with_capacity(count);
-    let mut rest = out;
-    while blobs.len() < count {
-        let nl = rest
-            .iter()
-            .position(|b| *b == b'\n')
-            .ok_or("git cat-file output ended early")?;
-        let header = std::str::from_utf8(&rest[..nl]).map_err(|_| "bad git cat-file header")?;
+/// `git cat-file --batch` output, one object per name in `names`:
+/// `<oid> <type> <size>\n<content>\n`, or `<oid> missing\n` for one it
+/// lacks. Read as it streams, so an object over `max` bytes is refused
+/// by its header, before its content is read. Pure but for `r`.
+pub fn parse_cat_file_batch<R: std::io::BufRead>(
+    mut r: R,
+    names: &[&str],
+    max: usize,
+) -> Result<Vec<Vec<u8>>, String> {
+    use std::io::{BufRead, Read};
+    let ended = |e: std::io::Error| format!("git cat-file output ended early: {e}");
+    let mut blobs = Vec::with_capacity(names.len());
+    for name in names {
+        let mut header = Vec::new();
+        (&mut r)
+            .take(512)
+            .read_until(b'\n', &mut header)
+            .map_err(ended)?;
+        if header.pop() != Some(b'\n') {
+            return Err("git cat-file output ended early".to_string());
+        }
+        let header = std::str::from_utf8(&header).map_err(|_| "bad git cat-file header")?;
         let fields: Vec<&str> = header.split(' ').collect();
         let [oid, kind, size] = fields[..] else {
-            return Err(format!("git cat-file: {header}"));
+            return Err(format!("{name}: git cat-file says {header:?}"));
         };
         if kind != "blob" {
-            return Err(format!("{oid} is a {kind}, not a file"));
+            return Err(format!("{name} ({oid}) is a {kind}, not a file"));
         }
         let size: usize = size
             .parse()
             .map_err(|_| format!("bad git cat-file size in {header:?}"))?;
-        let body = &rest[nl + 1..];
-        if body.len() < size + 1 || body[size] != b'\n' {
-            return Err("git cat-file output ended early".to_string());
+        if size > max {
+            return Err(too_big(name));
         }
-        blobs.push(body[..size].to_vec());
-        rest = &body[size + 1..];
+        let mut body = vec![0; size];
+        r.read_exact(&mut body).map_err(ended)?;
+        let mut nl = [0u8];
+        r.read_exact(&mut nl).map_err(ended)?;
+        if nl[0] != b'\n' {
+            return Err("git cat-file output is out of step".to_string());
+        }
+        blobs.push(body);
     }
     Ok(blobs)
 }
@@ -595,15 +622,46 @@ mod tests {
 
     #[test]
     fn cat_file_batch_splits_on_sizes_not_newlines() {
+        let parse = |out: &[u8], names: &[&str]| parse_cat_file_batch(out, names, 100);
         let out = b"aaa blob 5\nab\ncd\nbbb blob 0\n\n";
         assert_eq!(
-            parse_cat_file_batch(out, 2).unwrap(),
+            parse(out, &["a.sql", "b.sql"]).unwrap(),
             vec![b"ab\ncd".to_vec(), Vec::new()]
         );
-        assert!(parse_cat_file_batch(b"aaa missing\n", 1).is_err());
-        assert!(parse_cat_file_batch(b"aaa blob 9\nshort\n", 1).is_err());
-        assert!(parse_cat_file_batch(b"aaa tree 3\nabc\n", 1).is_err());
-        assert!(parse_cat_file_batch(b"aaa blob 1\nx\n", 2).is_err());
+        assert!(parse(b"aaa missing\n", &["a.sql"])
+            .unwrap_err()
+            .contains("a.sql"));
+        assert!(parse(b"aaa blob 9\nshort\n", &["a.sql"]).is_err());
+        assert!(parse(b"aaa tree 3\nabc\n", &["a.sql"]).is_err());
+        assert!(parse(b"aaa blob 1\nx\n", &["a.sql", "b.sql"]).is_err());
+        assert!(parse(b"aaa blob 1\nxy", &["a.sql"]).is_err());
+        // A size that would overflow, and one over the cap: refused by
+        // the header, nothing allocated for the content.
+        let huge = format!("aaa blob {}\n", usize::MAX);
+        assert!(parse(huge.as_bytes(), &["a.sql"])
+            .unwrap_err()
+            .contains("bigger than"));
+        assert!(parse(b"aaa blob 101\n", &["big.sql"])
+            .unwrap_err()
+            .starts_with("big.sql is bigger"));
+    }
+
+    #[test]
+    fn a_working_tree_file_over_the_cap_is_refused_unread() {
+        let dir =
+            std::env::temp_dir().join(format!("pgman-patch-source-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = std::fs::File::create(dir.join("001-big.sql")).unwrap();
+        // Sparse: big by its length, nothing written.
+        f.set_len(MAX_FILE_BYTES as u64 * 64).unwrap();
+        assert_eq!(
+            read_capped(&dir.join("001-big.sql")).unwrap().len(),
+            MAX_FILE_BYTES + 1
+        );
+        let e = read_work_tree(&dir).unwrap_err();
+        assert!(e.starts_with("001-big.sql is bigger"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

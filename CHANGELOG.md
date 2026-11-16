@@ -30,7 +30,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   directory outside git, is as before. An apply at the same ref as the
   session's dry run that finds another commit is refused.
 - A patch plan reads every file once, before connecting, and runs the
-  texts it read.
+  texts it read. A patch file over 16 MB is refused by its size, where
+  `pending_patches` used to read only its first 1 MB.
 
 ## [0.5.3] — 2026-11-14
 
