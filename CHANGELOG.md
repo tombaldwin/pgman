@@ -30,10 +30,25 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - MCP `apply_patches` refuses a remote database's patches from a
   checkout's working tree without `ref`; a local database, or a patches
   directory outside git, is as before. An apply at the same ref as the
-  session's dry run that finds another commit is refused.
+  session's dry run that finds another commit is refused. Any other run
+  after a dry run that reads another commit (another spelling of the
+  ref, another ref, the working tree) opens its confirmation by saying
+  so.
+- `apply_patches`' confirmation names where the files came from: the
+  ref and its commit, or the checkout's working tree with its branch
+  and commit. A protected environment over loopback warns that its
+  files aren't a named commit.
 - A patch plan reads every file once, before connecting, and runs the
   texts it read. A patch file over 16 MB is refused by its size, where
   `pending_patches` used to read only its first 1 MB.
+
+### Security
+
+- git, wherever pgman runs it in a checkout, ignores replace refs (which
+  could make a named commit yield another commit's files) and fetches
+  nothing: a partial clone's missing object reads as missing, rather
+  than being fetched through the remote's transport from the checkout's
+  config (`core.sshCommand`, a credential helper).
 
 ## [0.5.3] — 2026-11-14
 
