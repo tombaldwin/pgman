@@ -487,10 +487,7 @@ fn work_tree_warnings(
     let branch = git_out(top, &["symbolic-ref", "--quiet", "--short", "HEAD"])
         .ok()
         .map(|b| b.trim().to_string());
-    let default = git_out(top, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
-        .ok()
-        .map(|d| d.trim().trim_start_matches("origin/").to_string())
-        .filter(|d| !d.is_empty() && d != "origin/HEAD" && d != "HEAD");
+    let default = default_branch(top);
     let upstream = git_out(top, &["rev-parse", "--abbrev-ref", "@{upstream}"])
         .ok()
         .map(|u| u.trim().to_string());
@@ -516,6 +513,25 @@ fn work_tree_warnings(
         warnings,
         checkout_line(branch.as_deref(), head_short.as_deref()),
     )
+}
+
+/// The default branch: what `origin/HEAD` names, or else `main` or
+/// `master` when origin has it (a remote added with `git remote add`
+/// has no `origin/HEAD`). `None` when neither says.
+fn default_branch(top: &Path) -> Option<String> {
+    let named = git_out(top, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .ok()
+        .map(|d| d.trim().trim_start_matches("origin/").to_string())
+        .filter(|d| !d.is_empty() && d != "origin/HEAD" && d != "HEAD");
+    named.or_else(|| {
+        ["main", "master"]
+            .into_iter()
+            .find(|b| {
+                let r = format!("refs/remotes/origin/{b}");
+                git_out(top, &["rev-parse", "--verify", "--quiet", &r]).is_ok()
+            })
+            .map(str::to_string)
+    })
 }
 
 /// The checkout's branch and commit, for people: `branch main at
@@ -938,6 +954,28 @@ mod tests {
         assert!(got.is_err(), "a missing blob reads as missing: {got:?}");
         let _ = std::fs::remove_dir_all(&clone);
         let _ = std::fs::remove_dir_all(&origin);
+    }
+
+    /// With no origin/HEAD (a remote added by hand), origin's main is
+    /// still the default a feature branch is told it isn't on.
+    #[test]
+    fn a_feature_branch_is_told_its_not_main_without_origin_head() {
+        let Some(root) = repo("default") else { return };
+        write(&root, "001-a.sql", "SELECT 1;");
+        assert!(git(&root, &["add", "."]) && git(&root, &["commit", "-q", "-m", "one"]));
+        assert!(git(
+            &root,
+            &["update-ref", "refs/remotes/origin/main", "HEAD"]
+        ));
+        assert!(git(&root, &["switch", "-q", "-c", "feature-x"]));
+        let s = read(&root.join("db/patches"), None).unwrap();
+        assert!(
+            s.warnings
+                .contains(&"the checkout is on branch feature-x, not main".to_string()),
+            "{:?}",
+            s.warnings
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
