@@ -99,7 +99,7 @@ async fn read_plan(
             None,
             Some(match checked.kind {
                 crate::safety::StatementKind::Insert => "an INSERT".to_string(),
-                _ => "not a plain UPDATE or DELETE of one table".to_string(),
+                _ => "not an UPDATE or DELETE of one table pgman can read".to_string(),
             }),
         ),
     };

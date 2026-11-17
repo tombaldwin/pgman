@@ -10,8 +10,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 - MCP `execute`: one `INSERT`, `UPDATE` or `DELETE` on an environment's
   database, run once after the operator confirms the exact statement.
-  A plain `UPDATE` or `DELETE` is counted first, read-only, with its
-  own `WHERE`, and an `UPDATE`'s current values of the columns it sets
+  An `UPDATE` or `DELETE` of one table (`FROM` and `USING` joins
+  included) is counted first, read-only, with its own `WHERE`, and an `UPDATE`'s current values of the columns it sets
   are shown; anything pgman can't count needs `expect_rows`. It runs in
   one transaction with a 5 s lock timeout and a 30 s statement timeout,
   and is rolled back unless it changed exactly the rows confirmed. The

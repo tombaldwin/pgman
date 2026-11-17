@@ -19,9 +19,6 @@ window: PLAN.md — an item lives in exactly one of the two.
 - **No CLI or TUI twin.** The editor already writes through the
   guards; a `pgman execute` with the count and the rollback-unless-N
   check could follow if wanted.
-- **Counting `UPDATE … FROM` / `DELETE … USING`.** They need
-  `expect_rows` today; rewriting them as a count with their joins is
-  possible but easier to get wrong.
 
 ### Patch files at a git ref — follow-ups (2026-11-16)
 

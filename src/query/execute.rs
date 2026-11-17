@@ -12,9 +12,10 @@
 //! read-only profile `apply_patches` honours — a refusal of those two
 //! being what the operator may lift for one run.
 //!
-//! Before asking, a plain `UPDATE` or `DELETE` ([`shape`]: one table, no
-//! `FROM` / `USING`) is counted on a read-only session with its own
-//! `WHERE` ([`count_sql`]), and an `UPDATE`'s current values of the
+//! Before asking, an `UPDATE` or `DELETE` of one table ([`shape`]; with
+//! a `FROM` or `USING` list too, counted as a semi-join over it) is
+//! counted on a read-only session with its own `WHERE` ([`count_sql`]),
+//! and an `UPDATE`'s current values of the
 //! columns it sets are read ([`before_sql`]), so the operator sees what
 //! it overwrites and the audit line can undo it by hand. Both are
 //! derived from the statement's text: whole top-level clauses moved, never
@@ -204,7 +205,7 @@ fn is_parameter(token: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The parts of a plain `UPDATE` or `DELETE` pgman can count and read
+/// The parts of an `UPDATE` or `DELETE` pgman can count and read
 /// back: one table, its own `WHERE` (if any), and the columns an
 /// `UPDATE` sets — each as written.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,6 +214,10 @@ pub struct Shape {
     pub table: String,
     /// The `WHERE` condition, without `WHERE`.
     pub filter: Option<String>,
+    /// An `UPDATE`'s `FROM` list or a `DELETE`'s `USING` list, without
+    /// the keyword: the rows it changes are those of `table` some row
+    /// of these meets `filter` with.
+    pub joined: Option<String>,
     /// The columns an `UPDATE` sets, when each is a plain name; empty for
     /// a `DELETE`, or when one isn't.
     pub set_columns: Vec<String>,
@@ -285,9 +290,10 @@ fn top_level(sql: &str) -> Option<Vec<(Tok, usize, usize)>> {
     (depth == 0).then_some(out)
 }
 
-/// `stmt`'s [`Shape`], when it is a plain `UPDATE` or `DELETE`; `None`
-/// for an `INSERT`, an `UPDATE … FROM`, a `DELETE … USING`, `WHERE
-/// CURRENT OF`, or anything this can't read for certain. Pure.
+/// `stmt`'s [`Shape`], when it is an `UPDATE` or `DELETE` of one table
+/// (joined to others by `FROM` or `USING`, or not); `None` for an
+/// `INSERT`, `WHERE CURRENT OF`, or anything this can't read for
+/// certain. Pure.
 pub fn shape(stmt: &str) -> Option<Shape> {
     let sql = safety::strip_sql_comments(stmt);
     let sql = sql.trim().trim_end_matches(';').trim_end();
@@ -300,10 +306,8 @@ pub fn shape(stmt: &str) -> Option<Shape> {
     let (table_from, after_table) = match (word(0), word(1)) {
         (Some("update"), _) => (1, find("set", 1)?),
         (Some("delete"), Some("from")) => {
-            if find("using", 2).is_some() {
-                return None;
-            }
-            let end = find("where", 2)
+            let end = find("using", 2)
+                .or_else(|| find("where", 2))
                 .or_else(|| find("returning", 2))
                 .unwrap_or(toks.len());
             (2, end)
@@ -321,9 +325,17 @@ pub fn shape(stmt: &str) -> Option<Shape> {
     }
     let table = sql[table_toks[0].1..table_toks[table_toks.len() - 1].2].to_string();
     let update = word(0) == Some("update");
-    if update && find("from", after_table).is_some() {
-        return None;
-    }
+    // An UPDATE's FROM, a DELETE's USING. `IS [NOT] DISTINCT FROM` in a
+    // SET expression is no FROM list: such a statement isn't read.
+    let join_at = if update {
+        let from = find("from", after_table);
+        if from.is_some_and(|f| f > 0 && word(f - 1) == Some("distinct")) {
+            return None;
+        }
+        from
+    } else {
+        find("using", after_table).filter(|u| *u == after_table)
+    };
     let returning = find("returning", after_table);
     let where_at = find("where", after_table).filter(|w| returning.is_none_or(|r| *w < r));
     let end = returning.map_or(sql.len(), |r| toks[r].1);
@@ -340,8 +352,22 @@ pub fn shape(stmt: &str) -> Option<Shape> {
         }
         None => None,
     };
+    let joined = match join_at {
+        Some(j) => {
+            let end = where_at.or(returning).map_or(sql.len(), |i| toks[i].1);
+            if where_at.is_some_and(|w| w < j) || returning.is_some_and(|r| r < j) {
+                return None;
+            }
+            let list = sql[toks[j].2..end].trim();
+            if list.is_empty() {
+                return None;
+            }
+            Some(list.to_string())
+        }
+        None => None,
+    };
     let set_columns = if update {
-        let set_end = where_at.or(returning).unwrap_or(toks.len());
+        let set_end = join_at.or(where_at).or(returning).unwrap_or(toks.len());
         set_columns(sql, &toks[after_table + 1..set_end])
     } else {
         Vec::new()
@@ -349,6 +375,7 @@ pub fn shape(stmt: &str) -> Option<Shape> {
     Some(Shape {
         table,
         filter,
+        joined,
         set_columns,
     })
 }
@@ -369,12 +396,23 @@ fn set_columns(sql: &str, toks: &[(Tok, usize, usize)]) -> Vec<String> {
     cols
 }
 
+/// The condition on `shape`'s table that picks the rows its statement
+/// changes, with `WHERE`; empty for every row. Joined, a row is changed
+/// once however many rows it meets, so it is a semi-join: `EXISTS`
+/// over the joined list, the filter inside it, still seeing the table.
+/// Pure.
+fn picks(shape: &Shape) -> String {
+    match (&shape.joined, &shape.filter) {
+        (Some(j), Some(f)) => format!(" WHERE EXISTS (SELECT 1 FROM {j} WHERE {f})"),
+        (Some(j), None) => format!(" WHERE EXISTS (SELECT 1 FROM {j})"),
+        (None, Some(f)) => format!(" WHERE {f}"),
+        (None, None) => String::new(),
+    }
+}
+
 /// `SELECT count(*)` of the rows `shape`'s statement changes. Pure.
 pub fn count_sql(shape: &Shape) -> String {
-    match &shape.filter {
-        Some(f) => format!("SELECT count(*) FROM {} WHERE {f}", shape.table),
-        None => format!("SELECT count(*) FROM {}", shape.table),
-    }
+    format!("SELECT count(*) FROM {}{}", shape.table, picks(shape))
 }
 
 /// The current values of the columns an `UPDATE` sets, in the rows it
@@ -384,15 +422,13 @@ pub fn before_sql(shape: &Shape) -> Option<String> {
     if shape.set_columns.is_empty() {
         return None;
     }
+    // Unqualified, the columns are the table's: the joined list is
+    // only in scope inside the EXISTS.
     let cols = shape.set_columns.join(", ");
-    let filter = shape
-        .filter
-        .as_ref()
-        .map(|f| format!(" WHERE {f}"))
-        .unwrap_or_default();
     Some(format!(
-        "SELECT {cols} FROM {}{filter} LIMIT {}",
+        "SELECT {cols} FROM {}{} LIMIT {}",
         shape.table,
+        picks(shape),
         MAX_BEFORE_ROWS + 1
     ))
 }
@@ -775,9 +811,9 @@ mod tests {
     fn what_cannot_be_counted_for_certain_is_not_shaped() {
         for sql in [
             "INSERT INTO t VALUES (1)",
-            "UPDATE t SET a = u.a FROM u WHERE u.id = t.id",
             "UPDATE t SET a = b IS DISTINCT FROM c WHERE id = 1",
-            "DELETE FROM t USING u WHERE u.id = t.id",
+            "UPDATE t SET a = 1 FROM WHERE id = 1",
+            "DELETE FROM t USING WHERE id = 1",
             "UPDATE t SET a = 1 WHERE CURRENT OF c",
             "UPDATE t SET a = 1 WHERE",
             "UPDATE f(1) SET a = 1 WHERE id = 1",
@@ -790,6 +826,37 @@ mod tests {
         assert!(s.set_columns.is_empty() && before_sql(&s).is_none());
         let s = shape("UPDATE t SET a[1] = 2 WHERE id = 1").unwrap();
         assert!(s.set_columns.is_empty());
+    }
+
+    #[test]
+    fn a_joined_update_or_delete_is_counted_as_a_semi_join() {
+        let s = shape(
+            "UPDATE t AS x SET a = u.a, b = 2 FROM u, v WHERE u.id = x.id AND v.ok RETURNING x.id",
+        )
+        .unwrap();
+        assert_eq!(s.table, "t AS x");
+        assert_eq!(s.joined.as_deref(), Some("u, v"));
+        assert_eq!(s.filter.as_deref(), Some("u.id = x.id AND v.ok"));
+        assert_eq!(s.set_columns, vec!["a", "b"]);
+        assert_eq!(
+            count_sql(&s),
+            "SELECT count(*) FROM t AS x WHERE EXISTS (SELECT 1 FROM u, v WHERE u.id = x.id AND v.ok)"
+        );
+        assert_eq!(
+            before_sql(&s).unwrap(),
+            "SELECT a, b FROM t AS x WHERE EXISTS (SELECT 1 FROM u, v WHERE u.id = x.id AND v.ok) LIMIT 21"
+        );
+        let d = shape("DELETE FROM t USING u JOIN w ON w.id = u.w WHERE u.id = t.id").unwrap();
+        assert_eq!(d.table, "t");
+        assert_eq!(
+            count_sql(&d),
+            "SELECT count(*) FROM t WHERE EXISTS (SELECT 1 FROM u JOIN w ON w.id = u.w WHERE u.id = t.id)"
+        );
+        let all = shape("UPDATE t SET a = 1 FROM u").unwrap();
+        assert_eq!(
+            count_sql(&all),
+            "SELECT count(*) FROM t WHERE EXISTS (SELECT 1 FROM u)"
+        );
     }
 
     #[test]

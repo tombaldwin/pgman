@@ -14257,3 +14257,34 @@ fn mcp_execute_never_lifts_the_projects_safety() {
     s.finish();
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
+
+/// A joined UPDATE or DELETE is counted as the rows of its table it
+/// changes, once each however many rows they meet: the count the run
+/// then has to match.
+#[test]
+fn execute_counts_a_joined_update_and_delete_as_the_rows_they_change() {
+    let (t, u) = (it_name("execj_t"), it_name("execj_u"));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw("pgman_test").await;
+        c.batch_execute(&format!(
+            "CREATE TABLE {t} (id int, v text); INSERT INTO {t} VALUES (1, 'a'), (2, 'b'), (3, 'c'); \
+             CREATE TABLE {u} (id int); INSERT INTO {u} VALUES (1), (1), (2)"
+        ))
+        .await
+        .unwrap();
+        let update = format!("UPDATE {t} SET v = 'x' FROM {u} WHERE {u}.id = {t}.id");
+        let shape = pgman::query::execute::shape(&update).unwrap();
+        assert_eq!(pgman::query::execute::count(&c, &shape).await, Ok(2));
+        let before = pgman::query::execute::before(&c, &shape).await.unwrap().unwrap();
+        assert_eq!(before.rows.len(), 2);
+        assert_eq!(pgman::query::execute::run(&c, &update, 2).await, Ok(2));
+        let delete = format!("DELETE FROM {t} USING {u} WHERE {u}.id = {t}.id");
+        let shape = pgman::query::execute::shape(&delete).unwrap();
+        assert_eq!(pgman::query::execute::count(&c, &shape).await, Ok(2));
+        assert_eq!(pgman::query::execute::run(&c, &delete, 2).await, Ok(2));
+        c.batch_execute(&format!("DROP TABLE {t}; DROP TABLE {u}"))
+            .await
+            .unwrap();
+    });
+}
