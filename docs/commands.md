@@ -142,6 +142,7 @@ answers):
 | `pgman copies [show\|rm\|prune\|report]` | The dumps taken on this machine, from the journal: list, one in full, delete one, delete the expired, the whole account ([copies](dump-restore.md#pgman-copies)). |
 | `pgman run <target> <FILE>` | A script that runs its own transactions, `\c` between databases ([run](run.md)). |
 | `pgman apply <target>` | An environment's pending patches, as the environments view's `P` ([environments](environments.md#from-the-command-line-pgman-apply)). |
+| `pgman execute <target> --sql SQL` | One `INSERT`, `UPDATE` or `DELETE`, run once: counted first with its own `WHERE` (an `UPDATE`'s current values shown), then run in one transaction and rolled back unless exactly that many rows change. `--expect-rows N` gives the number where pgman can't count first (an `INSERT`); `--yes` doesn't answer a protected target or a statement that changes every row, which take the name typed. What `safety.toml` refuses is refused here, never lifted: MCP's `execute` is where you can lift it for one run ([mcp](mcp.md)). |
 | `pgman mcp serve` | The MCP server for coding agents ([mcp](mcp.md)). |
 
 Each takes `--help`. Exit codes: `0` done, `1` refused or failed (and

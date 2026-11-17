@@ -7,6 +7,15 @@ open items. Newest at the top within each section.
 
 Historical record. Newest at the top within each section.
 
+### 2026-11-17 MCP execute follow-ups *(see CHANGELOG → Unreleased)*
+
+- Named connections: `execute` takes `connection`, resolved as `pgman
+  dump` resolves a target, protected by the same rules.
+- The run's standby check is tested (`run_on`, a plan whose database
+  turns out a standby when the run connects).
+- `pgman execute`, the command-line twin.
+- `UPDATE … FROM` and `DELETE … USING` are counted, as a semi-join.
+
 ### 2026-11-13 backlog pass *(see CHANGELOG → Unreleased)*
 
 - The sessions panel stays open on a failed load (CockroachDB's `q`

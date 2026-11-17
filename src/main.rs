@@ -16,8 +16,8 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style terminal UI for PostgreSQL (beta)",
-    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman dump <target> [FILE]\n       pgman restore <FILE> <target>\n       pgman copies [show|rm|prune|report]\n       pgman masking show|check <target>\n       pgman key new|list\n       pgman run <target> <FILE>\n       pgman apply <target>\n       pgman env discover [--save]\n       pgman mcp serve\n       pgman diff <A> <B>\n       pgman doctor",
-    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nDump and restore: `pgman dump <target> [FILE]`, `pgman restore <FILE> <target>`, the copies taken: `pgman copies`; see docs/dump-restore.md.\nScripts and patches: `pgman run <target> <FILE>` (docs/run.md), `pgman apply <target>` (docs/environments.md).\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches, dump and restore ask you first); see docs/mcp.md.\nStuck: `pgman doctor` says which config files load, which programs pgman found, and which connections are usable."
+    override_usage = "pgman [OPTIONS] [DSN]\n       pgman [--dsn DSN] query ['SQL'] [--json] [--batch flags]\n       pgman dump <target> [FILE]\n       pgman restore <FILE> <target>\n       pgman copies [show|rm|prune|report]\n       pgman masking show|check <target>\n       pgman key new|list\n       pgman run <target> <FILE>\n       pgman apply <target>\n       pgman execute <target> --sql SQL\n       pgman env discover [--save]\n       pgman mcp serve\n       pgman diff <A> <B>\n       pgman doctor",
+    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nDump and restore: `pgman dump <target> [FILE]`, `pgman restore <FILE> <target>`, the copies taken: `pgman copies`; see docs/dump-restore.md.\nScripts and patches: `pgman run <target> <FILE>` (docs/run.md), `pgman apply <target>` (docs/environments.md), one INSERT, UPDATE or DELETE: `pgman execute <target> --sql SQL` (docs/commands.md).\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches, execute, dump and restore ask you first); see docs/mcp.md.\nStuck: `pgman doctor` says which config files load, which programs pgman found, and which connections are usable."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.
@@ -131,8 +131,8 @@ struct Cli {
 
 /// The words that start a sub-command rather than name a DSN.
 const SUBCOMMANDS: &[&str] = &[
-    "query", "env", "mcp", "dump", "restore", "copies", "masking", "key", "run", "apply", "doctor",
-    "diff",
+    "query", "env", "mcp", "dump", "restore", "copies", "masking", "key", "run", "apply",
+    "execute", "doctor", "diff",
 ];
 
 /// `argv` with a sub-command that follows global options moved to the
@@ -469,6 +469,29 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => {
                 eprintln!("pgman apply: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    if argv.get(1).map(String::as_str) == Some("execute") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", pgman::execute_cli::USAGE);
+            return Ok(());
+        }
+        init_logging();
+        let opts = match pgman::execute_cli::parse_cli(&argv[2..]) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        };
+        match pgman::execute_cli::run_cli(&opts).await {
+            Ok(done) => println!("{done}"),
+            Err(e) => {
+                eprintln!("pgman execute: {e}");
                 std::process::exit(1);
             }
         }

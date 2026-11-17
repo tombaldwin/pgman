@@ -7,11 +7,13 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ### MCP execute — follow-ups (2026-11-17)
 
-`execute` shipped (one INSERT, UPDATE or DELETE, confirmed); left:
+`execute` (MCP and `pgman execute`) shipped; left:
 
-- **No CLI or TUI twin.** The editor already writes through the
-  guards; a `pgman execute` with the count and the rollback-unless-N
-  check could follow if wanted.
+- **The editor's writes don't count first.** The TUI editor runs a
+  write through the guards, confirmed and in a transaction you can roll
+  back, but it doesn't count the rows before asking or roll back unless
+  N. Bringing execute's count into the editor changes its confirm flow
+  for every write: Tom's call whether it should.
 
 ### Patch files at a git ref — follow-ups (2026-11-16)
 

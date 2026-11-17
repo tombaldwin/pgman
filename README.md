@@ -41,7 +41,8 @@ At a glance:
 - **Applying patches** — `P` plans an environment's pending patches
   read-only, checks each against your guard rails, and after you confirm
   runs each in its own transaction; a dry run or a throwaway copy rehearses
-  it first; `pgman apply` does the same from the command line, and
+  it first; `pgman apply` does the same from the command line (and
+  `pgman execute` runs one counted INSERT, UPDATE or DELETE), and
   `pgman run` runs a script that manages its own transactions
   ([`docs/run.md`](https://github.com/tombaldwin/pgman/blob/main/docs/run.md)).
   `l` shows the RDS server's recent errors.

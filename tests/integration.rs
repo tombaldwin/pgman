@@ -14406,3 +14406,94 @@ fn execute_refuses_a_standby_found_at_the_run() {
         .unwrap_err();
     assert!(err.contains("is a standby (in recovery)"), "{err}");
 }
+
+/// `pgman execute`: `--yes` runs a counted statement on a connection,
+/// but answers neither a protected one nor a refused one; without
+/// `--yes` and no terminal, nothing runs.
+#[test]
+fn pgman_execute_runs_once_and_keeps_the_typed_name_for_a_terminal() {
+    let home = scratch_home("cli-exec", WRITABLE_PROFILE);
+    let t = it_name("execcli");
+    on(
+        "pgman_test",
+        &format!("CREATE TABLE {t} (id int PRIMARY KEY, value text)"),
+    )
+    .unwrap();
+    on(
+        "pgman_test",
+        &format!("INSERT INTO {t} VALUES (1, 'a'), (2, 'b')"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"solo\"\nurl = \"{DSN}\"\n\
+             [[connections]]\nname = \"solo-prod\"\nurl = \"{DSN}\"\n"
+        ),
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        pgman()
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .current_dir(&home)
+            .arg("execute")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let update = format!("UPDATE {t} SET value = 'z' WHERE id = 1");
+    let out = run(&["solo", "--sql", &update, "--yes"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("It changes 1 row(s)") && stderr.contains("value = a"),
+        "{stderr}"
+    );
+    assert!(stdout.contains("1 row(s) changed, committed"), "{stdout}");
+    assert_eq!(value_of(&t, 1).as_deref(), Some("z"));
+
+    let protected = format!("UPDATE {t} SET value = 'p' WHERE id = 2");
+    let out = run(&["solo-prod", "--sql", &protected, "--yes"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(stderr.contains("which --yes doesn't answer"), "{stderr}");
+    let out = run(&["solo", "--sql", &protected]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("stdin isn't a terminal"),
+        "{stderr}"
+    );
+    let out = run(&["solo-prod", "--sql", &protected]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("solo-prod is confirmed by typing its name, and stdin isn't a terminal"),
+        "{stderr}"
+    );
+    let out = run(&[
+        "solo",
+        "--sql",
+        &format!("INSERT INTO {t} VALUES (3, 'c')"),
+        "--yes",
+    ]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("expect_rows"));
+    assert_eq!(value_of(&t, 2).as_deref(), Some("b"));
+    assert_eq!(value_of(&t, 3), None);
+
+    // Read-only by safety.toml: refused, not lifted, at the terminal.
+    std::fs::remove_file(home.join(".config/pgman/safety.toml")).unwrap();
+    let out = run(&["solo", "--sql", &protected, "--yes"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("is read-only"),
+        "{stderr}"
+    );
+    assert_eq!(value_of(&t, 2).as_deref(), Some("b"));
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}

@@ -23,6 +23,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   and parameters are refused. An audit line in pgman's log records the
   statement, target, rows and the values it overwrote, a secret-named
   column's withheld.
+- `pgman execute <target> --sql SQL`: the same from the command line,
+  for any target `pgman dump` takes; what safety.toml refuses is
+  refused there, never lifted, and `--yes` doesn't answer a protected
+  target.
 
 ## [0.5.4] — 2026-11-16
 
