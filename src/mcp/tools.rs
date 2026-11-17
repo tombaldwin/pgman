@@ -199,7 +199,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "execute",
-            "description": "Run ONE INSERT, UPDATE or DELETE on an environment's database, once, after the OPERATOR confirms it through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name; likewise a statement that changes every row, or one safety.toml refuses). Plans first, read-only: a plain UPDATE or DELETE of one table is counted with its own WHERE, and an UPDATE's current values of the columns it sets are read, so the operator sees how many rows change and what is overwritten; anything else gets the planner's estimate and is refused without `expect_rows`, so nothing runs unchecked. The operator is shown the exact statement. It then runs in one transaction with a 5s lock_timeout and a 30s statement_timeout, and is ROLLED BACK unless it changed the rows confirmed: `expect_rows`, else the count. A database safety.toml keeps read-only, or a statement its guards block, is shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. The audit line in pgman's log records the statement, the target, the rows changed and the values it overwrote. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica or standby, and for anything but one INSERT, UPDATE or DELETE without parameters ($1): schema changes go through apply_patches; DO, CALL, a CTE, MERGE, SET and transaction control are for the operator. A decline is final for that database this session. The count and the run are moments apart: another session's change in between makes the counts differ, and it rolls back. If the call times out, the statement may have committed: check before calling again.",
+            "description": "Run ONE INSERT, UPDATE or DELETE on an environment's database, once, after the OPERATOR confirms it through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name; likewise a statement that changes every row, or one safety.toml refuses). Plans first, read-only: a plain UPDATE or DELETE of one table is counted with its own WHERE, and an UPDATE's current values of the columns it sets are read, so the operator sees how many rows change and what is overwritten; anything else gets the planner's estimate and is refused without `expect_rows`, so nothing runs unchecked. The operator is shown the exact statement. It then runs in one transaction with a 5s lock_timeout and a 30s statement_timeout, and is ROLLED BACK unless it changed the rows confirmed: `expect_rows`, else the count. A database safety.toml keeps read-only, or a statement its guards block, is shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. The audit line in pgman's log records the statement, the target, the rows changed and the values it overwrote. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica or standby, and for anything but one INSERT, UPDATE or DELETE without parameters ($1): schema changes go through apply_patches; DO, CALL, a CTE, MERGE, SET and transaction control are for the operator. The count is of the statement's own table: triggers, cascades and functions it calls run too, and are neither counted nor checked. Any answer but a confirmation is final for that database this session. The count and the run are moments apart: another session's change in between makes the counts differ, and it rolls back. If the call times out, the statement may have committed: check before calling again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1616,9 +1616,20 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
         plan.endpoint,
         plan.checked.statement
     );
+    // What must not be missed first: a client may cut a long question.
+    let lifted = plan.lifted();
+    if !lifted.is_empty() {
+        message.push_str(&format!(
+            "WARNING, FOR THIS RUN ONLY: pgman's safety settings refuse what follows, and \
+             confirming lifts that for this statement, this once: {}. The settings stay as they \
+             are for every other run. ",
+            lifted.join("; ")
+        ));
+    }
     match (plan.rows, &plan.uncounted) {
         (Some(n), _) => message.push_str(&format!(
-            "It changes {n} row(s): counted just now, read-only, with its own WHERE."
+            "It changes {n} row(s) of the table it names: counted just now, read-only, with its \
+             own WHERE."
         )),
         (None, why) => message.push_str(&format!(
             "pgman couldn't count its rows first ({}){}.",
@@ -1628,24 +1639,12 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
                 .unwrap_or_default()
         )),
     }
-    if let Some(b) = &plan.before {
-        message.push_str(&format!(
-            " What it overwrites now: {}{}.",
-            b.to_json(),
-            if b.more {
-                format!(" (the first {} rows)", b.rows.len())
-            } else {
-                String::new()
-            }
-        ));
-    }
     message.push_str(&format!(
-        " It runs in one transaction with a {} lock timeout and a {}s statement timeout",
+        " It runs in one transaction with a {} lock timeout and a {}s statement timeout, and is \
+         rolled back unless it changes exactly {} row(s) there. Triggers, cascades and functions \
+         it calls run too, and are neither counted nor checked.",
         crate::query::execute::LOCK_TIMEOUT,
-        crate::query::execute::STATEMENT_TIMEOUT_MS / 1000
-    ));
-    message.push_str(&format!(
-        ", and is rolled back unless it changes exactly {} row(s).",
+        crate::query::execute::STATEMENT_TIMEOUT_MS / 1000,
         plan.expect
     ));
     if !plan.checked.confirms.is_empty() {
@@ -1654,20 +1653,29 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
             plan.checked.confirms.join(", ")
         ));
     }
-    let lifted = plan.lifted();
-    if !lifted.is_empty() {
-        message.push_str(&format!(
-            " WARNING, FOR THIS RUN ONLY: pgman's safety settings refuse what follows, and \
-             confirming lifts that for this statement, this once: {}. The settings stay as they \
-             are for every other run.",
-            lifted.join("; ")
-        ));
-    }
-    let schema = if let Some(why) = execute_typed_reason(plan) {
+    let typed = execute_typed_reason(plan);
+    if let Some(why) = typed {
         message.push_str(&format!(
             " {} {why}: type its name to confirm.",
             plan.environment
         ));
+    }
+    // Last, and cut: the tool's result has them all.
+    if let Some(b) = &plan.before {
+        let mut shown = b.to_json().to_string();
+        if shown.chars().count() > BEFORE_SHOWN_CHARS {
+            shown = shown.chars().take(BEFORE_SHOWN_CHARS).collect::<String>() + "…";
+        }
+        message.push_str(&format!(
+            "\n\nWhat it overwrites now{}: {shown}",
+            if b.more {
+                format!(" (the first {} rows)", b.rows.len())
+            } else {
+                String::new()
+            }
+        ));
+    }
+    let schema = if typed.is_some() {
         json!({
             "type": "object",
             "properties": {"environment": {"type": "string", "title": "Environment name", "description": format!("Type {} to run it", plan.environment)}},
@@ -1676,12 +1684,17 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
     } else {
         json!({
             "type": "object",
-            "properties": {"run": {"type": "boolean", "title": "Run this statement", "default": true}},
+            // Unticked: a one-off write is ticked by the operator, so an
+            // Accept alone runs nothing.
+            "properties": {"run": {"type": "boolean", "title": "Run this statement", "default": false}},
             "required": ["run"]
         })
     };
     (message, schema)
 }
+
+/// How much of the current values the question shows.
+const BEFORE_SHOWN_CHARS: usize = 1500;
 
 /// Whether the operator's answer confirms `plan`. Pure.
 pub fn execute_confirmed(
@@ -3230,15 +3243,20 @@ mod tests {
         );
         assert!(message.contains("It changes 1 row(s)"), "{message}");
         assert!(
-            message.contains(r#"What it overwrites now: [{"value":"10"}]"#),
+            message.ends_with(r#"What it overwrites now: [{"value":"10"}]"#),
             "{message}"
         );
         assert!(
             message.contains("rolled back unless it changes exactly 1 row(s)"),
             "{message}"
         );
+        assert!(
+            message.contains("Triggers, cascades and functions it calls run too"),
+            "{message}"
+        );
         assert!(!message.contains("type its name"), "{message}");
         assert_eq!(schema["required"], json!(["run"]));
+        assert_eq!(schema["properties"]["run"]["default"], false);
         assert!(execute_confirmed(
             &plan,
             &json!({"action": "accept", "content": {"run": true}})
@@ -3290,6 +3308,11 @@ mod tests {
         let (message, _) = execute_request(&lifted);
         assert!(
             message.contains("this once: 'ledger' is read-only; DELETE without WHERE."),
+            "{message}"
+        );
+        // Ahead of the count, and of the current values a client may cut.
+        assert!(
+            message.find("WARNING").unwrap() < message.find("It changes").unwrap(),
             "{message}"
         );
         assert!(execute_confirmed(&lifted, &tick).is_err());
