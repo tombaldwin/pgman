@@ -1608,11 +1608,12 @@ fn execute_typed_reason(plan: &crate::inventory::execute::ExecPlan) -> Option<&'
 /// changes and what it overwrites. Pure.
 pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, Value) {
     let mut message = format!(
-        "Run this statement ONCE on {} {}/{}{}:\n\n{};\n\n",
+        "Run this statement ONCE on {} {}/{}{} ({}):\n\n{};\n\n",
         plan.environment,
         plan.server,
         plan.database,
         if plan.protected { " (protected)" } else { "" },
+        plan.endpoint,
         plan.checked.statement
     );
     match (plan.rows, &plan.uncounted) {
@@ -1716,6 +1717,7 @@ pub fn render_execute(
         "environment": plan.environment,
         "server": plan.server,
         "database": plan.database,
+        "endpoint": plan.endpoint,
         "statement": plan.checked.statement,
         "counted_rows": plan.rows,
         "not_counted": plan.uncounted,
@@ -3199,6 +3201,7 @@ mod tests {
             server: "db1".into(),
             database: "ledger".into(),
             protected,
+            endpoint: "postgres://app@db1:5432/ledger".into(),
             checked: crate::query::execute::check(&cfg, "ledger", sql, true).unwrap(),
             rows: Some(1),
             uncounted: None,
@@ -3221,7 +3224,7 @@ mod tests {
         let (message, schema) = execute_request(&plan);
         assert!(
             message.starts_with(
-                "Run this statement ONCE on demo db1/ledger:\n\nUPDATE settings SET value = '11' WHERE id = 1;\n\n"
+                "Run this statement ONCE on demo db1/ledger (postgres://app@db1:5432/ledger):\n\nUPDATE settings SET value = '11' WHERE id = 1;\n\n"
             ),
             "{message}"
         );

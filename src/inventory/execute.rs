@@ -27,6 +27,9 @@ pub struct ExecPlan {
     pub server: String,
     pub database: String,
     pub protected: bool,
+    /// Where it connects, password never included: what the operator is
+    /// shown, and what the run must find again.
+    pub endpoint: String,
     pub checked: Checked,
     /// The rows it changes now, counted with its own `WHERE`.
     pub rows: Option<u64>,
@@ -174,6 +177,7 @@ pub async fn plan_for(
     if target.role == Role::Replica {
         return Err(replica_refusal(&target));
     }
+    let endpoint = endpoint(&target)?;
     let dsn = super::patching::dsn_for(&target, &super::patching::aws_secrets()).await?;
     let (client, _tunnel) = super::patching::connect(dsn, true, 10_000).await?;
     if crate::query::apply::in_recovery(&client).await? {
@@ -186,6 +190,7 @@ pub async fn plan_for(
         server,
         database,
         protected: super::patching::is_protected(&env),
+        endpoint,
         expect: expect_rows.or(rows).ok_or("no row count")?,
         checked,
         rows,
@@ -207,6 +212,28 @@ fn recheck(plan: &ExecPlan, safety: &crate::safety::SafetyConfig) -> Result<(), 
         return Err("the statement checks differently now than when planned; plan again".into());
     }
     Ok(())
+}
+
+/// Where `target` connects, user, host, port, database and any ssh
+/// tunnel, never a password. Pure.
+fn endpoint(target: &super::Target) -> Result<String, String> {
+    let spec = target.connect.as_ref().map_err(Clone::clone)?;
+    let mut dsn = spec.dsn.clone();
+    dsn.password = None;
+    Ok(dsn.redacted())
+}
+
+/// Refused unless the run connects where the plan did (`now`): the
+/// operator confirmed that database, and environments.toml,
+/// connections.toml or the RDS listing may say otherwise since. Pure.
+fn same_endpoint(plan: &ExecPlan, now: &str) -> Result<(), String> {
+    if plan.endpoint == now {
+        return Ok(());
+    }
+    Err(format!(
+        "nothing run: {}/{} resolves to {now} now, not the {} the operator confirmed; plan again",
+        plan.server, plan.database, plan.endpoint
+    ))
 }
 
 /// The refusal for a replica. Pure.
@@ -243,6 +270,7 @@ pub async fn run_for(plan: &ExecPlan, safety: crate::safety::SafetyConfig) -> Re
     if target.role == Role::Replica {
         return Err(replica_refusal(&target));
     }
+    same_endpoint(plan, &endpoint(&target)?)?;
     let dsn = super::patching::dsn_for(&target, &super::patching::aws_secrets()).await?;
     let (client, _tunnel) =
         super::patching::connect(dsn, false, execute::STATEMENT_TIMEOUT_MS).await?;
@@ -263,6 +291,7 @@ mod tests {
             server: "db1".into(),
             database: "ledger".into(),
             protected,
+            endpoint: "postgres://app@db1:5432/ledger".into(),
             checked,
             rows: Some(1),
             uncounted: None,
@@ -271,6 +300,41 @@ mod tests {
             before: None,
             before_error: None,
         }
+    }
+
+    #[test]
+    fn a_run_is_refused_where_the_database_resolves_elsewhere_now() {
+        let open = crate::safety::SafetyConfig::default();
+        let p = plan("UPDATE a SET x = 1 WHERE id = 1", &open, false);
+        assert_eq!(same_endpoint(&p, "postgres://app@db1:5432/ledger"), Ok(()));
+        let why = same_endpoint(&p, "postgres://app@db2:5432/ledger").unwrap_err();
+        assert!(
+            why.contains("resolves to postgres://app@db2:5432/ledger now"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn an_endpoint_never_carries_a_password() {
+        let target = super::super::Target {
+            database: "ledger".into(),
+            server: "db1".into(),
+            role: Role::Direct,
+            replica_of: None,
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            connect: Ok(super::super::ConnectSpec {
+                dsn: crate::conn::Dsn::parse("postgres://app:hunter2@db1:5432/ledger").unwrap(),
+                secret: None,
+                password_env: None,
+            }),
+        };
+        let e = endpoint(&target).unwrap();
+        assert_eq!(e, "postgres://app@db1:5432/ledger");
     }
 
     #[test]
