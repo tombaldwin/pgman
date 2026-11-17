@@ -14,6 +14,13 @@ window: PLAN.md — an item lives in exactly one of the two.
   back, but it doesn't count the rows before asking or roll back unless
   N. Bringing execute's count into the editor changes its confirm flow
   for every write: Tom's call whether it should.
+- **A connection that reaches an RDS environment's server by another
+  host name** (a CNAME, an IP, a tunnel's local port) isn't seen as
+  that environment's: `target.rs`'s `protecting_env` matches RDS
+  environments by `*.rds.amazonaws.com` host, so neither its protection
+  nor execute's refusal of the connection form for a listed connection
+  applies. Static listings are caught. Found by the Fable review
+  (2026-11-17), pre-existing in dump and run too.
 
 ### Patch files at a git ref — follow-ups (2026-11-16)
 

@@ -78,8 +78,13 @@ or DELETE confirmed by the operator, asked for by the client lead after
 a Demo release needed two setting changes made by hand. A Fable
 adversarial review found one HIGH (a statement pgman couldn't count ran
 with no row check) plus five MEDIUMs and four LOWs, all fixed in their
-own commits. Follow-ups are in BACKLOG.md → "MCP execute". Waiting on
-Tom's go to release.
+own commits. Then its follow-ups (Tom: "do the backlog items"): a
+`connection` argument through the shared target resolver, the run's
+standby check tested, `pgman execute`, and UPDATE … FROM / DELETE …
+USING counted as a semi-join; a second Fable review found one HIGH (a
+connection an environment lists skipped that environment's safety.toml
+entries), one MEDIUM and two LOWs, all fixed. What's left is in
+BACKLOG.md → "MCP execute". Waiting on Tom's go to release.
 
 ## Window — after v0.5.2
 
