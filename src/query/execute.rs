@@ -99,6 +99,14 @@ pub fn check(
         )
         .into());
     }
+    if let Some(c) = statement.chars().find(|c| hides_text(*c)) {
+        return Err(format!(
+            "the statement holds U+{:04X}, an invisible or reordering character, so what the \
+             operator reads may not be what runs; write it without",
+            c as u32
+        )
+        .into());
+    }
     let allows = super::apply::declared_allows(&statement).map_err(Refused::from)?;
     if !allows.is_empty() {
         return Err(
@@ -196,6 +204,24 @@ pub fn check(
         lifted: None,
         read_only_lifted: false,
     })
+}
+
+/// A character that can make shown text read other than it runs: a
+/// control character (but tab and line breaks), a zero-width one, or a
+/// bidirectional override or isolate. Pure.
+fn hides_text(c: char) -> bool {
+    (c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{061C}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
 }
 
 /// `$1`, `$2`…: a positional parameter. Pure.
@@ -727,6 +753,20 @@ mod tests {
             refused("UPDATE a SET x = 'open WHERE id = 1"),
             safety::SPLIT_REFUSAL
         );
+        for hidden in ["\u{202E}", "\u{200B}", "\u{1b}[2J", "\u{2066}"] {
+            let sql = format!("UPDATE a SET x = 'ok{hidden}' WHERE id = 1");
+            assert!(
+                refused(&sql).contains("invisible or reordering"),
+                "{hidden:?}"
+            );
+        }
+        assert!(check(
+            &w,
+            "ledger",
+            "UPDATE a SET x = 'café\tok'\nWHERE id = 1",
+            false
+        )
+        .is_ok());
         // `$$`-quoted text holds no parameter.
         assert!(check(&w, "ledger", "UPDATE a SET x = $$1$$ WHERE id = 1", false).is_ok());
     }
