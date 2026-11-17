@@ -671,7 +671,7 @@ const DESTRUCTIVE_FUNCTIONS: &[&str] = &[
 
 /// `true` if `sql`'s code (not its string literals) calls one of
 /// [`DESTRUCTIVE_FUNCTIONS`].
-fn mentions_destructive_function(sql: &str) -> bool {
+pub(crate) fn mentions_destructive_function(sql: &str) -> bool {
     let toks = code_tokens(sql);
     toks.iter()
         .any(|t| DESTRUCTIVE_FUNCTIONS.contains(&t.as_str()))

@@ -686,7 +686,7 @@ async fn run_in_transaction(
 }
 
 /// The server's own message for `e`, or the client's when there is none.
-fn server_message(e: &tokio_postgres::Error) -> String {
+pub(crate) fn server_message(e: &tokio_postgres::Error) -> String {
     e.as_db_error()
         .map(|d| d.message().to_string())
         .unwrap_or_else(|| e.to_string())

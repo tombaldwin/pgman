@@ -21,6 +21,7 @@
 
 pub mod discover;
 pub mod docker;
+pub mod execute;
 pub mod patching;
 pub mod probe;
 pub mod rds;

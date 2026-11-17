@@ -660,7 +660,10 @@ pub type FetchSecret =
     std::sync::Arc<dyn Fn(&SecretRef) -> Result<SecretCreds, String> + Send + Sync>;
 
 /// `target`'s DSN with its credentials.
-async fn dsn_for(target: &Target, fetch_secret: &FetchSecret) -> Result<crate::conn::Dsn, String> {
+pub(crate) async fn dsn_for(
+    target: &Target,
+    fetch_secret: &FetchSecret,
+) -> Result<crate::conn::Dsn, String> {
     spec_dsn(target.connect.clone()?, fetch_secret).await
 }
 
@@ -888,7 +891,7 @@ pub fn project_refusal(
     )
 }
 
-async fn connect(
+pub(crate) async fn connect(
     dsn: crate::conn::Dsn,
     read_only: bool,
     timeout_ms: u64,

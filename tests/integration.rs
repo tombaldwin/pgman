@@ -13901,3 +13901,349 @@ fn a_masked_plan_stops_at_a_timescaledb_hypertable() {
             .unwrap();
     });
 }
+
+/// An `mcp serve` session in `home`, its environments.toml listing
+/// `it-dev` and the protected `it-prod` on the compose server and
+/// `it-standby` on its standby, answering the elicitations it is handed.
+struct ExecSession {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    lines: std::io::Lines<std::io::BufReader<std::process::ChildStdout>>,
+}
+
+impl ExecSession {
+    fn start(home: &std::path::Path) -> Self {
+        use std::io::{BufRead, Write};
+        std::fs::write(
+            home.join(".config/pgman/connections.toml"),
+            format!(
+                "[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n\
+                 [[connections]]\nname = \"standby\"\nurl = \"{STANDBY_DSN}\"\n\
+                 [[connections]]\nname = \"said-replica\"\nurl = \"{DSN}\"\nrole = \"replica\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            home.join(".config/pgman/environments.toml"),
+            "[[environments]]\nname = \"it-dev\"\nsource = { kind = \"static\", connections = [\"local\"] }\n\
+             [[environments]]\nname = \"it-prod\"\nsource = { kind = \"static\", connections = [\"local\"] }\n\
+             [[environments]]\nname = \"it-standby\"\nsource = { kind = \"static\", connections = [\"standby\"] }\n\
+             [[environments]]\nname = \"it-replica\"\nsource = { kind = \"static\", connections = [\"said-replica\"] }\n",
+        )
+        .unwrap();
+        let mut child = pgman()
+            .env("HOME", home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .current_dir(home)
+            .args(["mcp", "serve"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+        let mut s = ExecSession {
+            child,
+            stdin,
+            lines,
+        };
+        s.next();
+        s
+    }
+
+    fn next(&mut self) -> serde_json::Value {
+        serde_json::from_str(&self.lines.next().unwrap().unwrap()).unwrap()
+    }
+
+    /// Call `execute` with `args`; when it asks, answer `answer`. The
+    /// reply's (text, isError), and the question's message if one came.
+    fn call(
+        &mut self,
+        id: u64,
+        args: serde_json::Value,
+        answer: serde_json::Value,
+    ) -> (String, bool, Option<String>) {
+        use std::io::Write;
+        writeln!(self.stdin, "{}", tool_call(id, "execute", args)).unwrap();
+        let frame = self.next();
+        if frame["method"] != "elicitation/create" {
+            let (text, is_error) = reply(&[frame], id);
+            return (text, is_error, None);
+        }
+        let message = frame["params"]["message"].as_str().unwrap().to_string();
+        writeln!(
+            self.stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "id": frame["id"], "result": answer})
+        )
+        .unwrap();
+        let (text, is_error) = reply(&[self.next()], id);
+        (text, is_error, Some(message))
+    }
+
+    fn finish(mut self) {
+        drop(self.stdin);
+        assert!(self.child.wait().unwrap().success());
+    }
+}
+
+fn value_of(t: &str, id: i64) -> Option<String> {
+    on(
+        "pgman_test",
+        &format!("SELECT value FROM {t} WHERE id = {id}"),
+    )
+    .unwrap()
+    .first()
+    .map(|r| r.get(0))
+}
+
+/// `execute` counts the rows an UPDATE changes and reads what it
+/// overwrites, shows the operator the statement, and runs it once
+/// confirmed; an `expect_rows` the count contradicts asks nothing, and
+/// what isn't one INSERT, UPDATE or DELETE is refused.
+#[test]
+fn mcp_execute_counts_shows_and_runs_one_update_once_confirmed() {
+    let home = scratch_home("mcp-exec", WRITABLE_PROFILE);
+    let t = it_name("exec");
+    on(
+        "pgman_test",
+        &format!("CREATE TABLE {t} (id int PRIMARY KEY, value text)"),
+    )
+    .unwrap();
+    on(
+        "pgman_test",
+        &format!("INSERT INTO {t} VALUES (1, 'a'), (2, 'b')"),
+    )
+    .unwrap();
+    let mut s = ExecSession::start(&home);
+    let at = |sql: String| serde_json::json!({"environment": "it-dev", "server": "local", "database": "pgman_test", "sql": sql});
+    let update = format!("UPDATE {t} SET value = 'z' WHERE id = 1");
+
+    let mut wrong = at(update.clone());
+    wrong["expect_rows"] = 2.into();
+    let (text, is_error, asked) = s.call(2, wrong, serde_json::json!({}));
+    assert!(asked.is_none(), "a contradicted expect_rows asks nothing");
+    assert!(
+        is_error && text.contains("not the 2 expect_rows says"),
+        "{text}"
+    );
+
+    let (text, is_error, asked) = s.call(
+        3,
+        at(update.clone()),
+        serde_json::json!({"action": "accept", "content": {"run": true}}),
+    );
+    let message = asked.unwrap();
+    assert!(message.contains(&format!("{update};")), "{message}");
+    assert!(message.contains("It changes 1 row(s)"), "{message}");
+    assert!(message.contains(r#"[{"value":"a"}]"#), "{message}");
+    assert!(
+        message.contains("rolled back unless it changes exactly 1 row(s)"),
+        "{message}"
+    );
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["committed"], true, "{text}");
+    assert_eq!(v["rows_changed"], 1, "{text}");
+    assert_eq!(v["before"], serde_json::json!([{"value": "a"}]), "{text}");
+    assert_eq!(value_of(&t, 1).as_deref(), Some("z"));
+    assert_eq!(value_of(&t, 2).as_deref(), Some("b"));
+
+    let (text, is_error, asked) = s.call(
+        4,
+        at(format!("ALTER TABLE {t} ADD COLUMN x int")),
+        serde_json::json!({}),
+    );
+    assert!(asked.is_none());
+    assert!(
+        is_error && text.contains("one INSERT, UPDATE or DELETE"),
+        "{text}"
+    );
+
+    // An untick runs nothing, and is final for that database.
+    let (text, is_error, asked) = s.call(
+        5,
+        at(format!("INSERT INTO {t} VALUES (3, 'c')")),
+        serde_json::json!({"action": "accept", "content": {"run": false}}),
+    );
+    assert!(asked
+        .unwrap()
+        .contains("couldn't count its rows first (an INSERT)"));
+    assert!(is_error && text.contains("didn't tick run"), "{text}");
+    assert_eq!(value_of(&t, 3), None);
+    let (text, is_error, asked) = s.call(
+        6,
+        at(format!("DELETE FROM {t} WHERE id = 3")),
+        serde_json::json!({"action": "decline"}),
+    );
+    assert!(asked.is_some());
+    assert!(is_error && text.contains("That answer is final"), "{text}");
+    let (text, is_error, asked) = s.call(
+        7,
+        at(format!("DELETE FROM {t} WHERE id = 2")),
+        serde_json::json!({}),
+    );
+    assert!(asked.is_none(), "a decline is final");
+    assert!(is_error && text.contains("declined a statement"), "{text}");
+    assert_eq!(value_of(&t, 2).as_deref(), Some("b"));
+    s.finish();
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}
+
+/// A protected environment, and a statement safety.toml refuses, are
+/// confirmed by typing the environment's name; a standby is refused
+/// before anything is asked.
+#[test]
+fn mcp_execute_takes_the_typed_name_where_protected_or_lifted_and_never_a_standby() {
+    let home = scratch_home("mcp-exec-typed", WRITABLE_PROFILE);
+    let t = it_name("exect");
+    on(
+        "pgman_test",
+        &format!("CREATE TABLE {t} (id int PRIMARY KEY, value text)"),
+    )
+    .unwrap();
+    on(
+        "pgman_test",
+        &format!("INSERT INTO {t} VALUES (1, 'a'), (2, 'b')"),
+    )
+    .unwrap();
+    let mut s = ExecSession::start(&home);
+    let at = |env: &str, server: &str, sql: String| serde_json::json!({"environment": env, "server": server, "database": "pgman_test", "sql": sql});
+    let update = format!("UPDATE {t} SET value = 'p' WHERE id = 1");
+    let (text, is_error, asked) = s.call(
+        2,
+        at("it-prod", "local", update.clone()),
+        serde_json::json!({"action": "accept", "content": {"run": true}}),
+    );
+    assert!(asked
+        .unwrap()
+        .contains("it-prod is protected: type its name"));
+    assert!(is_error && text.contains("doesn't match it-prod"), "{text}");
+    assert_eq!(value_of(&t, 1).as_deref(), Some("a"));
+    let (text, is_error, _) = s.call(
+        3,
+        at("it-prod", "local", update),
+        serde_json::json!({"action": "accept", "content": {"environment": "it-prod"}}),
+    );
+    assert!(!is_error, "{text}");
+    assert_eq!(value_of(&t, 1).as_deref(), Some("p"));
+
+    // DELETE without WHERE: blocked by the default guard, lifted by the
+    // typed name for this one run, and counted.
+    let (text, is_error, asked) = s.call(
+        4,
+        at("it-dev", "local", format!("DELETE FROM {t}")),
+        serde_json::json!({"action": "accept", "content": {"environment": "it-dev"}}),
+    );
+    let message = asked.unwrap();
+    assert!(
+        message.contains("FOR THIS RUN ONLY") && message.contains("DELETE without WHERE"),
+        "{message}"
+    );
+    assert!(message.contains("It changes 2 row(s)"), "{message}");
+    assert!(!is_error, "{text}");
+    assert_eq!(value_of(&t, 2), None);
+
+    let (text, is_error, asked) = s.call(
+        5,
+        at(
+            "it-standby",
+            "standby",
+            format!("DELETE FROM {t} WHERE id = 1"),
+        ),
+        serde_json::json!({}),
+    );
+    assert!(asked.is_none());
+    assert!(is_error && text.contains("standby"), "{text}");
+    // Configured as a replica: refused without connecting to ask.
+    let (text, is_error, asked) = s.call(
+        6,
+        at(
+            "it-replica",
+            "said-replica",
+            format!("DELETE FROM {t} WHERE id = 1"),
+        ),
+        serde_json::json!({}),
+    );
+    assert!(asked.is_none());
+    assert!(
+        is_error && text.contains("is a replica; writes go to its primary"),
+        "{text}"
+    );
+    s.finish();
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}
+
+/// A statement that changes another number of rows than confirmed is
+/// rolled back: nothing kept.
+#[test]
+fn execute_rolls_back_a_statement_that_changes_other_than_the_rows_confirmed() {
+    let t = it_name("execrb");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw("pgman_test").await;
+        c.batch_execute(&format!(
+            "CREATE TABLE {t} (id int, value text); INSERT INTO {t} VALUES (1, 'a'), (1, 'b')"
+        ))
+        .await
+        .unwrap();
+        let sql = format!("UPDATE {t} SET value = 'z' WHERE id = 1");
+        let err = pgman::query::execute::run(&c, &sql, Some(1))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("changed 2 row(s), not the 1 confirmed"),
+            "{err}"
+        );
+        let kept: i64 = c
+            .query_one(&format!("SELECT count(*) FROM {t} WHERE value = 'z'"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(kept, 0, "rolled back");
+        assert_eq!(pgman::query::execute::run(&c, &sql, Some(2)).await, Ok(2));
+        c.batch_execute(&format!("DROP TABLE {t}")).await.unwrap();
+    });
+}
+
+/// A project's `.pgman/pgman.toml` that keeps the database read-only
+/// refuses `execute` outright: the operator isn't offered a lift, though
+/// the personal safety.toml lets it write.
+#[test]
+fn mcp_execute_never_lifts_the_projects_safety() {
+    let home = scratch_home("mcp-exec-floor", WRITABLE_PROFILE);
+    let t = it_name("execf");
+    on(
+        "pgman_test",
+        &format!("CREATE TABLE {t} (id int PRIMARY KEY, value text)"),
+    )
+    .unwrap();
+    on("pgman_test", &format!("INSERT INTO {t} VALUES (1, 'a')")).unwrap();
+    std::fs::create_dir_all(home.join(".pgman")).unwrap();
+    std::fs::write(
+        home.join(".pgman/pgman.toml"),
+        "[safety.databases.pgman_test]\nread_only = true\n",
+    )
+    .unwrap();
+    let mut s = ExecSession::start(&home);
+    let (text, is_error, asked) = s.call(
+        2,
+        serde_json::json!({"environment": "it-dev", "server": "local", "database": "pgman_test",
+            "sql": format!("UPDATE {t} SET value = 'z' WHERE id = 1")}),
+        serde_json::json!({"action": "accept", "content": {"environment": "it-dev"}}),
+    );
+    assert!(asked.is_none(), "nothing offered to lift");
+    assert!(
+        is_error
+            && text
+                .contains("this project's .pgman/pgman.toml [safety] keeps 'pgman_test' read-only"),
+        "{text}"
+    );
+    assert_eq!(value_of(&t, 1).as_deref(), Some("a"));
+    s.finish();
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}

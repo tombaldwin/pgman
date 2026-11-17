@@ -25,7 +25,7 @@ pub fn tool_table() -> Value {
     let mut table = json!([
         {
             "name": "doctor",
-            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (apply_patches and restore, the tools that write to a database, after the operator confirms each run; dump, which writes a dump file in the working directory, likewise confirmed; environments_save, which appends to their environments.toml; none under --read-only), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
+            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (apply_patches, execute and restore, the tools that write to a database, after the operator confirms each run; dump, which writes a dump file in the working directory, likewise confirmed; environments_save, which appends to their environments.toml; none under --read-only), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
             "annotations": {"readOnlyHint": true, "openWorldHint": false}
         },
@@ -198,6 +198,23 @@ pub fn tool_table() -> Value {
             "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}
         },
         {
+            "name": "execute",
+            "description": "Run ONE INSERT, UPDATE or DELETE on an environment's database, once, after the OPERATOR confirms it through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name; likewise a statement that changes every row, or one safety.toml refuses). Plans first, read-only: a plain UPDATE or DELETE of one table is counted with its own WHERE, and an UPDATE's current values of the columns it sets are read, so the operator sees how many rows change and what is overwritten; anything else gets the planner's estimate. The operator is shown the exact statement. It then runs in one transaction with a 5s lock_timeout and a 30s statement_timeout, and is ROLLED BACK unless it changed the rows confirmed: `expect_rows`, else the count. A database safety.toml keeps read-only, or a statement its guards block, is shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. The audit line in pgman's log records the statement, the target, the rows changed and the values it overwrote. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica or standby, and for anything but one INSERT, UPDATE or DELETE without parameters ($1): schema changes go through apply_patches; DO, CALL, a CTE, MERGE, SET and transaction control are for the operator. A decline is final for that database this session. The count and the run are moments apart: another session's change in between makes the counts differ, and it rolls back. If the call times out, the statement may have committed: check before calling again.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "environment": {"type": "string"},
+                    "server": {"type": "string"},
+                    "database": {"type": "string"},
+                    "sql": {"type": "string", "description": "Exactly one INSERT, UPDATE or DELETE, with its values written in."},
+                    "expect_rows": {"type": "integer", "minimum": 0, "description": "The rows it must change, or it is rolled back. When pgman can count them first and the count differs, nothing is asked."}
+                },
+                "required": ["environment", "server", "database", "sql"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}
+        },
+        {
             "name": "environments_discover",
             "description": "Propose environments from an AWS account, for environments.toml: one per RDS Postgres primary with its read replicas, the Secrets Manager secret matching each database by NAME, the bastion (public EC2 host) in the instance's VPC, sslmode=require, the account and region pinned. Each proposal has `toml` (exactly what environments_save would append), `notes` to check first (ambiguous secrets are listed, not guessed), and `covered_by` when an existing environment already lists that primary. CAVEATS: reads names and endpoints only — it never reads a secret's value or connects to a database, so a proposed secret is a match by name, not a tested login. Without permission to list secrets or EC2 hosts, proposals come without them and `warnings` says why. Uses the aws CLI's ambient profile and region unless given.",
             "inputSchema": {
@@ -267,6 +284,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         "environment_logs" => 180,
         // The operator's answer (`ELICIT_TIMEOUT`), then the patches.
         "apply_patches" => 1800,
+        // The operator's answer, then one statement.
+        "execute" => 600,
         // The operator's answer, then a whole dump or restore.
         "dump" | "restore" => 7200,
         // sts, configure, then three listings, each bounded by the CLI.
@@ -291,6 +310,7 @@ impl Server {
             "schema_diff" => self.tool_schema_diff(args).await,
             "environment_logs" => tool_environment_logs(args).await,
             "apply_patches" => self.tool_apply_patches(args).await,
+            "execute" => self.tool_execute(args).await,
             "dump" => self.tool_dump(args).await,
             "restore" => self.tool_restore(args).await,
             "environments_discover" => tool_environments_discover(args, self.cwd.clone()).await,
@@ -423,6 +443,88 @@ impl Server {
             ..Default::default()
         });
         Ok(render_apply(&plan, Some(&report), &report.summary()))
+    }
+
+    /// `execute`: plan, ask the operator, run once.
+    async fn tool_execute(&self, args: &Value) -> Result<String, String> {
+        if self.opts.read_only {
+            return Err("execute is refused: the server was started with --read-only".to_string());
+        }
+        if !self.client_info().1 {
+            return Err("execute needs a client that supports elicitation, so the operator confirms each statement; this one declared none".to_string());
+        }
+        let environment = arg_str(args, "environment")?.to_string();
+        let server = arg_str(args, "server")?.to_string();
+        let database = arg_str(args, "database")?.to_string();
+        let sql = arg_str(args, "sql")?.to_string();
+        let expect_rows = match args.get("expect_rows") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(
+                v.as_u64()
+                    .ok_or("expect_rows must be a non-negative integer")?,
+            ),
+        };
+        let decline_key = execute_decline_key(&environment);
+        if self.declined(&decline_key, &server, &database) {
+            return Err(format!(
+                "the operator declined a statement for {environment} {server}/{database} earlier in this session; nothing asked, nothing run (they can run it themselves, or restart the MCP server)"
+            ));
+        }
+        let personal = crate::safety::SafetyConfig::load_personal().0;
+        let safety = merged_safety(personal.clone(), &self.cwd);
+        let floor = crate::project::project_floor(
+            &personal,
+            crate::project::load_from(&self.cwd)
+                .and_then(|(_, cfg)| cfg.safety)
+                .as_ref(),
+        );
+        let plan = crate::inventory::execute::plan_for(
+            environment.clone(),
+            server.clone(),
+            database.clone(),
+            sql,
+            expect_rows,
+            safety.clone(),
+            floor,
+        )
+        .await?;
+        let (message, schema) = execute_request(&plan);
+        let answer = self.elicit(&message, schema).await?;
+        if answer.get("action").and_then(Value::as_str) != Some("accept") {
+            self.remember_decline(&decline_key, &server, &database);
+        }
+        let statement = plan.checked.statement.as_str();
+        if let Err(why) = execute_confirmed(&plan, &answer) {
+            tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, "execute not confirmed: {why}");
+            return Err(format!(
+                "nothing run: {why}. That answer is final: don't call execute again unless the operator asks"
+            ));
+        }
+        let lifted = plan.lifted();
+        let before = plan.before.as_ref().map(|b| b.to_json().to_string());
+        let how = if execute_typed_reason(&plan).is_some() {
+            "typed the environment's name"
+        } else {
+            "ticked"
+        };
+        tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, expect = ?plan.expect, lifted = ?lifted, confirmed = how, client = %self.client_info().0, os_user = %std::env::var("USER").unwrap_or_default(), "execute confirmed");
+        // Its own task: if this call times out, the statement still
+        // finishes and is logged rather than dropped mid-transaction.
+        let run = {
+            let plan = plan.clone();
+            tokio::spawn(async move { crate::inventory::execute::run_for(&plan, safety).await })
+                .await
+                .unwrap_or_else(|e| Err(format!("the execute task failed: {e}")))
+        };
+        match &run {
+            Ok(rows) => {
+                tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, rows, before = ?before, "execute committed")
+            }
+            Err(why) => {
+                tracing::warn!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, "execute not kept: {why}")
+            }
+        }
+        Ok(render_execute(&plan, &run))
     }
 
     /// `environments_save`: discover again and append the named
@@ -635,12 +737,12 @@ impl Server {
             "client": {
                 "name": client.0,
                 "declared_elicitation": client.1,
-                "note": "apply_patches, dump and restore ask the operator through elicitation, and are refused without it",
+                "note": "apply_patches, execute, dump and restore ask the operator through elicitation, and are refused without it",
             },
             "write_surface": if self.opts.read_only {
-                "none — --read-only: environments_save, apply_patches, dump and restore are refused"
+                "none — --read-only: environments_save, apply_patches, execute, dump and restore are refused"
             } else {
-                "environments_save appends discovered environments to environments.toml; apply_patches runs an environment's pending patches once the operator confirms through elicitation, on a database safety.toml lets write; dump writes a dump file in the working directory and restore restores one into a local, unprotected database, each once confirmed; `query` never writes, and --allow-writes is refused at startup"
+                "environments_save appends discovered environments to environments.toml; apply_patches runs an environment's pending patches and execute one INSERT, UPDATE or DELETE, each once the operator confirms through elicitation, on a database safety.toml lets write (or the operator lifts that for the run); dump writes a dump file in the working directory and restore restores one into a local, unprotected database, each once confirmed; `query` never writes, and --allow-writes is refused at startup"
             },
             "read_only_floor": [
                 "every `query` connection opens with default_transaction_read_only=on, whatever safety.toml says",
@@ -1495,6 +1597,152 @@ pub fn confirmed(
     Ok(())
 }
 
+/// The key a declined `execute` is remembered under: its own, so a
+/// declined statement doesn't stop `apply_patches`, nor the reverse.
+/// Pure.
+fn execute_decline_key(environment: &str) -> String {
+    format!("execute {environment}")
+}
+
+/// Why confirming `plan` takes the environment's name typed: the plan's
+/// own reasons, or a statement past what the question shows. Pure.
+fn execute_typed_reason(plan: &crate::inventory::execute::ExecPlan) -> Option<&'static str> {
+    plan.typed_reason()
+}
+
+/// The question `execute` puts to the operator, and the answer's
+/// schema: the statement as it will run, where, how many rows it
+/// changes and what it overwrites. Pure.
+pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, Value) {
+    let mut message = format!(
+        "Run this statement ONCE on {} {}/{}{}:\n\n{};\n\n",
+        plan.environment,
+        plan.server,
+        plan.database,
+        if plan.protected { " (protected)" } else { "" },
+        plan.checked.statement
+    );
+    match (plan.rows, &plan.uncounted) {
+        (Some(n), _) => message.push_str(&format!(
+            "It changes {n} row(s): counted just now, read-only, with its own WHERE."
+        )),
+        (None, why) => message.push_str(&format!(
+            "pgman couldn't count its rows first ({}){}.",
+            why.as_deref().unwrap_or("no count"),
+            plan.estimate
+                .map(|e| format!("; the planner estimates about {e}"))
+                .unwrap_or_default()
+        )),
+    }
+    if let Some(b) = &plan.before {
+        message.push_str(&format!(
+            " What it overwrites now: {}{}.",
+            b.to_json(),
+            if b.more {
+                format!(" (the first {} rows)", b.rows.len())
+            } else {
+                String::new()
+            }
+        ));
+    }
+    message.push_str(&format!(
+        " It runs in one transaction with a {} lock timeout and a {}s statement timeout",
+        crate::query::execute::LOCK_TIMEOUT,
+        crate::query::execute::STATEMENT_TIMEOUT_MS / 1000
+    ));
+    match plan.expect {
+        Some(e) => message.push_str(&format!(
+            ", and is rolled back unless it changes exactly {e} row(s)."
+        )),
+        None => message.push_str(
+            "; nothing checks how many rows it changes, since there is no count and no expect_rows.",
+        ),
+    }
+    if !plan.checked.confirms.is_empty() {
+        message.push_str(&format!(
+            " Your guards would ask about it: {}. This confirmation answers that.",
+            plan.checked.confirms.join(", ")
+        ));
+    }
+    let lifted = plan.lifted();
+    if !lifted.is_empty() {
+        message.push_str(&format!(
+            " WARNING, FOR THIS RUN ONLY: pgman's safety settings refuse what follows, and \
+             confirming lifts that for this statement, this once: {}. The settings stay as they \
+             are for every other run.",
+            lifted.join("; ")
+        ));
+    }
+    let schema = if let Some(why) = execute_typed_reason(plan) {
+        message.push_str(&format!(
+            " {} {why}: type its name to confirm.",
+            plan.environment
+        ));
+        json!({
+            "type": "object",
+            "properties": {"environment": {"type": "string", "title": "Environment name", "description": format!("Type {} to run it", plan.environment)}},
+            "required": ["environment"]
+        })
+    } else {
+        json!({
+            "type": "object",
+            "properties": {"run": {"type": "boolean", "title": "Run this statement", "default": true}},
+            "required": ["run"]
+        })
+    };
+    (message, schema)
+}
+
+/// Whether the operator's answer confirms `plan`. Pure.
+pub fn execute_confirmed(
+    plan: &crate::inventory::execute::ExecPlan,
+    answer: &Value,
+) -> Result<(), String> {
+    match answer.get("action").and_then(Value::as_str) {
+        Some("accept") => {}
+        Some(other) => return Err(format!("the operator chose {other}")),
+        None => return Err("the answer has no action".to_string()),
+    }
+    let content = answer.get("content");
+    if execute_typed_reason(plan).is_some() {
+        let typed = content
+            .and_then(|c| c.get("environment"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if typed != plan.environment {
+            return Err(format!("the name typed doesn't match {}", plan.environment));
+        }
+    } else if content.and_then(|c| c.get("run")).and_then(Value::as_bool) != Some(true) {
+        return Err("the operator didn't tick run".to_string());
+    }
+    Ok(())
+}
+
+/// `execute`'s result. Pure.
+pub fn render_execute(
+    plan: &crate::inventory::execute::ExecPlan,
+    run: &Result<u64, String>,
+) -> String {
+    json!({
+        "environment": plan.environment,
+        "server": plan.server,
+        "database": plan.database,
+        "statement": plan.checked.statement,
+        "counted_rows": plan.rows,
+        "not_counted": plan.uncounted,
+        "estimated_rows": plan.estimate,
+        "expected_rows": plan.expect,
+        "before": plan.before.as_ref().map(|b| b.to_json()),
+        "before_cut": plan.before.as_ref().map(|b| b.more),
+        "before_error": plan.before_error,
+        "lifted_for_this_run": plan.lifted(),
+        "committed": run.is_ok(),
+        "rows_changed": run.as_ref().ok(),
+        "error": run.as_ref().err(),
+    })
+    .to_string()
+}
+
 /// `apply_patches`' result. Pure.
 pub fn render_apply(
     plan: &crate::inventory::patching::PatchPlan,
@@ -2019,7 +2267,7 @@ pub fn statement_error(e: conn::QueryErr) -> String {
 }
 
 /// The hint on a read-only refusal over MCP.
-pub const MCP_READ_ONLY_HINT: &str = "pgman's MCP server runs every query read-only, and this statement writes (a function it calls, or nextval); schema changes go through apply_patches, and anything else is for the operator to run";
+pub const MCP_READ_ONLY_HINT: &str = "pgman's MCP server runs every query read-only, and this statement writes (a function it calls, or nextval); schema changes go through apply_patches, a one-off INSERT, UPDATE or DELETE through execute, and anything else is for the operator to run";
 
 /// Run `sql` through batch's guard rails with no `--yes`, and insist on
 /// exactly one statement. Returns the verified statement text, which is
@@ -2259,10 +2507,16 @@ mod tests {
         for d in tool_table().as_array().unwrap() {
             let desc = d["description"].as_str().unwrap();
             assert!(desc.contains("CAVEATS:"), "{} has no CAVEATS", d["name"]);
-            // Four tools write: a config file, an environment's patches,
-            // a dump file, a local database.
-            let writes = ["environments_save", "apply_patches", "dump", "restore"]
-                .contains(&d["name"].as_str().unwrap_or(""));
+            // Five tools write: a config file, an environment's patches,
+            // one statement, a dump file, a local database.
+            let writes = [
+                "environments_save",
+                "apply_patches",
+                "execute",
+                "dump",
+                "restore",
+            ]
+            .contains(&d["name"].as_str().unwrap_or(""));
             assert_eq!(d["annotations"]["readOnlyHint"], !writes, "{}", d["name"]);
         }
         assert_eq!(
@@ -2281,6 +2535,7 @@ mod tests {
                 "slow_queries",
                 "environment_logs",
                 "apply_patches",
+                "execute",
                 "environments_discover",
                 "environments_save",
                 "dump",
@@ -2946,5 +3201,127 @@ mod tests {
         assert_eq!(v["columns"][0]["type"], "int4");
         assert_eq!(v["row_count"], 1);
         assert_eq!(v["truncated"], true);
+    }
+
+    fn exec_plan(sql: &str, profile: &str, protected: bool) -> crate::inventory::execute::ExecPlan {
+        let (cfg, _) = crate::safety::SafetyConfig::parse_personal(profile);
+        crate::inventory::execute::ExecPlan {
+            environment: "demo".into(),
+            server: "db1".into(),
+            database: "ledger".into(),
+            protected,
+            checked: crate::query::execute::check(&cfg, "ledger", sql, true).unwrap(),
+            rows: Some(1),
+            uncounted: None,
+            estimate: None,
+            expect: Some(1),
+            before: Some(crate::query::execute::Before {
+                columns: vec!["value".into()],
+                rows: vec![vec![Some("10".into())]],
+                more: false,
+            }),
+            before_error: None,
+        }
+    }
+
+    const OPEN: &str = "[databases.ledger]\nread_only = false\n";
+
+    #[test]
+    fn the_execute_question_shows_the_statement_its_rows_and_what_it_overwrites() {
+        let plan = exec_plan("UPDATE settings SET value = '11' WHERE id = 1", OPEN, false);
+        let (message, schema) = execute_request(&plan);
+        assert!(
+            message.starts_with(
+                "Run this statement ONCE on demo db1/ledger:\n\nUPDATE settings SET value = '11' WHERE id = 1;\n\n"
+            ),
+            "{message}"
+        );
+        assert!(message.contains("It changes 1 row(s)"), "{message}");
+        assert!(
+            message.contains(r#"What it overwrites now: [{"value":"10"}]"#),
+            "{message}"
+        );
+        assert!(
+            message.contains("rolled back unless it changes exactly 1 row(s)"),
+            "{message}"
+        );
+        assert!(!message.contains("type its name"), "{message}");
+        assert_eq!(schema["required"], json!(["run"]));
+        assert!(execute_confirmed(
+            &plan,
+            &json!({"action": "accept", "content": {"run": true}})
+        )
+        .is_ok());
+        assert!(execute_confirmed(
+            &plan,
+            &json!({"action": "accept", "content": {"run": false}})
+        )
+        .is_err());
+        assert!(execute_confirmed(&plan, &json!({"action": "decline"})).is_err());
+        // An uncounted one says nothing checks its rows, unless told.
+        let mut uncounted = plan.clone();
+        (uncounted.rows, uncounted.expect, uncounted.estimate) = (None, None, Some(4));
+        uncounted.uncounted = Some("an INSERT".into());
+        let (message, _) = execute_request(&uncounted);
+        assert!(
+            message.contains(
+                "couldn't count its rows first (an INSERT); the planner estimates about 4"
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains("nothing checks how many rows it changes"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_protected_or_lifted_execute_takes_the_typed_name_and_says_why() {
+        let protected = exec_plan("UPDATE settings SET value = '11' WHERE id = 1", OPEN, true);
+        let (message, schema) = execute_request(&protected);
+        assert!(
+            message.contains("demo is protected: type its name to confirm"),
+            "{message}"
+        );
+        assert_eq!(schema["required"], json!(["environment"]));
+        let tick = json!({"action": "accept", "content": {"run": true}});
+        assert!(
+            execute_confirmed(&protected, &tick).is_err(),
+            "a tick isn't a typed name"
+        );
+        assert!(execute_confirmed(
+            &protected,
+            &json!({"action": "accept", "content": {"environment": "demo"}})
+        )
+        .is_ok());
+        let lifted = exec_plan("DELETE FROM settings", "", false);
+        let (message, _) = execute_request(&lifted);
+        assert!(
+            message.contains("this once: 'ledger' is read-only; DELETE without WHERE."),
+            "{message}"
+        );
+        assert!(execute_confirmed(&lifted, &tick).is_err());
+    }
+
+    #[test]
+    fn a_declined_execute_is_remembered_apart_from_apply_patches() {
+        assert_ne!(execute_decline_key("demo"), "demo");
+        let s = super::super::Server::new(Default::default(), std::path::PathBuf::from("/"));
+        s.remember_decline(&execute_decline_key("demo"), "db1", "ledger");
+        assert!(s.declined(&execute_decline_key("demo"), "db1", "ledger"));
+        assert!(!s.declined("demo", "db1", "ledger"));
+    }
+
+    #[test]
+    fn the_execute_result_says_whether_it_was_kept() {
+        let plan = exec_plan("UPDATE settings SET value = '11' WHERE id = 1", OPEN, false);
+        let v: Value = serde_json::from_str(&render_execute(&plan, &Ok(1))).unwrap();
+        assert_eq!(v["committed"], true);
+        assert_eq!(v["rows_changed"], 1);
+        assert_eq!(v["before"], json!([{"value": "10"}]));
+        let v: Value =
+            serde_json::from_str(&render_execute(&plan, &Err("rolled back".into()))).unwrap();
+        assert_eq!(v["committed"], false);
+        assert_eq!(v["error"], "rolled back");
     }
 }

@@ -13,12 +13,13 @@
 //!   carries a CAVEATS paragraph naming what the tool cannot see.
 //!
 //! `query` never writes, and `--allow-writes` is refused at startup
-//! rather than accepted and ignored. Four tools write: `environments_save`
+//! rather than accepted and ignored. Five tools write: `environments_save`
 //! appends discovered environments to the operator's `environments.toml`;
-//! `apply_patches` runs an environment's pending patches, `dump` writes a
+//! `apply_patches` runs an environment's pending patches, `execute` one
+//! INSERT, UPDATE or DELETE on an environment's database, `dump` writes a
 //! dump file in the working directory and `restore` restores one into a
 //! local database, each once the operator confirms through elicitation
-//! (`dumps`). `--read-only` refuses all four.
+//! (`dumps`). `--read-only` refuses all five.
 
 pub mod connections;
 pub mod describe;
@@ -43,8 +44,9 @@ const TOOL_SLOTS: usize = 8;
 pub const USAGE: &str = "usage: pgman mcp serve [--read-only] [--project-connections]
 
   --read-only            also refuse environments_save (writes environments.toml),
-                         apply_patches (runs patches), dump (writes a dump file)
-                         and restore (into a local database), each confirmed
+                         apply_patches (runs patches), execute (one statement),
+                         dump (writes a dump file) and restore (into a local
+                         database), each confirmed
   --project-connections  allow connections discovered in the working directory
                          (.pgman/pgman.toml, Spring, IntelliJ); a discovered
                          connection that tunnels is refused regardless
@@ -80,8 +82,9 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--project-connections" => opts.project_connections = true,
             s if s == "--allow-writes" || s.starts_with("--allow-writes=") => {
                 return Err(
-                    "--allow-writes: there is no blanket write switch to allow; apply_patches and \
-                     restore are the database-writing tools, and ask the operator to confirm each run"
+                    "--allow-writes: there is no blanket write switch to allow; apply_patches, \
+                     execute and restore are the database-writing tools, and ask the operator to \
+                     confirm each run"
                         .to_string(),
                 )
             }
@@ -366,9 +369,9 @@ pub fn instructions(opts: &Opts) -> String {
         "Connections discovered in the working directory are listed but refused; the operator allows them with --project-connections."
     };
     let save = if opts.read_only {
-        "environments_save, apply_patches, dump and restore are refused (--read-only)."
+        "environments_save, apply_patches, execute, dump and restore are refused (--read-only)."
     } else {
-        "environments_save appends to the operator's environments.toml: show them the proposal's toml and notes first. apply_patches and restore are the tools that write to a database, and dump writes a copy of one to a file: each asks the operator to confirm through elicitation, so call them only when the operator asked for that."
+        "environments_save appends to the operator's environments.toml: show them the proposal's toml and notes first. apply_patches, execute and restore are the tools that write to a database, and dump writes a copy of one to a file: each asks the operator to confirm through elicitation, so call them only when the operator asked for that."
     };
     format!(
         "pgman {} — Postgres access through pgman's safety rails. This describes THIS build.\n\n\

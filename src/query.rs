@@ -19,6 +19,7 @@ pub mod clause;
 pub mod complete;
 pub mod ddl;
 pub mod definitions;
+pub mod execute;
 pub mod explain;
 pub mod format;
 pub mod from_parse;
