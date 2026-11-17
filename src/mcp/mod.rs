@@ -120,7 +120,7 @@ pub struct Server {
     /// statement for (`execute`): its own set, so neither tool's
     /// answer stops the other, and no environment's name can stand for
     /// another's key.
-    declined_execute: Mutex<std::collections::HashSet<(String, String, String)>>,
+    declined_execute: Mutex<std::collections::HashSet<crate::inventory::execute::Named>>,
     /// (environment, server, database) → the ref a confirmed dry run read
     /// its patches at, and the commit it resolved to: an apply at the
     /// same ref must find the same commit.
@@ -166,16 +166,16 @@ impl Server {
         }
     }
 
-    pub(crate) fn remember_execute_decline(&self, environment: &str, server: &str, database: &str) {
+    pub(crate) fn remember_execute_decline(&self, named: &crate::inventory::execute::Named) {
         if let Ok(mut d) = self.declined_execute.lock() {
-            d.insert((environment.into(), server.into(), database.into()));
+            d.insert(named.clone());
         }
     }
 
-    pub(crate) fn execute_declined(&self, environment: &str, server: &str, database: &str) -> bool {
+    pub(crate) fn execute_declined(&self, named: &crate::inventory::execute::Named) -> bool {
         self.declined_execute
             .lock()
-            .is_ok_and(|d| d.contains(&(environment.into(), server.into(), database.into())))
+            .is_ok_and(|d| d.contains(named))
     }
 
     pub(crate) fn declined(&self, environment: &str, server: &str, database: &str) -> bool {

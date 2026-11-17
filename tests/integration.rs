@@ -13913,22 +13913,37 @@ struct ExecSession {
 
 impl ExecSession {
     fn start(home: &std::path::Path) -> Self {
+        Self::start_with(home, true)
+    }
+
+    /// [`ExecSession::start`]; without `it-prod` when not `with_prod`,
+    /// whose server is it-dev's, so it-dev's databases are protected
+    /// while it is listed.
+    fn start_with(home: &std::path::Path, with_prod: bool) -> Self {
         use std::io::{BufRead, Write};
         std::fs::write(
             home.join(".config/pgman/connections.toml"),
             format!(
                 "[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n\
                  [[connections]]\nname = \"standby\"\nurl = \"{STANDBY_DSN}\"\n\
-                 [[connections]]\nname = \"said-replica\"\nurl = \"{DSN}\"\nrole = \"replica\"\n"
+                 [[connections]]\nname = \"said-replica\"\nurl = \"{DSN}\"\nrole = \"replica\"\n\
+                 [[connections]]\nname = \"solo\"\nurl = \"{DSN}\"\n\
+                 [[connections]]\nname = \"solo-prod\"\nurl = \"{DSN}\"\n"
             ),
         )
         .unwrap();
+        let prod = if with_prod {
+            "[[environments]]\nname = \"it-prod\"\nsource = { kind = \"static\", connections = [\"local\"] }\n"
+        } else {
+            ""
+        };
         std::fs::write(
             home.join(".config/pgman/environments.toml"),
-            "[[environments]]\nname = \"it-dev\"\nsource = { kind = \"static\", connections = [\"local\"] }\n\
-             [[environments]]\nname = \"it-prod\"\nsource = { kind = \"static\", connections = [\"local\"] }\n\
-             [[environments]]\nname = \"it-standby\"\nsource = { kind = \"static\", connections = [\"standby\"] }\n\
-             [[environments]]\nname = \"it-replica\"\nsource = { kind = \"static\", connections = [\"said-replica\"] }\n",
+            format!(
+                "[[environments]]\nname = \"it-dev\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n{prod}\
+                 [[environments]]\nname = \"it-standby\"\nsource = {{ kind = \"static\", connections = [\"standby\"] }}\n\
+                 [[environments]]\nname = \"it-replica\"\nsource = {{ kind = \"static\", connections = [\"said-replica\"] }}\n"
+            ),
         )
         .unwrap();
         let mut child = pgman()
@@ -14019,7 +14034,7 @@ fn mcp_execute_counts_shows_and_runs_one_update_once_confirmed() {
         &format!("INSERT INTO {t} VALUES (1, 'a'), (2, 'b')"),
     )
     .unwrap();
-    let mut s = ExecSession::start(&home);
+    let mut s = ExecSession::start_with(&home, false);
     let at = |sql: String| serde_json::json!({"environment": "it-dev", "server": "local", "database": "pgman_test", "sql": sql});
     let update = format!("UPDATE {t} SET value = 'z' WHERE id = 1");
 
@@ -14182,10 +14197,7 @@ fn mcp_execute_takes_the_typed_name_where_protected_or_lifted_and_never_a_standb
         serde_json::json!({}),
     );
     assert!(asked.is_none());
-    assert!(
-        is_error && text.contains("is a replica; writes go to its primary"),
-        "{text}"
-    );
+    assert!(is_error && text.contains("is a replica"), "{text}");
     s.finish();
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
@@ -14287,4 +14299,110 @@ fn execute_counts_a_joined_update_and_delete_as_the_rows_they_change() {
             .await
             .unwrap();
     });
+}
+
+/// `execute` on a connection outside any environment: confirmed by a
+/// tick, or by typing its name when its name says prod; never a URL,
+/// and never an environment's name.
+#[test]
+fn mcp_execute_writes_to_a_connection_by_its_name() {
+    let home = scratch_home("mcp-exec-conn", WRITABLE_PROFILE);
+    let t = it_name("execc");
+    on(
+        "pgman_test",
+        &format!("CREATE TABLE {t} (id int PRIMARY KEY, value text)"),
+    )
+    .unwrap();
+    on(
+        "pgman_test",
+        &format!("INSERT INTO {t} VALUES (1, 'a'), (2, 'b')"),
+    )
+    .unwrap();
+    let mut s = ExecSession::start_with(&home, false);
+    let at = |name: &str, sql: String| serde_json::json!({"connection": name, "sql": sql});
+    let (text, is_error, asked) = s.call(
+        2,
+        at("solo", format!("UPDATE {t} SET value = 'z' WHERE id = 1")),
+        serde_json::json!({"action": "accept", "content": {"run": true}}),
+    );
+    let message = asked.unwrap();
+    assert!(message.contains("ONCE on solo (pgman_test)"), "{message}");
+    assert!(!is_error, "{text}");
+    assert_eq!(value_of(&t, 1).as_deref(), Some("z"));
+
+    let (text, is_error, asked) = s.call(
+        3,
+        at(
+            "solo-prod",
+            format!("UPDATE {t} SET value = 'y' WHERE id = 2"),
+        ),
+        serde_json::json!({"action": "accept", "content": {"environment": "solo-prod"}}),
+    );
+    assert!(asked
+        .unwrap()
+        .contains("solo-prod is protected: type its name"));
+    assert!(!is_error, "{text}");
+    assert_eq!(value_of(&t, 2).as_deref(), Some("y"));
+
+    for (id, name, why) in [
+        (4, "it-dev", "names an environment"),
+        (5, DSN, "never a URL"),
+    ] {
+        let (text, is_error, asked) = s.call(
+            id,
+            at(name, format!("DELETE FROM {t} WHERE id = 1")),
+            serde_json::json!({}),
+        );
+        assert!(asked.is_none(), "{name}");
+        assert!(is_error && text.contains(why), "{name}: {text}");
+    }
+    assert_eq!(value_of(&t, 1).as_deref(), Some("z"));
+    s.finish();
+    let _ = on("pgman_test", &format!("DROP TABLE {t}"));
+}
+
+/// A plan whose database turns out a standby when the run connects —
+/// a failover between the question and the answer — runs nothing.
+#[test]
+fn execute_refuses_a_standby_found_at_the_run() {
+    use pgman::inventory::execute::{endpoint, ExecPlan, Named};
+    let resolved = pgman::inventory::target::Resolved {
+        label: "standby".into(),
+        environment: None,
+        server: "standby".into(),
+        database: "pgman_test".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        protected: false,
+        protected_why: None,
+        connect: pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(STANDBY_DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        },
+    };
+    let (safety, _) = pgman::safety::SafetyConfig::parse_personal("[default]\nread_only = false\n");
+    let sql = "UPDATE pgman_never_there SET x = 1 WHERE id = 1";
+    let plan = ExecPlan {
+        named: Named::Connection("standby".into()),
+        environment: None,
+        server: "standby".into(),
+        database: "pgman_test".into(),
+        label: "standby".into(),
+        protected: false,
+        protected_why: None,
+        endpoint: endpoint(&resolved),
+        checked: pgman::query::execute::check(&safety, "pgman_test", sql, false).unwrap(),
+        rows: Some(1),
+        uncounted: None,
+        estimate: None,
+        expect: 1,
+        before: None,
+        before_error: None,
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let err = rt
+        .block_on(pgman::inventory::execute::run_on(&plan, &resolved, &safety))
+        .unwrap_err();
+    assert!(err.contains("is a standby (in recovery)"), "{err}");
 }

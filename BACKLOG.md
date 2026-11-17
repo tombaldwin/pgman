@@ -9,13 +9,6 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 `execute` shipped (one INSERT, UPDATE or DELETE, confirmed); left:
 
-- **Named connections.** It takes an environment's database only, so a
-  database outside environments.toml can't be written to this way; a
-  connection has no `protected` and its role is the operator's word.
-- **The run's standby check has no test.** The plan's is tested (a
-  standby is refused before anything is asked); the run's, which
-  catches a failover between the question and the answer, would need
-  the standby promoted mid-call.
 - **No CLI or TUI twin.** The editor already writes through the
   guards; a `pgman execute` with the count and the rollback-unless-N
   check could follow if wanted.

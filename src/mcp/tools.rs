@@ -199,17 +199,18 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "execute",
-            "description": "Run ONE INSERT, UPDATE or DELETE on an environment's database, once, after the OPERATOR confirms it through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name; likewise a statement that changes every row, or one safety.toml refuses). Plans first, read-only: an UPDATE or DELETE of one table (an UPDATE's FROM list and a DELETE's USING list included) is counted with its own WHERE, and an UPDATE's current values of the columns it sets are read, so the operator sees how many rows change and what is overwritten; anything else gets the planner's estimate and is refused without `expect_rows`, so nothing runs unchecked. The operator is shown the exact statement. It then runs in one transaction with a 5s lock_timeout and a 30s statement_timeout, and is ROLLED BACK unless it changed the rows confirmed: `expect_rows`, else the count. A database safety.toml keeps read-only, or a statement its guards block, is shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. The audit line in pgman's log records the statement, the target, the rows changed and the values it overwrote, except those of a column whose name says secret (password, token, key, hash…). CAVEATS: refused under --read-only, by a client that can't elicit, on a replica or standby, and for anything but one INSERT, UPDATE or DELETE without parameters ($1): schema changes go through apply_patches; DO, CALL, a CTE, MERGE, SET and transaction control are for the operator. The count is of the statement's own table: triggers, cascades and functions it calls run too, and are neither counted nor checked. Any answer but a confirmation is final for that database this session. The count and the run are moments apart: another session's change in between makes the counts differ, and it rolls back. If the call times out, the statement may have committed: check before calling again.",
+            "description": "Run ONE INSERT, UPDATE or DELETE on an environment's database (`environment`, `server`, `database`) or a connection's (`connection`, from connections.toml), once, after the OPERATOR confirms it through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name; likewise a statement that changes every row, or one safety.toml refuses). Plans first, read-only: an UPDATE or DELETE of one table (an UPDATE's FROM list and a DELETE's USING list included) is counted with its own WHERE, and an UPDATE's current values of the columns it sets are read, so the operator sees how many rows change and what is overwritten; anything else gets the planner's estimate and is refused without `expect_rows`, so nothing runs unchecked. The operator is shown the exact statement. It then runs in one transaction with a 5s lock_timeout and a 30s statement_timeout, and is ROLLED BACK unless it changed the rows confirmed: `expect_rows`, else the count. A database safety.toml keeps read-only, or a statement its guards block, is shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. The audit line in pgman's log records the statement, the target, the rows changed and the values it overwrote, except those of a column whose name says secret (password, token, key, hash…). CAVEATS: refused under --read-only, by a client that can't elicit, on a replica or standby, and for anything but one INSERT, UPDATE or DELETE without parameters ($1): schema changes go through apply_patches; DO, CALL, a CTE, MERGE, SET and transaction control are for the operator. The count is of the statement's own table: triggers, cascades and functions it calls run too, and are neither counted nor checked. Any answer but a confirmation is final for that database this session. The count and the run are moments apart: another session's change in between makes the counts differ, and it rolls back. If the call times out, the statement may have committed: check before calling again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "environment": {"type": "string"},
                     "server": {"type": "string"},
                     "database": {"type": "string"},
+                    "connection": {"type": "string", "description": "Instead of environment, server and database: a connection's name from connections.toml (never a URL), for a database outside any environment. Protected when an environment listing it is, or its own name contains \"prod\"."},
                     "sql": {"type": "string", "description": "Exactly one INSERT, UPDATE or DELETE, with its values written in."},
                     "expect_rows": {"type": "integer", "minimum": 0, "description": "The rows it must change, or it is rolled back. When pgman can count them first and the count differs, nothing is asked."}
                 },
-                "required": ["environment", "server", "database", "sql"],
+                "required": ["sql"],
                 "additionalProperties": false
             },
             "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}
@@ -453,9 +454,7 @@ impl Server {
         if !self.client_info().1 {
             return Err("execute needs a client that supports elicitation, so the operator confirms each statement; this one declared none".to_string());
         }
-        let environment = arg_str(args, "environment")?.to_string();
-        let server = arg_str(args, "server")?.to_string();
-        let database = arg_str(args, "database")?.to_string();
+        let named = execute_named(args)?;
         let sql = arg_str(args, "sql")?.to_string();
         let expect_rows = match args.get("expect_rows") {
             None | Some(Value::Null) => None,
@@ -464,10 +463,10 @@ impl Server {
                     .ok_or("expect_rows must be a non-negative integer")?,
             ),
         };
-        if self.execute_declined(&environment, &server, &database) {
-            return Err(format!(
-                "the operator didn't confirm a statement for {environment} {server}/{database} earlier in this session; nothing asked, nothing run (they can run it themselves, or restart the MCP server)"
-            ));
+        if self.execute_declined(&named) {
+            return Err(
+                "the operator didn't confirm a statement for that database earlier in this session; nothing asked, nothing run (they can run it themselves, or restart the MCP server)".to_string()
+            );
         }
         let personal = crate::safety::SafetyConfig::load_personal().0;
         let safety = merged_safety(personal.clone(), &self.cwd);
@@ -478,36 +477,35 @@ impl Server {
                 .as_ref(),
         );
         let plan = crate::inventory::execute::plan_for(
-            environment.clone(),
-            server.clone(),
-            database.clone(),
+            named.clone(),
             sql,
             expect_rows,
             safety.clone(),
-            floor,
+            Some(floor),
         )
         .await?;
         let (message, schema) = execute_request(&plan);
         let answer = self.elicit(&message, schema).await?;
-        let statement = plan.checked.statement.as_str();
         if let Err(why) = execute_confirmed(&plan, &answer) {
             // Any answer but a confirmation: a decline, an untick, a
             // wrong name. Each statement is a new question, so a
             // remembered decline is what stops one being reworded.
-            self.remember_execute_decline(&environment, &server, &database);
-            tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, why = ?why, "execute not confirmed");
+            self.remember_execute_decline(&named);
+            crate::inventory::execute::audit_not_confirmed(&plan, &why);
             return Err(format!(
                 "nothing run: {why}. That answer is final: don't call execute again unless the operator asks"
             ));
         }
-        let lifted = plan.lifted();
-        let before = plan.before.as_ref().map(|b| b.for_audit().to_string());
         let how = if plan.typed_reason().is_some() {
-            "typed the environment's name"
+            "typed the name"
         } else {
             "ticked"
         };
-        tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, expect = ?plan.expect, lifted = ?lifted, confirmed = how, client = %self.client_info().0, os_user = %std::env::var("USER").unwrap_or_default(), "execute confirmed");
+        crate::inventory::execute::audit_confirmed(
+            &plan,
+            how,
+            &format!("MCP client {}", self.client_info().0),
+        );
         // Its own task: if this call times out, the statement still
         // finishes and is logged rather than dropped mid-transaction.
         let run = {
@@ -516,14 +514,7 @@ impl Server {
                 .await
                 .unwrap_or_else(|e| Err(format!("the execute task failed: {e}")))
         };
-        match &run {
-            Ok(rows) => {
-                tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, rows, before = ?before, "execute committed")
-            }
-            Err(why) => {
-                tracing::warn!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, why = ?why, "execute not kept")
-            }
-        }
+        crate::inventory::execute::audit_outcome(&plan, &run);
         Ok(render_execute(&plan, &run))
     }
 
@@ -1597,16 +1588,34 @@ pub fn confirmed(
     Ok(())
 }
 
+/// The database an `execute` call names: `environment`, `server` and
+/// `database`, or `connection`, never both. Pure.
+fn execute_named(args: &Value) -> Result<crate::inventory::execute::Named, String> {
+    use crate::inventory::execute::Named;
+    let has = |k: &str| args.get(k).is_some_and(|v| !v.is_null());
+    match (has("connection"), ["environment", "server", "database"].map(has)) {
+        (true, [false, false, false]) => Ok(Named::Connection(arg_str(args, "connection")?.to_string())),
+        (false, [true, true, true]) => Ok(Named::Environment {
+            environment: arg_str(args, "environment")?.to_string(),
+            server: arg_str(args, "server")?.to_string(),
+            database: arg_str(args, "database")?.to_string(),
+        }),
+        _ => Err("name the database by environment, server and database, or by connection: one or the other".to_string()),
+    }
+}
+
 /// The question `execute` puts to the operator, and the answer's
 /// schema: the statement as it will run, where, how many rows it
 /// changes and what it overwrites. Pure.
 pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, Value) {
     let mut message = format!(
-        "Run this statement ONCE on {} {}/{}{} ({}):\n\n{};\n\n",
-        plan.environment,
-        plan.server,
-        plan.database,
-        if plan.protected { " (protected)" } else { "" },
+        "Run this statement ONCE on {}{} ({}):\n\n{};\n\n",
+        plan.place(),
+        match (plan.protected, &plan.protected_why) {
+            (true, Some(why)) => format!(" (protected: {why})"),
+            (true, None) => " (protected)".to_string(),
+            _ => String::new(),
+        },
         plan.endpoint,
         plan.checked.statement
     );
@@ -1651,7 +1660,7 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
     if let Some(why) = typed {
         message.push_str(&format!(
             " {} {why}: type its name to confirm.",
-            plan.environment
+            plan.confirm_name()
         ));
     }
     // Last, and cut: the tool's result has them all.
@@ -1672,7 +1681,7 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
     let schema = if typed.is_some() {
         json!({
             "type": "object",
-            "properties": {"environment": {"type": "string", "title": "Environment name", "description": format!("Type {} to run it", plan.environment)}},
+            "properties": {"environment": {"type": "string", "title": "Environment name", "description": format!("Type {} to run it", plan.confirm_name())}},
             "required": ["environment"]
         })
     } else {
@@ -1706,8 +1715,11 @@ pub fn execute_confirmed(
             .and_then(|c| c.get("environment"))
             .and_then(Value::as_str)
             .unwrap_or("");
-        if typed != plan.environment {
-            return Err(format!("the name typed doesn't match {}", plan.environment));
+        if typed != plan.confirm_name() {
+            return Err(format!(
+                "the name typed doesn't match {}",
+                plan.confirm_name()
+            ));
         }
     } else if content.and_then(|c| c.get("run")).and_then(Value::as_bool) != Some(true) {
         return Err("the operator didn't tick run".to_string());
@@ -1722,6 +1734,7 @@ pub fn render_execute(
 ) -> String {
     json!({
         "environment": plan.environment,
+        "target": plan.label,
         "server": plan.server,
         "database": plan.database,
         "endpoint": plan.endpoint,
@@ -3204,10 +3217,17 @@ mod tests {
     fn exec_plan(sql: &str, profile: &str, protected: bool) -> crate::inventory::execute::ExecPlan {
         let (cfg, _) = crate::safety::SafetyConfig::parse_personal(profile);
         crate::inventory::execute::ExecPlan {
-            environment: "demo".into(),
+            named: crate::inventory::execute::Named::Environment {
+                environment: "demo".into(),
+                server: "db1".into(),
+                database: "ledger".into(),
+            },
+            environment: Some("demo".into()),
             server: "db1".into(),
             database: "ledger".into(),
+            label: "demo/db1/ledger".into(),
             protected,
+            protected_why: None,
             endpoint: "postgres://app@db1:5432/ledger".into(),
             checked: crate::query::execute::check(&cfg, "ledger", sql, true).unwrap(),
             rows: Some(1),
@@ -3315,11 +3335,44 @@ mod tests {
     #[test]
     fn a_declined_execute_is_remembered_apart_from_apply_patches() {
         let s = super::super::Server::new(Default::default(), std::path::PathBuf::from("/"));
-        s.remember_execute_decline("demo", "db1", "ledger");
-        assert!(s.execute_declined("demo", "db1", "ledger"));
+        use crate::inventory::execute::Named;
+        let at = |e: &str| Named::Environment {
+            environment: e.into(),
+            server: "db1".into(),
+            database: "ledger".into(),
+        };
+        s.remember_execute_decline(&at("demo"));
+        assert!(s.execute_declined(&at("demo")));
         assert!(!s.declined("demo", "db1", "ledger"));
         s.remember_decline("staging", "db1", "ledger");
-        assert!(!s.execute_declined("staging", "db1", "ledger"));
+        assert!(!s.execute_declined(&at("staging")));
+        // A connection's decline is its own, whatever it is called.
+        assert!(!s.execute_declined(&Named::Connection("demo".into())));
+    }
+
+    #[test]
+    fn execute_takes_an_environments_database_or_a_connection_never_both() {
+        use crate::inventory::execute::Named;
+        assert_eq!(
+            execute_named(&json!({"connection": "app-dev", "sql": "x"})),
+            Ok(Named::Connection("app-dev".into()))
+        );
+        assert!(matches!(
+            execute_named(&json!({"environment": "e", "server": "s", "database": "d"})),
+            Ok(Named::Environment { .. })
+        ));
+        for args in [
+            json!({"connection": "app-dev", "environment": "e", "server": "s", "database": "d"}),
+            json!({"environment": "e", "server": "s"}),
+            json!({}),
+        ] {
+            assert!(
+                execute_named(&args)
+                    .unwrap_err()
+                    .contains("one or the other"),
+                "{args}"
+            );
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 ### Added
 
 - MCP `execute`: one `INSERT`, `UPDATE` or `DELETE` on an environment's
-  database, run once after the operator confirms the exact statement.
+  database, or a connection's in `connections.toml`, run once after the operator confirms the exact statement.
   An `UPDATE` or `DELETE` of one table (`FROM` and `USING` joins
   included) is counted first, read-only, with its own `WHERE`, and an `UPDATE`'s current values of the columns it sets
   are shown; anything pgman can't count needs `expect_rows`. It runs in
