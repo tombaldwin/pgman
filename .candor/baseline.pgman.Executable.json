@@ -113,7 +113,7 @@
     },
     {
       "fn": "<OwnerOnlyWriter<'_> as std::io::Write>::flush",
-      "loc": "src/main.rs:1887:5: 1887:47",
+      "loc": "src/main.rs:1910:5: 1910:47",
       "inferred": [
         "Unknown"
       ],
@@ -131,7 +131,7 @@
     },
     {
       "fn": "<OwnerOnlyWriter<'_> as std::io::Write>::write",
-      "loc": "src/main.rs:1881:5: 1881:62",
+      "loc": "src/main.rs:1904:5: 1904:62",
       "inferred": [
         "Clock",
         "Fs",
@@ -165,7 +165,7 @@
     },
     {
       "fn": "OwnerOnlyRolling::new",
-      "loc": "src/main.rs:1835:5: 1835:99",
+      "loc": "src/main.rs:1858:5: 1858:99",
       "inferred": [
         "Clock"
       ],
@@ -181,7 +181,7 @@
     },
     {
       "fn": "apply_pgpassword",
-      "loc": "src/main.rs:1917:1: 1917:41",
+      "loc": "src/main.rs:1940:1: 1940:41",
       "inferred": [
         "Env"
       ],
@@ -197,7 +197,7 @@
     },
     {
       "fn": "batch_dsn_from_picks",
-      "loc": "src/main.rs:1439:1: 1442:31",
+      "loc": "src/main.rs:1462:1: 1465:31",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -209,7 +209,7 @@
     },
     {
       "fn": "check_log_max_size",
-      "loc": "src/main.rs:1684:1: 1684:68",
+      "loc": "src/main.rs:1707:1: 1707:68",
       "inferred": [
         "Fs"
       ],
@@ -231,7 +231,7 @@
     },
     {
       "fn": "chmod_owner_only_if_exists",
-      "loc": "src/main.rs:1898:1: 1898:54",
+      "loc": "src/main.rs:1921:1: 1921:54",
       "inferred": [
         "Fs"
       ],
@@ -254,7 +254,7 @@
     },
     {
       "fn": "chmod_pgman_logs_in",
-      "loc": "src/main.rs:1796:1: 1796:46",
+      "loc": "src/main.rs:1819:1: 1819:46",
       "inferred": [
         "Fs"
       ],
@@ -301,7 +301,7 @@
     },
     {
       "fn": "dev_tty_opens",
-      "loc": "src/main.rs:1733:1: 1733:27",
+      "loc": "src/main.rs:1756:1: 1756:27",
       "inferred": [
         "Fs"
       ],
@@ -320,7 +320,7 @@
     },
     {
       "fn": "format_connect_failure",
-      "loc": "src/main.rs:1621:1: 1621:64",
+      "loc": "src/main.rs:1644:1: 1644:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -350,7 +350,7 @@
     },
     {
       "fn": "init_config_cli",
-      "loc": "src/main.rs:1648:1: 1648:28",
+      "loc": "src/main.rs:1671:1: 1671:28",
       "inferred": [
         "Clock",
         "Env",
@@ -378,7 +378,7 @@
     },
     {
       "fn": "init_logging",
-      "loc": "src/main.rs:1762:1: 1762:18",
+      "loc": "src/main.rs:1785:1: 1785:18",
       "inferred": [
         "Clock",
         "Env",
@@ -414,7 +414,7 @@
     },
     {
       "fn": "load_project_safety",
-      "loc": "src/main.rs:1933:1: 1933:82",
+      "loc": "src/main.rs:1956:1: 1956:82",
       "inferred": [
         "Fs",
         "Log"
@@ -432,7 +432,7 @@
     },
     {
       "fn": "load_safety_config",
-      "loc": "src/main.rs:1939:1: 1939:48",
+      "loc": "src/main.rs:1962:1: 1962:48",
       "inferred": [
         "Env",
         "Fs",
@@ -554,7 +554,7 @@
     },
     {
       "fn": "parse_tap_addr",
-      "loc": "src/main.rs:1239:1: 1239:69",
+      "loc": "src/main.rs:1262:1: 1262:69",
       "inferred": [
         "Net",
         "Unknown"
@@ -585,7 +585,7 @@
     },
     {
       "fn": "parse_tap_addr_with",
-      "loc": "src/main.rs:1250:1: 1253:42",
+      "loc": "src/main.rs:1273:1: 1276:42",
       "inferred": [
         "Unknown"
       ],
@@ -603,7 +603,7 @@
     },
     {
       "fn": "read_log_arg_cli",
-      "loc": "src/main.rs:1286:1: 1286:98",
+      "loc": "src/main.rs:1309:1: 1309:98",
       "inferred": [
         "Fs"
       ],
@@ -625,7 +625,7 @@
     },
     {
       "fn": "repair_logs_on_day_change",
-      "loc": "src/main.rs:1847:1: 1851:10",
+      "loc": "src/main.rs:1870:1: 1874:10",
       "inferred": [
         "Fs"
       ],
@@ -648,7 +648,7 @@
     },
     {
       "fn": "repair_private_dirs",
-      "loc": "src/main.rs:1749:1: 1749:25",
+      "loc": "src/main.rs:1772:1: 1772:25",
       "inferred": [
         "Env",
         "Fs",
@@ -668,7 +668,7 @@
     },
     {
       "fn": "resolve_batch_dsn",
-      "loc": "src/main.rs:1306:1: 1306:61",
+      "loc": "src/main.rs:1329:1: 1329:61",
       "inferred": [
         "Env",
         "Fs",
@@ -696,7 +696,7 @@
     },
     {
       "fn": "resolve_batch_target",
-      "loc": "src/main.rs:1362:1: 1374:2",
+      "loc": "src/main.rs:1385:1: 1397:2",
       "inferred": [
         "Clock",
         "Env",
@@ -732,7 +732,7 @@
     },
     {
       "fn": "run_batch",
-      "loc": "src/main.rs:1512:1: 1512:37",
+      "loc": "src/main.rs:1535:1: 1535:37",
       "inferred": [
         "Clock",
         "Db",
@@ -785,7 +785,7 @@
     },
     {
       "fn": "tap_addr_or_exit_cli",
-      "loc": "src/main.rs:1224:1: 1224:71",
+      "loc": "src/main.rs:1247:1: 1247:71",
       "inferred": [
         "Net",
         "Unknown"
@@ -809,7 +809,7 @@
     },
     {
       "fn": "tap_bind_failed_cli",
-      "loc": "src/main.rs:1211:1: 1216:12",
+      "loc": "src/main.rs:1234:1: 1239:12",
       "inferred": [
         "Log"
       ],
@@ -828,7 +828,7 @@
     },
     {
       "fn": "utc_day_number",
-      "loc": "src/main.rs:1810:1: 1810:27",
+      "loc": "src/main.rs:1833:1: 1833:27",
       "inferred": [
         "Clock"
       ],
