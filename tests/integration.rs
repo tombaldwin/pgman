@@ -14064,15 +14064,25 @@ fn mcp_execute_counts_shows_and_runs_one_update_once_confirmed() {
         "{text}"
     );
 
+    // What can't be counted first needs expect_rows, or nothing runs.
+    let insert = format!("INSERT INTO {t} VALUES (3, 'c')");
+    let (text, is_error, asked) = s.call(8, at(insert.clone()), serde_json::json!({}));
+    assert!(asked.is_none());
+    assert!(is_error && text.contains("pass expect_rows"), "{text}");
+    let mut counted = at(insert);
+    counted["expect_rows"] = 1.into();
     // An untick runs nothing, and is final for that database.
     let (text, is_error, asked) = s.call(
         5,
-        at(format!("INSERT INTO {t} VALUES (3, 'c')")),
+        counted,
         serde_json::json!({"action": "accept", "content": {"run": false}}),
     );
-    assert!(asked
-        .unwrap()
-        .contains("couldn't count its rows first (an INSERT)"));
+    let message = asked.unwrap();
+    assert!(
+        message.contains("couldn't count its rows first (an INSERT)")
+            && message.contains("unless it changes exactly 1 row(s)"),
+        "{message}"
+    );
     assert!(is_error && text.contains("didn't tick run"), "{text}");
     assert_eq!(value_of(&t, 3), None);
     let (text, is_error, asked) = s.call(
@@ -14192,9 +14202,7 @@ fn execute_rolls_back_a_statement_that_changes_other_than_the_rows_confirmed() {
         .await
         .unwrap();
         let sql = format!("UPDATE {t} SET value = 'z' WHERE id = 1");
-        let err = pgman::query::execute::run(&c, &sql, Some(1))
-            .await
-            .unwrap_err();
+        let err = pgman::query::execute::run(&c, &sql, 1).await.unwrap_err();
         assert!(
             err.contains("changed 2 row(s), not the 1 confirmed"),
             "{err}"
@@ -14205,7 +14213,7 @@ fn execute_rolls_back_a_statement_that_changes_other_than_the_rows_confirmed() {
             .unwrap()
             .get(0);
         assert_eq!(kept, 0, "rolled back");
-        assert_eq!(pgman::query::execute::run(&c, &sql, Some(2)).await, Ok(2));
+        assert_eq!(pgman::query::execute::run(&c, &sql, 2).await, Ok(2));
         c.batch_execute(&format!("DROP TABLE {t}")).await.unwrap();
     });
 }

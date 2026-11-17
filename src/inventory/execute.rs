@@ -35,8 +35,9 @@ pub struct ExecPlan {
     /// The planner's estimate, where they weren't counted.
     pub estimate: Option<u64>,
     /// The rows it must change, or it is rolled back: the caller's
-    /// `expect_rows`, else the count.
-    pub expect: Option<u64>,
+    /// `expect_rows`, else the count. A statement with neither is
+    /// refused: nothing runs unchecked.
+    pub expect: u64,
     /// What an `UPDATE` overwrites, as read when planned.
     pub before: Option<Before>,
     /// Why they weren't read, when an `UPDATE` sets plain columns.
@@ -104,13 +105,15 @@ async fn read_plan(
     } else {
         None
     };
-    if let (Some(e), Some(n)) = (expect_rows, rows) {
-        if e != n {
+    match (expect_rows, rows) {
+        (Some(e), Some(n)) if e != n => {
             return Err(format!(
                 "nothing asked, nothing run: the statement changes {n} row(s) now, not the {e} \
                  expect_rows says"
-            ));
+            ))
         }
+        (None, None) => return Err(uncounted_refusal(uncounted.as_deref(), estimate)),
+        _ => {}
     }
     let (before, before_error) = match &shape {
         Some(s) => match execute::before(client, s).await {
@@ -120,6 +123,20 @@ async fn read_plan(
         None => (None, None),
     };
     Ok((rows, uncounted, estimate, before, before_error))
+}
+
+/// The refusal for a statement pgman can't count, passed without
+/// `expect_rows`: nothing would check how many rows it changed. Pure.
+fn uncounted_refusal(why: Option<&str>, estimate: Option<u64>) -> String {
+    format!(
+        "nothing asked, nothing run: pgman can't count this statement's rows first ({}{}); pass \
+         expect_rows with the number it must change, and it is rolled back if it changes any \
+         other",
+        why.unwrap_or("no count"),
+        estimate
+            .map(|e| format!("; the planner estimates about {e}"))
+            .unwrap_or_default()
+    )
 }
 
 /// The plan for running `sql` once on `server`/`database` of
@@ -169,7 +186,7 @@ pub async fn plan_for(
         server,
         database,
         protected: super::patching::is_protected(&env),
-        expect: expect_rows.or(rows),
+        expect: expect_rows.or(rows).ok_or("no row count")?,
         checked,
         rows,
         uncounted,
@@ -250,10 +267,20 @@ mod tests {
             rows: Some(1),
             uncounted: None,
             estimate: None,
-            expect: Some(1),
+            expect: 1,
             before: None,
             before_error: None,
         }
+    }
+
+    #[test]
+    fn an_uncounted_statement_says_to_pass_expect_rows() {
+        let why = uncounted_refusal(Some("an INSERT"), Some(3));
+        assert!(
+            why.contains("can't count this statement's rows first (an INSERT; the planner estimates about 3)"),
+            "{why}"
+        );
+        assert!(why.contains("pass expect_rows"), "{why}");
     }
 
     #[test]

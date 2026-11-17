@@ -199,7 +199,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "execute",
-            "description": "Run ONE INSERT, UPDATE or DELETE on an environment's database, once, after the OPERATOR confirms it through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name; likewise a statement that changes every row, or one safety.toml refuses). Plans first, read-only: a plain UPDATE or DELETE of one table is counted with its own WHERE, and an UPDATE's current values of the columns it sets are read, so the operator sees how many rows change and what is overwritten; anything else gets the planner's estimate. The operator is shown the exact statement. It then runs in one transaction with a 5s lock_timeout and a 30s statement_timeout, and is ROLLED BACK unless it changed the rows confirmed: `expect_rows`, else the count. A database safety.toml keeps read-only, or a statement its guards block, is shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. The audit line in pgman's log records the statement, the target, the rows changed and the values it overwrote. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica or standby, and for anything but one INSERT, UPDATE or DELETE without parameters ($1): schema changes go through apply_patches; DO, CALL, a CTE, MERGE, SET and transaction control are for the operator. A decline is final for that database this session. The count and the run are moments apart: another session's change in between makes the counts differ, and it rolls back. If the call times out, the statement may have committed: check before calling again.",
+            "description": "Run ONE INSERT, UPDATE or DELETE on an environment's database, once, after the OPERATOR confirms it through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name; likewise a statement that changes every row, or one safety.toml refuses). Plans first, read-only: a plain UPDATE or DELETE of one table is counted with its own WHERE, and an UPDATE's current values of the columns it sets are read, so the operator sees how many rows change and what is overwritten; anything else gets the planner's estimate and is refused without `expect_rows`, so nothing runs unchecked. The operator is shown the exact statement. It then runs in one transaction with a 5s lock_timeout and a 30s statement_timeout, and is ROLLED BACK unless it changed the rows confirmed: `expect_rows`, else the count. A database safety.toml keeps read-only, or a statement its guards block, is shown to the operator, who may lift that for this one run by typing the environment's name; nothing the agent passes lifts it, and a project's .pgman/pgman.toml [safety] refusal is never lifted. The audit line in pgman's log records the statement, the target, the rows changed and the values it overwrote. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica or standby, and for anything but one INSERT, UPDATE or DELETE without parameters ($1): schema changes go through apply_patches; DO, CALL, a CTE, MERGE, SET and transaction control are for the operator. A decline is final for that database this session. The count and the run are moments apart: another session's change in between makes the counts differ, and it rolls back. If the call times out, the statement may have committed: check before calling again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1650,14 +1650,10 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
         crate::query::execute::LOCK_TIMEOUT,
         crate::query::execute::STATEMENT_TIMEOUT_MS / 1000
     ));
-    match plan.expect {
-        Some(e) => message.push_str(&format!(
-            ", and is rolled back unless it changes exactly {e} row(s)."
-        )),
-        None => message.push_str(
-            "; nothing checks how many rows it changes, since there is no count and no expect_rows.",
-        ),
-    }
+    message.push_str(&format!(
+        ", and is rolled back unless it changes exactly {} row(s).",
+        plan.expect
+    ));
     if !plan.checked.confirms.is_empty() {
         message.push_str(&format!(
             " Your guards would ask about it: {}. This confirmation answers that.",
@@ -3214,7 +3210,7 @@ mod tests {
             rows: Some(1),
             uncounted: None,
             estimate: None,
-            expect: Some(1),
+            expect: 1,
             before: Some(crate::query::execute::Before {
                 columns: vec!["value".into()],
                 rows: vec![vec![Some("10".into())]],
@@ -3258,9 +3254,9 @@ mod tests {
         )
         .is_err());
         assert!(execute_confirmed(&plan, &json!({"action": "decline"})).is_err());
-        // An uncounted one says nothing checks its rows, unless told.
+        // An uncounted one is checked against expect_rows.
         let mut uncounted = plan.clone();
-        (uncounted.rows, uncounted.expect, uncounted.estimate) = (None, None, Some(4));
+        (uncounted.rows, uncounted.expect, uncounted.estimate) = (None, 3, Some(4));
         uncounted.uncounted = Some("an INSERT".into());
         let (message, _) = execute_request(&uncounted);
         assert!(
@@ -3270,7 +3266,7 @@ mod tests {
             "{message}"
         );
         assert!(
-            message.contains("nothing checks how many rows it changes"),
+            message.contains("unless it changes exactly 3 row(s)"),
             "{message}"
         );
     }

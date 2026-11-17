@@ -525,12 +525,12 @@ pub async fn estimate(client: &tokio_postgres::Client, statement: &str) -> Resul
 
 /// Run `statement` (from [`check`]) once on a writable `client`, in one
 /// transaction with [`LOCK_TIMEOUT`] and [`STATEMENT_TIMEOUT_MS`], and
-/// commit it only when it changed `expect` rows (when given): the rows
-/// it changed, or why nothing was kept.
+/// commit it only when it changed `expect` rows: the rows it changed,
+/// or why nothing was kept.
 pub async fn run(
     client: &tokio_postgres::Client,
     statement: &str,
-    expect: Option<u64>,
+    expect: u64,
 ) -> Result<u64, String> {
     super::apply::begin(client).await?;
     let ran = match client
@@ -549,12 +549,10 @@ pub async fn run(
             "it failed, nothing kept: {}",
             super::apply::server_message(e)
         )),
-        Ok(n) => match expect.filter(|e| e != n) {
-            Some(e) => Err(format!(
-                "it changed {n} row(s), not the {e} confirmed, so it was rolled back: nothing kept"
-            )),
-            None => Ok(*n),
-        },
+        Ok(n) if *n != expect => Err(format!(
+            "it changed {n} row(s), not the {expect} confirmed, so it was rolled back: nothing kept"
+        )),
+        Ok(n) => Ok(*n),
     };
     let n = match halted {
         Ok(n) => n,
