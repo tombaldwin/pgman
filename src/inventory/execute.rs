@@ -183,11 +183,38 @@ fn scoped(safety: &crate::safety::SafetyConfig, r: &Resolved) -> crate::safety::
 /// checked to be what it names. A replica the resolver refuses itself.
 async fn locate(named: &Named) -> Result<Resolved, String> {
     let text = named.text()?;
-    let r = tokio::task::spawn_blocking(move || target::resolve(&text, Want::Primary))
-        .await
-        .map_err(|e| format!("resolve task failed: {e}"))??;
+    let (r, envs) = tokio::task::spawn_blocking(move || {
+        target::resolve(&text, Want::Primary)
+            .map(|r| (r, super::load().environments.unwrap_or_default()))
+    })
+    .await
+    .map_err(|e| format!("resolve task failed: {e}"))??;
     named.matches(&r)?;
+    if r.environment.is_none() {
+        unlisted(&r.server, &envs)?;
+    }
     Ok(r)
+}
+
+/// Refused when environments list connection `name` (a static source):
+/// its database is theirs, and named by the connection alone their
+/// `ENV/DATABASE` safety.toml entries wouldn't apply. Pure.
+fn unlisted(name: &str, envs: &[super::Environment]) -> Result<(), String> {
+    let listing: Vec<&str> = envs
+        .iter()
+        .filter(|e| {
+            matches!(&e.source, super::Source::Static { connections } if connections.iter().any(|c| c == name))
+        })
+        .map(|e| e.name.as_str())
+        .collect();
+    match listing.first() {
+        None => Ok(()),
+        Some(env) => Err(format!(
+            "{name} is a server of {}, so its safety settings apply: name it as {env}/{name}/<database> \
+             (MCP: environment, server and database)",
+            listing.join(" and ")
+        )),
+    }
 }
 
 /// `checked`'s plan on `target`'s database, read on `client`
@@ -552,6 +579,18 @@ mod tests {
         (r.role, r.replica_of) = (Role::Replica, Some("db0".into()));
         let why = run_on(&p, &r, &open).await.unwrap_err();
         assert_eq!(why, "db1 is a replica; writes go to its primary (db0)");
+    }
+
+    #[test]
+    fn a_connection_an_environment_lists_is_named_through_it() {
+        let envs = crate::inventory::parse_config(
+            "[[environments]]\nname = \"live\"\nsource = { kind = \"static\", connections = [\"live-db\"] }\n",
+        )
+        .unwrap();
+        let why = unlisted("live-db", &envs).unwrap_err();
+        assert!(why.contains("live-db is a server of live"), "{why}");
+        assert!(why.contains("live/live-db/<database>"), "{why}");
+        assert_eq!(unlisted("solo", &envs), Ok(()));
     }
 
     #[test]

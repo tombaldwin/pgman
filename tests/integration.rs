@@ -14347,6 +14347,8 @@ fn mcp_execute_writes_to_a_connection_by_its_name() {
     for (id, name, why) in [
         (4, "it-dev", "names an environment"),
         (5, DSN, "never a URL"),
+        // Listed by it-dev: its ENV/DATABASE entries would be skipped.
+        (6, "local", "local is a server of it-dev"),
     ] {
         let (text, is_error, asked) = s.call(
             id,
