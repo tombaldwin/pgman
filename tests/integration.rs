@@ -14084,21 +14084,18 @@ fn mcp_execute_counts_shows_and_runs_one_update_once_confirmed() {
         "{message}"
     );
     assert!(is_error && text.contains("didn't tick run"), "{text}");
+    assert!(text.contains("That answer is final"), "{text}");
     assert_eq!(value_of(&t, 3), None);
-    let (text, is_error, asked) = s.call(
-        6,
-        at(format!("DELETE FROM {t} WHERE id = 3")),
-        serde_json::json!({"action": "decline"}),
-    );
-    assert!(asked.is_some());
-    assert!(is_error && text.contains("That answer is final"), "{text}");
     let (text, is_error, asked) = s.call(
         7,
         at(format!("DELETE FROM {t} WHERE id = 2")),
         serde_json::json!({}),
     );
     assert!(asked.is_none(), "a decline is final");
-    assert!(is_error && text.contains("declined a statement"), "{text}");
+    assert!(
+        is_error && text.contains("didn't confirm a statement"),
+        "{text}"
+    );
     assert_eq!(value_of(&t, 2).as_deref(), Some("b"));
     s.finish();
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
@@ -14127,19 +14124,24 @@ fn mcp_execute_takes_the_typed_name_where_protected_or_lifted_and_never_a_standb
     let (text, is_error, asked) = s.call(
         2,
         at("it-prod", "local", update.clone()),
-        serde_json::json!({"action": "accept", "content": {"run": true}}),
+        serde_json::json!({"action": "accept", "content": {"environment": "it-prod"}}),
     );
     assert!(asked
         .unwrap()
         .contains("it-prod is protected: type its name"));
-    assert!(is_error && text.contains("doesn't match it-prod"), "{text}");
-    assert_eq!(value_of(&t, 1).as_deref(), Some("a"));
+    assert!(!is_error, "{text}");
+    assert_eq!(value_of(&t, 1).as_deref(), Some("p"));
+    // A tick isn't the name; and that answer is final for it-prod.
     let (text, is_error, _) = s.call(
         3,
-        at("it-prod", "local", update),
-        serde_json::json!({"action": "accept", "content": {"environment": "it-prod"}}),
+        at(
+            "it-prod",
+            "local",
+            format!("UPDATE {t} SET value = 'q' WHERE id = 1"),
+        ),
+        serde_json::json!({"action": "accept", "content": {"run": true}}),
     );
-    assert!(!is_error, "{text}");
+    assert!(is_error && text.contains("doesn't match it-prod"), "{text}");
     assert_eq!(value_of(&t, 1).as_deref(), Some("p"));
 
     // DELETE without WHERE: blocked by the default guard, lifted by the

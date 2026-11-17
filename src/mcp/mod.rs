@@ -116,6 +116,11 @@ pub struct Server {
     /// (environment, server, database) the operator declined patches
     /// for: not asked again while this server runs.
     declined: Mutex<std::collections::HashSet<(String, String, String)>>,
+    /// (environment, server, database) the operator didn't confirm a
+    /// statement for (`execute`): its own set, so neither tool's
+    /// answer stops the other, and no environment's name can stand for
+    /// another's key.
+    declined_execute: Mutex<std::collections::HashSet<(String, String, String)>>,
     /// (environment, server, database) → the ref a confirmed dry run read
     /// its patches at, and the commit it resolved to: an apply at the
     /// same ref must find the same commit.
@@ -140,6 +145,7 @@ impl Server {
             waiting: Mutex::new(std::collections::HashMap::new()),
             next_request: AtomicU64::new(1),
             declined: Mutex::new(std::collections::HashSet::new()),
+            declined_execute: Mutex::new(std::collections::HashSet::new()),
             dry_runs: Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -158,6 +164,18 @@ impl Server {
         if let Ok(mut d) = self.declined.lock() {
             d.insert((environment.into(), server.into(), database.into()));
         }
+    }
+
+    pub(crate) fn remember_execute_decline(&self, environment: &str, server: &str, database: &str) {
+        if let Ok(mut d) = self.declined_execute.lock() {
+            d.insert((environment.into(), server.into(), database.into()));
+        }
+    }
+
+    pub(crate) fn execute_declined(&self, environment: &str, server: &str, database: &str) -> bool {
+        self.declined_execute
+            .lock()
+            .is_ok_and(|d| d.contains(&(environment.into(), server.into(), database.into())))
     }
 
     pub(crate) fn declined(&self, environment: &str, server: &str, database: &str) -> bool {

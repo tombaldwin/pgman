@@ -464,10 +464,9 @@ impl Server {
                     .ok_or("expect_rows must be a non-negative integer")?,
             ),
         };
-        let decline_key = execute_decline_key(&environment);
-        if self.declined(&decline_key, &server, &database) {
+        if self.execute_declined(&environment, &server, &database) {
             return Err(format!(
-                "the operator declined a statement for {environment} {server}/{database} earlier in this session; nothing asked, nothing run (they can run it themselves, or restart the MCP server)"
+                "the operator didn't confirm a statement for {environment} {server}/{database} earlier in this session; nothing asked, nothing run (they can run it themselves, or restart the MCP server)"
             ));
         }
         let personal = crate::safety::SafetyConfig::load_personal().0;
@@ -490,11 +489,12 @@ impl Server {
         .await?;
         let (message, schema) = execute_request(&plan);
         let answer = self.elicit(&message, schema).await?;
-        if answer.get("action").and_then(Value::as_str) != Some("accept") {
-            self.remember_decline(&decline_key, &server, &database);
-        }
         let statement = plan.checked.statement.as_str();
         if let Err(why) = execute_confirmed(&plan, &answer) {
+            // Any answer but a confirmation: a decline, an untick, a
+            // wrong name. Each statement is a new question, so a
+            // remembered decline is what stops one being reworded.
+            self.remember_execute_decline(&environment, &server, &database);
             tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, statement = ?statement, "execute not confirmed: {why}");
             return Err(format!(
                 "nothing run: {why}. That answer is final: don't call execute again unless the operator asks"
@@ -1595,13 +1595,6 @@ pub fn confirmed(
         return Err("the operator didn't tick apply".to_string());
     }
     Ok(())
-}
-
-/// The key a declined `execute` is remembered under: its own, so a
-/// declined statement doesn't stop `apply_patches`, nor the reverse.
-/// Pure.
-fn execute_decline_key(environment: &str) -> String {
-    format!("execute {environment}")
 }
 
 /// Why confirming `plan` takes the environment's name typed: the plan's
@@ -3301,11 +3294,12 @@ mod tests {
 
     #[test]
     fn a_declined_execute_is_remembered_apart_from_apply_patches() {
-        assert_ne!(execute_decline_key("demo"), "demo");
         let s = super::super::Server::new(Default::default(), std::path::PathBuf::from("/"));
-        s.remember_decline(&execute_decline_key("demo"), "db1", "ledger");
-        assert!(s.declined(&execute_decline_key("demo"), "db1", "ledger"));
+        s.remember_execute_decline("demo", "db1", "ledger");
+        assert!(s.execute_declined("demo", "db1", "ledger"));
         assert!(!s.declined("demo", "db1", "ledger"));
+        s.remember_decline("staging", "db1", "ledger");
+        assert!(!s.execute_declined("staging", "db1", "ledger"));
     }
 
     #[test]
