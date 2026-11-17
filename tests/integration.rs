@@ -14146,19 +14146,6 @@ fn mcp_execute_takes_the_typed_name_where_protected_or_lifted_and_never_a_standb
         .contains("it-prod is protected: type its name"));
     assert!(!is_error, "{text}");
     assert_eq!(value_of(&t, 1).as_deref(), Some("p"));
-    // A tick isn't the name; and that answer is final for it-prod.
-    let (text, is_error, _) = s.call(
-        3,
-        at(
-            "it-prod",
-            "local",
-            format!("UPDATE {t} SET value = 'q' WHERE id = 1"),
-        ),
-        serde_json::json!({"action": "accept", "content": {"run": true}}),
-    );
-    assert!(is_error && text.contains("doesn't match it-prod"), "{text}");
-    assert_eq!(value_of(&t, 1).as_deref(), Some("p"));
-
     // DELETE without WHERE: blocked by the default guard, lifted by the
     // typed name for this one run, and counted.
     let (text, is_error, asked) = s.call(
@@ -14198,6 +14185,30 @@ fn mcp_execute_takes_the_typed_name_where_protected_or_lifted_and_never_a_standb
     );
     assert!(asked.is_none());
     assert!(is_error && text.contains("is a replica"), "{text}");
+    // A tick isn't the name; and that answer is final for it-prod, and
+    // for it-dev, on the same database.
+    let (text, is_error, _) = s.call(
+        3,
+        at(
+            "it-prod",
+            "local",
+            format!("UPDATE {t} SET value = 'q' WHERE id = 1"),
+        ),
+        serde_json::json!({"action": "accept", "content": {"run": true}}),
+    );
+    assert!(is_error && text.contains("doesn't match it-prod"), "{text}");
+    let (text, is_error, asked) = s.call(
+        7,
+        at(
+            "it-dev",
+            "local",
+            format!("UPDATE {t} SET value = 'n' WHERE id = 9"),
+        ),
+        serde_json::json!({}),
+    );
+    assert!(asked.is_none(), "{text}");
+    assert!(is_error && text.contains("named another way"), "{text}");
+    assert_eq!(value_of(&t, 9), None);
     s.finish();
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));
 }
@@ -14358,6 +14369,21 @@ fn mcp_execute_writes_to_a_connection_by_its_name() {
         assert!(asked.is_none(), "{name}");
         assert!(is_error && text.contains(why), "{name}: {text}");
     }
+    assert_eq!(value_of(&t, 1).as_deref(), Some("z"));
+    // Declined as solo: solo-prod reaches the same database, and isn't asked.
+    let (_, _, asked) = s.call(
+        7,
+        at("solo", format!("DELETE FROM {t} WHERE id = 1")),
+        serde_json::json!({"action": "decline"}),
+    );
+    assert!(asked.is_some());
+    let (text, is_error, asked) = s.call(
+        8,
+        at("solo-prod", format!("DELETE FROM {t} WHERE id = 1")),
+        serde_json::json!({}),
+    );
+    assert!(asked.is_none(), "{text}");
+    assert!(is_error && text.contains("named another way"), "{text}");
     assert_eq!(value_of(&t, 1).as_deref(), Some("z"));
     s.finish();
     let _ = on("pgman_test", &format!("DROP TABLE {t}"));

@@ -484,13 +484,18 @@ impl Server {
             Some(floor),
         )
         .await?;
+        if self.endpoint_declined(&plan.endpoint) {
+            return Err(
+                "the operator didn't confirm a statement for that database, named another way, earlier in this session; nothing asked, nothing run".to_string()
+            );
+        }
         let (message, schema) = execute_request(&plan);
         let answer = self.elicit(&message, schema).await?;
         if let Err(why) = execute_confirmed(&plan, &answer) {
             // Any answer but a confirmation: a decline, an untick, a
             // wrong name. Each statement is a new question, so a
             // remembered decline is what stops one being reworded.
-            self.remember_execute_decline(&named);
+            self.remember_execute_decline(&named, &plan.endpoint);
             crate::inventory::execute::audit_not_confirmed(&plan, &why);
             return Err(format!(
                 "nothing run: {why}. That answer is final: don't call execute again unless the operator asks"
@@ -3341,8 +3346,11 @@ mod tests {
             server: "db1".into(),
             database: "ledger".into(),
         };
-        s.remember_execute_decline(&at("demo"));
+        s.remember_execute_decline(&at("demo"), "postgres://app@db1:5432/ledger");
         assert!(s.execute_declined(&at("demo")));
+        // The same database, named another way, by its endpoint.
+        assert!(s.endpoint_declined("postgres://app@db1:5432/ledger"));
+        assert!(!s.endpoint_declined("postgres://app@db2:5432/ledger"));
         assert!(!s.declined("demo", "db1", "ledger"));
         s.remember_decline("staging", "db1", "ledger");
         assert!(!s.execute_declined(&at("staging")));

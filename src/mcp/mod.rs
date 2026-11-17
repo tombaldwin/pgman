@@ -121,6 +121,9 @@ pub struct Server {
     /// answer stops the other, and no environment's name can stand for
     /// another's key.
     declined_execute: Mutex<std::collections::HashSet<crate::inventory::execute::Named>>,
+    /// The endpoints of those: the same database named another way is
+    /// the same answer.
+    declined_endpoints: Mutex<std::collections::HashSet<String>>,
     /// (environment, server, database) → the ref a confirmed dry run read
     /// its patches at, and the commit it resolved to: an apply at the
     /// same ref must find the same commit.
@@ -146,6 +149,7 @@ impl Server {
             next_request: AtomicU64::new(1),
             declined: Mutex::new(std::collections::HashSet::new()),
             declined_execute: Mutex::new(std::collections::HashSet::new()),
+            declined_endpoints: Mutex::new(std::collections::HashSet::new()),
             dry_runs: Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -166,16 +170,33 @@ impl Server {
         }
     }
 
-    pub(crate) fn remember_execute_decline(&self, named: &crate::inventory::execute::Named) {
+    pub(crate) fn remember_execute_decline(
+        &self,
+        named: &crate::inventory::execute::Named,
+        endpoint: &str,
+    ) {
         if let Ok(mut d) = self.declined_execute.lock() {
             d.insert(named.clone());
         }
+        if let Ok(mut d) = self.declined_endpoints.lock() {
+            d.insert(endpoint.to_string());
+        }
     }
 
+    /// Whether a statement for `named` went unconfirmed this session:
+    /// asked before planning, by name.
     pub(crate) fn execute_declined(&self, named: &crate::inventory::execute::Named) -> bool {
         self.declined_execute
             .lock()
             .is_ok_and(|d| d.contains(named))
+    }
+
+    /// Whether one for `endpoint` did, however it was named: asked once
+    /// the plan has found it.
+    pub(crate) fn endpoint_declined(&self, endpoint: &str) -> bool {
+        self.declined_endpoints
+            .lock()
+            .is_ok_and(|d| d.contains(endpoint))
     }
 
     pub(crate) fn declined(&self, environment: &str, server: &str, database: &str) -> bool {
