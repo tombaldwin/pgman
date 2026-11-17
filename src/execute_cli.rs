@@ -86,8 +86,14 @@ pub fn parse_cli(args: &[String]) -> Result<Opts, String> {
     })
 }
 
-/// The plan as text, for the operator to read before confirming. Pure.
+/// The plan as text, for the operator to read before confirming: all of
+/// it terminal-safe, since server messages and current values are in
+/// it. Pure.
 pub fn render_plan(plan: &ExecPlan) -> String {
+    crate::batch::terminal_safe(&plan_text(plan))
+}
+
+fn plan_text(plan: &ExecPlan) -> String {
     let protected = match (plan.protected, &plan.protected_why) {
         (true, Some(why)) => format!(", protected: {why}"),
         (true, None) => ", protected".to_string(),
@@ -311,6 +317,19 @@ mod tests {
             text.contains("What it overwrites now:\n  value = 10"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_plan_reaches_the_terminal_without_escapes() {
+        let mut p = plan("UPDATE settings SET value = '11' WHERE id = 1", false);
+        p.before_error = Some("boom \u{1b}]0;pwned\u{7}".into());
+        p.label = "app\u{1b}[2J".into();
+        let text = render_plan(&p);
+        assert!(
+            !text.contains('\u{1b}') && !text.contains('\u{7}'),
+            "{text:?}"
+        );
+        assert!(text.contains("boom ]0;pwned"), "{text}");
     }
 
     #[test]
