@@ -180,16 +180,13 @@ fn scoped(safety: &crate::safety::SafetyConfig, r: &Resolved) -> crate::safety::
 }
 
 /// `named`, found as a primary (blocking: the aws CLI may run), and
-/// checked to be what it names.
+/// checked to be what it names. A replica the resolver refuses itself.
 async fn locate(named: &Named) -> Result<Resolved, String> {
     let text = named.text()?;
     let r = tokio::task::spawn_blocking(move || target::resolve(&text, Want::Primary))
         .await
         .map_err(|e| format!("resolve task failed: {e}"))??;
     named.matches(&r)?;
-    if r.role == Role::Replica {
-        return Err(replica_refusal(&r));
-    }
     Ok(r)
 }
 
@@ -253,8 +250,8 @@ async fn read_plan(
 fn uncounted_refusal(why: Option<&str>, estimate: Option<u64>) -> String {
     format!(
         "nothing asked, nothing run: pgman can't count this statement's rows first ({}{}); pass \
-         expect_rows with the number it must change, and it is rolled back if it changes any \
-         other",
+         expect_rows (pgman execute: --expect-rows) with the number it must change, and it is \
+         rolled back if it changes any other",
         why.unwrap_or("no count"),
         estimate
             .map(|e| format!("; the planner estimates about {e}"))
@@ -522,6 +519,39 @@ mod tests {
         assert!(Named::Any("postgres://app@db1/ledger".into())
             .text()
             .is_ok());
+    }
+
+    #[test]
+    fn an_environments_entries_apply_to_its_databases_alone() {
+        let (cfg, _) = crate::safety::SafetyConfig::parse_personal(
+            "[databases.\"demo/ledger\"]\nread_only = false\n",
+        );
+        assert!(
+            !scoped(&cfg, &resolved(Some("demo"), "db1"))
+                .profile_for("ledger")
+                .read_only
+        );
+        assert!(
+            scoped(&cfg, &resolved(Some("staging"), "db1"))
+                .profile_for("ledger")
+                .read_only
+        );
+        assert!(
+            scoped(&cfg, &resolved(None, "app-dev"))
+                .profile_for("ledger")
+                .read_only
+        );
+    }
+
+    #[tokio::test]
+    async fn a_replica_handed_to_the_run_is_refused_before_connecting() {
+        let (open, _) =
+            crate::safety::SafetyConfig::parse_personal("[default]\nread_only = false\n");
+        let p = plan("UPDATE a SET x = 1 WHERE id = 1", &open, false);
+        let mut r = resolved(Some("demo"), "db1");
+        (r.role, r.replica_of) = (Role::Replica, Some("db0".into()));
+        let why = run_on(&p, &r, &open).await.unwrap_err();
+        assert_eq!(why, "db1 is a replica; writes go to its primary (db0)");
     }
 
     #[test]
