@@ -6,6 +6,24 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- MCP `execute`: one `INSERT`, `UPDATE` or `DELETE` on an environment's
+  database, run once after the operator confirms the exact statement.
+  A plain `UPDATE` or `DELETE` is counted first, read-only, with its
+  own `WHERE`, and an `UPDATE`'s current values of the columns it sets
+  are shown; anything pgman can't count needs `expect_rows`. It runs in
+  one transaction with a 5 s lock timeout and a 30 s statement timeout,
+  and is rolled back unless it changed exactly the rows confirmed. The
+  same rails as `apply_patches`: refused under `--read-only`, without
+  elicitation, on a replica or standby; a protected environment, a
+  statement that changes every row and anything `safety.toml` refuses
+  take the environment's name typed, the last lifted for that run only,
+  never a project's `[safety]`. DDL, `DO`, `CALL`, CTEs, `MERGE`, `SET`
+  and parameters are refused. An audit line in pgman's log records the
+  statement, target, rows and the values it overwrote, a secret-named
+  column's withheld.
+
 ## [0.5.4] — 2026-11-16
 
 ### Added

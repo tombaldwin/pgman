@@ -73,6 +73,14 @@ plus three MEDIUMs and four LOWs, all fixed. Follow-ups are in
 BACKLOG.md → "Patch files at a git ref". Released as **0.5.4**
 (2026-11-16) on Tom's "Ship".
 
+**Unreleased on main (2026-11-17):** MCP `execute`, one INSERT, UPDATE
+or DELETE confirmed by the operator, asked for by the client lead after
+a Demo release needed two setting changes made by hand. A Fable
+adversarial review found one HIGH (a statement pgman couldn't count ran
+with no row check) plus five MEDIUMs and four LOWs, all fixed in their
+own commits. Follow-ups are in BACKLOG.md → "MCP execute". Waiting on
+Tom's go to release.
+
 ## Window — after v0.5.2
 
 ### 1. What the Fable review left (2026-11-12)

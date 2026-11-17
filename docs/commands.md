@@ -187,7 +187,8 @@ same holds for `env` and `mcp`.
 
 `pgman mcp serve [--read-only] [--project-connections]` runs the stdio
 MCP server instead of the TUI — read-only queries, plus `apply_patches`
-once you confirm it; see [MCP server](mcp.md).
+and `execute` (one INSERT, UPDATE or DELETE), each once you confirm it;
+see [MCP server](mcp.md).
 
 A `--batch --dsn` connect failure prints the driver/server message, then a
 `hint: …` line when pgman recognises the cause (wrong password, nothing
