@@ -439,6 +439,59 @@ impl Before {
     }
 }
 
+/// Words in a column's name that say its value is a secret: the audit
+/// line withholds it ([`Before::for_audit`]).
+const SECRET_WORDS: &[&str] = &[
+    "password",
+    "passwd",
+    "pwd",
+    "passphrase",
+    "secret",
+    "token",
+    "credential",
+    "credentials",
+    "apikey",
+    "key",
+    "hash",
+    "salt",
+    "otp",
+    "totp",
+    "pin",
+];
+
+/// Whether `column`'s name says its value is a secret. Over-reads (a
+/// `sort_key`), which only withholds more. Pure.
+pub fn secret_column(column: &str) -> bool {
+    let name = column.trim_matches('"');
+    crate::masking::classify::words(name)
+        .iter()
+        .any(|w| SECRET_WORDS.contains(&w.as_str()))
+        || SECRET_WORDS
+            .iter()
+            .filter(|w| w.len() > 4)
+            .any(|w| name.to_ascii_lowercase().contains(*w))
+}
+
+impl Before {
+    /// [`Before::to_json`] for pgman's log: a column whose name says
+    /// secret ([`secret_column`]) has its values withheld, since the log
+    /// is a plain file. The operator and the tool's result see them.
+    /// Pure.
+    pub fn for_audit(&self) -> serde_json::Value {
+        let mut audit = self.clone();
+        for (i, c) in self.columns.iter().enumerate() {
+            if secret_column(c) {
+                for row in &mut audit.rows {
+                    if let Some(v) = row.get_mut(i).filter(|v| v.is_some()) {
+                        *v = Some("(withheld: a secret's column)".to_string());
+                    }
+                }
+            }
+        }
+        audit.to_json()
+    }
+}
+
 /// `value` cut at [`MAX_BEFORE_CELL`] characters, ending in `…` when
 /// cut. Pure.
 fn cut(value: String) -> String {
@@ -749,6 +802,41 @@ mod tests {
         let plain = serde_json::json!([{"Plan": {"Node Type": "Result", "Plan Rows": 1}}]);
         assert_eq!(planned_rows(&plain), Some(1));
         assert_eq!(planned_rows(&serde_json::json!([])), None);
+    }
+
+    #[test]
+    fn a_secrets_column_is_withheld_from_the_audit_line_only() {
+        for c in [
+            "password_hash",
+            "apiKey",
+            "\"ResetToken\"",
+            "client_secret",
+            "salt",
+            "userpassword",
+        ] {
+            assert!(secret_column(c), "{c}");
+        }
+        for c in ["value", "status", "note", "keeper"] {
+            assert!(!secret_column(c), "{c}");
+        }
+        // Over-read, which only withholds more.
+        assert!(secret_column("sort_key"));
+        let b = Before {
+            columns: vec!["value".into(), "password_hash".into()],
+            rows: vec![
+                vec![Some("10".into()), Some("$2a$hash".into())],
+                vec![Some("11".into()), None],
+            ],
+            more: false,
+        };
+        assert_eq!(
+            b.for_audit(),
+            serde_json::json!([
+                {"value": "10", "password_hash": "(withheld: a secret's column)"},
+                {"value": "11", "password_hash": null}
+            ])
+        );
+        assert_eq!(b.to_json()[0]["password_hash"], "$2a$hash");
     }
 
     #[test]
