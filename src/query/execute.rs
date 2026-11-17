@@ -8,7 +8,7 @@
 //! [`check`] is the statement's gate: exactly one statement, one of those
 //! three verbs, no parameters, no `-- pgman: allow` of its own (the agent
 //! wrote it, so it can't vouch for itself), nothing that changes session
-//! settings or the transaction, and the same safety.toml guards and
+//! settings, and the same safety.toml guards and
 //! read-only profile `apply_patches` honours — a refusal of those two
 //! being what the operator may lift for one run.
 //!
@@ -130,9 +130,6 @@ pub fn check(
     if tokens.iter().any(|t| t == "set_config") {
         return Err("the statement calls set_config, which changes session settings".into());
     }
-    if safety::is_transaction_control(&statement) {
-        return Err("the statement manages its own transaction".into());
-    }
     let read_only = cfg.profile_for(db).read_only;
     // Judged as on a writable session: read-only is refused as itself.
     let writable = if read_only {
@@ -146,9 +143,6 @@ pub fn check(
         cfg.clone()
     };
     let decision = safety::evaluate(&writable, db, &statement);
-    if decision.read_only_escape {
-        return Err(safety::READ_ONLY_ESCAPE_REFUSAL.into());
-    }
     if safety::calls_server_control(&statement) || safety::mentions_destructive_function(&statement)
     {
         return Err(
@@ -664,6 +658,9 @@ mod tests {
             "MERGE INTO a USING b ON a.id = b.id WHEN MATCHED THEN DELETE",
             "DO $$ BEGIN DELETE FROM a; END $$",
             "CALL purge()",
+            "EXPLAIN ANALYZE UPDATE a SET x = 1 WHERE id = 1",
+            "BEGIN",
+            "COMMIT",
         ] {
             assert!(
                 refused(sql).contains("one INSERT, UPDATE or DELETE"),
@@ -685,6 +682,14 @@ mod tests {
         assert!(
             refused("UPDATE a SET x = pg_terminate_backend(1) WHERE id = 1")
                 .contains("acts on the server")
+        );
+        assert!(
+            refused("UPDATE a SET x = \"set_config\"('a', 'b', false) WHERE id = 1")
+                .contains("set_config")
+        );
+        assert_eq!(
+            refused("UPDATE a SET x = 'open WHERE id = 1"),
+            safety::SPLIT_REFUSAL
         );
         // `$$`-quoted text holds no parameter.
         assert!(check(&w, "ledger", "UPDATE a SET x = $$1$$ WHERE id = 1", false).is_ok());

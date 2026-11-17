@@ -502,7 +502,7 @@ impl Server {
         }
         let lifted = plan.lifted();
         let before = plan.before.as_ref().map(|b| b.for_audit().to_string());
-        let how = if execute_typed_reason(&plan).is_some() {
+        let how = if plan.typed_reason().is_some() {
             "typed the environment's name"
         } else {
             "ticked"
@@ -1597,12 +1597,6 @@ pub fn confirmed(
     Ok(())
 }
 
-/// Why confirming `plan` takes the environment's name typed: the plan's
-/// own reasons, or a statement past what the question shows. Pure.
-fn execute_typed_reason(plan: &crate::inventory::execute::ExecPlan) -> Option<&'static str> {
-    plan.typed_reason()
-}
-
 /// The question `execute` puts to the operator, and the answer's
 /// schema: the statement as it will run, where, how many rows it
 /// changes and what it overwrites. Pure.
@@ -1653,7 +1647,7 @@ pub fn execute_request(plan: &crate::inventory::execute::ExecPlan) -> (String, V
             plan.checked.confirms.join(", ")
         ));
     }
-    let typed = execute_typed_reason(plan);
+    let typed = plan.typed_reason();
     if let Some(why) = typed {
         message.push_str(&format!(
             " {} {why}: type its name to confirm.",
@@ -1707,7 +1701,7 @@ pub fn execute_confirmed(
         None => return Err("the answer has no action".to_string()),
     }
     let content = answer.get("content");
-    if execute_typed_reason(plan).is_some() {
+    if plan.typed_reason().is_some() {
         let typed = content
             .and_then(|c| c.get("environment"))
             .and_then(Value::as_str)
