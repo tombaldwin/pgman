@@ -73,7 +73,7 @@ plus three MEDIUMs and four LOWs, all fixed. Follow-ups are in
 BACKLOG.md → "Patch files at a git ref". Released as **0.5.4**
 (2026-11-16) on Tom's "Ship".
 
-**Unreleased on main (2026-11-17):** MCP `execute`, one INSERT, UPDATE
+**v0.5.5 (2026-11-19):** MCP `execute`, one INSERT, UPDATE
 or DELETE confirmed by the operator, asked for by the client lead after
 a Demo release needed two setting changes made by hand. A Fable
 adversarial review found one HIGH (a statement pgman couldn't count ran
@@ -84,7 +84,8 @@ standby check tested, `pgman execute`, and UPDATE … FROM / DELETE …
 USING counted as a semi-join; a second Fable review found one HIGH (a
 connection an environment lists skipped that environment's safety.toml
 entries), one MEDIUM and two LOWs, all fixed. What's left is in
-BACKLOG.md → "MCP execute". Waiting on Tom's go to release.
+BACKLOG.md → "MCP execute". Released as **0.5.5**
+(2026-11-19) on Tom's "ship".
 
 ## Window — after v0.5.2
 
